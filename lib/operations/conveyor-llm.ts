@@ -1,4 +1,4 @@
-import { AI_TASKS, aiTaskAliasIdentity, isAiLiveTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_TASKS, aiTaskAliasIdentity, aiTaskLedgerTracked, aiTaskOwnsLedgerRoute, aiTaskReadsRanks, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import { bareModelName } from "@/lib/crawl/review-model-identity";
 import { deviceServer, isLocalModelHost } from "./admin-models-view";
 import { NO_MODEL_TEXT, type StationKey } from "./conveyor-model";
@@ -24,7 +24,7 @@ export const STATION_TASKS: Readonly<Record<LlmStationKey, readonly string[]>> =
   first: ["first-review"],
   second: ["second-review"],
   // 순위 편집의 기존 묶음을 보존한다. 흐름 관측은 아래 buildStationLlm 에서 공개 전 소개 / 공개 후·보조 작업을 분리한다.
-  profile: ["crawl-tagline", "product-tagline-ko", "korean-translation-direct", "product-translate", "reason-translate", "product-intro-check"],
+  profile: ["crawl-tagline", "product-tagline-ko", "product-translate", "reason-translate", "product-intro-check"],
   publish: ["publish-classify"],
   // 키워드 등록 — 검색 키워드 짓기·검수(잡 product-search-profile·verify)와 제품 벡터(product-embedding)
   keywords: ["product-search-profile", "product-search-verify", "product-embedding"],
@@ -245,9 +245,12 @@ function placeOf(row: LlmUsedRow, inputs: LlmInputs): string {
 function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
   const fresh = currentRuntime(def, inputs);
   const poolConfigs = inputs.execution?.filter(row => row.task === def.id && row.mode === "workload_pool") ?? [];
-  const live = isAiLiveTask(def.id) || def.id === "publish-classify" && poolConfigs.length > 0;
-  const active: ActiveSeen[] | null = !def.routeId || inputs.active == null ? null : inputs.active
-    .filter(row => row.routeId === def.routeId).map(row => {
+  // LLM 보강은 순위가 있을 때만 실행 쪽이 순위를 읽는다(없으면 옛 env — 실제 적용 설정으로 보인다)
+  const live = aiTaskReadsRanks(def.id, (inputs.rows ?? []).some(row => row.task === def.id)) || def.id === "publish-classify" && poolConfigs.length > 0;
+  // 장부 route — 작업의 route id, LLM 보강은 보강 일마다의 local-assist-<일>-<backend>
+  const tracked = aiTaskLedgerTracked(def), owns = (routeId: string) => aiTaskOwnsLedgerRoute(def, routeId);
+  const active: ActiveSeen[] | null = !tracked || inputs.active == null ? null : inputs.active
+    .filter(row => owns(row.routeId)).map(row => {
       const place = placeOf(row, inputs);
       return { text: `${place} · ${row.model}`, model: row.model, where: place, count: row.count, rank: null,
         lastAt: row.lastAt, state: row.state };
@@ -262,9 +265,9 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
     const modelCount = new Set(members.map(member => member.model)).size, deviceCount = new Set(members.map(member => member.deviceId)).size;
     const pool: TaskLlmPool = { members, modelCount, deviceCount,
       summary: `작업 분산 · 모델 ${modelCount}개 · 장비 ${deviceCount}대`, runtime: fresh?.pool ? { ...fresh.pool, at: fresh.at } : null };
-    const usedWhy = !def.routeId ? "no_ledger" as const : inputs.used === null ? "unread" as const : null;
+    const usedWhy = !tracked ? "no_ledger" as const : inputs.used === null ? "unread" as const : null;
     // Ledger use is route-wide historical evidence, not proof that this pool/member supplied a particular call.
-    const used: UsedSeen[] | null = usedWhy ? null : (inputs.used ?? []).filter(row => row.routeId === def.routeId)
+    const used: UsedSeen[] | null = usedWhy ? null : (inputs.used ?? []).filter(row => owns(row.routeId))
       .sort((a, b) => b.count - a.count).map(row => { const place = placeOf(row, inputs);
         return { text: `${place} · ${row.model}`, model: row.model, where: place, count: row.count, rank: null, lastAt: row.lastAt }; });
     const top = used?.[0];
@@ -283,8 +286,8 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
   const configured = slots.flatMap((slot) => slot.ranks);
   const base = { task: def.id, label: def.label, live, slots, active };
 
-  const usedWhy = !def.routeId ? "no_ledger" as const : inputs.used === null ? "unread" as const : null;
-  const usedRows = usedWhy ? null : (inputs.used ?? []).filter((row) => row.routeId === def.routeId).sort((a, b) => b.count - a.count);
+  const usedWhy = !tracked ? "no_ledger" as const : inputs.used === null ? "unread" as const : null;
+  const usedRows = usedWhy ? null : (inputs.used ?? []).filter((row) => owns(row.routeId)).sort((a, b) => b.count - a.count);
   const used: UsedSeen[] | null = usedRows && usedRows.map((row) => {
     const rank = inputs.rows ? matchRank(slots, inputs.rows, def.id, row) : null;
     const place = rank ? where(rank) : placeOf(row, inputs);
@@ -304,7 +307,7 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
   // 실행 쪽이 순위를 읽지 않는 작업 — 저장된 순위가 아니라 실제 적용 설정만 보인다.
   if (!live) {
     const effective = inputs.effective?.[def.id] ?? null;
-    const plainUsed = usedWhy ? null : (inputs.used ?? []).filter(row => row.routeId === def.routeId).sort((a, b) => b.count - a.count)
+    const plainUsed = usedWhy ? null : (inputs.used ?? []).filter(row => owns(row.routeId)).sort((a, b) => b.count - a.count)
       .map(row => { const place = placeOf(row, inputs);
         return { text: `${place} · ${row.model}`, model: row.model, where: place, count: row.count, rank: null, lastAt: row.lastAt }; });
     const firstUsed = plainUsed?.[0] ?? null;

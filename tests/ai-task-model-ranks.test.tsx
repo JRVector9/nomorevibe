@@ -483,6 +483,81 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
       expect(aiRankReadiness(aiTask("audit-review")!, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct())).not.toHaveProperty("createLocalContract");
     });
   });
+  describe("2026-11-11 LLM 보강(assist-direct) — 보강 일마다의 local-assist-<일>-<backend>", () => {
+    const review = aiTask("assist-review")!, audit = aiTask("assist-audit")!;
+    const backend = (connectionId: string, model: string) => `api-${connectionId.slice(0, 8)}-${model.length}`;
+    const families = { primary: "qwen3.8-flash-next", audit: "deepseek-v4.1-flash-1017" };
+    const assist = (patch: Partial<AiReadinessInput> = {}) => input({ localBackendId: backend, localContractTableCount: 3, assistFamilies: families,
+      devices: new Map([["supa", { enabled: true, limitSlots: 4, physicalLimit: 4 }], ["gpu3090-qwen", { enabled: true, limitSlots: 4, physicalLimit: 4 }]]), ...patch });
+    it("작업 정의: API 만 받고(CLI 없음) 보강 일·잡·작업 id 가 실행 쪽과 맞는다", () => {
+      expect(review).toMatchObject({ wiring: "assist-direct", api: true, cliTools: [], routeId: null, jobs: ["product-llm-assist-review"],
+        assistWork: ["uptime", "repo_move", "intro_recheck", "news"] });
+      expect(audit).toMatchObject({ wiring: "assist-direct", api: true, cliTools: [], routeId: null, jobs: ["product-llm-assist-audit-review"],
+        assistWork: ["decision_audit", "semantic_exception"] });
+      expect(aiTaskAccepts(review, { kind: "cli", cliTool: "opencode" })).toBe(false);
+    });
+    it("같은 주소·모델의 로컬 계약이 없으면 계약 하나와 보강 일마다 route 를 만들 것으로 적는다", () => {
+      const ready = aiRankReadiness(review, 1, gpu, "qwen3.8-flash-next", assist({ policy: { mode: "open", routes: [], groupLimits: {} } }));
+      const id = backend(GPU, "qwen3.8-flash-next");
+      expect(ready).toMatchObject({ blocking: [], warnings: [], provider: "local-direct", createContract: null, createCliContract: null,
+        createLocalContract: { routeId: `local-assist-uptime-${id}`, backendId: id, endpoint: "http://100.77.43.63:8090/v1/chat/completions",
+          model: "qwen3.8-flash-next", physicalGroup: "gpu3090-qwen" },
+        appendRoute: { routeId: `local-assist-uptime-${id}`, provider: "local-direct", model: "qwen3.8-flash-next", providerBudgetId: id, groupId: "gpu3090-qwen" } });
+      expect(ready.extraRoutes?.map(route => route.routeId)).toEqual([`local-assist-repo_move-${id}`, `local-assist-intro_recheck-${id}`, `local-assist-news-${id}`]);
+      expect(ready.extraRoutes?.every(route => route.providerBudgetId === id && route.groupId === "gpu3090-qwen")).toBe(true);
+      expect(aiRankPendingText(ready)).toEqual([
+        "1순위 qwen3.8-flash-next: LLM 보강 경로의 로컬 계약이 없습니다 — 이 줄을 저장하면 연결 주소를 확인하고 만듭니다.",
+        `1순위 qwen3.8-flash-next: 용량 정책에 local-assist-uptime-${id}·local-assist-repo_move-${id}·local-assist-intro_recheck-${id}·local-assist-news-${id} / local-direct 경로가 없습니다 — 저장하면 덧붙입니다(DRAIN 없음).`]);
+    });
+    it("운영처럼 이미 있는 로컬 계약(gpu3090-qwen)·route 는 그대로 쓰고 빠진 일의 route 만 덧붙인다", () => {
+      const local = [{ backendId: "gpu3090-qwen", model: "qwen3.8-flash-next", endpoint: "http://100.77.43.63:8090/v1/chat/completions", physicalGroup: "gpu3090-qwen",
+        modelFamily: "qwen3.8-flash-next" }];
+      const routes = ["uptime", "repo_move", "intro_recheck"].map(work => ({ routeId: `local-assist-${work}-gpu3090-qwen`, provider: "local-direct", model: "qwen3.8-flash-next",
+        providerBudgetId: "gpu3090-qwen", groupId: "gpu3090-qwen" }));
+      const ready = aiRankReadiness(review, 1, gpu, "qwen3.8-flash-next", assist({ localContracts: local, localContract: () => ({ model: "qwen3.8-flash-next",
+        endpoint: "http://100.77.43.63:8090/v1/chat/completions" }), policy: { mode: "open", routes, groupLimits: {} } }));
+      expect(ready).toMatchObject({ blocking: [], appendRoute: { routeId: "local-assist-news-gpu3090-qwen", providerBudgetId: "gpu3090-qwen" } });
+      expect(ready).not.toHaveProperty("createLocalContract");
+      expect(ready).not.toHaveProperty("extraRoutes");
+      // 모든 route 가 있으면 만들 것이 없다
+      const full = aiRankReadiness(review, 1, gpu, "qwen3.8-flash-next", assist({ localContracts: local, policy: { mode: "open", groupLimits: {},
+        routes: [...routes, { ...routes[0], routeId: "local-assist-news-gpu3090-qwen" }] } }));
+      expect(full).toMatchObject({ blocking: [], appendRoute: null, createDevice: null });
+      // route 가 다른 예산·장비에 있으면 막는다
+      const moved = aiRankReadiness(review, 1, gpu, "qwen3.8-flash-next", assist({ localContracts: local, policy: { mode: "open", groupLimits: {},
+        routes: [{ ...routes[0], providerBudgetId: "other", groupId: "other" }] } }));
+      expect(moved.blocking).toEqual([expect.stringContaining("(local-assist-uptime-gpu3090-qwen)는 예산 other·장비 other에 있습니다")]);
+    });
+    it("모델 계열: 보강은 판정 계열만, 독립 감사는 두 계열만 받는다 — 계열을 못 읽으면 알리고 막지 않는다", () => {
+      const open = { policy: { mode: "open", routes: [], groupLimits: {} } } as const;
+      expect(aiRankReadiness(review, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", assist(open)).blocking)
+        .toEqual([expect.stringContaining("모델 계열 Inferact/Qwen3.8-27B-NVFP4은(는) 보강 판정 계열(qwen3.8-flash-next)이 아닙니다")]);
+      expect(aiRankReadiness(audit, 1, gpu, "qwen3.8-flash-next", assist(open)).blocking).toEqual([]);
+      expect(aiRankReadiness(audit, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", assist(open)).blocking)
+        .toEqual([expect.stringContaining("보강 감사가 받는 계열(qwen3.8-flash-next·deepseek-v4.1-flash-1017)")]);
+      const unread = aiRankReadiness(review, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", assist({ ...open, assistFamilies: null }));
+      expect(unread.blocking).toEqual([]);
+      expect(unread.warnings).toEqual([expect.stringContaining("보강 모델 계열(등록부 assist-primary·assist-audit)을 읽지 못해")]);
+      // 감사 일 route 는 독립 감사 줄만 만든다
+      const ready = aiRankReadiness(audit, 1, gpu, "qwen3.8-flash-next", assist(open));
+      expect([ready.appendRoute, ...ready.extraRoutes ?? []].map(route => route?.routeId.replace(/-api-.*$/, ""))).toEqual(["local-assist-decision_audit", "local-assist-semantic_exception"]);
+    });
+    it("못 읽는 계약·정책·꺼진 용량 관리는 다른 로컬 경로와 같은 까닭으로 막거나 알린다", () => {
+      const routes = [{ routeId: "local-second-opinion", provider: "local-direct", model: "qwen3.8-flash-next", providerBudgetId: "env-only", groupId: "gpu3090-qwen" }];
+      expect(aiRankReadiness(review, 1, gpu, "qwen3.8-flash-next", assist({ policy: { mode: "open", routes, groupLimits: {} } })).blocking)
+        .toEqual([expect.stringContaining("계약 env-only(으)로 쓰는데 이 화면이 그 계약을 읽지 못해")]);
+      expect(aiRankReadiness(review, 1, gpu, "qwen3.8-flash-next", assist({ policy: null })).blocking).toEqual([expect.stringContaining("용량 정책을 읽지 못해")]);
+      expect(aiRankReadiness(review, 1, gpu, "qwen3.8-flash-next", assist({ policy: { mode: "disabled", routes: [], groupLimits: {} } })).warnings)
+        .toEqual([expect.stringContaining("LLM 보강은(는) 용량 관리가 켜져 있어야 부릅니다")]);
+    });
+    it("두 순위가 같은 연결·모델을 다시 쓰면 앞 순위가 만들 계약을 뒤 순위가 쓴다(계약을 두 번 만들지 않는다)", () => {
+      const ready = aiRanksReadiness(review, [{ rank: 1, connection: gpu, model: "qwen3.8-flash-next" }, { rank: 2, connection: gpu, model: "qwen3.8-flash-next" }],
+        assist({ policy: { mode: "open", routes: [], groupLimits: {} } }));
+      expect(ready[0].createLocalContract?.backendId).toBe(backend(GPU, "qwen3.8-flash-next"));
+      expect(ready[1]).not.toHaveProperty("createLocalContract");
+      expect(ready[1].appendRoute?.providerBudgetId).toBe(backend(GPU, "qwen3.8-flash-next"));
+    });
+  });
   it("로컬 직접 경로: 정책 route 와 로컬 계약이 있어야 한다(만들지 않는다)", () => {
     const task = aiTask("audit-review")!;
     expect(aiRankReadiness(task, 1, gpu, "qwen3.8-flash-next", input({ localContract: () => ({ model: "qwen3.8-flash-next", endpoint: "http://100.77.43.63:8090/v1/chat/completions" }) })))
@@ -518,7 +593,7 @@ describe("가져오기 계획(buildAiImportPlan)", () => {
         use({ kind: "cli", cliTool: "claude", provider: "claude-cli", model: "sonnet" }), use({ model: "gpt-oss-120b", baseUrl: null, origin: "firstReviewAdditional[1]" })]),
       slot("audit-review", [use({ model: "qwen3.8-flash-next", provider: "local-direct", baseUrl: "http://100.77.43.63:8090/v1", keyEnv: "AUDIT_SECOND_OPINION_API_KEY" })]),
       slot("product-intro-check", [use({ kind: "cli", cliTool: "claude", provider: "claude-cli", model: "opus" })]),
-      slot("korean-translation-direct", [], { skip: "지금 꺼져 있습니다." }),
+      slot("screen-review", [], { skip: "지금 꺼져 있습니다." }),
     ] });
     expect(plan.connections.map(row => [row.action, row.label, row.kind, row.baseUrl, row.cliModels, row.deviceId, row.capacitySlots, row.keyFrom, row.keyEnv])).toEqual([
       ["create", "supa", "api", "http://supa.test:8000/v1", [], "supa", 4, { routeId: "crawl-agent-review", model: "Inferact/Qwen3.8-27B-NVFP4" }, null],
@@ -531,7 +606,7 @@ describe("가져오기 계획(buildAiImportPlan)", () => {
       ["product-intro-check", "create", ["1:cli:claude:opus"]],
     ]);
     expect(plan.warnings).toEqual(["1차 AI 검수: gpt-oss-120b(firstReviewAdditional[1])의 서버 주소를 몰라 옮기지 않습니다.",
-      "한국어 소개 번역 · 직접 경로: 지금 꺼져 있습니다."]);
+      "화면 판별: 지금 꺼져 있습니다."]);
   });
   it("있는 연결은 다시 만들지 않고, 저장된 칸은 덮지 않는다(같으면 그대로, 다르면 다름)", () => {
     const current = [slot("crawl-tagline", [use({ model: "qwen3.8-flash-next", baseUrl: "http://100.77.43.63:8090/v1" })]),

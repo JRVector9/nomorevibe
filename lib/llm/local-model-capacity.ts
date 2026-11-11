@@ -69,7 +69,12 @@ export function verifiedLocalModelContract(url: string, model: string, env: Env 
  */
 export function localModelRouteReady(policy: ModelCapacityPolicy | null, target: LocalModelTarget, contract: LocalModelServingContract,
   env: Env = process.env): boolean {
-  const mapped = Boolean(policy?.routes.some(route => route.routeId === localModelRoute(target) && route.provider === "local-direct"
+  return localModelRouteIdReady(policy, localModelRoute(target), contract, env);
+}
+/** localModelRouteReady 의 route id 판 — 대상(target)을 만들기 전에 경로를 미리 보는 쪽(LLM 보강 순위 고르기)이 쓴다. 판정은 같다 */
+export function localModelRouteIdReady(policy: Pick<ModelCapacityPolicy, "routes"> | null, routeId: string, contract: LocalModelServingContract,
+  env: Env = process.env): boolean {
+  const mapped = Boolean(policy?.routes.some(route => route.routeId === routeId && route.provider === "local-direct"
     && route.model === contract.model && route.providerBudgetId === contract.backendId && route.groupId === contract.physicalGroup));
   if (!mapped) return false;
   const table = devicePhysicalLimit(contract.physicalGroup);

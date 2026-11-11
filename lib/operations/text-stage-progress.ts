@@ -79,9 +79,9 @@ export function textStageProgressSql(homeSlugs: readonly string[], group: 'all' 
       CASE WHEN ${t.status}='failed' THEN ${t.updatedAt} END
       FROM ${t} JOIN ${products} ON ${products.id}=${t.productId} WHERE ${productTranslationEligible}
     UNION ALL
-    SELECT 'tagline-ko', (${q.ready} OR ${q.recoveryReady}),
-      ((${q.retry} OR ${q.recovery}) AND NOT ${q.due}),
-      (${q.current} AND ${k.errorCode} IS NOT NULL AND NOT ${q.allowance} AND NOT ${q.recovery}),
+    SELECT 'tagline-ko', ${q.ready},
+      (${q.retry} AND NOT ${q.due}),
+      (${q.current} AND ${k.errorCode} IS NOT NULL AND NOT ${q.allowance}),
       CASE WHEN ${q.fresh} THEN coalesce(${products.verifiedAt},${products.createdAt})
         ELSE greatest(${k.updatedAt},${k.retryAt}) END,
       NULL::timestamp,

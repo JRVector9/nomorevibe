@@ -103,6 +103,7 @@ function TaskTable({ rows, caption, editor, onChange, locked }: { rows: TaskAssi
                 <span>옛 순위 기록 {row.records.count}개 · 실행 안 함</span>
                 {!locked && <ClearRecordsButton task={row.task} slot={row.slot} revision={row.records.revision} count={row.records.count} label={row.label} />}
               </span>}
+              {row.manage && <a href={row.manage.href} className="tk-manage text-[13px] font-semibold text-accent-ink underline" data-manage={row.task}>{row.manage.label} →</a>}
             </th>
             <SettingCells row={row} editor={editor} />
             <ActualCell row={row} editor={editor} />

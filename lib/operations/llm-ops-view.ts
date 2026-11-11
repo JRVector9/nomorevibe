@@ -1,4 +1,4 @@
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_TASKS, aiCliToolOfProvider, aiTask, aiTaskSlotLabel, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_TASKS, aiCliToolOfProvider, aiTask, aiTaskSlotLabel, isAiAssistTask, RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import { aiConnectionLabel, aiConnectionModelIds, aiConnectionModelsMissing, aiModelsErrorText, aiTaskRanksUnread, type AiConnectionView, type AiCurrentSlot,
   type AiTaskRankRow } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
@@ -613,13 +613,14 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     for (const row of input.rows ?? []) {
       if (row.connectionId !== connection.id) continue;
       const task = aiTask(row.task), record = aiTaskRanksUnread(row.task);
-      chips.push({ key: `${record ? "record" : "rank"}:${row.task}:${row.slot}:${row.rank}`, task: row.task, label: task ? (task.slots > 1 ? aiTaskSlotLabel(task, row.slot) : task.label) : row.task,
+      chips.push({ key: `${record ? "record" : "rank"}:${row.task}:${row.slot}:${row.rank}`, task: row.task,
+        label: task ? (task.slots > 1 ? aiTaskSlotLabel(task, row.slot) : task.label) : RETIRED_AI_TASKS[row.task] ?? row.task,
         rank: row.rank, slot: row.slot, model: row.model, enabled: row.enabled, source: record ? "record" : "rank", paused: paused.has(row.task), href: chipHref(row.task, row.slot),
         fix: record ? null : pausedFix(row.task, paused) });
     }
-    // 순위를 읽지 않는 작업이 실제로 이 서버를 쓰는 곳 — 주소(없으면 장비)로 맞춘다
+    // 순위를 읽지 않는 작업이 실제로 이 서버를 쓰는 곳 — 주소(없으면 장비)로 맞춘다. LLM 보강은 순위가 없을 때만(옛 env 로 돈다)
     if (connection.kind === "api") for (const slot of input.current ?? []) {
-      if (!aiTaskRanksUnread(slot.task)) continue;
+      if (!aiTaskRanksUnread(slot.task) && !(isAiAssistTask(slot.task) && !(input.rows ?? []).some(row => row.task === slot.task))) continue;
       const task = aiTask(slot.task);
       for (const use of slot.uses) {
         if (use.kind !== "api" || !(use.baseUrl ? use.baseUrl === connection.baseUrl : use.deviceId !== null && use.deviceId === connection.deviceId)) continue;

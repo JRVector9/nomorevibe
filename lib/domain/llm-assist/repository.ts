@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, llmAssistControls, llmAssistWorks, modelCapacityRequests } from "@/lib/db/schema";
 import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
@@ -24,6 +24,14 @@ export async function readAssistControl(task: AssistWorkTask, tx: Transaction | 
   const [row] = await tx.select().from(llmAssistControls).where(eq(llmAssistControls.task, task)).for("share");
   if (!row && options.required) throw new Error("assist_control_missing");
   return row ?? { task, mode: "off", confirmationRequired: false, dispatchEnabled: false, applyEnabled: false, revision: 1 };
+}
+
+/** 이 보강 일 중 하나라도 보내기가 켜져 있는가(mode shadow·confirm + dispatch_enabled) — claimAssistWork 의 조건과 같다. 잠그지 않는 읽기다 */
+export async function assistLaneDispatching(tasks: readonly AssistWorkTask[]): Promise<boolean> {
+  if (!tasks.length) return false;
+  const [row] = await db.select({ task: llmAssistControls.task }).from(llmAssistControls)
+    .where(and(inArray(llmAssistControls.task, [...tasks]), eq(llmAssistControls.dispatchEnabled, true), inArray(llmAssistControls.mode, ["shadow", "confirm"]))).limit(1);
+  return Boolean(row);
 }
 
 /** caller는 현재 제품·관측 행을 이미 잠근 TX를 전달한다. HTTP와 모델 호출은 하지 않는다. */

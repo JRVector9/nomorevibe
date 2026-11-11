@@ -19,10 +19,14 @@ const llm = (patch: Partial<LlmOpsInput> = {}) => buildLlmOpsView({ now: LLM_NOW
 
 describe("순위를 읽지 않는 작업 가르기", () => {
   it("순위를 읽는 작업·검색 벡터·재정렬은 아니고, 감사·보류·갈림 판가름 같은 단계 풀 작업은 옛 기록이다", () => {
-    for (const task of ["first-review", "second-review", "product-translate", "product-search-verify", "product-audit", "grok-session-check"]) expect(aiTaskRanksUnread(task), task).toBe(false);
+    // LLM 보강(assist-review·assist-audit)은 2026-11-11 부터 실행 쪽이 순위를 읽는다(순위가 없을 때만 옛 env)
+    for (const task of ["first-review", "second-review", "product-translate", "product-search-verify", "product-audit", "grok-session-check",
+      "assist-review", "assist-audit"]) expect(aiTaskRanksUnread(task), task).toBe(false);
     for (const task of ["product-embedding", "search-embedding", "search-rerank"]) { expect(isAiLiveTask(task)).toBe(false); expect(aiTaskRanksUnread(task), task).toBe(false); }
-    for (const task of ["assist-review", "audit-review", "audit-second-opinion", "held-review-retry", "published-filter", "screen-review", "split-tiebreak",
-      "assist-audit", "human-review", "split-confirm", "korean-translation-direct", "product-intro-check"]) expect(aiTaskRanksUnread(task), task).toBe(true);
+    for (const task of ["audit-review", "audit-second-opinion", "held-review-retry", "published-filter", "screen-review", "split-tiebreak",
+      "human-review", "split-confirm", "product-intro-check"]) expect(aiTaskRanksUnread(task), task).toBe(true);
+    // 없앤 작업(korean-translation-direct)의 남은 행도 옛 기록이다 — 실행 쪽은 그 작업을 모른다
+    expect(aiTaskRanksUnread("korean-translation-direct")).toBe(true);
   });
 });
 

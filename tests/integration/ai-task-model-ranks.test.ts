@@ -513,7 +513,7 @@ describe("지금 설정 → 작업 ↔ 모델 가져오기", () => {
         { kind: "cli", baseUrl: null, cliTool: "claude", model: "sonnet", provider: "claude-cli", origin: "firstReviewAdditional[0]", deviceId: "anthropic-cli", keyFrom: null }] },
       { task: "product-embedding", slot: 1, source: "env", error: null, skip: null, notes: [], uses: [
         { kind: "api", baseUrl: EMB, cliTool: null, model: "bge-m3-f16@daec91ff", provider: "llama-server", origin: "env EMBEDDING_URL", deviceId: null, keyFrom: null, serverNamed: true }] },
-      { task: "korean-translation-direct", slot: 1, source: "env", error: null, skip: "지금 꺼져 있습니다.", notes: [], uses: [] },
+      { task: "screen-review", slot: 1, source: "env", error: null, skip: "지금 꺼져 있습니다.", notes: [], uses: [] },
     ];
     const preview = await previewAiTaskImport();
     expect(preview.error).toBeNull();
@@ -539,5 +539,157 @@ describe("지금 설정 → 작업 ↔ 모델 가져오기", () => {
     const again = await previewAiTaskImport();
     expect(again.plan!.slots.map(row => row.action)).toEqual(["unchanged"]);
     expect(again.plan!.connections.map(row => row.action)).toEqual(["existing", "existing"]);
+  });
+});
+
+describe("2026-11-11 LLM 보강(assist-review·assist-audit) — 순위 저장이 로컬 계약·보강 일마다의 장부 route 를 만들고, 실행 쪽이 순위로 고른다", () => {
+  // 보강 판정 계열은 등록부 assist-primary 의 family(기본 qwen3.8-flash-next) — 그 모델을 내놓는 엔진을 하나 더 둔다
+  const QWEN = "http://qwen.test:8000/v1";
+  const qwenFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const target = String(input), method = init?.method ?? "GET";
+    if (target === `${QWEN}/models`) { calls.push({ url: target, method, auth: null }); return Response.json({ data: [{ id: "qwen3.8-flash-next", max_model_len: 65536 }] }); }
+    if (target === `${QWEN}/chat/completions` && method === "POST") {
+      calls.push({ url: target, method, auth: null });
+      return Response.json({ object: "chat.completion", model: "qwen3.8-flash-next", choices: [{ message: { content: "OK" } }] });
+    }
+    return fakeFetch(input, init);
+  }) as typeof fetch;
+  it("보강 순위: readback + 1토큰 시험 뒤 로컬 계약 하나와 local-assist-<일>-<backend> 네 route·장비 행을 한 TX 에 — 다시 저장하면 만들지 않고, 실행 쪽은 그 순위로 줄을 고른다", async () => {
+    setAiTaskDepsForTest({ request: qwenFetch, now: () => clock, current: async () => current });
+    const { saveAiConnectionAction, saveAiTaskRanksAction } = await actions();
+    expect(await saveAiConnectionAction(null, form({ kind: "api", label: "gpu", baseUrl: QWEN, deviceId: "gpu-dev", capacitySlots: "4" }))).toMatchObject({ ok: true });
+    const gpu = (await connections()).find(row => row.label === "gpu")!;
+    const before = await controlRow();
+    calls = [];
+    const saved = await saveAiTaskRanksAction(null, form({ task: "assist-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: gpu.id, rank1Model: "qwen3.8-flash-next" }));
+    expect(saved).toMatchObject({ ok: true, message: expect.stringContaining("워커는 30초 주기로") });
+    expect(calls.map(call => `${call.method} ${call.url}`)).toEqual([`GET ${QWEN}/models`, `POST ${QWEN}/chat/completions`]);
+    const { auditDirectBackendId } = await import("@/lib/operations/admin-ai-tasks-repository");
+    const backend = auditDirectBackendId(gpu.id, "qwen3.8-flash-next");
+    const contracts = await client<{ route_id: string; model: string; auth: string; contract: Record<string, unknown> }[]>`
+      SELECT route_id, model, auth, contract FROM model_serving_contracts WHERE enabled ORDER BY id`;
+    expect(contracts.map(row => [row.route_id, row.model, row.auth])).toEqual([[`local-model:${backend}`, "qwen3.8-flash-next", "none"]]);
+    expect(contracts[0].contract).toMatchObject({ protocol: "local-openai-chat-v1", backendId: backend, physicalGroup: "gpu-dev", modelFamily: "qwen3.8-flash-next",
+      capabilities: { jsonSchema: true } });
+    const after = await controlRow();
+    expect(after.revision).toBe(before.revision + 1);
+    for (const work of ["uptime", "repo_move", "intro_recheck", "news"])
+      expect(after.policy.routes).toContainEqual({ routeId: `local-assist-${work}-${backend}`, provider: "local-direct", model: "qwen3.8-flash-next",
+        providerBudgetId: backend, groupId: "gpu-dev" });
+    expect(after.policy.routes.some(route => route.routeId.startsWith("local-assist-decision_audit-"))).toBe(false);
+    expect(await client`SELECT device_id FROM model_capacity_devices ORDER BY device_id`).toEqual([{ device_id: "gpu-dev" }]);
+    const [audit] = await audits("ai-task-models-save");
+    expect(audit).toMatchObject({ target: "assist-review#1", detail: { created: { routes: expect.arrayContaining([expect.stringContaining(`local-assist-news-${backend}`)]) } } });
+    // 화면: 이제 순위를 읽는 줄(대체 실행) — 만들 것은 남지 않았다(물리 상한 알림만)
+    const view = await (await import("@/lib/operations/admin-ai-tasks-repository")).readAiTasksAdminView();
+    const line = view.slots.find(slot => slot.task.id === "assist-review")!;
+    expect(line).toMatchObject({ live: true });
+    expect(line.readiness[0]).toMatchObject({ blocking: [], appendRoute: null, createDevice: null, provider: "local-direct" });
+    expect(line.readiness[0].warnings).toEqual([expect.stringContaining("장비 gpu-dev에 물리 상한이 없습니다")]);
+    expect(view.slots.find(slot => slot.task.id === "assist-audit")).toMatchObject({ live: false });
+    calls = [];
+    expect(await saveAiTaskRanksAction(null, form({ task: "assist-review", slot: "1", revision: line.revision, rank1Connection: gpu.id, rank1Model: "qwen3.8-flash-next" })))
+      .toMatchObject({ ok: true });
+    expect(calls).toEqual([]);
+    expect((await controlRow()).revision).toBe(after.revision);
+    // 실행 쪽: DB 스냅숏의 순위 → 표의 로컬 계약 → 정책 route(장비 물리 상한은 env 로 준다) → 줄 하나, 키 없음(연결에 키를 두지 않았다)
+    const [{ ensureAiTaskModels }, { ensureServingContracts }, { assistLanePlan }] = await Promise.all([
+      import("@/lib/llm/ai-task-models-snapshot"), import("@/lib/llm/serving-contract-store"), import("@/lib/domain/llm-assist/rank-backends")]);
+    await Promise.all([ensureAiTaskModels(0), ensureServingContracts(0)]);
+    const plan = await assistLanePlan("regular", { LOCAL_MODEL_PHYSICAL_LIMITS: JSON.stringify({ "gpu-dev": 2 }) });
+    expect(plan).toMatchObject({ source: "ranks", degraded: null, drains: [{ backendId: backend, tasks: ["uptime", "repo_move", "intro_recheck", "news"], maxClaims: 1,
+      apiKey: null, rank: { rank: 1, connectionId: gpu.id, model: "qwen3.8-flash-next" } }] });
+    // 물리 상한이 없으면 경로가 열리지 않는다 — 다른 길로 부르지 않고 까닭을 남긴다
+    expect(await assistLanePlan("regular", {})).toMatchObject({ source: "ranks", drains: [], degraded: { code: "all_ranks_unusable" } });
+    // 독립 감사 줄은 순위가 없어 옛 env 길(여기서는 비어 있음)
+    expect(await assistLanePlan("audit", {})).toEqual({ source: "env", drains: [] });
+  });
+  it("판정 계열이 아닌 모델은 저장하지 않는다 — 아무것도 쓰지 않는다", async () => {
+    const engine = await makeEngine();
+    const { saveAiTaskRanksAction } = await actions();
+    const snapshot = await tableState();
+    const refused = await saveAiTaskRanksAction(null, form({ task: "assist-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X" }));
+    expect(refused?.issues).toEqual([expect.stringContaining("모델 계열 Qwen-X은(는) 보강 판정 계열(qwen3.8-flash-next)이 아닙니다")]);
+    expect({ ...await tableState(), audits: snapshot.audits }).toEqual(snapshot);
+  });
+  it("없앤 작업(korean-translation-direct)의 남은 순위 행은 화면을 깨뜨리지 않고, 판을 맞춰 지울 수 있다", async () => {
+    const engine = await makeEngine();
+    await client`INSERT INTO ai_task_models (task, slot, rank, connection_id, model, updated_by) VALUES ('korean-translation-direct', 1, 1, ${engine.id}, 'Qwen-X', 'it')`;
+    const { readAiTasksAdminView, aiTaskSlotRevision, listAiTaskRows, aiTaskTargetLabel } = await import("@/lib/operations/admin-ai-tasks-repository");
+    const view = await readAiTasksAdminView();
+    expect(view.rows.map(row => row.task)).toContain("korean-translation-direct");
+    expect(view.slots.some(slot => slot.task.id === "korean-translation-direct")).toBe(false);
+    expect(aiTaskTargetLabel("korean-translation-direct#1")).toBe("한국어 소개 번역 · 직접 경로(없앤 작업)");
+    const { clearUnreadAiTaskRanksAction, saveAiTaskRanksAction } = await actions();
+    // 없앤 작업에는 순위를 저장하지 않는다
+    expect((await saveAiTaskRanksAction(null, form({ task: "korean-translation-direct", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X" })))?.issues)
+      .toEqual(["입력을 확인하세요: 작업."]);
+    const rows = (await listAiTaskRows()).filter(row => row.task === "korean-translation-direct");
+    expect(await clearUnreadAiTaskRanksAction(null, form({ task: "korean-translation-direct", slot: "1", revision: aiTaskSlotRevision(rows) })))
+      .toEqual({ ok: true, message: "옛 순위 기록 1개를 지웠습니다." });
+    expect(await rankRows()).toEqual([]);
+    const [audit] = await audits("ai-task-models-save");
+    expect(audit).toMatchObject({ target: "korean-translation-direct#1", detail: { reason: "unread_records_cleared", after: [] } });
+  });
+});
+
+describe("2026-11-11 LLM 보강 제어(llm_assist_controls) — 관리자 저장", () => {
+  const control = async (task: string) => (await client<{ mode: string; confirmation_required: boolean; dispatch_enabled: boolean; apply_enabled: boolean; revision: number }[]>`
+    SELECT mode, confirmation_required, dispatch_enabled, apply_enabled, revision::int FROM llm_assist_controls WHERE task = ${task}`)[0];
+  const assistAction = () => import("@/app/(operator)/admin/models/tasks/assist-actions");
+  afterEach(async () => {
+    // 확인 필수는 한 번 켜지면 끌 수 없다(트리거) — 이 DB 는 이 파일만 쓴다. 다른 칸만 되돌린다
+    await client`UPDATE llm_assist_controls SET mode = CASE WHEN confirmation_required THEN 'shadow' ELSE 'off' END, dispatch_enabled = false, apply_enabled = false`;
+  });
+  it("단계·보내기·반영을 판 compare-and-set 으로 바꾸고 감사 한 줄을 남긴다 — DB 규칙과 같은 거절은 아무것도 쓰지 않는다", async () => {
+    const { saveAssistControlAction } = await assistAction();
+    const start = await control("news");
+    expect(start).toMatchObject({ mode: "off", dispatch_enabled: false, apply_enabled: false, confirmation_required: false });
+    // 끔에서 보내기·반영은 받지 않는다
+    expect((await saveAssistControlAction(null, form({ task: "news", revision: String(start.revision), mode: "off", dispatch: "on" })))?.issues)
+      .toEqual(["보내기는 그림자·확인 후 반영 단계에서만 켤 수 있습니다."]);
+    expect((await saveAssistControlAction(null, form({ task: "news", revision: String(start.revision), mode: "shadow", dispatch: "on", apply: "on" })))?.issues)
+      .toEqual(["반영은 「확인 후 반영」 단계에서 보내기가 켜져 있을 때만 켤 수 있습니다."]);
+    expect(await control("news")).toEqual(start);
+    const shadow = await saveAssistControlAction(null, form({ task: "news", revision: String(start.revision), mode: "shadow", dispatch: "on" }));
+    expect(shadow).toMatchObject({ ok: true, message: expect.stringContaining("소식: 그림자(묻고 기록만) · 보내기 켜짐 · 반영 꺼짐") });
+    expect(await control("news")).toEqual({ mode: "shadow", dispatch_enabled: true, apply_enabled: false, confirmation_required: false, revision: start.revision + 1 });
+    const [audit] = await audits("llm-assist-control");
+    expect(audit).toMatchObject({ target: "news", ok: true, detail: { task: "news", aiTask: "assist-review",
+      before: { mode: "off", dispatchEnabled: false, revision: start.revision }, after: { mode: "shadow", dispatchEnabled: true, revision: start.revision + 1 } } });
+    // 옛 판·바뀐 것 없음은 거절
+    expect((await saveAssistControlAction(null, form({ task: "news", revision: String(start.revision), mode: "off" })))?.issues)
+      .toEqual(["다른 곳에서 이 보강 제어가 바뀌었습니다. 새로고침한 뒤 다시 저장하세요."]);
+    expect((await saveAssistControlAction(null, form({ task: "news", revision: String(start.revision + 1), mode: "shadow", dispatch: "on" })))?.issues)
+      .toEqual(["바뀐 것이 없습니다."]);
+    // 보내기 판정은 claimAssistWork 와 같다
+    const { assistLaneDispatching } = await import("@/lib/domain/llm-assist/repository");
+    expect(await assistLaneDispatching(["uptime", "news"])).toBe(true);
+    expect(await assistLaneDispatching(["decision_audit", "semantic_exception"])).toBe(false);
+    expect(await assistLaneDispatching([])).toBe(false);
+  });
+  it("「확인 후 반영」은 확인 필수를 켜고, 그 뒤로 확인 필수는 그대로다(끌 수 없는 DB 규칙) — 반영은 그 단계 + 보내기에서만", async () => {
+    const { saveAssistControlAction } = await assistAction();
+    const start = await control("repo_move");
+    const confirm = await saveAssistControlAction(null, form({ task: "repo_move", revision: String(start.revision), mode: "confirm", dispatch: "on", apply: "on" }));
+    expect(confirm).toMatchObject({ ok: true, message: expect.stringContaining("확인 필수") });
+    expect(await control("repo_move")).toMatchObject({ mode: "confirm", confirmation_required: true, dispatch_enabled: true, apply_enabled: true });
+    const back = await saveAssistControlAction(null, form({ task: "repo_move", revision: String(start.revision + 1), mode: "shadow" }));
+    expect(back).toMatchObject({ ok: true });
+    expect(await control("repo_move")).toMatchObject({ mode: "shadow", confirmation_required: true, dispatch_enabled: false, apply_enabled: false });
+    const { readAssistControls, assistTasksOff } = await import("@/lib/operations/llm-assist-controls");
+    const read = await readAssistControls();
+    expect(read.error).toBeNull();
+    expect(read.controls.map(row => row.task)).toEqual(["uptime", "repo_move", "intro_recheck", "decision_audit", "semantic_exception", "news"]);
+    expect(read.controls.find(row => row.task === "repo_move")).toMatchObject({ label: "저장소 이동", aiTask: "assist-review", confirmationRequired: true, queue: {} });
+    expect(assistTasksOff(read.controls)).toEqual({ "assist-review": true, "assist-audit": true });
+  });
+  it("관리자가 아니면 아무것도 쓰지 않는다", async () => {
+    const { saveAssistControlAction } = await assistAction();
+    const start = await control("uptime");
+    admin.login = null;
+    expect((await saveAssistControlAction(null, form({ task: "uptime", revision: String(start.revision), mode: "shadow" })))?.issues)
+      .toEqual(["관리자 확인이 필요합니다. 다시 로그인하세요."]);
+    expect(await control("uptime")).toEqual(start);
   });
 });

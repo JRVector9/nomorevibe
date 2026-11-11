@@ -191,8 +191,8 @@ const contractProvider = (contract: unknown): string | null =>
  * - a local-direct contract (PR 3b-C: AI1·AI2, PR 3b-E: the seven text routes, direct-openai-chat-v1, the engine's own name on the wire)
  *   is direct by definition, whatever the row's transport flag says, and sends no key unless its row stores one. `provider` is the parsed
  *   contract's provider when the caller holds it (text jobs pass `<route>ServingProvider(model)`); without it the row's contract JSON decides.
- * Anything else — no row, a gateway-transport abcllm row — is no_direct_contract. The Qwen native path of product-tagline-ko
- * (korean-translation-config, env switch) is outside this gate until the route→engine assignment table (PR 3b-B/3b-D) absorbs it.
+ * Anything else — no row, a gateway-transport abcllm row — is no_direct_contract. (The uncapped Qwen path of product-tagline-ko that sat
+ * outside this gate was removed on 2026-11-11.)
  */
 export function textRouteAccess(routeId: string, model: string, provider?: string): TextRouteAccess {
   const row = servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model);

@@ -14,7 +14,6 @@ import { PIPELINE_STAGES, resolveModelSlots, type ModelSlot } from "@/lib/operat
 import { consumerOfInstance, type ConsumerName } from "@/lib/runtime/consumer-registry";
 import { formatAgo, formatListTime } from "@/lib/format/time";
 import { modelName, slotTitle } from "./dashboard/ModelCards";
-import { KOREAN_TRANSLATION_QWEN_MODEL } from "@/lib/crawl/korean-translation-config";
 
 /**
  * 조치 칸의 "누가 맡나" — 그 일을 하는 작업(카탈로그 잡)·서비스가 지금 어느 장비에서, 어떤 LLM 으로, 어떤 주기로 도는지.
@@ -249,7 +248,6 @@ function slotJob(slot: ModelSlot): string | undefined {
 
 function runsOn(provider: string | null, model: string): string {
   if (provider === "local-direct") return "모델 서버 직접 연결";
-  if (provider === "vllm" && model === KOREAN_TRANSLATION_QWEN_MODEL) return "gpu3090 Qwen 직접 연결";
   const runner = /^\[([^\]]+)\]/.exec(model)?.[1];
   if (provider === "abcllm") return `abcllm · 직접 연결 계약${runner ? ` · 장비 표지 ${runner}` : ""}`;
   if (provider === "claude-cli") return "Claude CLI — 작업을 돌리는 워커 장비에서 실행";

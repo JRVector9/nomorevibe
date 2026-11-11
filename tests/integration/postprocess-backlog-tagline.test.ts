@@ -35,7 +35,6 @@ async function holdForeign(owner: { instanceId: string; bootId: string }, member
 beforeAll(ensureSchema);
 beforeEach(async () => {
   await resetTables();
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false"); vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
 });
 afterEach(async () => { vi.unstubAllEnvs(); await cleanupCapacityFixture(); });
 afterAll(() => admin.end({ timeout: 5 }));

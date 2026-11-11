@@ -1,4 +1,4 @@
-import { AI_CLI_TOOL_LABELS, AI_TASK_GROUP_LABELS, type AiTaskDef, type AiTaskGroup } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_TASK_GROUP_LABELS, aiTaskLedgerTracked, isAiAssistTask, type AiTaskDef, type AiTaskGroup } from "@/lib/llm/ai-tasks";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 import { aiConnectionHost, aiConnectionLabel, aiRankPendingText, aiSameUnderlyingModel, aiTaskRanksUnread, type AiConnectionView, type AiCurrentUse } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
@@ -10,7 +10,8 @@ import { llmReasonShort, observationReadable, RUNTIME_FRESH_MS, taskOfRoute, UNR
 /**
  * 작업 배정(/admin/models/tasks, 2026-11-07 승인 시안 PR 4) — 「어느 작업이 어느 모델로 가나? 설정대로 가고 있나?」 표의 화면 모형. DB 를 읽지 않는 순수 함수다.
  * 작업 × 칸마다 설정(1·2·3순위 · 작업 분산 구성원 · 실제 적용 설정)과 실제(장부의 최근 1시간 정산을 모델별로)를 한 줄에 놓고, 다르면 경고한다.
- * 장부 route → 작업은 LLM 운영과 같은 taskOfRoute 다. 장부는 2차 투표자를 가르지 않으므로 여러 칸 작업의 「실제」는 작업 전체 기준이다.
+ * 장부 route → 작업은 LLM 운영과 같은 taskOfRoute 다(LLM 보강은 보강 일마다의 local-assist-<일>-<backend> 여럿을 한 작업으로 모은다).
+ * 장부는 2차 투표자를 가르지 않으므로 여러 칸 작업의 「실제」는 작업 전체 기준이다.
  * 읽지 못한 값은 0 으로 꾸미지 않는다(「확인 불가」).
  */
 
@@ -33,7 +34,12 @@ export type TaskAssignInput = Readonly<{
     /** 공개분 변경 재판정 줄에 사람을 기다리는 거절이 있나(0171, null·없음 = 모름) — 감사 두 번째 의견은 감사 캠페인이 없어도 이것을 묻는다 */
     recheckRejectsOpen?: boolean | null;
     /** 공개분 변경 재판정이 꺼져 있나(실시간 한도 jobs.published-recheck 의 askBatch 0 또는 dailyCap 0, null·없음 = 모름) */
-    recheckOff?: boolean | null }>;
+    recheckOff?: boolean | null;
+    /**
+     * LLM 보강 작업(assist-review·assist-audit) → 보내기가 모두 꺼져 있나(그 작업의 보강 일이 모두 mode off 이거나 dispatch_enabled 아님 — llm_assist_controls).
+     * true 면 「의도적 중지」, false 면 켜진 일이 있음, null·없음 = 모름
+     */
+    assistOff?: Readonly<Record<string, boolean | null>> | null }>;
 }>;
 
 /** fallback = 대체 실행(작업 순위), workload_pool = 작업 분산, classifier = 기존 CLI 분류(발행 분류의 대체 실행), effective = 실행 쪽이 순위를 읽지 않는 작업(실제 적용 설정) */
@@ -77,6 +83,8 @@ export type TaskAssignRow = Readonly<{
   actual: TaskAssignActual; status: TaskAssignStatus; paused: boolean;
   /** 실행 쪽이 순위를 읽지 않는 작업에 남은 옛 순위 행(실행 안 함) — 「기록 지우기」가 그 판(revision)으로 지운다 */
   records: Readonly<{ count: number; revision: string }> | null;
+  /** 이 작업을 켜고 끄는 곳(LLM 보강 — 같은 화면의 「LLM 보강 제어」). 없으면 null */
+  manage: Readonly<{ href: string; label: string }> | null;
 }>;
 export type TaskAssignView = Readonly<{
   readable: boolean; observedAt: string | null; rows: TaskAssignRow[];
@@ -226,7 +234,10 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     const entries = expected(slot, mode);
     const paused = pausedJobs(task, input.jobs);
     const aggs = ledger.get(task.id) ?? [];
-    const tracked = !!task.routeId;
+    // LLM 보강은 route id 하나가 아니라 보강 일마다의 local-assist-<일>-<backend> 여럿을 센다(taskOfRoute 가 모은다)
+    const tracked = aiTaskLedgerTracked(task);
+    // LLM 보강의 보내기가 모두 꺼짐(llm_assist_controls) — 운영자가 끈 것이라 「의도적 중지」다(잡 일시중지와 같이 다룬다)
+    const assistOff = isAiAssistTask(task.id) && input.facts?.assistOff?.[task.id] === true ? "LLM 보강 보내기 꺼짐(LLM 보강 제어)" : null;
     const total = aggs.reduce((sum, agg) => sum + agg.settled, 0);
     const failed = aggs.reduce((sum, agg) => sum + agg.failed, 0);
     const succeeded = aggs.reduce((sum, agg) => sum + agg.succeeded, 0);
@@ -316,7 +327,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     // 감사 두 번째 의견은 공개분 변경 재판정 줄의 거절도 묻는다(0171) — 그 거절이 없다고 읽었을 때만 쉰다
     const auditIdle = AUDIT_FED_TASKS.has(task.id) && input.facts?.auditRunning === false
       && (task.id !== "audit-second-opinion" || input.facts.recheckRejectsOpen === false) ? "진행 중인 감사 없음" : null;
-    const idleWhy = paused ? "잡 일시중지" : unused ? "쓰지 않음" : mode === "fallback" && !entries.length ? "순위 없음"
+    const idleWhy = paused ? "잡 일시중지" : assistOff ? "보강 보내기 꺼짐" : unused ? "쓰지 않음" : mode === "fallback" && !entries.length ? "순위 없음"
       : runtime?.degraded ? llmReasonShort(runtime.degraded.code) ?? runtime.degraded.code
       : skipText ?? auditIdle ?? (enabledConnections.length && enabledConnections.every(connection => !connection?.enabled) ? "연결 꺼짐"
       : !task.jobs.length ? "최근 웹 요청 없음" : null);
@@ -373,6 +384,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     // 장부 밖 작업은 「정상」이라 하지 않는다 — 호출을 세지 않아 이 표로는 확인하지 못한다(같은 수준의 신호에 자리를 내준다)
     const untracked: TaskAssignStatus = { level: "unknown", text: "장부 밖", reason: "호출을 세지 않아 이 표로는 확인하지 못함", detail: null };
     const base: TaskAssignStatus = paused ? { level: "idle", text: "의도적 중지", reason: `잡 일시중지: ${paused.join(" · ")}`, detail: null }
+      : assistOff ? { level: "idle", text: "의도적 중지", reason: assistOff, detail: null }
       : unused ? { level: "idle", text: "쓰지 않음", reason: unused, detail: null }
       : skipText ? { level: "idle", text: "의도적 중지", reason: skipText, detail: null }
       : emptyExtra ? { level: "idle", text: "비어 있음", reason: "이 칸은 쓰지 않습니다", detail: null }
@@ -383,8 +395,8 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       : { level: "idle", text: "쉼", reason: lastSuccess !== null ? `최근 1시간 호출 없음 · 마지막 성공 ${kstStamp(lastSuccess)}` : "최근 1시간 호출 없음", detail: null };
     const worst = signals.reduce<TaskAssignStatus | null>((current, entry) => !current || LEVEL_RANK[entry.level] > LEVEL_RANK[current.level] ? entry : current, null);
     let status: TaskAssignStatus;
-    if (paused) {
-      // 멈춘 작업은 늘 「의도적 중지」 — 고칠 것이 있으면 까닭 옆에 함께 적는다
+    if (paused || assistOff) {
+      // 멈춘 작업(잡 일시중지·보강 보내기 꺼짐)은 늘 「의도적 중지」 — 고칠 것이 있으면 까닭 옆에 함께 적는다
       status = { ...base, detail: [...signals.map(entry => entry.reason), ...notes].filter(Boolean).join(" / ") || null };
     } else if (worst && (LEVEL_RANK[worst.level] > LEVEL_RANK[base.level] || (base === untracked && worst.level === base.level))) {
       const others = signals.filter(entry => entry !== worst && entry.level !== "ok").map(entry => entry.reason).filter((text): text is string => !!text);
@@ -400,7 +412,8 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       actual: { readable, tracked, settled: readable && tracked ? total : null, failed: readable && tracked ? failed : null, calls, empty, warnings, shared: multi, compared,
         mixed, note },
       status, paused: !!paused,
-      records: aiTaskRanksUnread(task.id) && slot.rows.length > 0 && slot.revision ? { count: slot.rows.length, revision: slot.revision } : null };
+      records: aiTaskRanksUnread(task.id) && slot.rows.length > 0 && slot.revision ? { count: slot.rows.length, revision: slot.revision } : null,
+      manage: isAiAssistTask(task.id) ? { href: "#assist-controls", label: "보강 켜기·끄기" } : null };
   });
 
   const counts: Record<LlmOpsLevel, number> = { ok: 0, warn: 0, bad: 0, idle: 0, unknown: 0 };

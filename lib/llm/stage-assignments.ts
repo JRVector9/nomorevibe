@@ -113,7 +113,7 @@ export const ASSIGNMENT_PURPOSE_STAGES: Readonly<Record<string, AssignmentStage>
 
 /**
  * 관리자 단계 풀(stageModelPools, lib/llm/admin-model-stages.ts) → 배정 단계. 이 단계들은 'table' 일 때 저장된 풀 대신 배정 표 행으로 고른다.
- * 대응이 없는 관리자 단계(direct-review·published-filter·split-tiebreak·held-review-retry·split-confirm·korean-translation-direct·
+ * 대응이 없는 관리자 단계(direct-review·published-filter·split-tiebreak·held-review-retry·split-confirm·
  * search-query-translate·assist-primary·assist-audit)는 저장된 풀 그대로다.
  */
 export const ADMIN_STAGE_ASSIGNMENTS: Readonly<Record<string, AssignmentStage>> = Object.freeze({

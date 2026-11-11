@@ -85,7 +85,7 @@ const local = "http://100.77.43.63:8090/v1";
 export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { key: "gpu3090:review", equipment: "gpu3090", displayName: "GPU3090 · Qwen · 직접 연결", provider: "local-direct", baseUrl: local,
     model: "qwen3.8-flash-next", family: "qwen3.8-flash-next", timeoutMs: 60_000, maxTokens: 10_000, concurrency: 2,
-    purposes: ["direct-review", "ai2-direct", "assist-primary", "korean-translation-direct"] },
+    purposes: ["direct-review", "ai2-direct", "assist-primary"] },
   { key: "m3:review", equipment: "m3", displayName: "M3 · DeepSeek", provider: "local-direct", baseUrl: "http://100.92.77.66:8010/v1",
     model: "deepseek-v4.1-flash-1017", family: "deepseek-v4.1-flash-1017", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1,
     purposes: ["human-review", "assist-audit"] },

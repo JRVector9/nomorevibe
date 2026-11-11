@@ -28,7 +28,6 @@ beforeEach(async () => {
   await db.delete(operationsObservations);
   await db.insert(operationsObservations).values(['scheduler', 'crawler', 'reviewer', 'publisher', 'maintenance', 'text']
     .map(role => ({ key: `service:${role}:fixture`, value: { status: 'running' }, observedAt: new Date() })));
-  vi.stubEnv('KOREAN_TRANSLATION_QWEN_ENABLED', 'false'); vi.stubEnv('KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED', 'false');
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -199,7 +198,6 @@ it('runs the canonical reader with SELECT-only monitor grants and refuses writes
   try {
     globals.db = drizzle(client, { schema });
     clearAllMemos();
-    vi.stubEnv('KOREAN_TRANSLATION_QWEN_ENABLED', 'true'); vi.stubEnv('KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED', 'true');
     expect(await readTextStageProgress()).toHaveLength(7);
     expect(await readModelCapacityControlObservation()).toMatchObject({ epoch: expect.any(Number), revision: expect.any(Number) });
     expect((await readWorkerProgress()).stages.filter(stage => ['product-translate', 'tagline-ko', 'intro-check'].includes(stage.stage))).toHaveLength(3);

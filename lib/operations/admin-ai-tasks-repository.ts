@@ -6,7 +6,7 @@ import { db, onPrimary } from "@/lib/db";
 import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, aiTaskPoolMembers, modelCapacityControl, modelHelperAssignments, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
-import { AI_TEXT_TASK_IDS, aiTask, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_TASK_SLOT_MAX, AI_TEXT_TASK_IDS, aiTask, aiTaskReadsRanks, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, isRetiredAiTask, RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import { cliDbContract } from "@/lib/llm/cli-db-contracts";
 import { CLI_DB_CONTRACT_ROUTES, type CliProvider } from "@/lib/llm/cli-serving-contract";
 import { textRankStatusFromCounts, textRankUnusableText, textTaskRankStatus, type TextRankStatus } from "@/lib/llm/ai-task-resolver";
@@ -14,7 +14,7 @@ import { listModelCapacityDevices, saveModelCapacityDevice } from "@/lib/llm/cap
 import type { GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { resolveLocalModelContract, tableLocalModelContracts } from "@/lib/llm/local-model-contract-table";
 import { localModelServingContractSchema, localModelServingContractsSchema, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
-import { readModelRegistry } from "@/lib/llm/model-registry";
+import { modelFamily, readModelRegistry } from "@/lib/llm/model-registry";
 import { cliDerivedRegistryKeys } from "@/lib/llm/ai-task-models-snapshot";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { logger } from "@/lib/observability/logger";
@@ -165,11 +165,18 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
       const contract = resolveLocalModelContract(backendId);
       return contract ? { model: contract.model, endpoint: contract.endpoint } : null;
     },
-    // 감사 직접 경로(「발행분 감사 · 변경 재판정」의 API 순위): 표의 행 + 이 프로세스 env 의 로컬 계약 — 같은 주소·모델을 다시 쓰고 장비가 갈리지 않게 본다
+    // 감사 직접 경로(「발행분 감사 · 변경 재판정」의 API 순위)·LLM 보강: 표의 행 + 이 프로세스 env 의 로컬 계약 — 같은 주소·모델을 다시 쓰고 장비가 갈리지 않게 본다
     localContracts: [...table.flatMap(row => row.contract ? [row.contract] : []), ...envLocalModelContracts()]
-      .map(contract => ({ backendId: contract.backendId, model: contract.model, endpoint: contract.endpoint, physicalGroup: contract.physicalGroup })),
+      .map(contract => ({ backendId: contract.backendId, model: contract.model, endpoint: contract.endpoint, physicalGroup: contract.physicalGroup,
+        modelFamily: contract.modelFamily })),
     localContractTableCount: new Set(table.flatMap(row => row.contract ? [row.contract.backendId] : [])).size,
-    localBackendId: auditDirectBackendId };
+    localBackendId: auditDirectBackendId, assistFamilies: readAssistFamilies() };
+}
+
+/** LLM 보강의 모델 계열(등록부 용도 assist-primary·assist-audit) — 실행 쪽(rank-backends.ts)과 같은 값. 못 읽으면 null */
+function readAssistFamilies(): AiReadinessInput["assistFamilies"] {
+  try { return { primary: modelFamily("assist-primary"), audit: modelFamily("assist-audit") }; }
+  catch { return null; }
 }
 
 /** env LOCAL_MODEL_SERVING_CONTRACTS 의 로컬 계약(모양이 틀리면 없음) — 확인 여부와 상관없이 주소·장비 대조에만 쓴다 */
@@ -292,6 +299,10 @@ function auditSummary(row: AdminLogRow): string {
     }
     case AI_TASK_MODELS_IMPORT_AUDIT_ACTION: return `가져오기 · 연결 ${String((detail.connections as unknown[] | undefined)?.length ?? 0)} · 칸 ${String((detail.slots as unknown[] | undefined)?.length ?? 0)}`;
     case AI_CONNECTION_KEY_FILL_AUDIT_ACTION: return `키 자동 채움 · ${String(detail.label ?? "")} · 같은 주소 계약 ${String((detail.sources as unknown[] | undefined)?.length ?? 0)}개`;
+    case "llm-assist-control": {
+      const after = (detail.after ?? null) as { mode?: unknown; dispatchEnabled?: unknown; applyEnabled?: unknown } | null;
+      return after ? `${String(detail.task ?? row.target)} · ${String(after.mode)} · 보내기 ${after.dispatchEnabled ? "켬" : "끔"} · 반영 ${after.applyEnabled ? "켬" : "끔"}` : "—";
+    }
     default: return "—";
   }
 }
@@ -309,7 +320,9 @@ function runtimeView(status: TextRankStatus, from: AiTaskRuntimeView["from"], de
 export async function readAiTaskRuntime(): Promise<Record<string, AiTaskRuntimeView>> {
   // 작업 → 그 순위를 읽는 잡(text 일곱은 작업 id = 잡 이름, PR C1: 1차·2차·Grok 로그인 유지)
   const jobOf = new Map<string, string>([...AI_TEXT_TASK_IDS.filter(task => task !== "search-query-translate").map(task => [task, task] as const),
-    ["first-review", "crawl-agent-review"], ["second-review", "second-review"], ["grok-session-check", "grok-session-check"], ["publish-classify", "crawl-publish"]]);
+    ["first-review", "crawl-agent-review"], ["second-review", "second-review"], ["grok-session-check", "grok-session-check"], ["publish-classify", "crawl-publish"],
+    // LLM 보강(2026-11-11): 순위로 고른 틱이 ai_task.ranks 를 남긴다(lib/jobs/products/llm-assist-review.ts)
+    ["assist-review", "product-llm-assist-review"], ["assist-audit", "product-llm-assist-audit-review"]]);
   const taskOf = new Map([...jobOf].map(([task, job]) => [`job:${job}`, task]));
   const rows = await onPrimary(() => db.select({ key: operationsObservations.key, value: operationsObservations.value, observedAt: operationsObservations.observedAt })
     .from(operationsObservations).where(inArray(operationsObservations.key, [...taskOf.keys()])));
@@ -361,11 +374,13 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
       return connection ? [{ rank: row.rank, connection, model: row.model,
         reasoningEffort: typeof row.options?.reasoningEffort === "string" ? row.options.reasoningEffort : undefined }] : [];
     }), readiness) : [];
+    // LLM 보강은 순위가 있을 때만 실행 쪽이 순위를 읽는다 — 순위가 없으면 옛 env(LLM_ASSIST_BACKENDS)로 돌아 「실제 적용 설정」으로 보인다
+    const live = aiTaskReadsRanks(task.id, own.length > 0);
     return Object.freeze({ task, slot, label: aiTaskSlotLabel(task, slot), revision: aiTaskSlotRevision(own), rows: Object.freeze(own),
       options: Object.freeze(aiTaskRankOptions(task, connections, own)), current: cur,
-      currentLabels: Object.freeze((isAiLiveTask(task.id) ? (cur?.uses ?? []).slice(0, 3) : cur?.uses ?? []).map(use => currentLabel(use, connections))),
-      sameAsCurrent: isAiReviewTask(task.id) || !isAiLiveTask(task.id) ? null : sameAsCurrent(own, cur, connections),
-      readiness: Object.freeze(ready), live: isAiLiveTask(task.id), runtime: runtime[task.id] ?? null,
+      currentLabels: Object.freeze((live ? (cur?.uses ?? []).slice(0, 3) : cur?.uses ?? []).map(use => currentLabel(use, connections))),
+      sameAsCurrent: isAiReviewTask(task.id) || !live ? null : sameAsCurrent(own, cur, connections),
+      readiness: Object.freeze(ready), live, runtime: runtime[task.id] ?? null,
       savedAt: own.reduce<string | null>((latest, row) => row.updatedAt && (!latest || row.updatedAt > latest) ? row.updatedAt : latest, null) });
   });
   return Object.freeze({ connections: Object.freeze(connections), rows: Object.freeze(rows), slots: Object.freeze(slots), errors: Object.freeze(errors),
@@ -678,9 +693,11 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
  */
 export async function clearUnreadAiTaskRanks(input: { task: string; slot: number; revision: string }, actor: string): Promise<{ ok: true; removed: number } | { ok: false; issues: string[] }> {
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
-  const task = aiTask(input.task);
+  // 없앤 작업(RETIRED_AI_TASKS — 예: korean-translation-direct)의 남은 행도 같은 길로 지운다. 실행 쪽은 그 작업을 모른다
+  const known = aiTask(input.task);
+  const task = known ?? (isRetiredAiTask(input.task) ? { id: input.task, slots: AI_TASK_SLOT_MAX } : null);
   if (!task || !Number.isSafeInteger(input.slot) || input.slot < 1 || input.slot > task.slots) return { ok: false, issues: ["ai_task_invalid:task"] };
-  if (!aiTaskRanksUnread(task.id)) return { ok: false, issues: ["ai_task_ranks_read"] };
+  if (known && !aiTaskRanksUnread(known.id)) return { ok: false, issues: ["ai_task_ranks_read"] };
   try {
     const removed = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
@@ -852,7 +869,7 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
 export function aiTaskTargetLabel(target: string): string {
   const [id, slot] = target.split("#");
   const task = aiTask(id);
-  return task ? aiTaskSlotLabel(task, Number(slot) || 1) : target;
+  return task ? aiTaskSlotLabel(task, Number(slot) || 1) : RETIRED_AI_TASKS[id] ?? target;
 }
 export type { AiRankChoice };
 
@@ -974,7 +991,7 @@ export async function saveAiTaskServingResources(tx: ProductTransaction, task: A
   const { contracts, cliContracts, localContracts = [] } = resources;
   const madeContracts: string[] = [];
   for (const contract of localContracts) {
-    const saved = await saveLocalContract(tx, contract, actor, `작업 ↔ 모델 저장(${task.label}) · 감사 직접 경로`);
+    const saved = await saveLocalContract(tx, contract, actor, `작업 ↔ 모델 저장(${task.label}) · ${task.wiring === "assist-direct" ? "LLM 보강 경로" : "감사 직접 경로"}`);
     if (saved) madeContracts.push(`${saved.routeId} · ${contract.model} 로컬 계약 (#${saved.id})`);
   }
   for (const entry of contracts) {
@@ -999,7 +1016,7 @@ export async function saveAiTaskServingResources(tx: ProductTransaction, task: A
       madeDevices.push(`${device.deviceId} (${device.limitSlots}칸)`);
     }
   }
-  const wantRoutes = readiness.flatMap(row => row.appendRoute ? [row.appendRoute] : []);
+  const wantRoutes = readiness.flatMap(row => [...row.appendRoute ? [row.appendRoute] : [], ...row.extraRoutes ?? []]);
   let appended: readonly { routeId: string; provider: string; model: string; groupId: string }[] = [], policyRevision: number | null = null;
   if (wantRoutes.length) {
     const { appendCompatibleRoutes } = await import("@/lib/llm/capacity-repository");

@@ -84,6 +84,12 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
   cli_engine_contract_not_stored: "CLI 엔진 계약이 저장되어 있지 않음",
   model_paused: "이 틱에 쉬는 중",
   blocked_unconfirmed: "미확인 점유로 장비 칸이 가득 참",
+  // LLM 보강(2026-11-11, lib/domain/llm-assist/rank-backends.ts)
+  connection_url_missing: "연결 주소가 없음",
+  no_local_contract: "이 연결·모델의 검증된 로컬 계약이 없음(그 줄을 다시 저장하면 만듦)",
+  assist_json_schema_missing: "로컬 계약이 JSON 스키마 응답을 받지 않음",
+  assist_family_mismatch: "보강 모델 계열이 아님(등록부 assist-primary·assist-audit 의 계열만 — 보강 감사가 계열로 짝을 맞춤)",
+  assist_routes_missing: "용량 정책에 보강 경로(local-assist-<일>-<backend>)가 없거나 장비에 물리 상한이 없음(그 줄을 다시 저장하면 덧붙임)",
 });
 export const textRankUnusableText = (code: string) => TEXT_RANK_UNUSABLE_TEXT[code] ?? code;
 
