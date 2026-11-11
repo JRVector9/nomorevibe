@@ -748,6 +748,61 @@ it("별 자동승인도 소개가 없으면 올리지 않고 사람 확인(no_de
   expect(await crawl.getCandidate(repo)).toMatchObject({ state: "needs_review", reason: "no_description" });
 });
 
+/**
+ * 2026-11-10 운영: 별 자동승인 표지(signals.starAutoApproval)가 남은 채 관리자가 승인한 후보 3건이 매 틱
+ * review_approval_changed 로 돌아와 approved 에 남았고, 발행 워커가 1~2시간마다 no_progress 로 재시작했다.
+ * 사람의 승인이 이긴다 — 옛 표지는 발행을 막지 않는다(assertReviewApproval 과 같은 갈래).
+ */
+it.each(["off", "enforce"] as const)("관리자가 승인한 후보는 옛 별 자동승인 표지가 남아 있어도 발행한다 (reviewMode %s)", async reviewMode => {
+  await saveSettings({ enabled: true, reviewMode }, "테스트");
+  const repo = "someone/admin-star";
+  // 표지를 남긴 뒤 별이 줄었고(100,000 → 90,000) 원본도 24시간이 지났다 — 별 자동승인으로는 지금 근거가 없다
+  await approved(repo, { meta: { id: 321, full_name: repo, stargazers_count: 90_000, private: false, fork: false, archived: false } });
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 30 * 3600_000) }).where(eq(crawlDocuments.repo, repo));
+  const candidate = await crawl.getCandidate(repo);
+  await db.update(crawlCandidates).set({ decidedBy: "admin",
+    signals: { ...candidate!.signals, starAutoApproval: { stars: 100_000, githubId: 321 } } })
+    .where(eq(crawlCandidates.repo, repo));
+
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+
+  expect(await products.findByUrl("https://my-app.test")).toMatchObject({ status: "seeded" });
+  expect(await crawl.getCandidate(repo)).toMatchObject({ state: "published", decidedBy: "admin" });
+});
+
+/**
+ * 발행 직전 승인 근거를 다시 확인하지 못한 후보(review_approval_changed)는 approved(대기 목록)에 두지 않고 사람에게 넘긴다.
+ * 여기서는 별 자동승인의 원본이 24시간을 넘겼는데, 같은 저장소의 다른 대소문자 수집 기록이 있어 requeueInvalidStarApprovals 가
+ * 판정으로 되돌리지 못하는 경우를 쓴다 — 전에는 이 후보가 approved 에 남아 매 틱 다시 집혔다.
+ */
+it("발행 직전 승인 근거가 바뀐 후보는 사람에게 넘기고 다음 틱이 다시 집지 않는다", async () => {
+  const repo = "bigoss/stale-star";
+  await crawl.putDocument({
+    repo, productUrl: "https://stale-star.test", pageStatus: 200,
+    repoMeta: { id: 321, full_name: repo, stargazers_count: 100_000, private: false, fork: false, archived: false,
+      description: "Big OSS tool", language: "Go" },
+    pageMeta: { title: "Stale Star", description: "A big tool", ogImage: null },
+  });
+  const document = await crawl.getDocument(repo);
+  await crawl.recordJudgement({
+    repo, productUrl: "https://stale-star.test", state: "approved", reason: "passed", decidedBy: "auto",
+    signals: { stars: 100_000, judgedRevision: judgeRevision(document!), starAutoApproval: { stars: 100_000, githubId: 321 } },
+  });
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 25 * 3600_000) }).where(eq(crawlDocuments.repo, repo));
+  await db.insert(crawlFrontier).values({ repo: "BigOSS/Stale-Star", signal: "test" });
+
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+
+  expect(await products.findByUrl("https://stale-star.test")).toBeUndefined();
+  const held = await crawl.getCandidate(repo);
+  expect(held).toMatchObject({ state: "needs_review", reason: "review_approval_changed", decidedBy: "auto",
+    signals: { starAutoApproval: { stars: 100_000, githubId: 321 }, stoppedAt: { rule: "발행 조건" } } });
+
+  // 사람 큐에 선 뒤에는 발행이 다시 집지 않는다 — 대기 목록(approved)에서 빠졌다
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+  expect(await crawl.getCandidate(repo)).toEqual(held);
+});
+
 describe("발행 뒤 마이페이지 알림", () => {
   it("OG 이미지 단계가 실패해도 메이커 팔로·저장소 주인 알림은 그 전에 발행 잡 lease 로 넣었다", async () => {
     const { cacheOgImage } = await import("@/lib/domain/products/og");

@@ -47,6 +47,7 @@ const PUBLISH_STOPS: Record<string, string> = {
   source_changed: "판정 뒤 배포 URL 이 바뀌었다",
   repository_relationship_conflict: "페이지가 가리키는 저장소가 이 레포가 아니다",
   suspected_spam: "스팸·악성 배포 의심 — 틀에 찍은 README·다운로드 미끼·남의 github.io 첫 화면. 사람이 승인해야 올린다",
+  review_approval_changed: "발행 직전에 승인 근거(별 자동승인 표지·AI 승인·2차 표)를 지금 원본으로 다시 확인하지 못했다. 사람이 다시 본다",
 };
 
 async function observeClassificationDrain(error: unknown, ctx: JobContext<null>) {
@@ -235,7 +236,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         });
 
         if (!result.ok) {
-          if (result.reason === "publication_state_changed" || result.reason === "review_approval_changed") {
+          if (result.reason === "publication_state_changed") {
             publicationChanged(candidate, result.reason);
             continue; // Preserve the newer human/source decision, and process other candidates.
           }
@@ -255,15 +256,22 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
            * 같은 것을 또 집어 큐가 막힌다 — approved 상태가 곧 대기 목록이기 때문이다.
            *
            * 소개가 없어서 못 올린 것만 사람에게 넘긴다. 나머지는 사람이 봐도 할 일이 없다.
+           *
+           * 승인 근거가 바뀐 것(review_approval_changed)도 사람에게 넘긴다(2026-11-10 운영자 결정). approved 에 두면
+           * 그 대기 목록에서 같은 후보를 매 틱 다시 집어 처리 0 이 이어지고, 감시가 발행 워커를 no_progress 로 재시작했다.
+           * 사람만 가르는 사유라 AI 1차·규칙 재판정이 다시 집지 않는다(HUMAN_ONLY_REASONS).
            */
           const evidenceHeld = result.reason.startsWith("ai_evidence_") || result.reason === "repository_relationship_conflict" || result.reason === "source_changed";
           const spam = result.reason === "suspected_spam";
-          const held = result.reason === "no_description" || evidenceHeld || result.reason === "installation_review_required" || spam;
+          const approvalChanged = result.reason === "review_approval_changed";
+          const held = result.reason === "no_description" || evidenceHeld || result.reason === "installation_review_required" || spam || approvalChanged;
           const duplicateReason = result.existing?.status === "banned" ? "banned" : "already_listed";
           const recorded = await recordPublicationFailure(candidate, {
             state: held ? "needs_review" : "rejected",
             // 소개 없음은 AI 가 다시 집지 않는 사유로 둔다 — ambiguous 면 enforce 에서 보류·승인·발행 실패가 AI 호출마다 되풀이된다
-            reason: result.reason === "installation_review_required" ? "ambiguous" : spam ? "suspected_spam" : evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "no_description" : result.reason === "already_listed" ? duplicateReason : "not_a_product",
+            reason: result.reason === "installation_review_required" ? "ambiguous" : spam ? "suspected_spam"
+              : approvalChanged ? "review_approval_changed"
+              : evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "no_description" : result.reason === "already_listed" ? duplicateReason : "not_a_product",
             existing: result.existing,
             ...(result.suspectedSpam ? { signals: { suspectedSpam: result.suspectedSpam } } : {}),
             stoppedAt: { rule: "발행 조건", detail: PUBLISH_STOPS[result.reason] ?? result.reason },

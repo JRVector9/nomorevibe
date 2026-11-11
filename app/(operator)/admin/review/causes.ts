@@ -149,6 +149,17 @@ export const CAUSE_GUIDE: Record<CauseKey, {
       { decision: "승인", when: "코드·커밋 이력이 실제로 있고 다운로드가 공식 릴리스나 제품 사이트로 간다 — 이름 모양(adjective-noun-1234)만으로는 거부하지 않는다" },
     ],
   },
+  review_approval_changed: {
+    label: "발행 직전 승인 근거 바뀜",
+    short: "승인 근거 바뀜",
+    recommend: null,
+    summary: "승인된 후보를 발행하려 했지만, 그 승인의 근거(별 자동승인의 별 수·저장소 ID, AI 승인의 유효 기간·입력, 2차 표)를 지금 원본으로 다시 확인하지 못했습니다. 승인 대기에 두면 발행이 같은 후보를 계속 다시 집어 멈추므로 사람에게 넘겼습니다.",
+    question: "지금 원본과 근거로 보아도 올릴 만한 제품입니까?",
+    hints: [
+      { decision: "승인", when: "지금 저장소와 페이지가 그대로 제품이다 — 사람의 승인은 별 표지·AI 승인을 다시 재지 않는다(소개·중복 같은 발행 조건은 그대로 본다)" },
+      { decision: "거부", when: "저장소가 바뀌었거나(별 감소·이름 변경·보관) 제품이 아니다" },
+    ],
+  },
   page_status_unknown: {
     label: "배포 URL 응답 미확인",
     short: "응답 미확인",

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { reviewShortcut } from "@/app/(operator)/admin/review/shortcuts";
 import { approvalNote, CAUSE_GUIDE, causeShort, modelsAgree, recommendDecision, type CauseKey } from "@/app/(operator)/admin/review/causes";
 import { HUMAN_ONLY_REASONS } from "@/lib/crawl/admin-review";
+import { REASON_LABELS } from "@/app/(operator)/admin/reasons";
+import { HOLD_LABELS, holdHref } from "@/lib/operations/conveyor-model";
 
 /**
  * 심사 큐 키보드 흐름(ADM-10)과 갈래 짧은 이름·권장 결정(ADM-13·07·11). DOM 없이 눌린 자리를 흉내 낸다.
@@ -81,6 +83,15 @@ describe("갈래 짧은 이름", () => {
     expect(causeShort("host_excluded_subpath")).toBe("호스트·하위경로");
     expect(causeShort("second_review_split")).toBe("2차 갈림");
     expect(causeShort("no_description")).toBe("소개 없음");
+  });
+
+  it("사람만 가르는 사유는 모두 한국어 사유 이름·흐름 칩 이름과 심사 큐 갈래 링크가 있다", () => {
+    for (const reason of HUMAN_ONLY_REASONS) {
+      expect(REASON_LABELS[reason], reason).toMatch(/[가-힣]/);
+      expect(HOLD_LABELS[reason], reason).toMatch(/[가-힣]/);
+      expect(holdHref(reason), reason).toBe(`/admin/review?cause=${reason}#review-list`);
+    }
+    expect(causeShort("review_approval_changed")).toBe("승인 근거 바뀜");
   });
 });
 
