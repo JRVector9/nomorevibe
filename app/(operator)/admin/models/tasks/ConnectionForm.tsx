@@ -134,7 +134,8 @@ export function ConnectionForm({ initial, secretBox, limit: given = null, cancel
         <label className="grid gap-1">추론 토큰 여유 — 추론이 max_tokens 에 포함되는 추론 모델만
           <input name="reasoningTokenReserve" type="number" inputMode="numeric" min={1} max={AI_REASONING_TOKEN_RESERVE_MAX} step={1}
             defaultValue={initial?.reasoningTokenReserve ?? ""} placeholder="예: 4096 — 일반 모델은 비워 둡니다" autoComplete="off" className={`${INPUT} font-mono`} />
-          <span className="text-[13px] text-fg-3">심사 사유 번역 요청의 max_tokens 에 더합니다. 그 작업의 계약을 처음 만들 때 계약에 들어갑니다(나중에 바꾸면 계약을 끄고 다시 저장).</span></label>
+          <span className="text-[13px] text-fg-3">심사 사유 번역·한국어 소개 번역 요청의 max_tokens 에 더합니다. 그 작업의 계약을 처음 만들 때 계약에 들어갑니다(나중에 바꾸면
+            서빙 계약 화면에서 그 작업의 계약을 끄고 작업 ↔ 모델에서 다시 저장).</span></label>
         <label className="grid gap-1">키 유효 기간(일) — 키가 정해진 날 뒤 만료되는 API만
           <input name="keyValidDays" type="number" inputMode="numeric" min={1} max={3650} step={1} defaultValue={initial?.keyValidDays ?? ""}
             placeholder="예: 30" autoComplete="off" className={`${INPUT} font-mono`} />

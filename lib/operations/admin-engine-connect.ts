@@ -153,7 +153,7 @@ export function engineRouteContract(routeId: GatewayServingRoute, model: string,
     if (!shape || !("engineModel" in shape)) return null;
     contract.engineModel = engineModel;
   }
-  // 추론 토큰이 max_tokens 에 포함되는 모델의 여유(2026-11-10): 그 칸을 받는 경로(사유 번역)의 계약에만 싣는다 — 다른 경로는 그대로(화면이 알린다)
+  // 추론 토큰이 max_tokens 에 포함되는 모델의 여유(2026-11-10): 그 칸을 받는 경로(사유 번역·한국어 소개 2026-11-11)의 계약에만 싣는다 — 다른 경로는 그대로(화면이 알린다)
   if (reasoningTokenReserve && shape && "reasoningTokenReserve" in shape) contract.reasoningTokenReserve = reasoningTokenReserve;
   const checked = validateAdminServingContract(routeId, contract);
   return checked.ok ? checked.contract : null;

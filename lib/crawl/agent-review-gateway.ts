@@ -2,6 +2,7 @@ import { modelTimeoutMs, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/ll
 import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport, reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
+import { clearProviderRateLimit, parseRetryAfterMs, recordProviderRateLimit, type ProviderRateLimitKey } from "@/lib/llm/provider-rate-limit";
 import { logger } from "@/lib/observability/logger";
 import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-end-fetch";
 import { gatewayNotSentWitness, issueGatewayNotStarted, readGatewayNotStarted, type GatewayNotStarted } from "@/lib/llm/gateway-not-started";
@@ -235,6 +236,23 @@ export function textWireFor(contract: TextRouteContract, selection: string, buil
     body.reasoning_effort = effort;
   }
   return JSON.stringify(body);
+}
+/**
+ * 계약의 추론 토큰 여유(사유 번역 #894·한국어 소개 2026-11-11). abcllm 형 계약의 칸이다(직접 계약 모양에는 없다) — 없으면 0 이라 wire 는 예전 그대로다.
+ * wire 에 들어가므로 wireHash·계약 hash 로 binding 에 묶인다.
+ */
+export const contractReasoningReserve = (contract: object): number => {
+  const value = "reasoningTokenReserve" in contract ? contract.reasoningTokenReserve : undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+};
+/**
+ * text 경로가 받은 HTTP 응답 상태를 공급자 빈도 한도 쉼에 알린다(2026-11-11, provider-rate-limit.ts). 429 면 그 경로·공급자·장부 모델을 Retry-After
+ * (없으면 연속 수의 지수 backoff)만큼 쉬게 하고, 그 밖의 응답이면 연속 수를 지운다. 결과 코드(rate_limit)·장부 정산은 바꾸지 않는다.
+ */
+function noteTextRouteStatus(binding: ProviderRateLimitKey, response: { status: number; headers: { get(name: string): string | null } }): void {
+  const key = { routeId: binding.routeId, provider: binding.provider, model: binding.model };
+  if (response.status === 429) recordProviderRateLimit(key, parseRetryAfterMs(response.headers.get("retry-after"), Date.now()));
+  else clearProviderRateLimit(key);
 }
 export const wireMaxTokens = (wire: string): number | undefined => {
   const value = (JSON.parse(wire) as { max_tokens?: unknown }).max_tokens;
@@ -785,6 +803,7 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
     if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
+    noteTextRouteStatus(binding, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Nonterminal failure retains full C. */ }
       return { result: { ok: false, error: response.status === 404 ? "model_unavailable"
@@ -841,7 +860,7 @@ export function prepareReasonTranslationGatewayCall(texts: readonly string[], op
   const contract = reasonTranslationRouteServingContractSchema.parse(structuredClone(resolved));
   if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
   // 추론 토큰 여유는 abcllm 형 계약의 칸이다(직접 계약 모양에는 없다) — wire 에 들어가 wireHash·계약 hash 로 binding 에 묶인다
-  const reserve = "reasoningTokenReserve" in contract ? contract.reasoningTokenReserve ?? 0 : 0;
+  const reserve = contractReasoningReserve(contract);
   const wire = textWireFor(contract, model, engine => reasonTranslationGatewayWire(snapshot, engine, reserve)), sourceHashes = snapshot.map(textHash);
   const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: reasonTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
@@ -880,6 +899,7 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
+    noteTextRouteStatus(binding, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -991,6 +1011,7 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
+    noteTextRouteStatus(binding, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -1041,7 +1062,9 @@ export function prepareProductTaglineKoGatewayCall(items: readonly ProductTaglin
   if (!resolved) return unsupported;
   const contract = productTaglineKoRouteServingContractSchema.parse(structuredClone(resolved));
   if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
-  const wire = textWireFor(contract, model, engine => productTaglineKoGatewayWire(snapshot, engine));
+  // 추론 토큰 여유(2026-11-11, 사유 번역과 같은 규칙): 계약에 있으면 답 몫 위에 더한다 — wireHash 로 binding 에 묶이고, 없으면 예전 wire 그대로다
+  const reserve = contractReasoningReserve(contract);
+  const wire = textWireFor(contract, model, engine => productTaglineKoGatewayWire(snapshot, engine, reserve));
   const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: productTaglineKoServingContractHash(contract), totalTokenBound: contract.totalTokenBound, model });
   productTaglineKoCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
@@ -1060,7 +1083,8 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   if (!state || state.used || !checked.success || !validProductTaglineKoItems(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("product_tagline_ko_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
-  if (textWireFor(state.contract, call.model, engine => productTaglineKoGatewayWire(snapshot, engine)) !== state.wire || binding.members.length !== snapshot.length
+  if (textWireFor(state.contract, call.model, engine => productTaglineKoGatewayWire(snapshot, engine, contractReasoningReserve(state.contract))) !== state.wire
+    || binding.members.length !== snapshot.length
     || binding.members.some((member, index) => member.sourceHash !== productTaglineKoSourceHash(snapshot[index]))
     || binding.model !== call.model || binding.wireHash !== call.wireHash
     || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
@@ -1079,6 +1103,7 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
+    noteTextRouteStatus(binding, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -1167,6 +1192,7 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
     if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
+    noteTextRouteStatus(binding, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -1256,6 +1282,7 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
     if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
+    noteTextRouteStatus(binding, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -1353,6 +1380,7 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
+    noteTextRouteStatus(binding, response);
     if (!response.ok) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };

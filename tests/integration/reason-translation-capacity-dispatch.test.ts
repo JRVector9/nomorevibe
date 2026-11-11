@@ -20,6 +20,7 @@ import type { ReasonTranslationServingContract } from '@/lib/llm/reason-translat
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 import { inTextRank, pinTextRanks, textContract } from '../text-task-ranks-fixture';
+import { providerRateLimitedUntil, resetProviderRateLimitsForTest } from '@/lib/llm/provider-rate-limit';
 
 const legacyTransport = vi.fn(async () => { throw new Error('fixture_unexpected_legacy_transport'); });
 const serving = vi.hoisted(() => ({ contract: null as ReasonTranslationServingContract | null }));
@@ -214,7 +215,8 @@ beforeEach(() => tracked((async () => {
   pinTextRanks({ [jobName]: TRANSLATE_MODEL }); setServingContractSnapshotForTest([textContract(jobName, TRANSLATE_MODEL)]); legacyTransport.mockClear(); vi.stubGlobal('fetch', legacyTransport);
   await install(); await elect();
 })(), setups));
-afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals();
+  resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end(), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end(); }]); });
 
@@ -504,6 +506,13 @@ it('records a provider 429 as rate_limit without counting the cache attempt', ex
     expect(await tick()).toMatchObject({ status: 'completed' }); expect(bodies).toHaveLength(1);
     const [row] = await admin`SELECT status,attempts,error_code,retry_at>clock_timestamp() AS backed_off FROM text_translations WHERE source_hash=${item.hash}`;
     expect(row).toEqual({ status: 'failed', attempts: 2, error_code: 'rate_limit', backed_off: true });
+    expect(Array.from(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ state: 'indeterminate' }]);
+    // 2026-11-11: 그 경로·모델은 쉰다 — Retry-After(1초)보다 긴 연속 1번째 backoff(30초)만큼(provider-rate-limit.ts). 다음 틱은 장부에 묻지 않는다
+    const until = providerRateLimitedUntil({ routeId: 'reason-translate', provider: 'abcllm', model: TRANSLATE_MODEL });
+    expect(until).not.toBeNull(); expect(until! - Date.now()).toBeGreaterThan(25_000);
+    const next = await seed();
+    expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' }); expect(bodies).toHaveLength(1);
+    expect(await admin`SELECT status FROM text_translations WHERE source_hash=${next.hash}`).toEqual([]);
     expect(Array.from(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ state: 'indeterminate' }]);
   });
 }));

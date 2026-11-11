@@ -26,6 +26,7 @@ import type { ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
+import { providerRateLimitedUntil, resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTaglineKoServingContract | null }));
 vi.mock("@/lib/llm/product-tagline-ko-serving-contract", async original => ({
@@ -220,7 +221,8 @@ beforeAll(() => tracked((async () => {
 beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, KOREAN_TAGLINE_MODEL)]);
   pinTextRanks({ [jobName]: KOREAN_TAGLINE_MODEL }); await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals();
+    resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
@@ -369,6 +371,37 @@ it("rolls dispatch and event back when reservation DBwall expires during actual 
     })).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(0);
     expect(await admin`SELECT product_id FROM product_korean_taglines WHERE product_id=${product.id}`).toEqual([]);
     const [job] = await admin`SELECT requested_version,processed_version FROM jobs WHERE name=${jobName}`; expect(Number(job.processed_version)).toBeLessThan(Number(job.requested_version));
+  });
+}), 20_000);
+
+// 2026-11-11 공급자 429(LG EXAONE 빈도 한도): 보낸 뒤 받은 429 의 장부 행은 예전처럼 결과 미확정(transport_unknown)이다 — 확정 실패로 정산하려면
+// terminal 근거 kind 를 늘리는 마이그레이션이 필요하다. 대신 그 경로·모델이 Retry-After 만큼 쉬어, 쉬는 동안의 틱은 장부에 묻지 않고(대기·전송 행 없음,
+// HTTP 없음) 포화처럼 미룬다. 쉼이 끝나면 다시 보낸다.
+it("cools the route after a provider 429 so the next tick neither queues nor sends, and sends again after the cooldown", exercise(async () => {
+  const key = { routeId: jobName, provider: "abcllm", model: KOREAN_TAGLINE_MODEL };
+  const { products: [limited] } = await seed();
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => { response.statusCode = 429; response.setHeader("retry-after", "120"); response.end('{"result_code":429,"description":"rate limit"}'); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
+    const [first] = await admin`SELECT request_id,state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
+    expect(first.state).toBe("indeterminate");
+    expect(await admin`SELECT reason FROM model_capacity_events WHERE request_id=${first.request_id}::uuid AND kind='dispatch_indeterminate'`)
+      .toEqual([{ reason: "transport_unknown" }]);
+    expect((await admin`SELECT error_code FROM product_korean_taglines WHERE product_id=${limited.id}`)[0].error_code).toBe("rate_limit");
+    const until = providerRateLimitedUntil(key); expect(until).not.toBeNull(); expect(until! - Date.now()).toBeGreaterThan(100_000);
+    // 쉬는 동안: 새 제품이 있어도 장부 행·HTTP 없이 포화처럼 미룬다(degraded 로 알리지 않는다)
+    const { products: [next] } = await seed();
+    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
+    expect((await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).map(row => row.request_id)).toEqual([first.request_id]);
+    expect(await admin`SELECT product_id FROM product_korean_taglines WHERE product_id=${next.id}`).toEqual([]);
+    // 쉼이 끝난 뒤(시험이 Retry-After 경과를 대신한다) 다시 보내고, 200 이 오면 쉼 기록을 지운다
+    resetProviderRateLimitsForTest();
+    setReply(response => response.end(JSON.stringify(replyBody())));
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`).map(row => row.state))
+      .toEqual(["indeterminate", "settled"]);
+    expect((await admin`SELECT tagline_ko FROM product_korean_taglines WHERE product_id=${next.id}`)[0].tagline_ko).toBe("문서를 관리하는 도구");
+    expect(providerRateLimitedUntil(key)).toBeNull();
   });
 }), 20_000);
 

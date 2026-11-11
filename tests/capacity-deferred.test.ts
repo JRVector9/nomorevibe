@@ -10,7 +10,7 @@ const TABLE: Record<ModelCapacityDeferredReason, "global" | "model" | "work"> = 
   draining: "global", disabled: "global", policy_changed: "global", owner_unavailable: "global", reservation_required: "global",
   assignments_unavailable: "global",
   capacity: "model", queue_full: "model", unmapped: "model", provider_contract_unavailable: "model", device_unconfigured: "model",
-  helper_ineligible: "model", route_quota: "model", model_quota: "model",
+  helper_ineligible: "model", route_quota: "model", model_quota: "model", rate_limited: "model",
   dispatched: "work", work_busy: "work", ledger_mismatch: "work", withdrawn: "work", reservation_lost: "work",
 };
 

@@ -6,12 +6,13 @@ vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveCapacityDe
 import { ConnectionForm } from "@/app/(operator)/admin/models/tasks/ConnectionForm";
 import { aiConnectionTaskAllowed, aiTask, aiTaskAccepts } from "@/lib/llm/ai-tasks";
 import { reasonTranslationServingContractSchema } from "@/lib/llm/reason-translation-serving-contract";
+import { productTaglineKoServingContractHash, productTaglineKoServingContractSchema } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { bindApiTaskRank, type AiTaskRank } from "@/lib/llm/ai-task-resolver";
 import { uncountedTranslationFailure } from "@/lib/crawl/translations";
-import { reasonTranslationGatewayWire } from "@/lib/crawl/translate";
+import { productTaglineKoGatewayWire, reasonTranslationGatewayWire } from "@/lib/crawl/translate";
 import { engineRouteContract, probeEngineContract } from "@/lib/operations/admin-engine-connect";
 import {
-  aiConnectionInputFromForm, aiConnectionManualOnly, aiConnectionModelIds, aiConnectionModelsMissing, aiRankReadiness, aiTaskIssueMessage, aiTaskRankOptions,
+  AI_REASONING_RESERVE_TASKS, aiConnectionInputFromForm, aiConnectionManualOnly, aiConnectionModelIds, aiConnectionModelsMissing, aiRankReadiness, aiTaskIssueMessage, aiTaskRankOptions,
   aiUnreadConnections, validateAiTaskRanks, type AiConnectionView, type AiReadinessInput,
 } from "@/lib/operations/admin-ai-tasks";
 import { llmKeyDaysLeft } from "@/lib/operations/llm-ops-view";
@@ -178,5 +179,66 @@ describe("공급자 한도(429)·키 만료", () => {
     expect(llmKeyDaysLeft(keyed, "2026-12-02T00:00:00.000Z")).toBe(-1);
     expect(llmKeyDaysLeft({ ...keyed, keyValidDays: null }, "2026-11-10T00:00:00.000Z")).toBeNull();
     expect(llmKeyDaysLeft({ ...keyed, hasKey: false }, "2026-11-10T00:00:00.000Z")).toBeNull();
+  });
+});
+
+/**
+ * 한국어 소개 번역(product-tagline-ko)에도 추론 토큰 여유(2026-11-11) — 운영자가 EXAONE 을 그 작업의 2순위로 쓰는데, 계약(42)에 여유 칸이 없어
+ * 추론이 max_tokens(750·900·1050)를 다 먹고 content 가 비었다(97건 중 37건 invalid_output). 사유 번역(#894)과 같은 규칙으로 계약에 싣고 wire 에 더한다.
+ */
+describe("한국어 소개 번역의 추론 토큰 여유", () => {
+  const tagline = aiTask("product-tagline-ko")!;
+  // 운영 꼴: 장비(그룹) 이름 Exaone, 한도 1
+  const exaoneKo = { ...exaone, deviceId: "Exaone", allowedTasks: ["reason-translate", "product-tagline-ko"], reasoningTokenReserve: 8196 };
+  const input = (patch: Partial<AiReadinessInput> = {}): AiReadinessInput => ({ contracts: [], localContract: () => null,
+    engineRoutes: ["reason-translate", "product-tagline-ko", "crawl-tagline"],
+    policy: { mode: "open", routes: [{ routeId: "product-tagline-ko", provider: "abcllm", model: MODEL, providerBudgetId: "Exaone", groupId: "Exaone" }],
+      groupLimits: {} }, devices: new Map([["Exaone", { enabled: true, limitSlots: 1 }]]), ...patch });
+  it("여유를 싣는 작업은 사유 번역과 한국어 소개 번역 — 계약 모양에 칸이 있는 경로와 같다", () => {
+    expect(AI_REASONING_RESERVE_TASKS).toEqual(["reason-translate", "product-tagline-ko"]);
+    expect("reasoningTokenReserve" in productTaglineKoServingContractSchema.shape).toBe(true);
+    expect("reasoningTokenReserve" in reasonTranslationServingContractSchema.shape).toBe(true);
+  });
+  it("계약을 만들 때 연결의 여유를 싣고, 여유 없는 계약의 모양·hash 는 예전 그대로다", () => {
+    const reserved = engineRouteContract("product-tagline-ko", MODEL, MODEL, `${BASE}/chat/completions`, 524_288, "exaone-api", "operator", null, 8196);
+    expect(reserved).toMatchObject({ protocol: "abcllm-product-tagline-ko-total-bound-v1", routeId: "product-tagline-ko", provider: "abcllm", model: MODEL,
+      totalTokenBound: 524_288, reasoningTokenReserve: 8196, strictTerminalOptIn: "abcllm-strict-terminal-v1" });
+    expect(productTaglineKoServingContractSchema.safeParse(reserved).success).toBe(true);
+    const plain = engineRouteContract("product-tagline-ko", MODEL, MODEL, `${BASE}/chat/completions`, 524_288, "exaone-api", "operator");
+    expect(plain).not.toHaveProperty("reasoningTokenReserve");
+    // 칸이 없는 계약(지금 저장된 계약 42 꼴)은 새 스키마로 읽어도 같은 hash 다 — 칸 순서·값 그대로
+    const { reasoningTokenReserve: _drop, ...withoutReserve } = reserved as Record<string, unknown>;
+    void _drop;
+    expect(productTaglineKoServingContractHash(withoutReserve as never)).toBe(productTaglineKoServingContractHash(plain as never));
+    expect(productTaglineKoServingContractHash(reserved as never)).not.toBe(productTaglineKoServingContractHash(plain as never));
+    for (const bad of [0, -1, 1.5, 32_769]) expect(productTaglineKoServingContractSchema.safeParse({ ...reserved, reasoningTokenReserve: bad }).success, String(bad)).toBe(false);
+  });
+  it("wire 의 max_tokens 는 답 몫(줄 수 식) + 여유, 여유가 없으면 예전 wire 와 한 글자도 다르지 않다", () => {
+    const items = [{ name: "Doc", tagline: "Document management tools" }];
+    const plain = JSON.parse(productTaglineKoGatewayWire(items, MODEL)) as { max_tokens: number; reasoning_effort: string };
+    expect(plain).toMatchObject({ max_tokens: 750, reasoning_effort: "low" });
+    expect(productTaglineKoGatewayWire(items, MODEL, 0)).toBe(productTaglineKoGatewayWire(items, MODEL));
+    expect(JSON.parse(productTaglineKoGatewayWire(items, MODEL, 8196))).toEqual({ ...plain, max_tokens: 750 + 8196 });
+  });
+  it("저장 전 확인: 새 계약이면 경고 없이 만들고, 여유가 다른 계약이면 끄고 다시 저장하라고 알린다(사유 번역과 같은 길)", () => {
+    const fresh = aiRankReadiness(tagline, 2, exaoneKo, MODEL, input());
+    expect(fresh).toMatchObject({ blocking: [], warnings: [], createContract: { routeId: "product-tagline-ko", identity: MODEL, engineModel: null } });
+    const contract = { routeId: "product-tagline-ko", model: MODEL, provider: "abcllm", endpoint: `${BASE}/chat/completions`, transport: "direct" };
+    const stale = aiRankReadiness(tagline, 2, exaoneKo, MODEL, input({ contracts: [{ ...contract, reasoningTokenReserve: null }] }));
+    expect(stale).toMatchObject({ blocking: [], createContract: null, identity: MODEL });
+    expect(stale.warnings).toHaveLength(1);
+    expect(stale.warnings[0]).toContain("계약의 추론 토큰 여유(없음)가 연결의 값(8196)과 다릅니다");
+    expect(stale.warnings[0]).toContain(`서빙 계약 화면(/admin/models/contracts)에서 product-tagline-ko · ${MODEL} 계약을 끈 뒤`);
+    expect(stale.warnings[0]).toContain("다시 저장하세요");
+    expect(stale.warnings[0]).not.toContain("쓰지 않습니다");
+    expect(aiRankReadiness(tagline, 2, exaoneKo, MODEL, input({ contracts: [{ ...contract, reasoningTokenReserve: 8196 }] })).warnings).toEqual([]);
+    // 연결의 여유를 지웠는데 계약에 남아 있어도 알린다
+    expect(aiRankReadiness(tagline, 2, { ...exaoneKo, reasoningTokenReserve: null }, MODEL, input({ contracts: [{ ...contract, reasoningTokenReserve: 8196 }] })).warnings[0])
+      .toContain("계약의 추론 토큰 여유(8196)가 연결의 값(없음)과 다릅니다");
+  });
+  it("연결 폼은 여유가 두 작업에 쓰인다고 말한다", () => {
+    const html = renderToStaticMarkup(createElement(ConnectionForm, { initial: exaoneKo, secretBox: true }));
+    expect(html).toContain("심사 사유 번역·한국어 소개 번역 요청의 max_tokens 에 더합니다");
+    expect(html).toContain(`value="8196"`);
   });
 });

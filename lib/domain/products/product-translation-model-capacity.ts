@@ -18,6 +18,7 @@ import type { ProductTranslationWriteExpectation } from "./translations";
 import { textRouteAccess } from "@/lib/llm/serving-contract-store";
 import { productTranslationServingProvider } from "@/lib/llm/product-translation-serving-contract";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import { assertProviderNotRateLimited } from "@/lib/llm/provider-rate-limit";
 
 export type ProductTranslationCapacityResult = { kind: "skipped" } | {
   kind: "result"; result: KoreanTaglineBatch; expectation?: ProductTranslationWriteExpectation; batch?: readonly ProductTranslationTask[];
@@ -47,6 +48,8 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   };
   // 순위(PR B)가 계약을 확인하고 범위를 열었다 — 그 사이 계약이 닫혔으면 이 모델만의 일이라 다음 순위로 넘긴다(옛 게이트웨이 길로 떨어지지 않는다)
   if (textRouteAccess("product-translate", model, provider).block) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+  // 공급자가 이 경로·모델에 429(빈도 한도)를 준 뒤 쉬는 중이면 장부에 묻지 않고 이 모델만 미룬다(다음 순위가 받는다, provider-rate-limit.ts)
+  assertProviderNotRateLimited({ routeId: "product-translate", provider, model });
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");

@@ -924,7 +924,7 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
       return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:${reason}`] };
     }
     // 장부 이름(identity)이 계약 행의 열쇠다. 같은 모델을 다른 연결에도 둔 순위는 연결로 가른 이름이고 엔진에는 engineModel(= 순위 모델)이 나간다(PR B)
-    // 추론 토큰 여유는 그 칸을 받는 경로(사유 번역)의 계약에만 실린다
+    // 추론 토큰 여유는 그 칸을 받는 경로(사유 번역·한국어 소개)의 계약에만 실린다
     const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, probed.responseModel, probed.endpoint,
       probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel, connection.reasoningTokenReserve ?? null);
     if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
