@@ -12,7 +12,15 @@ const mocks = vi.hoisted(() => ({
   tags: vi.fn(), profiles: vi.fn(), reasons: vi.fn(),
   tagCall: vi.fn(), profileCall: vi.fn(), reasonCall: vi.fn(),
   tagWrite: vi.fn(), profileWrite: vi.fn(), reasonWrite: vi.fn(),
+  remainingMs: null as number | null,
 }));
+vi.mock("@/lib/jobs/tick-deadline", async load => {
+  const actual = await load<typeof import("@/lib/jobs/tick-deadline")>();
+  return { ...actual, tickRemaining: (...args: Parameters<typeof actual.tickRemaining>) => {
+    const remaining = actual.tickRemaining(...args);
+    return () => mocks.remainingMs ?? remaining();
+  } };
+});
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true }) }));
 vi.mock("@/lib/crawl/taglines", () => ({ pendingTaglines: mocks.tags, recordTaglineResult: mocks.tagWrite }));
 vi.mock("@/lib/crawl/tagline-model-capacity", () => ({ writeCrawlTaglineWithModelCapacity: mocks.tagCall }));
@@ -55,6 +63,7 @@ const scenarios = [
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.remainingMs = null;
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   setRuntimeSettingsForTest(null);
   pinTextRanks(MODELS);
@@ -175,4 +184,21 @@ it("reason-translate does not start accepting unknown results after its internal
   await translateReasons(ctx);
 
   expect(mocks.reasonWrite).not.toHaveBeenCalled();
+});
+
+it("crawl-tagline leaves the first empty phase uncommitted when only the second-question window is too short", async () => {
+  const { ctx } = context("crawl-tagline");
+  mocks.remainingMs = 30_000;
+  mocks.tags.mockResolvedValue([tag]);
+  mocks.tagCall.mockImplementation(async () => {
+    mocks.remainingMs = 14_000; // hasBudget and signal stay live; minCallMs is 15 seconds.
+    return { kind: "result", askOrdinal: 1, result: { ok: true, tagline: "", source: "page" }, expectation: proof };
+  });
+
+  expect(await writeTaglines(ctx)).toEqual({ done: false });
+
+  expect(mocks.tagCall).toHaveBeenCalledTimes(1);
+  expect(mocks.tagWrite).not.toHaveBeenCalled();
+  expect(ctx.signal!.aborted).toBe(false);
+  expect(ctx.hasBudget()).toBe(true);
 });

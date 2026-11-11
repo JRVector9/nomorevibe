@@ -8,6 +8,7 @@ import { crawlCandidates, crawlDocuments } from "@/lib/db/schema";
 import { taglineEvidence, crawlTaglineGatewayWire } from "@/lib/crawl/tagline";
 import { pendingTaglines, prepareCrawlTaglineDispatch, recordTaglineResult, type TaglineTask } from "@/lib/crawl/taglines";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
+import type { CrawlTaglineCapacityResult } from "@/lib/crawl/tagline-model-capacity";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { prepareCrawlTaglineGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { requestCrawlTaglineModelSlot, cancelReservedModelSlot, closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
@@ -29,8 +30,17 @@ import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixtu
 // fresh 전용 테스트 DB만 허용한다(setup이 localhost·nomorevibe_test를 강제). 이 파일은 reset/truncate하지 않는다.
 if (process.env.TEST_DATABASE_URL !== TEST_DATABASE_URL) throw new Error("crawl_tagline_runtime_test_database_required");
 const serving = vi.hoisted(() => ({ contract: null as CrawlTaglineServingContract | null }));
+const afterNative = vi.hoisted(() => ({ run: null as null | ((result: CrawlTaglineCapacityResult) => Promise<void>) }));
 vi.mock("@/lib/llm/crawl-tagline-serving-contract", async load => ({ ...await load<typeof import("@/lib/llm/crawl-tagline-serving-contract")>(),
   resolveCrawlTaglineServingContract: () => serving.contract }));
+vi.mock("@/lib/crawl/tagline-model-capacity", async load => {
+  const actual = await load<typeof import("@/lib/crawl/tagline-model-capacity")>();
+  return { ...actual, writeCrawlTaglineWithModelCapacity: async (...args: Parameters<typeof actual.writeCrawlTaglineWithModelCapacity>) => {
+    const result = await actual.writeCrawlTaglineWithModelCapacity(...args);
+    await afterNative.run?.(result); // Fault injection after the real HTTP and SQL settlement.
+    return result;
+  } };
+});
 type Raw = Record<string, unknown>;
 // 「작업 ↔ 모델」 순위(PR B)의 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
 const TAGLINE_MODEL = "qwen3.6-35b-heretic";
@@ -181,10 +191,81 @@ beforeEach(async () => { pinTextRanks({ [jobName]: TAGLINE_MODEL }); setServingC
   await admin`INSERT INTO crawl_settings(id,values) VALUES(1,'{"enabled":true}') ON CONFLICT(id) DO UPDATE SET values=crawl_settings.values||'{"enabled":true}'::jsonb`;
   await elect();
 });
-afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs();
+afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { afterNative.run = null; serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs();
   resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end({ timeout: 5 }),
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
+
+async function tickAfterBudgetEndsAt(ordinal: 1 | 2) {
+  let budget = true, injected = false;
+  afterNative.run = async result => {
+    if (result.kind !== "result" || result.askOrdinal !== ordinal) return;
+    expect(result.result.ok).toBe(true);
+    afterNative.run = null; injected = true; budget = false;
+    await new Promise(resolve => setTimeout(resolve, 300)); // Run the actual 250ms ownership poll.
+  };
+  await tracked(requestJob(jobName));
+  try {
+    const result = await tracked(runJob(jobName, (ctx: JobContext<null>) => writeTaglines({ ...ctx,
+      hasBudget: () => budget && ctx.hasBudget() }), { requestedOnly: true, roleLease: role }));
+    expect(injected).toBe(true);
+    return result;
+  } finally { afterNative.run = null; }
+}
+
+it.each(["Document manager", ""])("continues ask2 on the next tick after a budget-ended first empty reply (second=%j)", exerciseCase(async secondLine => {
+  const task = await seed();
+  await server(async ({ bodies, setReply }) => {
+    let asks = 0;
+    setReply(response => response.end(JSON.stringify(replyBody(++asks === 1 ? "" : secondLine))));
+
+    expect(await tickAfterBudgetEndsAt(1)).toMatchObject({ status: "completed", done: false });
+
+    expect(bodies).toHaveLength(1);
+    expect(await admin`SELECT tagline,attempts FROM crawl_taglines WHERE repo=${task.candidate.repo}`).toEqual([]);
+    const firstPhase = await phases(task.candidate.repo);
+    expect(firstPhase.map(row => [row.state, row.ask])).toEqual([["settled", 1]]);
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+
+    expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT state,reason FROM crawl_candidates WHERE id=${task.candidate.id}`)[0])
+      .toEqual(secondLine ? { state: "approved", reason: "passed" } : { state: "needs_review", reason: "no_description" });
+    expect((await admin`SELECT tagline,attempts,error_code FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0])
+      .toEqual({ tagline: secondLine, attempts: 1, error_code: null });
+    expect((await phases(task.candidate.repo)).map(row => [row.state, row.ask])).toEqual([["settled", 1], ["settled", 2]]);
+    // A final second reply is cached; a third tick must not send a third question.
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(2);
+  });
+}), 20_000);
+
+it("stores a final empty second reply even if its completion exhausts the budget", exercise(async () => {
+  const task = await seed();
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => response.end(JSON.stringify(replyBody(""))));
+
+    expect(await tickAfterBudgetEndsAt(2)).toMatchObject({ status: "completed", done: false });
+
+    expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT tagline,attempts,error_code FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0])
+      .toEqual({ tagline: "", attempts: 1, error_code: null });
+    expect((await admin`SELECT state FROM crawl_candidates WHERE id=${task.candidate.id}`)[0].state).toBe("needs_review");
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(2);
+  });
+}), 20_000);
+
+it("stores a single nonempty completed reply after the budget aborts", exercise(async () => {
+  const task = await seed();
+  await server(async ({ bodies }) => {
+    expect(await tickAfterBudgetEndsAt(1)).toMatchObject({ status: "completed", done: false });
+    expect(bodies).toHaveLength(1);
+    expect((await admin`SELECT tagline,attempts FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0])
+      .toEqual({ tagline: "Document manager", attempts: 1 });
+    expect((await admin`SELECT state FROM crawl_candidates WHERE id=${task.candidate.id}`)[0].state).toBe("approved");
+  });
+}), 20_000);
 
 it("uses two independent actual requests/native proofs but one attempt and publish wakeup", exercise(async () => {
   const task = await seed();

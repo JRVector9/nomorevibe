@@ -148,6 +148,9 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                   if (capacity.kind === "skipped") { skipped = true; return "stop"; }
                   result = capacity.result;
                 }
+                // The first empty reply is an unfinished phase, not the final empty cache.
+                // If ask2 cannot start in this window, keep settled ask1 for the next tick.
+                if (result.ok && !result.tagline && capacity.askOrdinal === 1) { skipped = true; return "stop"; }
                 const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
                   ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
                 // A completed answer can outlive this tick's admission budget. The writer
