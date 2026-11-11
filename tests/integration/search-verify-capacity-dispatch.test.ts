@@ -15,6 +15,7 @@ import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { JobLeaseLostError } from "@/lib/jobs/lease";
 import { tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { requestModelSlot, requestSearchVerifyModelSlot, cancelReservedModelSlot, closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
+import * as capacityRepository from "@/lib/llm/capacity-repository";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import { canRequeueUnknownRoute, requeueModelCapacityUnknowns } from "@/lib/operations/model-capacity-requeue";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -278,6 +279,69 @@ it("discards an expired prefix without attempt or failure and starts a new execu
   expect(rows.map(row => [row.binding.execution, row.binding.step.chunk])).toEqual([[0, 0], [1, 0], [1, 1], [1, 2]]);
   expect(rows[1].binding.parent).toBeNull(); expect(rows[1].binding.deadlineAt - rows[0].binding.deadlineAt).toBeGreaterThan(55_000);
   expect(await profileRow(task.product.id)).toEqual(before);
+}), 20_000);
+
+it("recovers a settled success cancelled after reconciliation on the next tick without resending after expiry", exercise(async () => {
+  const words = keywords(3), task = await seed(words, null), before = await profileRow(task.product.id);
+  await server(async ({ bodies }) => {
+    const controller = new AbortController(), reconcile = capacityRepository.reconcileSearchVerifyGatewayTerminal;
+    const interruption = vi.spyOn(capacityRepository, "reconcileSearchVerifyGatewayTerminal").mockImplementation(async (...args) => {
+      const result = await reconcile(...args); // Actual native response and actual PostgreSQL settlement.
+      controller.abort();
+      return result;
+    });
+    try {
+      expect(await custom(async lease => {
+        const outcome = await tracked(verifyKeywordsWithModelCapacity(task, lease,
+          { timeoutMs: 1_000, chunked: false, roleLease: role, signal: controller.signal }));
+        expect(outcome).toMatchObject({ kind: "result", result: { ok: false, error: "cancelled" } });
+      })).toMatchObject({ status: "completed" });
+    } finally { interruption.mockRestore(); }
+    expect(bodies).toHaveLength(1);
+    expect(await profileRow(task.product.id)).toEqual(before);
+    const [settled] = await ledger(task.product.id);
+    expect(settled.state).toBe("settled");
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(settled.binding.deadlineAt) - Date.now()) + 25));
+
+    expect(await custom(async lease => {
+      const outcome = await verify(task, lease);
+      expect(outcome).toMatchObject({ kind: "result", result: { ok: true, unsupported: [] } });
+      expect(bodies).toHaveLength(1);
+      if (outcome.kind !== "result" || !outcome.expectation) throw new Error("fixture_positive_result_required");
+      expect(await tracked(recordVerificationResult(task, lease,
+        { kind: "success", removed: [], model: VERIFY_MODEL }, outcome.expectation))).toBe(true);
+    })).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(1);
+  });
+  expect(await ledger(task.product.id)).toHaveLength(1);
+  expect(await profileRow(task.product.id)).toMatchObject({ verify_attempts: 1, verify_error: null });
+  expect((await profileRow(task.product.id)).verified_at).not.toBeNull();
+}), 20_000);
+
+it("never reuses an expired completed execution for a changed profile generation", exercise(async () => {
+  const words = keywords(3), task = await seed(words, null);
+  await server(async ({ bodies }) => {
+    expect(await custom(async lease => {
+      expect(await verify(task, lease, 1_000)).toMatchObject({ kind: "result", result: { ok: true } });
+    })).toMatchObject({ status: "completed" });
+    const [settled] = await ledger(task.product.id);
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(settled.binding.deadlineAt) - Date.now()) + 25));
+    await admin`UPDATE product_search_profiles SET source_revision=source_revision+1 WHERE product_id=${task.product.id}`;
+    expect(await custom(async lease => { expect(await verify(task, lease)).toEqual({ kind: "skipped" }); }))
+      .toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(1);
+
+    const fresh = (await tracked(pendingVerifications(1000))).find(row => row.product.id === task.product.id)!;
+    expect(await custom(async lease => {
+      const outcome = await verify(fresh, lease);
+      expect(outcome).toMatchObject({ kind: "result", result: { ok: true } });
+      if (outcome.kind !== "result" || !outcome.expectation) throw new Error("fixture_positive_result_required");
+      expect(await tracked(recordVerificationResult(fresh, lease,
+        { kind: "success", removed: [], model: VERIFY_MODEL }, outcome.expectation))).toBe(true);
+    })).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(2);
+  });
+  expect((await ledger(task.product.id)).map(row => row.binding.member.profile.sourceRevision)).toEqual([0, 1]);
 }), 20_000);
 
 it("refuses stale raw rows by one microsecond and a lost job lease after historical settlement", exercise(async () => {

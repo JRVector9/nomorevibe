@@ -60,8 +60,11 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   if (continuation.unresolved) throw new ModelCapacityDeferredError("dispatched");
   // A row of this generation has no readable execution: only this product is skipped, the job goes on (no call, attempt or failure).
   if (continuation.broken) throw new ModelCapacityDeferredError("ledger_mismatch");
-  // A resumed execution keeps its stored deadline, further shortened by this tick; it never receives a new 60 seconds.
-  const latest = continuation.latest && continuation.latest.deadlineAt > continuation.nowMs ? continuation.latest : null;
+  // Deadlines bound new HTTP admission. A fully settled successful chain needs no more HTTP:
+  // recover it through the current generation's fenced writer even after its admission deadline.
+  // Incomplete executions still resume only inside their stored deadline, never a new 60 seconds.
+  const latest = continuation.latest && (continuation.latest.next === "done" || continuation.latest.deadlineAt > continuation.nowMs)
+    ? continuation.latest : null;
   const resumed = !!latest, execution = latest ? latest.execution : continuation.nextExecution;
   sealSearchVerifyWriteExpectation(expectation, execution);
   const deadline = startedAt + Math.max(1, latest ? Math.min(options.timeoutMs, latest.deadlineAt - continuation.nowMs) : options.timeoutMs);

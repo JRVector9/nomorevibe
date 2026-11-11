@@ -218,6 +218,12 @@ describe("shared deadline continuation", () => {
     expect(await run()).toEqual({ kind: "result", result: { ok: true, unsupported: ["keyword-4"] }, expectation });
     expect(state.posts).toEqual([]); expect(state.inputs).toEqual([]);
   });
+  it("reuses a fully settled completed execution after its admission deadline without a POST", async () => {
+    resumable("done", -1_000, [{ step: { kind: "full" }, outcome: { ok: true, removed: ["a"] } }]);
+    expect(await run({ chunked: false }, task(["a"], null)))
+      .toEqual({ kind: "result", result: { ok: true, unsupported: ["a"] }, expectation });
+    expect(state.posts).toEqual([]); expect(state.inputs).toEqual([]);
+  });
   it("defers on any unresolved physical call of the target without a new permit", async () => {
     state.continuation = { generationHash: "9".repeat(64), nowMs: Date.now(), unresolved: true, nextExecution: 1, latest: null };
     await expect(run()).rejects.toMatchObject({ reason: "dispatched" }); expect(state.inputs).toEqual([]);
