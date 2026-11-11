@@ -120,8 +120,13 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
       && ['worker_missing', 'restart_loop'].includes(role.reason)
       ? [{ stage: `role-${role.role}`, reason: role.reason }] : []),
   ] : undefined;
+  // 2026-11-11: 모델 접수 모드와 그 행이 바뀐 시각(이 컨테이너 시계 epoch ms). gateway 가 같은 시계로 나이를 재 Oracle 에 넘기고, Oracle 은
+  // DRAINING 동안의 pipeline_alarm 알림을 묶어 둔다(incident_notifications.DRAIN_HOLD_SECONDS). 읽지 못한 주기에는 칸이 없다.
+  const mode = status.capacityMode;
+  const capacityMode = mode && ['open', 'draining', 'disabled'].includes(mode.mode) && Number.isSafeInteger(mode.changedAt) && mode.changedAt >= 0
+    ? { mode: mode.mode, changedAt: mode.changedAt } : undefined;
   writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures, stageFailures,
-    capacityUnknowns: status.capacityUnknowns }), { mode: 0o600 });
+    capacityUnknowns: status.capacityUnknowns, capacityMode }), { mode: 0o600 });
   renameSync(temporary, path);
 }
 
@@ -205,7 +210,8 @@ async function main() {
       console.error('monitor push failed');
     }
     console.log(JSON.stringify({ measuredAt: status.measuredAt, overall: status.overall,
-      badSamples: state.badSamples, ...(status.warnings ? { warnings: status.warnings } : {}) }));
+      badSamples: state.badSamples, ...(status.warnings ? { warnings: status.warnings } : {}),
+      ...(status.capacityMode ? { capacityMode: status.capacityMode.mode } : {}) }));
     await new Promise<void>(resolve => {
       const onAbort = () => { clearTimeout(timer); resolve(); };
       const timer = setTimeout(() => { stop.signal.removeEventListener('abort', onAbort); resolve(); }, 30_000);

@@ -64,6 +64,19 @@ it('accepts recent failure counts and deferred demand without requiring an alrea
     providerErrorMinutes: 0 })])).value.providerFailures).toEqual(['keywords']);
 });
 
+it('records the model admission mode for the Oracle drain hold only when the observation is well formed', () => {
+  const at = (capacityMode: unknown) => heartbeat({ ...status(null), capacityMode } as MonitorStatus).value;
+  expect(at({ mode: 'draining', changedAt: 1_700_000_000_000 })).toEqual({ checkedAt: expect.any(Number), overall: 'ok',
+    capacityMode: { mode: 'draining', changedAt: 1_700_000_000_000 } });
+  expect(at({ mode: 'open', changedAt: 0, secret: 'private-token' }).capacityMode).toEqual({ mode: 'open', changedAt: 0 });
+  for (const value of [undefined, { mode: 'paused', changedAt: 1 }, { mode: 'open', changedAt: 1.5 }, { mode: 'open', changedAt: -1 },
+    { mode: 'open', changedAt: '1' }, { mode: 'open' }]) {
+    const recorded = at(value);
+    expect(recorded).toEqual({ checkedAt: expect.any(Number), overall: 'ok' });
+    expect(JSON.stringify(recorded)).not.toContain('private');
+  }
+});
+
 it('preserves the legacy heartbeat fields and omits unavailable provider observations', () => {
   const { value } = heartbeat(status(null));
   expect(value).toEqual({ checkedAt: expect.any(Number), overall: 'ok' });
