@@ -74,10 +74,12 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
     let written = 0, empty = 0, failed = 0, released = 0, blocked = "";
     /** 이 틱에 넘긴 후보(같은 작업의 미룸) — 다시 고르지 않는다 */
     const passed = new Set<number>();
+    // A completed cache reuse or a concurrently changed source must not monopolize this tick.
+    const seen = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
-      const tasks = (await pendingTaglines(batch, { skipBusy: true, exclude: [...passed] }))
-        .filter(task => !passed.has(task.candidate.id));
+      const tasks = (await pendingTaglines(batch, { skipBusy: true, exclude: [...seen] }))
+        .filter(task => !seen.has(task.candidate.id));
       if (tasks.length === 0) {
         ctx.log("tagline.done", { written, empty, failed, released, passed: passed.size, drained: true });
         return { done: true };
@@ -89,6 +91,7 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
           for (let index = next++; index < tasks.length; index = next++) {
             if (skipped || blocked || ranks.exhausted || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
+            seen.add(task.candidate.id);
             try {
               const { candidate, document, written: stored } = task;
               const evidence = taglineEvidence(candidate.repo, document);
