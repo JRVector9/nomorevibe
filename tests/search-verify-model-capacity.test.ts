@@ -56,7 +56,8 @@ vi.mock("@/lib/crawl/agent-review-gateway", () => ({
   readSearchVerifyGatewayTerminal: (terminal: { requestId: string; outcome: SearchVerifyOutcome } | null) =>
     terminal ? { responseHash: "d".repeat(64), outcome: terminal.outcome } : null,
 }));
-const { verifyKeywordsWithModelCapacity } = await import("@/lib/domain/products/search-verify-model-capacity");
+const verifyCapacity = await import("@/lib/domain/products/search-verify-model-capacity");
+const { verifyKeywordsWithModelCapacity } = verifyCapacity;
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
 /** The route opens only on an engine connected directly (admin contract, transport direct); the gateway key env is gone (2026-10-30). */
 const pinDirectContract = () => setServingContractSnapshotForTest([textContract("product-search-verify", VERIFY_MODEL)]);
@@ -217,6 +218,18 @@ describe("shared deadline continuation", () => {
     expect(await run()).toEqual({ kind: "result", result: { ok: true, unsupported: ["keyword-4"] }, expectation });
     expect(state.posts).toEqual([]); expect(state.inputs).toEqual([]);
   });
+  it("reuses a fully settled completed execution after its admission deadline without a POST", async () => {
+    resumable("done", -1_000, [{ step: { kind: "full" }, outcome: { ok: true, removed: ["a"] } }]);
+    expect(await run({ chunked: false }, task(["a"], null)))
+      .toEqual({ kind: "result", result: { ok: true, unsupported: ["a"] }, expectation });
+    expect(state.posts).toEqual([]); expect(state.inputs).toEqual([]);
+  });
+  it("reuses a fully settled invalid-output stop after its admission deadline without a POST", async () => {
+    resumable("stop", -1_000, [{ step: { kind: "full" }, outcome: { ok: false, error: "invalid_output" } }]);
+    expect(await run({ chunked: false }, task(["a"], null)))
+      .toEqual({ kind: "result", result: { ok: false, error: "invalid_output" }, expectation });
+    expect(state.posts).toEqual([]); expect(state.inputs).toEqual([]);
+  });
   it("defers on any unresolved physical call of the target without a new permit", async () => {
     state.continuation = { generationHash: "9".repeat(64), nowMs: Date.now(), unresolved: true, nextExecution: 1, latest: null };
     await expect(run()).rejects.toMatchObject({ reason: "dispatched" }); expect(state.inputs).toEqual([]);
@@ -231,6 +244,33 @@ describe("job wiring keeps deferred and expired unconsumed", () => {
   const ctx = (): JobContext<null> => ({ cursor: null, lease, hasBudget: () => true, log: vi.fn(), save: vi.fn() });
   const stubRole = () => { for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: "text", ROLE_LEASE_INSTANCE_ID: "text-unit",
     ROLE_LEASE_BOOT_ID: boot, ROLE_LEASE_RELEASE: "unit", ROLE_LEASE_EPOCH: "1" })) vi.stubEnv(key, value); };
+  it.each([
+    { mode: "tick budget", positive: true, stored: true },
+    { mode: "tick budget", positive: false, stored: false },
+    { mode: "external shutdown", positive: true, stored: false },
+  ])("preserves completed adapter success after $mode (positive=$positive, stored=$stored)", async ({ mode, positive, stored }) => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const context = ctx(), shutdown = new AbortController();
+    context.signal = shutdown.signal;
+    let budget = true;
+    context.hasBudget = () => budget;
+    state.pending.mockResolvedValueOnce([task(["a"], null)]).mockResolvedValue([]);
+    const adapter = vi.spyOn(verifyCapacity, "verifyKeywordsWithModelCapacity").mockImplementation(async (_task, _lease, options) => {
+      if (mode === "tick budget") budget = false;
+      else shutdown.abort();
+      // Run the real caller ownership poll before a completed adapter outcome is delivered.
+      await vi.advanceTimersByTimeAsync(250);
+      expect(options.signal?.aborted).toBe(true);
+      return { kind: "result", result: positive ? { ok: true, unsupported: [] } : { ok: false, error: "cancelled" }, expectation };
+    });
+    try {
+      expect(await verifySearchKeywords(context)).toEqual({ done: false });
+      expect(state.writes).toHaveBeenCalledTimes(stored ? 1 : 0);
+      if (stored) expect(state.writes).toHaveBeenCalledWith(expect.anything(), lease,
+        { kind: "success", removed: [], model: VERIFY_MODEL }, expectation);
+      expect(adapter).toHaveBeenCalledTimes(1);
+    } finally { adapter.mockRestore(); }
+  });
   it("records no attempt, rests the product and ends the tick when the shared deadline expired", async () => {
     stubRole(); state.pending.mockResolvedValueOnce([task()]).mockResolvedValue([]);
     resumable({ kind: "chunk", chunk: 1 }, 5_000, []); state.prepares = ["expired"];
