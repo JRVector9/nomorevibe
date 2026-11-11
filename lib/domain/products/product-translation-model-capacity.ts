@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { translateProductFields } from "@/lib/crawl/translate";
 import { prepareProductTranslationGatewayCall, translateProductFieldsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
-import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTranslationModelSlot,
+import { reconcileGatewayNotStarted, reconcileGatewayHttpRejected, readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTranslationModelSlot,
   findOwnPendingProductTextRequests, cancelOwnPendingProductTextRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileProductTranslationGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
@@ -133,10 +133,12 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   try {
     if (native.terminal) await reconcileProductTranslationGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
+    // 0174: 공급자가 처리하지 않고 거절한 완결 응답(429·401·403) — 결과 미확정 대신 확정 실패로 정산해 칸을 바로 비운다
+    else if (native.rejected) await reconcileGatewayHttpRejected(native.rejected);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !native.result.ok && native.result.error === "timeout" })))
       throw new Error("product_translation_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted || native.rejected) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "product_translation_result_cleanup_failed");
     throw cleanup;
   }

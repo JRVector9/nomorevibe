@@ -311,8 +311,10 @@ it("retains network attempts beyond six and the actual home-extra shortened solo
     expect(koreanTaglineSource(task)).not.toBe(task.tagline);
     const [stored] = await admin`SELECT attempts,quality_rejections,error_code,retry_at>clock_timestamp() AS future FROM product_korean_taglines WHERE product_id=${product.id}`;
     expect(stored).toEqual({ attempts: 10, quality_rejections: 4, error_code: "rate_limit", future: true });
-    expect((await admin`SELECT state,dispatch_binding->'members'->0->'cache' AS cache FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)[0])
-      .toMatchObject({ state: "indeterminate", cache: { kind: "present", attempts: 9, qualityRejections: 4 } });
+    // 0174: 429 는 결과 미확정이 아니라 확정 실패(gateway_http_rejected)로 정산된다
+    expect((await admin`SELECT state,terminal_evidence->>'kind' AS kind,dispatch_binding->'members'->0->'cache' AS cache FROM model_capacity_requests
+      WHERE owner_instance_id=${prefix}`)[0])
+      .toMatchObject({ state: "settled", kind: "gateway_http_rejected", cache: { kind: "present", attempts: 9, qualityRejections: 4 } });
   });
 }), 20_000);
 
@@ -374,19 +376,21 @@ it("rolls dispatch and event back when reservation DBwall expires during actual 
   });
 }), 20_000);
 
-// 2026-11-11 공급자 429(LG EXAONE 빈도 한도): 보낸 뒤 받은 429 의 장부 행은 예전처럼 결과 미확정(transport_unknown)이다 — 확정 실패로 정산하려면
-// terminal 근거 kind 를 늘리는 마이그레이션이 필요하다. 대신 그 경로·모델이 Retry-After 만큼 쉬어, 쉬는 동안의 틱은 장부에 묻지 않고(대기·전송 행 없음,
-// HTTP 없음) 포화처럼 미룬다. 쉼이 끝나면 다시 보낸다.
+// 2026-11-11 공급자 429(LG EXAONE 빈도 한도): 보낸 뒤 받은 429 의 장부 행은 0174 부터 확정 실패(gateway_http_rejected, Retry-After 포함)로 정산되어
+// 칸을 바로 비운다(예전: 결과 미확정 transport_unknown 으로 유지 시간 600초 동안 칸을 쥐었다). 그 경로·모델은 Retry-After 만큼 쉬어, 쉬는 동안의 틱은
+// 장부에 묻지 않고(대기·전송 행 없음, HTTP 없음) 포화처럼 미룬다. 쉼이 끝나면 다시 보낸다.
 it("cools the route after a provider 429 so the next tick neither queues nor sends, and sends again after the cooldown", exercise(async () => {
   const key = { routeId: jobName, provider: "abcllm", model: KOREAN_TAGLINE_MODEL };
   const { products: [limited] } = await seed();
   await server(async ({ bodies, setReply }) => {
     setReply(response => { response.statusCode = 429; response.setHeader("retry-after", "120"); response.end('{"result_code":429,"description":"rate limit"}'); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
-    const [first] = await admin`SELECT request_id,state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
-    expect(first.state).toBe("indeterminate");
-    expect(await admin`SELECT reason FROM model_capacity_events WHERE request_id=${first.request_id}::uuid AND kind='dispatch_indeterminate'`)
-      .toEqual([{ reason: "transport_unknown" }]);
+    const [first] = await admin`SELECT request_id,state,terminal_evidence,dispatch_binding FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
+    expect(first.state).toBe("settled");
+    expect(first.terminal_evidence).toMatchObject({ version: 1, kind: "gateway_http_rejected", status: 429, retryAfterMs: 120_000,
+      dispatch: { requestId: first.request_id, binding: first.dispatch_binding } });
+    expect(await admin`SELECT kind,from_state,to_state,reason FROM model_capacity_events WHERE request_id=${first.request_id}::uuid
+      AND kind IN ('dispatch_indeterminate','dispatch_settled')`).toEqual([{ kind: "dispatch_settled", from_state: "dispatched", to_state: "settled", reason: null }]);
     expect((await admin`SELECT error_code FROM product_korean_taglines WHERE product_id=${limited.id}`)[0].error_code).toBe("rate_limit");
     const until = providerRateLimitedUntil(key); expect(until).not.toBeNull(); expect(until! - Date.now()).toBeGreaterThan(100_000);
     // 쉬는 동안: 새 제품이 있어도 장부 행·HTTP 없이 포화처럼 미룬다(degraded 로 알리지 않는다)
@@ -398,8 +402,8 @@ it("cools the route after a provider 429 so the next tick neither queues nor sen
     resetProviderRateLimitsForTest();
     setReply(response => response.end(JSON.stringify(replyBody())));
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
-    expect((await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`).map(row => row.state))
-      .toEqual(["indeterminate", "settled"]);
+    expect((await admin`SELECT state,terminal_evidence->>'kind' AS kind FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`)
+      .map(row => [row.state, row.kind])).toEqual([["settled", "gateway_http_rejected"], ["settled", "product_tagline_ko_gateway_terminal"]]);
     expect((await admin`SELECT tagline_ko FROM product_korean_taglines WHERE product_id=${next.id}`)[0].tagline_ko).toBe("문서를 관리하는 도구");
     expect(providerRateLimitedUntil(key)).toBeNull();
   });

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
+import { withoutRejected } from "./gateway-http-rejected-fixture";
 import { translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
   productTaglineKoLegacyWire, type ProductTaglineKoGatewayItem } from "@/lib/crawl/translate";
 import { parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
@@ -219,8 +220,8 @@ it.each([{ usage: { prompt_tokens: 8192, completion_tokens: 1, total_tokens: 819
 it.each([429, 307])("performs one native POST for HTTP %i without redirect or retry", async status => {
   await server(async ({ bodies, reply }) => {
     reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
-    const batch = items(), call = prepared(batch);
-    expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
+    const batch = items(), call = prepared(batch), owned = dispatch(batch, call);
+    expect(withoutRejected(await send(batch, owned, call), status, owned)).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
     expect(bodies).toHaveLength(1);
   });
 });
@@ -292,13 +293,15 @@ it("adds the contract's reasoning reserve to the native max_tokens and keeps the
       actualUsage: { inputTokens: 80, outputTokens: 2_000, totalTokens: 2_080 }, provenance: "upstream_reported" });
   });
 });
-// 2026-11-11: 공급자의 429 는 결과 코드(rate_limit)·장부(terminal 없음 → 결과 미확정)를 바꾸지 않고, 이 경로·공급자·모델만 Retry-After 만큼 쉬게 한다
+// 2026-11-11: 공급자의 429 는 결과 코드(rate_limit)를 바꾸지 않고, 이 경로·공급자·모델만 Retry-After 만큼 쉬게 한다. 장부 쪽은 terminal 없이
+// 처리 전 거절 증인(0174 gateway_http_rejected, Retry-After 포함)을 실어 용량 호출자가 결과 미확정 대신 확정 정산하게 한다
 it("cools only this route and model after a 429, honours Retry-After, and clears on the next non-429 answer", async () => {
   await server(async ({ bodies, reply }) => {
     const key = { routeId: "product-tagline-ko", provider: "abcllm", model };
     reply(response => { response.statusCode = 429; response.setHeader("retry-after", "120"); response.end('{"result_code":429,"description":"rate limit"}'); });
-    const batch = items(), before = Date.now(), call = prepared(batch);
-    expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: "rate_limit" }, terminal: null });
+    const batch = items(), before = Date.now(), call = prepared(batch), owned = dispatch(batch, call);
+    // 0174: 장부 정산 근거(처리 전 거절 증인)도 싣는다 — Retry-After 120초가 retryAfterMs 로 들어간다
+    expect(withoutRejected(await send(batch, owned, call), 429, owned, 120_000)).toEqual({ result: { ok: false, error: "rate_limit" }, terminal: null });
     expect(bodies).toHaveLength(1);
     const until = providerRateLimitedUntil(key);
     expect(until).not.toBeNull();

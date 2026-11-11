@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prepareWebsearchQueryGatewayCall, translateQueryWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
-import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, reconcileGatewayHttpRejected, readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileWebsearchQueryGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey } from "@/lib/llm/capacity";
@@ -93,9 +93,11 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
   try {
     if (native.terminal) await reconcileWebsearchQueryGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
+    // 0174: 공급자가 처리하지 않고 거절한 완결 응답(429·401·403) — 결과 미확정 대신 확정 실패로 정산해 칸을 바로 비운다
+    else if (native.rejected) await reconcileGatewayHttpRejected(native.rejected);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ timedOut: !native.result.ok && native.result.error === "timeout" }))) throw new Error("websearch_query_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted || native.rejected) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "websearch_query_result_cleanup_failed");
     throw cleanup;
   }

@@ -22,6 +22,7 @@ import { modelCapacityPolicyHash, searchVerifyInputHash, searchVerifyLogicalWork
   type ModelCapacityRequest, type SearchVerifyInput, type SearchVerifyMember } from "@/lib/llm/capacity";
 import type { SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 import { OVERDUE_DEFAULT_CALL_MS, OVERDUE_GRACE_MS, overdueTrackedForTest, resetOverdueDispatchesForTest, sweepOverdueDispatches } from "@/lib/llm/capacity-overdue";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
@@ -191,7 +192,7 @@ beforeAll(() => tracked((async () => {
 beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, VERIFY_MODEL)]); pinTextRanks({ [jobName]: VERIFY_MODEL });
   await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
@@ -517,6 +518,28 @@ it("records a live not_started failure once so the generation moves on, without 
   const after = await profileRow(task.product.id);
   expect(after.verify_error).toBe("network"); expect(after.updated_at).not.toEqual(before.updated_at);
   expect((await ledger(task.product.id)).map(row => row.state)).toEqual(["settled"]);
+}), 20_000);
+
+// 0174(2026-11-11): 공급자의 429 는 확정 실패(gateway_http_rejected)로 정산된다 — 결과 없는 settled 꼬리라 not_started 처럼 그 실행을 닫고, writer 는
+// 실패를 한 번 적는다(두 번째 POST 없음). 결과 미확정으로 남겨 칸을 쥐지 않는다.
+it("records a live provider 429 (settled gateway_http_rejected) once so the execution closes, without a second POST", exercise(async () => {
+  const words = keywords(2), task = await seed(words, null), before = await profileRow(task.product.id);
+  await server(async ({ bodies, setReply }) => {
+    setReply((_, response) => { response.statusCode = 429; response.end('{"error":"rate limit"}'); });
+    expect(await custom(async lease => {
+      const outcome = await verify(task, lease);
+      expect(outcome).toMatchObject({ kind: "result", result: { ok: false, error: "rate_limit" } });
+      if (outcome.kind !== "result" || !outcome.expectation) throw new Error("fixture_expectation_required");
+      expect(await tracked(recordVerificationResult(task, lease, { kind: "failure", error: "rate_limit" }, outcome.expectation))).toBe(true);
+    })).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(1);
+  });
+  const after = await profileRow(task.product.id);
+  expect(after.verify_error).toBe("rate_limit"); expect(after.updated_at).not.toEqual(before.updated_at);
+  const rows = await ledger(task.product.id);
+  expect(rows.map(row => row.state)).toEqual(["settled"]);
+  expect((await admin`SELECT terminal_evidence->>'kind' AS kind, terminal_evidence->'status' AS status, terminal_evidence->'retryAfterMs' AS "retryAfterMs"
+    FROM model_capacity_requests WHERE request_id=${rows[0].request_id}::uuid`)[0]).toEqual({ kind: "gateway_http_rejected", status: 429, retryAfterMs: null });
 }), 20_000);
 
 it("2026-11-07 repro: a committed dispatch whose caller left without settling goes to unknown review by its own owner after the deadline", exercise(async () => {

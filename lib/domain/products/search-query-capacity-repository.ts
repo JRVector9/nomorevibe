@@ -107,10 +107,11 @@ export async function prepareWebsearchQueryDispatch(value: WebsearchQueryTarget,
       if (continuation.kind === "blocked") throw new ModelCapacityDeferredError("dispatched");
       // 이 검색어 한 스냅숏의 장부 행이 하나의 결과로 읽히지 않는다 — 이 검색어만 미루고(원문·정해 둔 영어로 찾는다) 다른 검색어는 계속 (2026-10-31)
       if (continuation.kind === "broken") throw new ModelCapacityDeferredError("ledger_mismatch");
-      if (continuation.kind === "unresolved") {
+      if (continuation.kind === "unresolved" || continuation.kind === "failed") {
         // 이 스냅숏의 호출이 결과 미확정으로 남았고 그 실패가 캐시에 닿지 못했다(전송 오류로 던짐·프로세스 재시작·캐시 쓰기 실패) — 같은 스냅숏은 다시 보낼 수
-        // 없으니(snapshot 고유 색인) 결과를 지어내지 않고 실패 한 번(unknown)만 적어 다음 검색이 새 스냅숏으로 묻게 한다(2026-11-09). 장부 행은 그대로다
-        const result: WebsearchQueryResult = { ok: false, error: "unknown" };
+        // 없으니(snapshot 고유 색인) 결과를 지어내지 않고 실패 한 번(unknown)만 적어 다음 검색이 새 스냅숏으로 묻게 한다(2026-11-09). 장부 행은 그대로다.
+        // failed: 결과 없이 정산된 호출(전송 0·0174 공급자의 처리 전 거절) — 같은 길로 그 실패 코드(rate_limit·http_401…·not_started)를 적는다
+        const result: WebsearchQueryResult = { ok: false, error: continuation.kind === "failed" ? continuation.error : "unknown" };
         const written = await writeQueryCache(tx, target.cacheKey, raw, result, continuation.model);
         return { kind: "continued", result, cached: written ? null : doneText(await lockQueryCache(tx, target.cacheKey)) };
       }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
+import { withoutRejected } from "./gateway-http-rejected-fixture";
 import { crawlTaglineGatewayWire, parseTagline, taglineHash, writeTagline, type TaglineEvidence } from "@/lib/crawl/tagline";
 import { crawlTaglineGenerationHash, crawlTaglineLogicalWorkKey, crawlTaglineInputHash,
   crawlTaglineDispatchBindingHash, crawlTaglineModelDispatchSchema, type CrawlTaglineInput } from "@/lib/llm/capacity";
@@ -240,8 +241,8 @@ it.each([{ usage: { prompt_tokens: 8192, completion_tokens: 1, total_tokens: 819
 it.each([404, 429, 307])("performs one physical POST for HTTP %i with original errors and no redirect/retry", async status => {
   await server(async ({ bodies, reply }) => {
     reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
-    const input = evidence(), call = prepared(input);
-    expect(await send(input, dispatch(input, call), call)).toEqual({ result: { ok: false, error: status === 404 ? "model_unavailable" : status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
+    const input = evidence(), call = prepared(input), owned = dispatch(input, call);
+    expect(withoutRejected(await send(input, owned, call), status, owned)).toEqual({ result: { ok: false, error: status === 404 ? "model_unavailable" : status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
     expect(bodies).toHaveLength(1);
   });
 });

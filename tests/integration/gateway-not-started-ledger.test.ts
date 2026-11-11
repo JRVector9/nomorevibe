@@ -1,5 +1,6 @@
 import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
+import { gatewayHttpRejectedTerminalSql, gatewayHttpRejectedEventTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
 import { randomBytes, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -521,6 +522,10 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
       let full = new PgDialect().sqlToQuery(check.value).sql;
+      // 0174 appends the HTTP-rejected settlement branch last on both terminal CHECKs; strip it first.
+      const rejectedTail = `) OR (${events ? gatewayHttpRejectedEventTerminalSql : gatewayHttpRejectedTerminalSql})`;
+      expect(full.startsWith("(") && full.endsWith(rejectedTail), `${name}: 0174 tail present`).toBe(true);
+      full = full.slice(1, -rejectedTail.length);
       if (events) {
         const taskTail = `) OR (${opencodeTaskEventTerminalSql})`;
         expect(full.startsWith("(") && full.endsWith(taskTail), `${name}: 0168 task tail present`).toBe(true);
@@ -660,7 +665,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const predecessor = textLocalDirect[name] ? inner(after0161[name]) : `(${inner(after0161[name])})`;
       expect(after0163[name], `${name}: exact prior ordinals plus the 0163 review branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
     }
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    await migrateThrough(168);
     const current0168 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const publication: Record<string, string> = { model_capacity_requests_logical_check: publicationApiLogicalSql,
       model_capacity_requests_members_check: publicationApiLogicalSql, model_capacity_requests_dispatch_check: publicationApiDispatchSql,
@@ -674,6 +679,16 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const predecessor = textLocalDirect[name] || opencode[name] ? inner(after0163[name]) : `(${inner(after0163[name])})`;
       const taskTail = opencodeTask[name] ? ` OR (${opencodeTask[name]})` : "";
       expect(current0168[name], `${name}: exact prior ordinals plus the 0166 publication and 0168 task branches`).toBe(`CHECK (${predecessor} OR (${branch})${taskTail})`);
+    }
+    // 0174 appends only the HTTP-rejected branch to the two terminal CHECKs (next ordinal); every other CHECK is byte-identical.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const current0174 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const rejected: Record<string, string> = { model_capacity_requests_terminal_check: gatewayHttpRejectedTerminalSql,
+      model_capacity_events_terminal_check: gatewayHttpRejectedEventTerminalSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = rejected[name];
+      if (!branch) { expect(current0174[name], `${name}: unchanged by 0174`).toBe(current0168[name]); continue; }
+      expect(current0174[name], `${name}: exact prior ordinals plus the 0174 HTTP-rejected branch`).toBe(`CHECK (${inner(current0168[name])} OR (${branch}))`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }

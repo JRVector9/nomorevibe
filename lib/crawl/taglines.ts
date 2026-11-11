@@ -17,7 +17,7 @@ import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { lockModelCapacityCallerControl, lockCrawlTaglineModelCapacityDispatch, finishCrawlTaglineModelCapacityDispatch,
   type CrawlTaglineContinuation, type CrawlTaglineNotStartedContinuation } from "@/lib/llm/capacity-repository";
 import { crawlTaglineMemberSchema, crawlTaglineGenerationHash, crawlTaglineInputHash, crawlTaglineLogicalWorkKey,
-  crawlTaglineDispatchBindingSchema, crawlTaglineGatewayTerminalEvidenceSchema, crawlTaglineMemberKeys, gatewayNotStartedEvidenceSchema,
+  crawlTaglineDispatchBindingSchema, crawlTaglineGatewayTerminalEvidenceSchema, crawlTaglineMemberKeys, gatewayNoOutcomeEvidenceSchema,
   type CrawlTaglineInput, type CrawlTaglineMember, type CrawlTaglineModelDispatch, type CrawlTaglineDispatchBinding,
   type CrawlTaglineParent, type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -331,9 +331,10 @@ async function storedCrawlPhase(tx: ProductTransaction, parent: CrawlTaglinePare
     || parent.bindingHash !== dispatch.bindingHash || parent.responseHash !== evidence.responseHash) throw new CrawlTaglineChanged();
   return evidence;
 }
-/** 같은 검증의 gateway_not_started 판(0149): 이 행 자신의 dispatch 로 요청 바이트 0 이 증명된 정산. 결과가 없으니 실패만 받는다. */
+/** 같은 검증의 결과 없는 정산 판: gateway_not_started(0149, 이 행 자신의 dispatch 로 요청 바이트 0 이 증명됨) 또는 gateway_http_rejected(0174, 공급자가
+ * 처리하지 않고 거절함 — 429·401·403). 결과가 없으니 실패만 받는다. */
 function crawlNotStartedRow(row: RequestRow | undefined, initial: CrawlInitial, ordinal: 1 | 2, bindingHash: string): CrawlTaglineModelDispatch | null {
-  const parsed = gatewayNotStartedEvidenceSchema.safeParse(row?.terminalEvidence);
+  const parsed = gatewayNoOutcomeEvidenceSchema.safeParse(row?.terminalEvidence);
   if (!row || row.state !== "settled" || !row.settledAt || !row.dispatchedAt || !parsed.success
     || parsed.data.dispatch.binding.kind !== "crawl_tagline_gateway") return null;
   const dispatch = parsed.data.dispatch as CrawlTaglineModelDispatch;

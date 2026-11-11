@@ -6,6 +6,8 @@ import { clearProviderRateLimit, parseRetryAfterMs, recordProviderRateLimit, typ
 import { logger } from "@/lib/observability/logger";
 import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-end-fetch";
 import { gatewayNotSentWitness, issueGatewayNotStarted, readGatewayNotStarted, type GatewayNotStarted } from "@/lib/llm/gateway-not-started";
+import { gatewayHttpRejectedWitness, readGatewayHttpRejected, type GatewayHttpRejected } from "@/lib/llm/gateway-http-rejected";
+import type { GatewayHttpRejectedDispatch } from "@/lib/llm/capacity";
 import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
   type Ai2ModelDispatch, type Ai2GatewayTerminalEvidence,
@@ -247,12 +249,17 @@ export const contractReasoningReserve = (contract: object): number => {
 };
 /**
  * text 경로가 받은 HTTP 응답 상태를 공급자 빈도 한도 쉼에 알린다(2026-11-11, provider-rate-limit.ts). 429 면 그 경로·공급자·장부 모델을 Retry-After
- * (없으면 연속 수의 지수 backoff)만큼 쉬게 하고, 그 밖의 응답이면 연속 수를 지운다. 결과 코드(rate_limit)·장부 정산은 바꾸지 않는다.
+ * (없으면 연속 수의 지수 backoff)만큼 쉬게 하고, 그 밖의 응답이면 연속 수를 지운다. 결과 코드(rate_limit)는 바꾸지 않는다.
+ * 0174: 상태가 처리 전 거절(429·401·403)이면 이 dispatch 의 gateway_http_rejected 증인을 돌려준다 — 전송 함수는 실패 반환에 펼쳐 넣고, 용량 호출자는
+ * 결과 미확정 대신 확정 정산(reconcileGatewayHttpRejected)으로 칸을 바로 비운다. 그 밖의 상태(200·5xx·다른 4xx)는 빈 객체다.
  */
-function noteTextRouteStatus(binding: ProviderRateLimitKey, response: { status: number; headers: { get(name: string): string | null } }): void {
-  const key = { routeId: binding.routeId, provider: binding.provider, model: binding.model };
-  if (response.status === 429) recordProviderRateLimit(key, parseRetryAfterMs(response.headers.get("retry-after"), Date.now()));
+function noteTextRouteStatus(dispatch: GatewayHttpRejectedDispatch & { binding: ProviderRateLimitKey },
+  response: { status: number; headers: { get(name: string): string | null } }): { rejected: GatewayHttpRejected } | Record<never, never> {
+  const binding = dispatch.binding, key = { routeId: binding.routeId, provider: binding.provider, model: binding.model };
+  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"), Date.now());
+  if (response.status === 429) recordProviderRateLimit(key, retryAfterMs);
   else clearProviderRateLimit(key);
+  return gatewayHttpRejectedWitness(dispatch, response.status, retryAfterMs);
 }
 export const wireMaxTokens = (wire: string): number | undefined => {
   const value = (JSON.parse(wire) as { max_tokens?: unknown }).max_tokens;
@@ -377,6 +384,8 @@ function freeze<T>(value: T): T {
  * 지금처럼 indeterminate 로 남는다. 이 원본 객체만 정산 근거다 — JSON·사본은 아니다.
  */
 export { readGatewayNotStarted, type GatewayNotStarted };
+/** 공급자가 처리하지 않고 거절한 text 경로 호출의 증인(0174) — 등록부와 규칙은 lib/llm/gateway-http-rejected 에 있다(noteTextRouteStatus 가 낸다). */
+export { readGatewayHttpRejected, type GatewayHttpRejected };
 const issueNotStarted = issueGatewayNotStarted;
 /**
  * 이미 끝난 신호(기한·틱 끝·형제 호출 중단)로는 fetch 를 부르지 않는다 — undici 도 보내지 않고 같은 사유로 거절하므로 전송 0 이 증명된다(AI1·AI2 전송과 같다).
@@ -779,7 +788,7 @@ export function readTextProfileGatewayTerminal(value: unknown): TextProfileGatew
 }
 export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence, dispatch: TextProfileModelDispatch,
   call: PreparedTextProfileGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: KeywordResult; terminal: TextProfileGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
+  Promise<{ result: KeywordResult; terminal: TextProfileGatewayTerminal | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(evidence), state = textProfileCalls.get(call);
   const checked = textProfileModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -803,11 +812,11 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
     if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
-    noteTextRouteStatus(binding, response);
+    const rejected = noteTextRouteStatus(owned, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Nonterminal failure retains full C. */ }
       return { result: { ok: false, error: response.status === 404 ? "model_unavailable"
-        : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+        : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };
     }
     body = await response.text();
   } catch (error) {
@@ -873,7 +882,7 @@ export function readReasonTranslationGatewayTerminal(value: unknown): ReasonTran
 }
 export async function translateWithReservedReasonGateway(texts: readonly string[], dispatch: ReasonTranslationModelDispatch,
   call: PreparedReasonTranslationGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: TranslateResult; terminal: ReasonTranslationGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
+  Promise<{ result: TranslateResult; terminal: ReasonTranslationGatewayTerminal | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(texts), state = reasonTranslationCalls.get(call);
   const checked = reasonTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -899,10 +908,10 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
-    noteTextRouteStatus(binding, response);
+    const rejected = noteTextRouteStatus(owned, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
-      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };
     }
     body = await response.text();
   } catch (error) {
@@ -980,7 +989,7 @@ export function readProductTranslationGatewayTerminal(value: unknown): ProductTr
 }
 export async function translateProductFieldsWithReservedGateway(items: readonly ProductTranslationGatewayItem[], dispatch: ProductTranslationModelDispatch,
   call: PreparedProductTranslationGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: KoreanTaglineBatch; terminal: ProductTranslationGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
+  Promise<{ result: KoreanTaglineBatch; terminal: ProductTranslationGatewayTerminal | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(items), state = productTranslationCalls.get(call);
   const checked = productTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1011,10 +1020,10 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
-    noteTextRouteStatus(binding, response);
+    const rejected = noteTextRouteStatus(owned, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
-      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };
     }
     body = await response.text();
   } catch (error) {
@@ -1075,7 +1084,7 @@ export function readProductTaglineKoGatewayTerminal(value: unknown): ProductTagl
 }
 export async function translateTaglinesWithReservedGateway(items: readonly ProductTaglineKoGatewayItem[], dispatch: ProductTaglineKoModelDispatch,
   call: PreparedProductTaglineKoGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: KoreanTaglineBatch; terminal: ProductTaglineKoGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
+  Promise<{ result: KoreanTaglineBatch; terminal: ProductTaglineKoGatewayTerminal | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(items), state = productTaglineKoCalls.get(call);
   const checked = productTaglineKoModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1103,10 +1112,10 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
-    noteTextRouteStatus(binding, response);
+    const rejected = noteTextRouteStatus(owned, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
-      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };
     }
     body = await response.text();
   } catch (error) {
@@ -1167,7 +1176,7 @@ export function readCrawlTaglineGatewayTerminal(value: unknown): CrawlTaglineGat
 }
 export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence, dispatch: CrawlTaglineModelDispatch,
   call: PreparedCrawlTaglineGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: TaglineResult; terminal: CrawlTaglineGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
+  Promise<{ result: TaglineResult; terminal: CrawlTaglineGatewayTerminal | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(evidence), state = crawlTaglineCalls.get(call);
   const checked = crawlTaglineModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1192,10 +1201,10 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
     if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
-    noteTextRouteStatus(binding, response);
+    const rejected = noteTextRouteStatus(owned, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
-      return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+      return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };
     }
     body = await response.text();
   } catch (error) {
@@ -1257,7 +1266,7 @@ export function readSearchVerifyGatewayTerminal(value: unknown): SearchVerifyGat
 /** Exactly one POST. Original HTTP, outer-decoding (network) and content-parser (invalid_output) names are kept. */
 export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispatch: SearchVerifyModelDispatch,
   call: PreparedSearchVerifyGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: VerifyResult; terminal: SearchVerifyGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
+  Promise<{ result: VerifyResult; terminal: SearchVerifyGatewayTerminal | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(item), state = searchVerifyCalls.get(call);
   const checked = searchVerifyModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1282,10 +1291,10 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
     if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
-    noteTextRouteStatus(binding, response);
+    const rejected = noteTextRouteStatus(owned, response);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
-      return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+      return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };
     }
     body = await response.text();
   } catch (error) {
@@ -1353,7 +1362,7 @@ export function readWebsearchQueryGatewayTerminal(value: unknown): WebsearchQuer
 /** Original chat error names stay: 404 is http_404, outer JSON decoding is network, the content parser is invalid_output. */
 export async function translateQueryWithReservedGateway(input: WebsearchQueryGatewayInput, dispatch: WebsearchQueryModelDispatch,
   call: PreparedWebsearchQueryGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: WebsearchQueryGatewayResult; terminal: WebsearchQueryGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
+  Promise<{ result: WebsearchQueryGatewayResult; terminal: WebsearchQueryGatewayTerminal | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(input), state = websearchQueryCalls.get(call);
   const checked = websearchQueryModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1380,10 +1389,10 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
-    noteTextRouteStatus(binding, response);
+    const rejected = noteTextRouteStatus(owned, response);
     if (!response.ok) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
-      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };
     }
     status = response.status; body = await response.text();
   } catch (error) {

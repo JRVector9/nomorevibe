@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestReasonTranslationModelSlot,
+import { reconcileGatewayNotStarted, reconcileGatewayHttpRejected, readModelCapacityCallerControl, findOwnPendingModelRequest, requestReasonTranslationModelSlot,
   findOwnPendingReasonTranslationRequests, cancelOwnPendingReasonTranslationRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileReasonTranslationGatewayTerminal } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
@@ -110,11 +110,13 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   try {
     if (response.terminal) await reconcileReasonTranslationGatewayTerminal(response.terminal);
     else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
+    // 0174: 공급자가 처리하지 않고 거절한 완결 응답(429·401·403) — 결과 미확정 대신 확정 실패로 정산해 칸을 바로 비운다
+    else if (response.rejected) await reconcileGatewayHttpRejected(response.rejected);
     else await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !response.result.ok && response.result.error === 'timeout' }));
   } catch (cleanup) {
-    if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
+    if (response.terminal || response.notStarted || response.rejected) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'reason_translation_result_cleanup_failed');
     throw cleanup;
   }
-  return { kind: 'ready', batch: checked, result: response.result, expectation, unknown: !response.terminal && !response.notStarted };
+  return { kind: 'ready', batch: checked, result: response.result, expectation, unknown: !response.terminal && !response.notStarted && !response.rejected };
 }

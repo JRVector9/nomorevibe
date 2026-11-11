@@ -30,6 +30,8 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
       if (!control) return unavailableAdminModels();
       const storedHold = Number(control.unknownHoldMs);
       const unknownHoldMs = Number.isSafeInteger(storedHold) && storedHold >= 0 ? storedHold : DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS * 1000;
+      // response_ok: 0174 gateway_http_rejected(공급자의 처리 전 거절 — 429·401·403)는 결과 없이 끝난 실패다(성공·미분류가 아니다).
+      // gateway_not_started(전송 0)는 예전처럼 미분류(NULL)로 둔다.
       // measured 는 MATERIALIZED 로 한 번만 짓고 쓰는 칸만 담는다. 그냥 두면 플래너가 CTE 를 펼쳐 response_ok(terminal_evidence 의 jsonb 를 여러 번 푼다)를
       // 아래 FILTER 마다 다시 계산했다 — 2026-11-10 프로드 24시간 3.7만 행에 1.7초(공유 버퍼 191만). 굳히면 0.2초, 같은 스냅숏에서 결과가 같다.
       const metrics = await tx.execute(sql`
@@ -37,6 +39,7 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
           SELECT r.route_id, r.provider, r.model, r.group_id, r.provider_budget_id, r.state, r.settled_at, r.updated_at, r.dispatched_at,
             r.queue_until, r.epoch, r.revision, r.policy_hash, CASE
             WHEN state <> 'settled' THEN NULL
+            WHEN terminal_evidence->>'kind' = 'gateway_http_rejected' THEN false
             WHEN terminal_evidence->'outcome'->>'ok' IN ('true','false') THEN (terminal_evidence->'outcome'->>'ok')::boolean
             WHEN terminal_evidence->>'finishReason' IS NOT NULL THEN terminal_evidence->>'finishReason' IN ('stop','tool_calls','function_call')
             WHEN terminal_evidence->'process'->>'exitCode' IS NOT NULL THEN terminal_evidence->'process'->>'exitCode' = '0'
@@ -77,7 +80,8 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
         SELECT route_id AS "routeId", provider, model, state,
           to_char(queued_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "queuedAt",
           to_char(settled_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "settledAt",
-          CASE WHEN terminal_evidence->'outcome'->>'ok' IN ('true','false') THEN (terminal_evidence->'outcome'->>'ok')::boolean
+          CASE WHEN terminal_evidence->>'kind' = 'gateway_http_rejected' THEN false
+            WHEN terminal_evidence->'outcome'->>'ok' IN ('true','false') THEN (terminal_evidence->'outcome'->>'ok')::boolean
             WHEN terminal_evidence->>'finishReason' IS NOT NULL THEN terminal_evidence->>'finishReason' IN ('stop','tool_calls','function_call')
             WHEN terminal_evidence->'process'->>'exitCode' IS NOT NULL THEN terminal_evidence->'process'->>'exitCode' = '0'
             ELSE NULL END AS "responseOk"

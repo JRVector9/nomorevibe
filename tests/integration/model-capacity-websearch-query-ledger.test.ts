@@ -8,6 +8,7 @@ import { modelCapacityPolicyHash, modelCapacityRequestIdentitySchema, websearchQ
   type ModelCapacityPolicy, type WebsearchQueryInput } from "@/lib/llm/capacity";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract, textRankRow } from "../text-task-ranks-fixture";
 
@@ -277,6 +278,33 @@ it("2026-11-09: an unknown call whose failure never reached the cache no longer 
   expect(bodies.length - before).toBe(2);
   expect((await rows(key)).map(item => item.state)).toEqual(["indeterminate", "settled"]);
   expect((await rows(key))[0]).toMatchObject({ request_id: row.request_id, state: "indeterminate", terminal_evidence: null });
+});
+
+// 0174(2026-11-11): 공급자의 429 는 확정 실패(gateway_http_rejected)로 정산되어 칸을 바로 비우고 캐시에 rate_limit 실패 한 번을 적는다(결과 미확정이 아니다).
+// 그 실패가 캐시에 닿지 못해도(스냅숏 그대로) 결과 없는 settled 행을 깨진 증거(broken → 매번 ledger_mismatch)로 읽지 않고 같은 실패 한 번으로 스냅숏을 넘긴다.
+it("0174: a provider 429 settles as gateway_http_rejected with a rate_limit cache failure; a lost cache write closes the snapshot with that failure, not broken", async () => {
+  const query = "요금 한도 검색어", key = target(query).cacheKey, before = bodies.length;
+  reply = response => { response.statusCode = 429; response.setHeader("retry-after", "2"); response.end("rate limit"); };
+  try { expect((await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).translated).toBeNull(); }
+  finally { reply = response => response.end(JSON.stringify(envelope("rate limit app | quota app"))); resetProviderRateLimitsForTest(); }
+  expect(bodies.length - before).toBe(1);
+  const [row] = await rows(key);
+  expect(row).toMatchObject({ state: "settled", terminal_evidence: { kind: "gateway_http_rejected", status: 429, retryAfterMs: 2_000 } });
+  expect((await events(row.request_id as string)).map(entry => entry.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
+  expect((await cache(key)).row).toMatchObject({ status: "failed", attempts: 1, error_code: "rate_limit" });
+  // 실패가 캐시에 닿지 못한 모양 — 캐시 행이 없어 그 호출과 같은 스냅숏(absent)이다
+  await admin`DELETE FROM text_translations WHERE source_hash=${key} AND target_lang='en'`;
+  const binding = row.dispatch_binding as { model: string; member: WebsearchQueryInput["member"] };
+  expect(await db.transaction(tx => ledger.readWebsearchQueryContinuation(tx, { model: binding.model, member: binding.member })))
+    .toEqual({ kind: "failed", requestId: row.request_id, model: binding.model, error: "rate_limit" });
+  expect((await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).translated).toBeNull();
+  expect(bodies.length - before).toBe(1);
+  expect((await cache(key)).row).toMatchObject({ status: "failed", attempts: 1, error_code: "rate_limit", model: binding.model });
+  // 다음 검색은 새 스냅숏(present, attempts 1)이라 막히지 않고 한 번 보내 번역된다
+  expect(await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).toMatchObject({ translated: "rate limit app / quota app" });
+  expect(bodies.length - before).toBe(2);
+  expect((await rows(key)).map(item => [item.state, (item.terminal_evidence as { kind: string }).kind]))
+    .toEqual([["settled", "gateway_http_rejected"], ["settled", "websearch_query_gateway_terminal"]]);
 });
 
 it("never POSTs after reservation expiry or a changed cache snapshot; only reserved rows are cancelled", async () => {

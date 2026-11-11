@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { capacityRefusalReason } from "@/lib/llm/capacity-busy-targets";
 import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
-import { reconcileGatewayNotStarted, findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, reconcileGatewayHttpRejected, findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
   reconcileTextProfileGatewayTerminal, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { writeKeywordsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
@@ -74,10 +74,12 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   try {
     if (native.terminal) await reconcileTextProfileGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
+    // 0174: 공급자가 처리하지 않고 거절한 완결 응답(429·401·403) — 결과 미확정 대신 확정 실패로 정산해 칸을 바로 비운다
+    else if (native.rejected) await reconcileGatewayHttpRejected(native.rejected);
     else if (!await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: captured.signal, timedOut: !native.result.ok && native.result.error === "timeout" })))
       throw new Error("text_profile_dispatch_not_marked");
   } catch (error) {
-    if (native.terminal || native.notStarted) await markUnsettledDispatch(dispatch);
+    if (native.terminal || native.notStarted || native.rejected) await markUnsettledDispatch(dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, error], "profile result and terminal recording failed");
     throw error;
   }

@@ -506,14 +506,17 @@ it('records a provider 429 as rate_limit without counting the cache attempt', ex
     expect(await tick()).toMatchObject({ status: 'completed' }); expect(bodies).toHaveLength(1);
     const [row] = await admin`SELECT status,attempts,error_code,retry_at>clock_timestamp() AS backed_off FROM text_translations WHERE source_hash=${item.hash}`;
     expect(row).toEqual({ status: 'failed', attempts: 2, error_code: 'rate_limit', backed_off: true });
-    expect(Array.from(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ state: 'indeterminate' }]);
+    // 0174: 결과 미확정이 아니라 확정 실패(gateway_http_rejected, Retry-After 1초)로 정산되어 칸을 바로 비운다
+    expect(Array.from(await admin`SELECT state,terminal_evidence->>'kind' AS kind,terminal_evidence->'status' AS status,
+      terminal_evidence->'retryAfterMs' AS "retryAfterMs" FROM model_capacity_requests WHERE owner_instance_id=${prefix}`))
+      .toEqual([{ state: 'settled', kind: 'gateway_http_rejected', status: 429, retryAfterMs: 1_000 }]);
     // 2026-11-11: 그 경로·모델은 쉰다 — Retry-After(1초)보다 긴 연속 1번째 backoff(30초)만큼(provider-rate-limit.ts). 다음 틱은 장부에 묻지 않는다
     const until = providerRateLimitedUntil({ routeId: 'reason-translate', provider: 'abcllm', model: TRANSLATE_MODEL });
     expect(until).not.toBeNull(); expect(until! - Date.now()).toBeGreaterThan(25_000);
     const next = await seed();
     expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' }); expect(bodies).toHaveLength(1);
     expect(await admin`SELECT status FROM text_translations WHERE source_hash=${next.hash}`).toEqual([]);
-    expect(Array.from(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ state: 'indeterminate' }]);
+    expect(Array.from(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ state: 'settled' }]);
   });
 }));
 it('settles a direct engine\'s complete answer without the gateway\'s PR3 usage_provenance even under the strict opt-in', exercise(async () => {

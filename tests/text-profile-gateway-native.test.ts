@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
+import { withoutRejected } from "./gateway-http-rejected-fixture";
 import { parseProfileGatewayBody, profileGatewayWire, profileHash, writeKeywords, type ProfileEvidence } from "@/lib/domain/products/search-profile";
 import { textProfileInputHash, textProfileDispatchBindingHash, textProfileModelDispatchSchema } from "@/lib/llm/capacity";
 import { prepareTextProfileGatewayCall, readTextProfileGatewayTerminal, readAi1GatewayTerminal,
@@ -155,10 +156,10 @@ it("rejects copies and reordered original evidence before HTTP", async () => {
     await expect(send({ ...rest, url }, owned, call)).rejects.toThrow("text_profile_gateway_call_mismatch");
     expect(bodies).toHaveLength(0); });
 });
-it.each([400, 422, 429, 307])("maps HTTP %i without retry/redirect or terminal", async status => {
+it.each([400, 401, 403, 422, 429, 307])("maps HTTP %i without retry/redirect or terminal", async status => {
   await server(async ({ bodies, reply }) => { reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
-    const value = evidence(), call = prepared(value), result = await send(value, dispatch(value, call), call);
-    expect(result).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
+    const value = evidence(), call = prepared(value), owned = dispatch(value, call), result = await send(value, owned, call);
+    expect(withoutRejected(result, status, owned)).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
     expect(bodies).toHaveLength(1); });
 });
 
