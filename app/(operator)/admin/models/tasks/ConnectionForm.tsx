@@ -41,6 +41,7 @@ export function connectionLimitHint(limit: ConnectionLimitField, value: string):
 const FIX_HINT: Readonly<Partial<Record<LlmFixField, string>>> = {
   key: "키를 넣고 「저장하고 모델 읽기」를 누르세요.",
   address: "주소·키를 확인하고 「저장하고 모델 읽기」를 누르세요.",
+  context: "엔진에 실제 설정된 컨텍스트 상한을 적고 「저장하고 모델 읽기」를 누른 뒤 작업 배정을 다시 저장하세요.",
 };
 
 /** 연결 저장 → (바뀌었으면) 장비 한도 저장. 두 기존 서버 동작을 차례로 부른다 — 새 쓰기 경로가 없다. */
@@ -122,9 +123,9 @@ export function ConnectionForm({ initial, secretBox, limit: given = null, cancel
         <input name="apiKey" type="password" autoComplete="off" disabled={!secretBox} className={INPUT}
           placeholder={secretBox ? "" : "이 서버에는 키 암호화 설정이 없어 키를 저장할 수 없습니다"} />{fixHint("key")}</label>
       {initial?.hasKey && <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" name="clearKey" value="1" />저장된 키 지우기</label>}
-      <label className="grid gap-1">컨텍스트 상한(토큰) — /models 가 최대 길이를 알려 주지 않는 엔진에만
+      <label className="grid gap-1" {...fixField("context")}>컨텍스트 상한(토큰) — /models 가 최대 길이를 알려 주지 않는 엔진에만
         <input name="contextTokens" type="number" inputMode="numeric" min={1} max={2097152} step={1} defaultValue={initial?.contextTokens ?? ""}
-          placeholder="예: 131072 — 엔진이 알려 주면 비워 둡니다" autoComplete="off" className={`${INPUT} font-mono`} /></label>
+          placeholder="예: 131072 — 엔진이 알려 주면 비워 둡니다" autoComplete="off" className={`${INPUT} font-mono`} />{fixHint("context")}</label>
       <label className="grid gap-1">모델 이름 직접 적기 — 모델 목록(GET /models)을 주지 않는 서버에만
         <textarea name="manualModels" rows={1} defaultValue={initial?.manualModels?.join(" ") ?? ""} placeholder="예: k-exaone_v2.5 (띄어쓰기·쉼표로 나눔)"
           className={`${INPUT} font-mono`} />

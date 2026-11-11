@@ -10,9 +10,9 @@ export const LLM_CONTRACTS_HREF = "/admin/models/contracts";
 
 /**
  * LLM 운영 연결 폼에서 바로 고칠 칸(?fix=). 그 칸으로 내려가 초점을 두고 눈에 띄게 한다.
- * limit = 동시 실행 한도 · key = API 키 · address = 주소(저장하면 모델 목록도 다시 읽는다) · version = CLI 버전 · enabled = 켜짐/꺼짐.
+ * limit = 동시 실행 한도 · context = 컨텍스트 상한 · key = API 키 · address = 주소(저장하면 모델 목록도 다시 읽는다) · version = CLI 버전 · enabled = 켜짐/꺼짐.
  */
-export const LLM_FIX_FIELDS = ["limit", "key", "address", "version", "enabled"] as const;
+export const LLM_FIX_FIELDS = ["limit", "context", "key", "address", "version", "enabled"] as const;
 export type LlmFixField = typeof LLM_FIX_FIELDS[number];
 export const llmFixField = (value: string | null | undefined): LlmFixField | null =>
   (LLM_FIX_FIELDS as readonly string[]).includes(value ?? "") ? value as LlmFixField : null;
