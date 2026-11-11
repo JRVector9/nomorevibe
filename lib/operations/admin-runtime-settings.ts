@@ -1,28 +1,21 @@
 import { inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { operationsObservations } from "@/lib/db/schema";
-import { JOB_CATALOG } from "@/lib/jobs/catalog";
-import type { DeadlineLadder } from "@/lib/llm/deadline-policy";
-import { DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_TIMEOUTS, readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
 import { adminLog, type AdminLogRow } from "./admin-log";
-import { ROLE_LABELS } from "./contracts";
 import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
-import { readRuntimeSettingsApply, readRuntimeSettingsRow, RUNTIME_SETTINGS_AUDIT_ACTION, type RuntimeSettingsRow } from "./runtime-settings";
+import { readRuntimeSettingsRow, RUNTIME_SETTINGS_AUDIT_ACTION, type RuntimeSettingsRow } from "./runtime-settings";
 import { MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX } from "@/lib/llm/capacity-unknown-hold";
 import { ASSIGNMENT_TABLE_READS, ASSIGNMENT_TABLE_READS_LABELS, BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS,
-  effectiveJobBudgetMs, GROUP_LABELS, JOB_CALL_ROUTES, JOB_KNOB_NAMES, JOB_LABELS, jobCallCeilingMs, jobKnobsSchema, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
-  runtimeSettingLabel, runtimeSettingsWarnings, shortRuntimeSettingsVersion, storedSettingsVersion, type JobKnobName, type ProductTranslationPolicy,
-  type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
-import type { SettingsApply } from "./settings-apply";
+  GROUP_LABELS, JOB_LABELS, jobKnobsSchema, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
+  runtimeSettingLabel, type JobKnobName, type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
 import { parseRuntimeLanes } from "./worker-progress";
 
 /**
- * 관리자 「실시간 한도」(/admin/models/limits) 화면 모형 — PR 1a WP-D.
+ * 관리자 실시간 한도(runtime_settings)의 칸 모형·폼 → sparse patch·거절 문장 — PR 1a WP-D, 2026-11-11 개편.
  *
- * - 유효값(코드 기본값 위에 저장 문서를 덮은 것)·기본값·덮어쓴 키를 칸마다 함께 보인다. 저장 문서는 sparse 라(D2) 덮어쓴 키만 "덮어씀"이다.
+ * - 칸(SettingField)은 유효값(코드 기본값 위에 저장 문서를 덮은 것)·기본값·덮어쓴 키를 함께 싣는다. 저장 문서는 sparse 라(D2) 덮어쓴 키만 "덮어씀"이다.
  * - 폼은 바뀐 칸만 sparse patch 로 보낸다(runtimeSettingsPatchFromForm). ms 칸은 화면에서 초로 적고 patch 는 ms 다.
- * - "읽은 판"은 readRuntimeSettingsApply(WP-A/B)가 주고, 역할별 env 등록부 여부·감독 하한·지금 도는 틱은 service:<역할> 관측에서 읽는다
- *   (heartbeat 의 runtimeSettingsRegistryEnv·laneLimits·lanes — scripts/worker-supervisor.ts WorkerHealth 계약).
+ * - 「실시간 한도」 화면(/admin/models/limits)의 작업 줄 모형은 admin-limits-view.ts 이고, 이 모듈은 칸·폼·문장과 다른 화면으로 옮긴 칸 묶음(buildSettingsControl)을 맡는다.
  * - 저장 거절 코드 → 한국어 문장은 runtimeSettingsIssueMessage 한 곳에서 만든다(폼·감사 줄이 같은 말을 쓴다).
  * 이 모듈은 DB 를 읽으므로 서버에서만 import 한다. 클라이언트 폼은 여기서 만든 값(문자열)만 받는다.
  */
@@ -54,40 +47,9 @@ export const CHOICE_OPTIONS: Readonly<Record<string, readonly ChoiceOption[]>> =
   "assignments.tableReads": ASSIGNMENT_TABLE_READS.map(value => ({ value, label: ASSIGNMENT_TABLE_READS_LABELS[value] })),
 });
 
-export type RouteRow = { route: string; label: string; maxTokens: SettingField | null; concurrency: SettingField | null; timeout: SettingField | null;
-  /** 호출 상한 칸이 없을 때의 설명(사다리 클라이언트 기한을 따른다 등) */
-  timeoutNote: string | null;
-  /** 이 경로를 맡은 등록부 모델의 상한(읽기 전용, 가장 작은 값) */
-  modelCeiling: string | null };
-export type LadderRow = { route: string; label: string; fields: Record<keyof DeadlineLadder, SettingField> };
-export type JobKnobRow = { job: string; label: string; knobs: Partial<Record<JobKnobName, SettingField>> };
 export type LaneView = { state: string; currentJob: string | null; ageMs: number | null; budgetMs: number | null };
-export type BudgetRow = { job: string; label: string; role: string; roleLabel: string; field: SettingField; auto: boolean; defaultAuto: boolean;
-  /** "auto" 일 때 "= 호출 상한 300초 + 여유 15초 = 315초" */
-  autoNote: string | null;
-  /** 예산을 적지 않은 잡(runner 기본 25초로 돈다) */
-  declared: boolean;
-  ceilingMs: number | null;
-  /** 최근 관측의 laneLimits.jobMs — 감독의 env 하한 */
-  supervisorFloorMs: number | null;
-  lane: LaneView | null;
-  warning: string | null };
 export type AuditView = { id: number; actor: string; at: string; ok: boolean; group: string; revision: number | null; changes: string[]; error: string | null };
 export type RoleEnvView = { role: string; label: string; registryEnv: boolean };
-export type RuntimeSettingsAdminView = {
-  /** 저장 행을 읽었으면 revision·판. 못 읽었으면(0151 전·stub) null 이고 rowError 에 이유 */
-  revision: number | null; version: string; shortVersion: string; updatedBy: string | null; updatedAt: string | null; rowError: string | null;
-  stored: Record<string, unknown>;
-  effective: RuntimeSettings; defaults: RuntimeSettings;
-  issues: string[]; warnings: string[];
-  routes: RouteRow[]; ladders: LadderRow[]; translation: SettingField[]; jobKnobs: JobKnobRow[]; budgets: BudgetRow[];
-  /** 모델 배정 읽기(3b-E) — 열거 칸(assignments.tableReads) */
-  assignments: SettingField[];
-  /** 모델 장부 점유(2026-11-10) — 결과 미확정 점유 유지 시간(capacity.unknownHoldSeconds, 초 정수) */
-  capacity: SettingField[];
-  apply: SettingsApply | null; roles: RoleEnvView[];
-  audit: AuditView[];
-};
 /** 배정 화면(/admin/models/assignments)이 그리는 「배정 표 읽기」 폼 한 묶음 — 행을 못 읽으면 revision null·읽기 전용 */
 export type AssignmentReadsControlView = { revision: number | null; rowError: string | null; fields: SettingField[] };
 
@@ -99,7 +61,6 @@ const ACTIVE_SECONDS = 60;
 const AUDIT_ROWS = 10;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
-const fmt = (value: number) => value.toLocaleString("ko-KR");
 /** ms → 초 글자("300", "1.5"). 소수는 셋째 자리까지만 */
 export const msToInput = (ms: number | null | undefined): string => ms === null || ms === undefined ? "" : String(Math.round(ms) / 1000);
 export const secondsLabel = (ms: number | null | undefined): string => ms === null || ms === undefined ? "—" : `${msToInput(ms)}초`;
@@ -125,7 +86,7 @@ export function storedLeaf(stored: unknown, path: string): unknown {
   return node;
 }
 
-function field(stored: unknown, path: string, value: number | string | null | undefined, defaultValue: number | string | null | undefined,
+export function settingField(stored: unknown, path: string, value: number | string | null | undefined, defaultValue: number | string | null | undefined,
   extra: Partial<Pick<SettingField, "readOnly" | "note">> = {}): SettingField {
   const kind = fieldKind(path);
   const leaf = storedLeaf(stored, path);
@@ -136,7 +97,7 @@ function field(stored: unknown, path: string, value: number | string | null | un
 
 /** 모델 배정 읽기(3b-E) — 열거 칸 하나. 켜면 모든 역할이 30초 안에 배정 표를 읽고, 끄면 설정으로 돌아간다(재배포 없음) */
 export function assignmentFields(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings): SettingField[] {
-  return [field(stored, "assignments.tableReads", effective.assignments.tableReads, defaults.assignments.tableReads,
+  return [settingField(stored, "assignments.tableReads", effective.assignments.tableReads, defaults.assignments.tableReads,
     { note: "켜면 1차·2차·단계 풀·등록부 기본값이 배정 표의 실전(live) 행으로 고릅니다(쓸 행이 없는 단계는 설정 그대로). 모든 역할이 30초 안에 같은 값을 읽습니다 — 재배포 없음. "
       + "env MODEL_ASSIGNMENT_TABLE(1·0)이 있는 앱은 그 값이 이깁니다(비상용)." })];
 }
@@ -146,70 +107,13 @@ export function assignmentFields(stored: unknown, effective: RuntimeSettings, de
  * 범위 0~3600(0 = 예전처럼 차지하지 않음).
  */
 export function capacityFields(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings): SettingField[] {
-  return [field(stored, "capacity.unknownHoldSeconds", effective.capacity.unknownHoldSeconds, defaults.capacity.unknownHoldSeconds,
+  return [settingField(stored, "capacity.unknownHoldSeconds", effective.capacity.unknownHoldSeconds, defaults.capacity.unknownHoldSeconds,
     { note: "결과 미확정(확인 못함) 호출은 보낸 시각부터 이 시간 동안 장비 칸·모델 상한·경로 몫을 계속 차지합니다 — 취소가 없는 엔진(M1 mlx-lm·supa)은 "
       + "기한이 지나도 생성을 계속하기 때문입니다. 지나면 칸을 놓고 재실행 대기 목록에만 남습니다(행 상태는 그대로). "
       + `0 이면 차지하지 않습니다(10-30 규칙). 범위 0~${MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX}초. 저장 즉시 다음 모델 입장부터 씁니다.` })];
 }
 
-function modelCeiling(route: string, models: readonly ModelDefinition[]): string | null {
-  const serving = models.filter(model => model.purposes.includes(route));
-  if (!serving.length) return null;
-  const min = (pick: (model: ModelDefinition) => number) => Math.min(...serving.map(pick));
-  const names = serving.map(model => model.key).join(", ");
-  return `${names}: 상한 ${secondsLabel(min(model => model.timeoutMs))} · ${fmt(min(model => model.maxTokens))} 토큰 · 동시 ${min(model => model.concurrency)}`;
-}
-
-function routeRows(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings, models: readonly ModelDefinition[]): RouteRow[] {
-  const storedRoutes = isPlainObject(storedLeaf(stored, "routes")) ? storedLeaf(stored, "routes") as Record<string, unknown> : {};
-  const routes = new Set([...Object.keys(defaults.routes.limits), ...Object.keys(defaults.routes.timeouts),
-    ...Object.keys(isPlainObject(storedRoutes.limits) ? storedRoutes.limits : {}), ...Object.keys(isPlainObject(storedRoutes.timeouts) ? storedRoutes.timeouts : {})]);
-  return [...routes].sort((a, b) => (ROUTE_LABELS[a] ?? a).localeCompare(ROUTE_LABELS[b] ?? b, "ko")).map(route => {
-    const limit = effective.routes.limits[route], base = defaults.routes.limits[route];
-    const row: RouteRow = { route, label: ROUTE_LABELS[route] ?? route, maxTokens: null, concurrency: null, timeout: null, timeoutNote: null,
-      modelCeiling: modelCeiling(route, models) };
-    if (limit) {
-      row.maxTokens = field(stored, `routes.limits.${route}.maxTokens`, limit.maxTokens, base?.maxTokens);
-      row.concurrency = field(stored, `routes.limits.${route}.concurrency`, limit.concurrency, base?.concurrency);
-    }
-    if (effective.routes.deadlines[route]) row.timeoutNote = `기한 사다리의 클라이언트 기한(${secondsLabel(effective.routes.deadlines[route].clientMs)})을 따릅니다 — 아래 사다리에서 바꿉니다`;
-    else if (route in DEFAULT_MODEL_TIMEOUTS || effective.routes.timeouts[route] !== undefined)
-      row.timeout = field(stored, `routes.timeouts.${route}`, effective.routes.timeouts[route], defaults.routes.timeouts[route]);
-    else if (limit) row.timeout = field(stored, `routes.limits.${route}.timeoutMs`, limit.timeoutMs, base?.timeoutMs,
-      limit.timeoutMs === undefined ? { note: "비우면 모델 상한을 따릅니다" } : {});
-    return row;
-  });
-}
-
-function ladderRows(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings): LadderRow[] {
-  return Object.keys(effective.routes.deadlines).sort().map(route => {
-    const ladder = effective.routes.deadlines[route], base = defaults.routes.deadlines[route];
-    const part = (key: keyof DeadlineLadder, note?: string) => field(stored, `routes.deadlines.${route}.${key}`, ladder[key], base?.[key], note ? { note } : {});
-    return { route, label: ROUTE_LABELS[route] ?? route, fields: { engineMs: part("engineMs", "선언만 — 엔진이 강제하지 않습니다"), relayMs: part("relayMs", "비우면 중계 층 없음"),
-      gatewayMs: part("gatewayMs", "선언만 — 이 칸을 강제하는 게이트웨이는 없습니다"), clientMs: part("clientMs", "이 경로의 호출 상한") } };
-  });
-}
-
-function translationFields(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings): SettingField[] {
-  const keys = Object.keys(defaults.translation.product) as (keyof ProductTranslationPolicy)[];
-  return keys.map(key => field(stored, `translation.product.${key}`, effective.translation.product[key], defaults.translation.product[key],
-    key === "batchMax" ? { readOnly: true, note: "PR 1a 에서는 4로 고정" }
-      : key === "maxSourceChars" ? { note: "낮추면 더 긴 원문 행은 다음 틱에 source_too_long 으로 표시되고 시도가 소진됩니다 — 되돌려도 그 행은 공개 번역 화면에서 재요청해야 합니다" } : {}));
-}
-
-function jobKnobRows(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings): JobKnobRow[] {
-  return Object.keys(defaults.jobs).map(job => {
-    const knobs: JobKnobRow["knobs"] = {};
-    for (const knob of JOB_KNOB_NAMES) {
-      const base = defaults.jobs[job]?.[knob];
-      if (base === undefined) continue;
-      knobs[knob] = field(stored, `jobs.${job}.${knob}`, effective.jobs[job]?.[knob] ?? base, base);
-    }
-    return { job, label: JOB_LABELS[job] ?? job, knobs };
-  });
-}
-
-type RoleObservation = { registryEnv: boolean; jobMs: number | null; lanes: ReturnType<typeof parseRuntimeLanes> };
+export type RoleObservation = { registryEnv: boolean; jobMs: number | null; lanes: ReturnType<typeof parseRuntimeLanes> };
 /** 역할마다 지금 일하는 인스턴스의 관측 하나(consumer 제외, 1분 안, running). 없으면 null */
 export function latestRoleObservations(observations: readonly AdminObservation[]): Record<string, RoleObservation | null> {
   const result: Record<string, RoleObservation | null> = {};
@@ -224,33 +128,6 @@ export function latestRoleObservations(observations: readonly AdminObservation[]
     result[role] = { registryEnv: latest.value.runtimeSettingsRegistryEnv === true, jobMs, lanes: parseRuntimeLanes(latest.value.lanes, role) };
   }
   return result;
-}
-
-function budgetRows(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings, models: readonly ModelDefinition[],
-  roles: Record<string, RoleObservation | null>, warnings: readonly string[], now: Date): BudgetRow[] {
-  const storedBudgets = isPlainObject(storedLeaf(stored, "budgets")) ? storedLeaf(stored, "budgets") as Record<string, unknown> : {};
-  const jobs = new Set([...Object.keys(defaults.budgets), ...Object.keys(JOB_CALL_ROUTES), ...Object.keys(storedBudgets)]);
-  const roleOrder = [...RUNTIME_SETTINGS_ROLES] as string[];
-  const rows = [...jobs].map((job): BudgetRow => {
-    const role = JOB_CATALOG.find(entry => entry.name === job)?.role ?? "unknown";
-    const raw = effective.budgets[job], base = defaults.budgets[job];
-    const declared = raw !== undefined;
-    const auto = raw === "auto", defaultAuto = base === "auto";
-    const ceilingMs = jobCallCeilingMs(job, effective, models);
-    const value = declared ? effectiveJobBudgetMs(job, effective, models) : null;
-    const defaultValue = base === undefined ? null : base === "auto" ? effectiveJobBudgetMs(job, defaults, models) : base;
-    const row = field(stored, `budgets.${job}`, value, defaultValue, declared ? {} : { note: `예산을 적지 않은 잡 — runner 기본 ${secondsLabel(DEFAULT_JOB_BUDGET_MS)}로 돕니다` });
-    const margin = effective.translation.product.jobMarginMs;
-    const autoNote = auto && ceilingMs !== null ? `= 호출 상한 ${secondsLabel(ceilingMs)} + 여유 ${secondsLabel(margin)} = ${secondsLabel(ceilingMs + margin)}` : null;
-    const observed = roles[role] ?? null;
-    const lane = observed?.lanes?.find(entry => entry.jobs.includes(job)) ?? null;
-    const laneView: LaneView | null = lane ? { state: lane.state, currentJob: lane.currentJob,
-      ageMs: lane.state === "running" && lane.startedAt !== null ? Math.max(0, now.getTime() - lane.startedAt) : null, budgetMs: lane.budgetMs ?? null } : null;
-    const warning = warnings.find(code => code.endsWith(`:${job}`)) ?? null;
-    return { job, label: JOB_LABELS[job] ?? job, role, roleLabel: ROLE_LABELS[role] ?? role, field: row, auto, defaultAuto, autoNote, declared, ceilingMs,
-      supervisorFloorMs: observed?.jobMs ?? null, lane: laneView, warning: warning ? runtimeSettingsWarningMessage(warning) : null };
-  });
-  return rows.sort((a, b) => (roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role)) || a.label.localeCompare(b.label, "ko"));
 }
 
 /** 감사 detail.changes({path,before,after}[]) 를 "이름: 전 → 후" 로. path 는 전체 경로거나 그룹 안 경로일 수 있어 둘 다 받는다 */
@@ -274,35 +151,8 @@ export function auditView(rows: readonly AdminLogRow[]): AuditView[] {
   });
 }
 
-export type AdminViewInput = { row: RuntimeSettingsRow | null; rowError?: string | null; models?: readonly ModelDefinition[]; apply?: SettingsApply | null;
-  observations?: readonly AdminObservation[]; audit?: readonly AdminLogRow[]; now?: Date };
-
-/** 순수 — DB 없이 시험한다. row 가 null 이면(0151 전·stub) 기본값으로 그리고 폼은 읽기 전용이다 */
-export function buildRuntimeSettingsAdminView(input: AdminViewInput): RuntimeSettingsAdminView {
-  const models = input.models ?? DEFAULT_MODEL_DEFINITIONS, now = input.now ?? new Date();
-  const stored = isPlainObject(input.row?.values) ? input.row!.values as Record<string, unknown> : {};
-  const { settings: effective, issues } = resolveRuntimeSettings(input.row?.values ?? null, { models });
-  const defaults = DEFAULT_RUNTIME_SETTINGS;
-  const warnings = runtimeSettingsWarnings(effective, models);
-  const roles = latestRoleObservations(input.observations ?? []);
-  const version = input.row ? storedSettingsVersion(input.row.values) : "default";
-  return {
-    revision: input.row?.revision ?? null, version, shortVersion: shortRuntimeSettingsVersion(version), updatedBy: input.row?.updatedBy ?? null,
-    updatedAt: input.row?.updatedAt ?? null, rowError: input.row ? null : input.rowError ?? "runtime_settings_row_missing",
-    stored, effective, defaults, issues: issues.map(runtimeSettingsIssueMessage), warnings: warnings.map(runtimeSettingsWarningMessage),
-    routes: routeRows(stored, effective, defaults, models), ladders: ladderRows(stored, effective, defaults), translation: translationFields(stored, effective, defaults),
-    jobKnobs: jobKnobRows(stored, effective, defaults), budgets: budgetRows(stored, effective, defaults, models, roles, warnings, now),
-    assignments: assignmentFields(stored, effective, defaults),
-    capacity: capacityFields(stored, effective, defaults),
-    apply: input.apply ?? null,
-    // env 등록부 여부는 관측에서 직접 읽은 것과 적용 확인(WP-B settings-apply.ts RoleSettingsApply.registryEnv, 선택 필드) 중 하나라도 true 면 true
-    roles: RUNTIME_SETTINGS_ROLES.map(role => ({ role, label: ROLE_LABELS[role] ?? role,
-      registryEnv: roles[role]?.registryEnv === true || (input.apply?.roles.find(entry => entry.role === role) as { registryEnv?: boolean } | undefined)?.registryEnv === true })),
-    audit: auditView(input.audit ?? []),
-  };
-}
-
-async function readAdminObservations(): Promise<AdminObservation[]> {
+/** 역할 관측(service:<역할>) — 화면의 「읽은 판」 진단·지금 도는 틱이 읽는다 */
+export async function readAdminObservations(): Promise<AdminObservation[]> {
   const rows = await db.select({ key: operationsObservations.key, value: operationsObservations.value,
     ageSeconds: sql<number>`extract(epoch from ((now() at time zone 'utc') - ${operationsObservations.observedAt}))::double precision` })
     .from(operationsObservations)
@@ -310,18 +160,54 @@ async function readAdminObservations(): Promise<AdminObservation[]> {
   return rows.map(row => ({ key: row.key, value: row.value, ageSeconds: Number(row.ageSeconds) }));
 }
 
-/** 화면 한 번 그리기 — 행·적용 확인·관측·감사를 함께 읽는다. 행 말고는 덤이다(못 읽어도 화면은 뜬다) */
-export async function readRuntimeSettingsAdminView(now = new Date()): Promise<RuntimeSettingsAdminView> {
-  let models: readonly ModelDefinition[];
-  try { models = readModelRegistry().models; } catch { models = DEFAULT_MODEL_DEFINITIONS; }
-  const [row, apply, observations, audit] = await Promise.all([
-    readRuntimeSettingsRow().then(value => ({ value, error: null as string | null }), (error: unknown) => ({ value: null, error: error instanceof Error ? error.message : String(error) })),
-    readRuntimeSettingsApply().catch(() => null),
-    readAdminObservations().catch(() => [] as AdminObservation[]),
-    adminLog({ actions: [RUNTIME_SETTINGS_AUDIT_ACTION] }).catch(() => [] as AdminLogRow[]),
-  ]);
-  return buildRuntimeSettingsAdminView({ row: row.value, rowError: row.error, models, apply, observations, audit, now });
+/** 실시간 한도 저장 기록(runtime-settings-save) 최근 줄 — 못 읽으면 빈 목록 */
+export async function readRuntimeSettingsAudit(): Promise<AuditView[]> {
+  return auditView(await adminLog({ actions: [RUNTIME_SETTINGS_AUDIT_ACTION] }).catch(() => [] as AdminLogRow[]));
 }
+
+/**
+ * 다른 화면으로 옮긴 실시간 한도 칸(2026-11-11 개편) — 그 값을 쓰는 화면이 같은 저장 행의 칸 몇 개를 그린다(저장은 saveRuntimeSettingsGroup, 그룹 하나).
+ * 행을 못 읽으면 revision null(읽기 전용)이고 값은 코드 기본값이다.
+ */
+export type SettingsControlView = { revision: number | null; rowError: string | null; fields: SettingField[] };
+export type SettingsControlSpec = Readonly<{ path: string; note?: string; readOnly?: boolean }>;
+/** 점 경로의 유효값 — settings 를 그 경로로 따라간다(없으면 undefined) */
+export function settingsLeaf(settings: RuntimeSettings, path: string): number | string | null | undefined {
+  const value = storedLeaf(settings, path);
+  return typeof value === "number" || typeof value === "string" || value === null ? value : undefined;
+}
+export function buildSettingsControl(row: RuntimeSettingsRow | null, specs: readonly SettingsControlSpec[], rowError: string | null = null): SettingsControlView {
+  const { settings } = resolveRuntimeSettings(row?.values ?? null);
+  const stored = row?.values ?? null;
+  return { revision: row?.revision ?? null, rowError: row ? null : rowError ?? "runtime_settings_row_missing",
+    fields: specs.map(spec => settingField(stored, spec.path, settingsLeaf(settings, spec.path), settingsLeaf(DEFAULT_RUNTIME_SETTINGS, spec.path),
+      { ...(spec.note ? { note: spec.note } : {}), ...(spec.readOnly ? { readOnly: true } : {}) })) };
+}
+export async function readSettingsControl(specs: readonly SettingsControlSpec[]): Promise<SettingsControlView> {
+  try { return buildSettingsControl(await readRuntimeSettingsRow(), specs); }
+  catch (error) { return buildSettingsControl(null, specs, error instanceof Error ? error.message : String(error)); }
+}
+
+/** 장비 한도 화면(세부 설정)으로 옮긴 칸 — 결과 미확정 점유 유지 시간 */
+export const UNKNOWN_HOLD_CONTROL: readonly SettingsControlSpec[] = Object.freeze([{ path: "capacity.unknownHoldSeconds",
+  note: "결과 미확정(확인 못함) 호출은 보낸 시각부터 이 시간 동안 장비 칸·모델 상한·경로 몫을 계속 차지합니다 — 취소가 없는 엔진(M1 mlx-lm·supa)은 "
+    + "기한이 지나도 생성을 계속하기 때문입니다. 지나면 칸을 놓고 재실행 대기 목록에만 남습니다(행 상태는 그대로). "
+    + `0 이면 차지하지 않습니다(10-30 규칙). 범위 0~${MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX}초. 저장 즉시 다음 모델 입장부터 씁니다.` }]);
+/** lib/domain/products/translations.ts DISPATCHABLE_ATTEMPTS — 자동 처리가 보내는 시도 수의 상한(이보다 큰 최대 시도는 보내기에 효과가 없다) */
+export const TRANSLATION_DISPATCHABLE_ATTEMPTS = 4;
+/** 공개 번역 화면으로 옮긴 칸 — 원문 글자 상한·묶음 글자·요청 보류 한도·최대 시도, 묶음 최대 건수(고정). 자동 틱 여유(jobMarginMs)는 실시간 한도에 남는다 */
+export const TRANSLATION_LIMITS_CONTROL: readonly SettingsControlSpec[] = Object.freeze([
+  { path: "translation.product.maxSourceChars", note: "낮추면 더 긴 원문 행은 다음 틱에 source_too_long 으로 표시되고 시도가 소진됩니다 — 되돌려도 그 행은 아래 목록에서 재요청해야 합니다" },
+  { path: "translation.product.batchChars", note: "한 번에 묶어 보내는 글자 수의 문턱입니다. 원문 글자 상한보다 클 수 없습니다" },
+  { path: "translation.product.demandLimit", note: "한 틱에 접수해 둘 번역 요청 수의 상한입니다" },
+  { path: "translation.product.maxAttempts", note: `같은 원문의 자동 시도 상한입니다. 자동 처리는 ${TRANSLATION_DISPATCHABLE_ATTEMPTS}회까지만 보내므로 ${TRANSLATION_DISPATCHABLE_ATTEMPTS}보다 크게 해도 더 보내지 않습니다` },
+  { path: "translation.product.batchMax", readOnly: true, note: "한 묶음의 최대 건수 — 코드에 4로 고정" },
+]);
+/** 작업 배정 화면으로 옮긴 칸 — 2차 심사 소비자 동시 업무 · 발행 분류 동시 묶음 */
+export const JOB_CONCURRENCY_CONTROL: readonly SettingsControlSpec[] = Object.freeze([
+  { path: "jobs.second-review.consumerConcurrency", note: "2차 심사 소비자가 한꺼번에 맡는 후보 수(1~4)입니다. 투표자 수·장비 한도와 별개이며 실제 동시 호출은 장비 한도가 막습니다" },
+  { path: "jobs.crawl-publish.classifierConcurrency", note: "발행 분류를 작업 분산으로 돌릴 때 한 틱에 동시에 보내는 묶음 수(1~4)입니다. 대체 실행이면 늘 1입니다" },
+]);
 
 /** 배정 화면의 「배정 표 읽기」 폼 — 행 하나만 읽는다(못 읽으면 revision null·읽기 전용, 값은 기본값). 순수 부분은 assignmentFields */
 export function buildAssignmentReadsControl(row: RuntimeSettingsRow | null, rowError: string | null = null): AssignmentReadsControlView {
@@ -362,7 +248,7 @@ export function buildRecheckLimitsControl(row: RuntimeSettingsRow | null, rowErr
   const fields = RECHECK_LIMIT_KNOBS.map((knob): RecheckLimitField => {
     const base = DEFAULT_RUNTIME_SETTINGS.jobs[RECHECK_LIMITS_JOB]?.[knob];
     const range = jobKnobRange(knob)!;
-    return { ...field(stored, `jobs.${RECHECK_LIMITS_JOB}.${knob}`, settings.jobs[RECHECK_LIMITS_JOB]?.[knob] ?? base, base, { note: RECHECK_LIMIT_NOTES[knob] }),
+    return { ...settingField(stored, `jobs.${RECHECK_LIMITS_JOB}.${knob}`, settings.jobs[RECHECK_LIMITS_JOB]?.[knob] ?? base, base, { note: RECHECK_LIMIT_NOTES[knob] }),
       knob, unit: RECHECK_LIMIT_UNITS[knob], ...range };
   });
   return { revision: row?.revision ?? null, rowError: row ? null : rowError ?? "runtime_settings_row_missing", fields, settings };
@@ -411,13 +297,15 @@ function secondsTooLarge(label: string, raw: string, value: number): string | nu
  * 폼 칸 이름: value:<path>(지금 글자) · initial:<path>(처음 그린 글자) · stored:<path>("1" = 덮어쓴 키) · reset:<path>(기본값으로)
  * · auto:budgets.<job> / initialAuto:budgets.<job>. 바뀐 칸만 patch 에 넣는다. reset 은 덮어쓴 키에만 null 을 넣는다(없는 키의 reset 은 바뀐 것이 없다).
  * patch 는 저장 문서 모양(그룹 키부터)이다: { translation: { product: { batchChars: 6000 } } }.
+ * group 은 하나거나 여럿이다(실시간 한도 화면은 한 폼이 routes·jobs·budgets·translation 을 함께 보낸다 — saveRuntimeSettings 가 한 TX 로 저장한다).
  */
-export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup, form: FormLike): FormPatch {
+export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup | readonly RuntimeSettingGroup[], form: FormLike): FormPatch {
+  const groups: readonly RuntimeSettingGroup[] = typeof group === "string" ? [group] : group;
   const patch: Record<string, unknown> = {}, changed: string[] = [], issues: string[] = [];
   for (const [name, entry] of form.entries()) {
     if (!name.startsWith("value:")) continue;
     const path = name.slice("value:".length);
-    if (!path.startsWith(`${group}.`) || path.split(".").some(part => !part)) { issues.push(`모르는 설정입니다: ${path}`); continue; }
+    if (!groups.some(each => path.startsWith(`${each}.`)) || path.split(".").some(part => !part)) { issues.push(`모르는 설정입니다: ${path}`); continue; }
     const label = fieldLabel(path), kind = fieldKind(path);
     if (text(form.get(`reset:${path}`)) === "on") {
       if (text(form.get(`stored:${path}`)) === "1") { setLeaf(patch, path, null); changed.push(path); }
@@ -455,7 +343,35 @@ export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup, form: F
     }
     if (value !== parseFieldInput(kind, initial)) { setLeaf(patch, path, value); changed.push(path); }
   }
+  if (groups.includes("routes")) deriveReviewLadder(patch, changed, form);
   return { patch, changed, issues };
+}
+
+/** 심사 사다리(routes.deadlines.review-gateway) — 화면은 클라이언트 기한(= 2차 심사·1차 Qwen 호출 상한)만 받는다 */
+export const REVIEW_LADDER_ROUTE = "review-gateway";
+const LADDER_STEP_MS = 5_000;
+/**
+ * 클라이언트 기한(clientMs)을 바꾸면 안쪽 선언 층(게이트웨이·중계·엔진)을 순서가 맞게 끌어내린다(2026-11-11 개편 — 그 세 칸은 아무도 강제하지 않는 선언이라
+ * 화면에서 뺐다; 남겨 두면 클라이언트 기한을 57초 아래로 낮추는 저장이 deadline_order_inverted 로 늘 거절된다).
+ * 지금 값은 폼의 숨은 칸 current:<사다리 경로>.<층> 에서 읽는다. 층이 이미 순서에 맞으면 건드리지 않는다(올릴 때는 아무 것도 바꾸지 않는다).
+ * 게이트웨이 = min(지금, 클라이언트 - 5초), 중계(있으면) = min(지금, 게이트웨이 - 2.5초), 엔진 = min(지금, (중계 ?? 게이트웨이) - 5초). 엔진이 1초 아래로 가면 끌어내리지 않는다(검사가 거절한다).
+ */
+function deriveReviewLadder(patch: Record<string, unknown>, changed: string[], form: FormLike): void {
+  const base = `routes.deadlines.${REVIEW_LADDER_ROUTE}`;
+  const client = storedLeaf(patch, `${base}.clientMs`);
+  if (typeof client !== "number") return;
+  const current = (layer: string) => { const value = parseFieldInput("ms", text(form.get(`current:${base}.${layer}`))); return typeof value === "number" ? value : null; };
+  const gateway = current("gatewayMs"), engine = current("engineMs"), relay = current("relayMs");
+  if (gateway === null || engine === null) return;
+  const nextGateway = Math.min(gateway, client - LADDER_STEP_MS);
+  const nextRelay = relay === null ? null : Math.min(relay, nextGateway - LADDER_STEP_MS / 2);
+  const nextEngine = Math.min(engine, (nextRelay ?? nextGateway) - LADDER_STEP_MS);
+  if (nextEngine < 1_000) return;
+  for (const [layer, before, after] of [["gatewayMs", gateway, nextGateway], ["relayMs", relay, nextRelay], ["engineMs", engine, nextEngine]] as const) {
+    if (after === null || after === before) continue;
+    setLeaf(patch, `${base}.${layer}`, after);
+    changed.push(`${base}.${layer}`);
+  }
 }
 
 // ---------- 거절·경고 코드 → 한국어 ----------
@@ -508,4 +424,6 @@ export function runtimeSettingsWarningMessage(code: string): string {
     default: return code;
   }
 }
+/** 「실시간 한도」 화면 한 폼이 보내는 그룹 — 작업 줄의 호출 상한·동시 호출·응답 토큰(routes), 묶음(jobs), 틱 시간(budgets), 자동 틱 여유(translation) */
+export const LIMITS_PAGE_GROUPS: readonly RuntimeSettingGroup[] = Object.freeze(["routes", "jobs", "budgets", "translation"]);
 export const isRuntimeSettingGroup = (value: unknown): value is RuntimeSettingGroup => typeof value === "string" && (RUNTIME_SETTING_GROUPS as readonly string[]).includes(value);

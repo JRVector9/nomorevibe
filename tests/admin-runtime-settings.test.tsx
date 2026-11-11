@@ -2,26 +2,27 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// 실시간 한도 화면(PR 1a WP-D) — 화면 모형·폼 → sparse patch·거절 문장·그리기·server action. DB 없이 본다; WP-A 의 저장 본문은 가짜다.
-const mocks = vi.hoisted(() => ({ admin: vi.fn(), save: vi.fn(), readRow: vi.fn(), readApply: vi.fn() }));
+// 실시간 한도의 칸·폼 → sparse patch·거절 문장·server action, 그리고 다른 화면으로 옮긴 칸 묶음(2026-11-11 개편). DB 없이 본다; 저장 본문은 가짜다.
+// 「실시간 한도」 화면의 작업 줄 모형·규칙·편집기는 tests/admin-limits-view.test.tsx 가 본다.
+const mocks = vi.hoisted(() => ({ admin: vi.fn(), save: vi.fn(), readRow: vi.fn(), readApply: vi.fn(), revalidate: vi.fn() }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
 vi.mock("@/lib/operations/runtime-settings", async importOriginal => ({ ...(await importOriginal<object>()),
   saveRuntimeSettings: mocks.save, readRuntimeSettingsRow: mocks.readRow, readRuntimeSettingsApply: mocks.readApply }));
 vi.mock("@/lib/operations/dr/web-gate", () => ({ webWriteAction: (fn: unknown) => fn }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidate }));
 
-import { saveRuntimeSettingsGroup } from "@/app/(operator)/admin/models/limits/actions";
-import { BudgetsForm } from "@/app/(operator)/admin/models/limits/BudgetsForm";
-import { RoutesForm } from "@/app/(operator)/admin/models/limits/RoutesForm";
-import { TranslationForm } from "@/app/(operator)/admin/models/limits/TranslationForm";
+import { saveRuntimeLimits, saveRuntimeSettingsGroup } from "@/app/(operator)/admin/models/limits/actions";
 import { SettingsApplyLine } from "@/app/(operator)/admin/settings/SettingsApplyLine";
 import { AssignmentsForm } from "@/app/(operator)/admin/models/limits/AssignmentsForm";
 import { CapacityForm } from "@/app/(operator)/admin/models/limits/CapacityForm";
-import { auditChangeLines, buildAssignmentReadsControl, buildRuntimeSettingsAdminView, fieldLabel, latestRoleObservations, runtimeSettingsIssueMessage,
-  runtimeSettingsPatchFromForm, type AdminObservation } from "@/lib/operations/admin-runtime-settings";
+import { SettingsFieldsForm } from "@/app/(operator)/admin/models/limits/SettingsFieldsForm";
+import { LimitsEditor } from "@/app/(operator)/admin/models/limits/LimitsEditor";
+import { buildLimitsView } from "@/lib/operations/admin-limits-view";
+import { auditChangeLines, auditView, buildAssignmentReadsControl, buildSettingsControl, fieldLabel, JOB_CONCURRENCY_CONTROL, latestRoleObservations, LIMITS_PAGE_GROUPS,
+  readSettingsControl, runtimeSettingsIssueMessage, runtimeSettingsPatchFromForm, TRANSLATION_LIMITS_CONTROL, UNKNOWN_HOLD_CONTROL, type AdminObservation } from "@/lib/operations/admin-runtime-settings";
 import type { AdminLogRow } from "@/lib/operations/admin-log";
 import { formatRuntimeSettingsLine, runtimeSettingsReadback } from "@/lib/operations/pipeline-control-status";
-import { RUNTIME_SETTING_LABELS, type RuntimeSettingGroup } from "@/lib/operations/runtime-settings-schema";
+import { resolveRuntimeSettings, RUNTIME_SETTING_LABELS, type RuntimeSettingGroup } from "@/lib/operations/runtime-settings-schema";
 
 const NOW = new Date("2026-10-30T12:00:00.000Z");
 // 공개 번역 호출 상한 290초(모델 m1:translation 의 300초보다 짧아 경로 값이 실제 상한이 된다 — 둘 중 작은 값이 쓰인다)
@@ -40,52 +41,35 @@ const OBSERVATIONS: AdminObservation[] = [
 const audit = (over: Partial<AdminLogRow>): AdminLogRow => ({ id: 1, actor: "jr", action: "runtime-settings-save", target: "runtime_settings:translation",
   detail: { revision: 4, changes: [{ path: "product.batchChars", before: 8_000, after: 6_000 }] }, createdAt: NOW, actorKind: "github", ip: null, userAgent: null,
   ok: true, error: null, ...over });
-const view = (overrides: Partial<Parameters<typeof buildRuntimeSettingsAdminView>[0]> = {}) =>
-  buildRuntimeSettingsAdminView({ row: ROW, observations: OBSERVATIONS, now: NOW, audit: [audit({})], ...overrides });
 const form = (entries: Record<string, string>) => { const data = new FormData(); for (const [key, value] of Object.entries(entries)) data.set(key, value); return data; };
 
 beforeEach(() => {
   mocks.admin.mockReset().mockResolvedValue({ login: "operator" });
   mocks.save.mockReset().mockResolvedValue({ ok: true, revision: 4, version: "abcdef1234567890" });
+  mocks.revalidate.mockReset();
 });
 
-describe("화면 모형 — 유효값·기본값·덮어씀", () => {
-  it("저장 문서의 키만 덮어씀이고 나머지는 기본값이다; 이름은 RUNTIME_SETTING_LABELS 에서 온다(ms 칸은 초)", () => {
-    const model = view();
-    expect(model).toMatchObject({ revision: 3, updatedBy: "jr", rowError: null, issues: [] });
-    expect(model.shortVersion).toMatch(/^v[0-9a-f]{6}$/);
-    const batchChars = model.translation.find(field => field.path === "translation.product.batchChars")!;
-    expect(batchChars).toMatchObject({ value: 6_000, defaultValue: 8_000, overridden: true, input: "6000", defaultInput: "8000", kind: "int" });
-    expect(batchChars.label).toBe(RUNTIME_SETTING_LABELS["translation.product.batchChars"]);
-    expect(batchChars.label).toBe("공개 번역 묶음 글자 임계");
-    expect(model.translation.find(field => field.path === "translation.product.maxSourceChars")).toMatchObject({ overridden: false, input: "30000", note: expect.stringContaining("source_too_long") });
-    expect(model.translation.find(field => field.path === "translation.product.batchMax")).toMatchObject({ readOnly: true, input: "4" });
-    const margin = model.translation.find(field => field.path === "translation.product.jobMarginMs")!;
-    expect(margin).toMatchObject({ kind: "ms", input: "15", defaultInput: "15", label: "공개 번역 틱 여유(초)" });
-    expect(fieldLabel("translation.product.jobMarginMs")).toBe(RUNTIME_SETTING_LABELS["translation.product.jobMarginMs"].replace("(ms)", "(초)"));
-  });
-
+describe("칸 모형·옮긴 칸 묶음 — 유효값·기본값·덮어씀", () => {
   it("모델 배정 읽기(3b-E) — 열거 칸 하나: 기본 off, 저장 문서가 on 이면 덮어씀, 선택지와 안내가 붙는다; 배정 화면용 묶음은 행 하나로 만든다", () => {
-    const [toggle] = view().assignments;
+    const [toggle] = buildAssignmentReadsControl(ROW).fields;
     expect(toggle).toMatchObject({ path: "assignments.tableReads", label: "배정 표 읽기", kind: "choice", value: "off", defaultValue: "off", input: "off", defaultInput: "off",
       overridden: false, options: [{ value: "off", label: "끔 — 설정(legacy)으로 고른다" }, { value: "on", label: "켬 — 배정 표(live 행)로 고른다" }] });
     expect(toggle.note).toContain("재배포 없음");
     expect(toggle.note).toContain("MODEL_ASSIGNMENT_TABLE");
-    const on = view({ row: { ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } } }).assignments[0];
-    expect(on).toMatchObject({ value: "on", input: "on", overridden: true, defaultInput: "off" });
     expect(fieldLabel("assignments.tableReads")).toBe("배정 표 읽기");
     const control = buildAssignmentReadsControl({ ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } });
     expect(control).toMatchObject({ revision: 3, rowError: null, fields: [{ path: "assignments.tableReads", input: "on", overridden: true }] });
     expect(buildAssignmentReadsControl(null, "runtime_settings_row_missing")).toMatchObject({ revision: null, rowError: "runtime_settings_row_missing", fields: [{ input: "off", overridden: false }] });
   });
 
-  it("모델 장부 점유(2026-11-10) — 결과 미확정 점유 유지 시간은 초 정수 칸 하나: 기본 600, 저장 문서가 0 이면 덮어씀, 폼은 정수 그대로 sparse patch", () => {
-    const [hold] = view().capacity;
+  it("결과 미확정 점유(장비 한도 화면으로 옮김) — 초 정수 칸 하나: 기본 600, 저장 문서가 0 이면 덮어씀, 폼은 정수 그대로 sparse patch", () => {
+    const [hold] = buildSettingsControl(ROW, UNKNOWN_HOLD_CONTROL).fields;
     expect(hold).toMatchObject({ path: "capacity.unknownHoldSeconds", label: "결과 미확정 점유 유지(초)", kind: "int", value: 600, defaultValue: 600,
       input: "600", defaultInput: "600", overridden: false });
     expect(hold.note).toContain("0 이면 차지하지 않습니다");
     expect(hold.note).toContain("저장 즉시 다음 모델 입장부터");
-    expect(view({ row: { ...ROW, values: { ...STORED, capacity: { unknownHoldSeconds: 0 } } } }).capacity[0]).toMatchObject({ value: 0, input: "0", overridden: true });
+    expect(buildSettingsControl({ ...ROW, values: { ...STORED, capacity: { unknownHoldSeconds: 0 } } }, UNKNOWN_HOLD_CONTROL).fields[0])
+      .toMatchObject({ value: 0, input: "0", overridden: true });
     const patch = (over: Record<string, string>) => runtimeSettingsPatchFromForm("capacity", form({ "value:capacity.unknownHoldSeconds": "600",
       "initial:capacity.unknownHoldSeconds": "600", "stored:capacity.unknownHoldSeconds": "0", ...over }));
     expect(patch({ "value:capacity.unknownHoldSeconds": "300" })).toEqual({ patch: { capacity: { unknownHoldSeconds: 300 } }, changed: ["capacity.unknownHoldSeconds"], issues: [] });
@@ -94,72 +78,47 @@ describe("화면 모형 — 유효값·기본값·덮어씀", () => {
     expect(runtimeSettingsIssueMessage("runtime_settings_invalid:capacity.unknownHoldSeconds")).toBe("결과 미확정 점유 유지(초): 범위를 벗어났습니다(0~3600)");
   });
 
-  it("경로 한도 — 호출 상한 칸은 timeouts·limits.timeoutMs·사다리 중 그 경로가 실제로 읽는 자리고, 모델 상한은 등록부에서 읽기 전용으로 붙는다", () => {
-    const model = view();
-    const translate = model.routes.find(row => row.route === "product-translate")!;
-    expect(translate.label).toBe("공개 번역");
-    expect(translate.timeout).toMatchObject({ path: "routes.limits.product-translate.timeoutMs", input: "290", defaultInput: "300", overridden: true, label: "공개 번역 호출 상한(초)" });
-    expect(translate.maxTokens).toMatchObject({ path: "routes.limits.product-translate.maxTokens", input: "30000", overridden: false });
-    expect(translate.modelCeiling).toContain("m1:translation");
-    expect(model.routes.find(row => row.route === "crawl-tagline")!.timeout).toMatchObject({ path: "routes.timeouts.crawl-tagline", input: "45" });
-    // 시간 상한만 있는 경로는 토큰·동시 칸이 없다
-    expect(model.routes.find(row => row.route === "screen-review")).toMatchObject({ maxTokens: null, concurrency: null, timeout: { path: "routes.timeouts.screen-review", input: "90" } });
-    // 사다리 경로의 호출 상한은 사다리 클라이언트 기한
-    const ladder = model.ladders.find(row => row.route === "review-gateway")!;
-    expect(ladder.fields.clientMs).toMatchObject({ input: "60", kind: "ms" });
-    expect(ladder.fields.relayMs).toMatchObject({ input: "", value: null });
-    expect(ladder.fields.engineMs.note).toContain("선언만");
+  it("공개 번역 한도(공개 번역 화면으로 옮김) — 네 칸 + 묶음 최대 건수(고정); 최대 시도는 4회까지만 보낸다고 알린다", () => {
+    const control = buildSettingsControl(ROW, TRANSLATION_LIMITS_CONTROL);
+    expect(control.fields.map(field => field.path)).toEqual(["translation.product.maxSourceChars", "translation.product.batchChars", "translation.product.demandLimit",
+      "translation.product.maxAttempts", "translation.product.batchMax"]);
+    expect(control.fields[1]).toMatchObject({ value: 6_000, defaultValue: 8_000, overridden: true, input: "6000", defaultInput: "8000", kind: "int",
+      label: RUNTIME_SETTING_LABELS["translation.product.batchChars"] });
+    expect(control.fields[0].note).toContain("source_too_long");
+    expect(control.fields[3].note).toContain("4보다 크게 해도 더 보내지 않습니다");
+    expect(control.fields[4]).toMatchObject({ readOnly: true, input: "4" });
+    // 자동 틱 여유는 실시간 한도 화면에 남는다
+    expect(control.fields.some(field => field.path === "translation.product.jobMarginMs")).toBe(false);
   });
 
-  it("틱 예산 — auto 는 상한 + 여유로 풀고, 감독 하한·지금 도는 틱·env 등록부는 역할 관측에서 읽는다", () => {
-    const model = view();
-    const translate = model.budgets.find(row => row.job === "product-translate")!;
-    expect(translate).toMatchObject({ auto: true, defaultAuto: true, declared: true, ceilingMs: 290_000, role: "text", roleLabel: "소개·사유 번역",
-      autoNote: "= 호출 상한 290초 + 여유 15초 = 305초", supervisorFloorMs: 180_000, lane: { state: "running", currentJob: "product-translate", ageMs: 12_000, budgetMs: 315_000 } });
-    expect(translate.field).toMatchObject({ input: "305", defaultInput: "315", overridden: false, label: "공개 번역 틱 예산(초)" });
-    // 경로 상한을 모델 상한(300초)보다 길게 적으면 실제 상한은 모델 쪽이다
-    expect(view({ row: { ...ROW, values: { version: 1, routes: { limits: { "product-translate": { timeoutMs: 310_000 } } } } } }).budgets.find(row => row.job === "product-translate"))
-      .toMatchObject({ ceilingMs: 300_000, autoNote: "= 호출 상한 300초 + 여유 15초 = 315초" });
-    expect(model.budgets.find(row => row.job === "crawl-tagline")).toMatchObject({ declared: true, ceilingMs: 45_000, field: { input: "60", overridden: true }, warning: null });
-    expect(model.budgets.find(row => row.job === "product-search-verify")!.warning).toContain("키워드 검수 예산 여유가 15초보다 좁습니다");
-    expect(model.budgets.find(row => row.job === "crawl-agent-review")).toMatchObject({ ceilingMs: 60_000, field: { input: "110" }, supervisorFloorMs: null, lane: null });
-    expect(model.roles).toEqual([
-      { role: "crawler", label: "프로젝트 수집", registryEnv: false }, { role: "reviewer", label: "후보 심사", registryEnv: false },
-      { role: "publisher", label: "제품 발행", registryEnv: false }, { role: "text", label: "소개·사유 번역", registryEnv: true },
-      { role: "maintenance", label: "생존 확인·지표 집계", registryEnv: false }]);
-    // 역할 순서로 묶이고 한 역할 안은 이름 순
-    const roles = model.budgets.map(row => row.role);
-    expect(roles.indexOf("text")).toBeGreaterThan(roles.lastIndexOf("reviewer"));
-    expect(latestRoleObservations(OBSERVATIONS).reviewer).toBeNull();
-    // 적용 확인(WP-B)이 registryEnv 를 실어 오면 그것도 배지가 된다
-    const apply = { savedVersion: "default", allApplied: false, attention: null, roles: [
-      { role: "publisher" as const, label: "제품 발행", reportedVersion: "default", observedAt: null, state: "applied" as const, lagging: false, registryEnv: true }] };
-    expect(view({ apply }).roles.find(role => role.role === "publisher")).toMatchObject({ registryEnv: true });
+  it("작업 배정 화면으로 옮긴 동시 업무 두 칸 — 저장 문서 값(2)과 기본(1)", () => {
+    const control = buildSettingsControl({ ...ROW, values: { ...STORED, jobs: { "second-review": { consumerConcurrency: 2 } } } }, JOB_CONCURRENCY_CONTROL);
+    expect(control.fields).toMatchObject([{ path: "jobs.second-review.consumerConcurrency", input: "2", defaultInput: "1", overridden: true },
+      { path: "jobs.crawl-publish.classifierConcurrency", input: "1", overridden: false }]);
   });
 
-  it("예산을 적지 않은 잡은 runner 기본으로 돈다고 알리고, 빈 문서는 모두 기본값·판 default 다", () => {
-    const model = view({ row: { ...ROW, values: { version: 1 } } });
-    expect(model).toMatchObject({ version: "default", shortVersion: "default" });
-    expect(model.budgets.find(row => row.job === "crawl-tagline")).toMatchObject({ declared: false, field: { input: "", overridden: false, note: expect.stringContaining("runner 기본 25초") } });
-    expect(model.warnings).toContain("소개 생성 은 예산을 적지 않아 runner 기본 25초로 돕니다 — 호출 상한보다 짧습니다");
-    expect(model.routes.every(row => !row.timeout?.overridden && !row.maxTokens?.overridden)).toBe(true);
+  it("행을 못 읽으면 읽기 전용(revision null)·기본값이고, 읽기 함수는 던지지 않는다", async () => {
+    expect(buildSettingsControl(null, UNKNOWN_HOLD_CONTROL, "boom")).toMatchObject({ revision: null, rowError: "boom", fields: [{ input: "600" }] });
+    mocks.readRow.mockRejectedValueOnce(new Error("runtime_settings_row_missing"));
+    expect(await readSettingsControl(JOB_CONCURRENCY_CONTROL)).toMatchObject({ revision: null, rowError: "runtime_settings_row_missing" });
+    mocks.readRow.mockResolvedValueOnce(ROW);
+    expect(await readSettingsControl(TRANSLATION_LIMITS_CONTROL)).toMatchObject({ revision: 3, rowError: null });
   });
 
-  it("행이 없으면(0151 전·stub) 기본값으로 그리고 읽기 전용이다; 저장 문서 문제는 한국어로 올린다", () => {
-    const missing = view({ row: null, rowError: "runtime_settings_not_implemented" });
-    expect(missing).toMatchObject({ revision: null, rowError: "runtime_settings_not_implemented", shortVersion: "default" });
-    const broken = view({ row: { ...ROW, values: { version: 1, budgets: { "product-translate": 100_000 }, routes: { timeouts: { nope: 1_000 } } } } });
-    expect(broken.issues).toEqual(expect.arrayContaining(["모르는 경로입니다: nope", "공개 번역 틱 예산이 호출 상한보다 짧습니다 — 예산 ≥ 상한 + 2초"]));
+  it("역할 관측 — 1분 넘은 관측·consumer 관측은 그 역할의 지금 상태가 아니다", () => {
+    const roles = latestRoleObservations(OBSERVATIONS);
+    expect(roles.text).toMatchObject({ registryEnv: true, jobMs: 180_000 });
+    expect(roles.crawler).toMatchObject({ registryEnv: false, jobMs: 120_000 });
+    expect(roles.reviewer).toBeNull();
   });
 
   it("감사 줄은 바뀐 값을 한국어 이름으로 — 그룹 안 경로와 전체 경로를 모두 읽는다", () => {
-    const model = view();
-    expect(model.audit).toEqual([{ id: 1, actor: "jr", at: NOW.toISOString(), ok: true, group: "번역·묶음", revision: 4, changes: ["공개 번역 묶음 글자 임계: 8000 → 6000"], error: null }]);
-    expect(buildRuntimeSettingsAdminView({ row: ROW, audit: [audit({ ok: false, error: "stale_form · budget_below_call_timeout:product-translate" })] }).audit[0].error)
+    expect(auditView([audit({})])).toEqual([{ id: 1, actor: "jr", at: NOW.toISOString(), ok: true, group: "번역·묶음", revision: 4, changes: ["공개 번역 묶음 글자 임계: 8000 → 6000"], error: null }]);
+    expect(auditView([audit({ ok: false, error: "stale_form · budget_below_call_timeout:product-translate" })])[0].error)
       .toBe("그 사이 다른 곳에서 설정이 바뀌었습니다. 새로고침해 바뀐 값을 확인한 뒤 다시 저장해주세요. · 공개 번역 틱 예산이 호출 상한보다 짧습니다 — 예산 ≥ 상한 + 2초");
     expect(auditChangeLines(audit({ target: "runtime_settings:budgets", detail: { changes: [{ path: "budgets.product-translate", before: "auto", after: 320_000 }, { path: "crawl-tagline", before: null, after: 60_000 }] } })))
       .toEqual(["공개 번역 틱 예산(ms): auto → 320000", "소개 생성 틱 예산(ms): 기본값 → 60000"]);
-    expect(buildRuntimeSettingsAdminView({ row: ROW, audit: Array.from({ length: 12 }, (_, index) => audit({ id: index + 1 })) }).audit).toHaveLength(10);
+    expect(auditView(Array.from({ length: 12 }, (_, index) => audit({ id: index + 1 })))).toHaveLength(10);
   });
 });
 
@@ -251,7 +210,7 @@ describe("폼 → sparse patch", () => {
       .toEqual({ budgets: { "product-translate": null } });
   });
 
-  // 그려진 폼을 브라우저가 보내는 그대로 모은다 — 폼마다(숨은 group 칸으로 가름) 이름 있는 칸, disabled 제외, 체크박스는 켜진 것만, select 는 고른 option
+  // 그려진 폼을 브라우저가 보내는 그대로 모은다 — 폼마다(숨은 group 칸으로 가름, 없으면 「실시간 한도」 한 폼) 이름 있는 칸, disabled 제외, 체크박스는 켜진 것만, select 는 고른 option
   const submittedForms = (html: string) => {
     const decode = (value: string) => value.replace(/&quot;/g, "\"").replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
     const attr = (tag: string, name: string) => { const match = new RegExp(`\\s${name}="([^"]*)"`).exec(tag); return match ? decode(match[1]) : null; };
@@ -269,28 +228,28 @@ describe("폼 → sparse patch", () => {
         const chosen = /<option[^>]*\sselected=""[^>]*>/.exec(options)?.[0] ?? /<option[^>]*>/.exec(options)?.[0] ?? "";
         data.append(name, attr(chosen, "value") ?? "");
       }
-      forms.set(String(data.get("group")), data);
+      // 「실시간 한도」 화면은 숨은 group 칸이 없는 한 폼이다(그룹 여럿을 함께 보낸다)
+      forms.set(data.has("group") ? String(data.get("group")) : "limits", data);
     }
     return forms;
   };
 
-  it("그려진 틱 예산 폼 그대로 — 예산을 적지 않아 빈칸인 소개 생성이 있어도 손댄 칸만 저장한다(2026-11-11 틱 예산 저장이 늘 거절됨)", () => {
-    // 운영 행처럼 예산을 덮어쓰지 않은 문서 — 소개 생성(crawl-tagline)은 예산이 없어 빈칸으로 그려진다
-    const model = buildRuntimeSettingsAdminView({ row: { ...ROW, values: { version: 1 } }, observations: [], now: NOW, audit: [] });
-    expect(model.budgets.find(row => row.job === "crawl-tagline")).toMatchObject({ declared: false, auto: false, field: { input: "", overridden: false } });
-    const budgets = (rows = model.budgets) => submittedForms(renderToStaticMarkup(createElement(BudgetsForm, { budgets: rows, revision: 3 }))).get("budgets")!;
-    const edit = (change: (data: FormData) => void, rows = model.budgets) => { const data = budgets(rows); change(data); return runtimeSettingsPatchFromForm("budgets", data); };
-    expect(budgets().get("value:budgets.crawl-tagline")).toBe("");
-    expect(budgets().get("auto:budgets.product-translate")).toBe("on");
+  it("그려진 틱 시간 칸 그대로 — 예산을 적지 않은 소개 생성이 있어도 손댄 칸만 저장한다(2026-11-11 틱 예산 저장이 늘 거절됨, 새 화면으로 옮김)", () => {
+    // 운영 행처럼 예산을 덮어쓰지 않은 문서 — 소개 생성(crawl-tagline)은 예산이 없다. 새 화면은 빈칸 대신 실제로 도는 25초를 그린다
+    const limits = (values: unknown) => submittedForms(renderToStaticMarkup(createElement(LimitsEditor, { view: buildLimitsView({ row: { ...ROW, values }, now: NOW }) })))
+      .get("limits")!;
+    const edit = (change: (data: FormData) => void, values: unknown = { version: 1 }) => { const data = limits(values); change(data); return runtimeSettingsPatchFromForm(LIMITS_PAGE_GROUPS, data); };
+    expect(limits({ version: 1 }).get("value:budgets.crawl-tagline")).toBe("25");
+    expect(limits({ version: 1 }).get("auto:budgets.product-translate")).toBe("on");
     // 아무것도 안 바꾸면 거절도 바뀐 것도 없다
     expect(edit(() => {})).toEqual({ patch: {}, changed: [], issues: [] });
-    // 다른 잡 하나만 고치면 그 칸만 저장한다(소개 생성 빈칸 때문에 거절되지 않는다)
+    // 다른 잡 하나만 고치면 그 칸만 저장한다
     expect(edit(data => data.set("value:budgets.product-search-profile", "60")))
       .toEqual({ patch: { budgets: { "product-search-profile": 60_000 } }, changed: ["budgets.product-search-profile"], issues: [] });
-    // 빈칸이던 소개 생성에 값을 넣으면 저장한다
+    // 소개 생성에 값을 넣으면 저장한다
     expect(edit(data => data.set("value:budgets.crawl-tagline", "50")))
       .toEqual({ patch: { budgets: { "crawl-tagline": 50_000 } }, changed: ["budgets.crawl-tagline"], issues: [] });
-    // auto 켜기 — 빈칸 그대로여도 "auto"
+    // auto 켜기 — "auto"
     expect(edit(data => data.set("auto:budgets.crawl-tagline", "on"))).toEqual({ patch: { budgets: { "crawl-tagline": "auto" } }, changed: ["budgets.crawl-tagline"], issues: [] });
     // auto 끄기 — 글자를 그대로 두면 지금 auto 값(315초)을 숫자로 저장한다
     expect(edit(data => data.delete("auto:budgets.product-translate")))
@@ -300,22 +259,22 @@ describe("폼 → sparse patch", () => {
     expect(edit(data => data.set("value:budgets.product-search-profile", ""))).toEqual({ patch: {}, changed: [],
       issues: [`${fieldLabel("budgets.product-search-profile")}: 초 단위 숫자를 넣어주세요`] });
     // 덮어쓴 예산의 「기본값으로」 — 저장 문서에서 키를 지운다(null)
-    const stored = view().budgets;
-    expect(edit(() => {}, stored)).toEqual({ patch: {}, changed: [], issues: [] });
-    expect(edit(data => data.set("reset:budgets.crawl-tagline", "on"), stored))
+    expect(edit(() => {}, STORED)).toEqual({ patch: {}, changed: [], issues: [] });
+    expect(edit(data => data.set("reset:budgets.crawl-tagline", "on"), STORED))
       .toEqual({ patch: { budgets: { "crawl-tagline": null } }, changed: ["budgets.crawl-tagline"], issues: [] });
   });
 
-  it("다른 묶음도 그려진 그대로 보내면 거절도 바뀐 것도 없다 — 빈칸을 숫자 검사보다 먼저 건너뛴다", () => {
+  it("다른 폼도 그려진 그대로 보내면 거절도 바뀐 것도 없다 — 실시간 한도 한 폼과 옮긴 칸의 그룹 폼들", () => {
     for (const row of [{ ...ROW, values: { version: 1 } }, ROW]) {
-      const model = buildRuntimeSettingsAdminView({ row, observations: [], now: NOW, audit: [] });
-      const html = [createElement(RoutesForm, { routes: model.routes, ladders: model.ladders, revision: 3 }),
-        createElement(TranslationForm, { translation: model.translation, jobKnobs: model.jobKnobs, revision: 3 }),
-        createElement(BudgetsForm, { budgets: model.budgets, revision: 3 }), createElement(AssignmentsForm, { fields: model.assignments, revision: 3 }),
-        createElement(CapacityForm, { fields: model.capacity, revision: 3 })].map(element => renderToStaticMarkup(element)).join("");
+      const html = [createElement(LimitsEditor, { view: buildLimitsView({ row, now: NOW }) }),
+        createElement(SettingsFieldsForm, { group: "translation", fields: buildSettingsControl(row, TRANSLATION_LIMITS_CONTROL).fields, revision: 3 }),
+        createElement(SettingsFieldsForm, { group: "jobs", fields: buildSettingsControl(row, JOB_CONCURRENCY_CONTROL).fields, revision: 3 }),
+        createElement(AssignmentsForm, { fields: buildAssignmentReadsControl(row).fields, revision: 3 }),
+        createElement(CapacityForm, { fields: buildSettingsControl(row, UNKNOWN_HOLD_CONTROL).fields, revision: 3 })].map(element => renderToStaticMarkup(element)).join("");
       const forms = submittedForms(html);
-      expect([...forms.keys()].sort()).toEqual(["assignments", "budgets", "capacity", "jobs", "routes", "translation"]);
-      for (const [group, data] of forms) expect(runtimeSettingsPatchFromForm(group as RuntimeSettingGroup, data), group).toEqual({ patch: {}, changed: [], issues: [] });
+      expect([...forms.keys()].sort()).toEqual(["assignments", "capacity", "jobs", "limits", "translation"]);
+      for (const [group, data] of forms) expect(runtimeSettingsPatchFromForm(group === "limits" ? LIMITS_PAGE_GROUPS : group as RuntimeSettingGroup, data), group)
+        .toEqual({ patch: {}, changed: [], issues: [] });
     }
   });
 });
@@ -372,94 +331,88 @@ describe("server action — 쓰기 관문 뒤 관리자 확인·CAS·거절 문�
   });
 });
 
-describe("폼 그리기", () => {
-  const model = view();
-  it("경로 한도 — 한국어 이름표·기본값·덮어씀·기본값으로·숨은 revision·사다리 선언 안내", () => {
-    const html = renderToStaticMarkup(createElement(RoutesForm, { routes: model.routes, ladders: model.ladders, revision: model.revision }));
-    expect(html).toContain('name="group" value="routes"');
-    expect(html).toContain('name="expectedRevision" value="3"');
-    expect(html).toContain('name="value:routes.limits.product-translate.timeoutMs"');
-    expect(html).toContain('aria-label="공개 번역 호출 상한(초)"');
-    expect(html).toContain('value="290"');
-    expect(html).toContain("기본 300초");
-    expect(html).toContain("덮어씀");
-    expect(html).toContain('name="reset:routes.limits.product-translate.timeoutMs"');
-    expect(html).toContain("기본값으로");
-    expect(html).toContain("m1:translation");
-    expect(html).toContain("이 숫자를 강제하는 게이트웨이는 없습니다");
-    expect(html).toContain("모델 자체의 상한은 서빙 계약·등록부 → 등록부 덮어쓰기");
-    expect(html).toContain("이 묶음 저장");
-    expect(html).not.toMatch(/name="value:routes\.deadlines\.review-gateway\.relayMs"[^>]*placeholder="모델 상한"/);
+describe("server action — 실시간 한도 화면 한 폼(saveRuntimeLimits)", () => {
+  it("바뀐 칸의 그룹만 골라 한 번에 저장한다(그룹 여럿이면 배열, 하나면 그 그룹) — 다른 화면도 다시 그린다", async () => {
+    const changed = { expectedRevision: "9", "value:routes.limits.product-translate.timeoutMs": "100", "initial:routes.limits.product-translate.timeoutMs": "120",
+      "value:budgets.product-translate": "115", "initial:budgets.product-translate": "135", "initialAuto:budgets.product-translate": "1" };
+    const result = await saveRuntimeLimits(null, form(changed));
+    expect(mocks.save).toHaveBeenCalledWith({ routes: { limits: { "product-translate": { timeoutMs: 100_000 } } }, budgets: { "product-translate": 115_000 } }, "operator",
+      { expectedRevision: 9, group: ["routes", "budgets"] });
+    expect(result).toEqual({ ok: true, message: "저장했습니다 — 바뀐 값 2개(판 vabcdef, revision 4). 각 워커는 30초 안에 다음 틱부터 씁니다." });
+    expect(mocks.revalidate.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining(["/admin/models/limits", "/admin/models/devices", "/admin/models/tasks", "/admin/translations"]));
+    await saveRuntimeLimits(null, form({ expectedRevision: "9", "value:jobs.reason-translate.batch": "6", "initial:jobs.reason-translate.batch": "4" }));
+    expect(mocks.save).toHaveBeenLastCalledWith({ jobs: { "reason-translate": { batch: 6 } } }, "operator", { expectedRevision: 9, group: "jobs" });
   });
+
+  it("거절·바뀐 것 없음·판 번호 없음·비관리자·화면 밖 그룹은 그대로 알린다", async () => {
+    mocks.save.mockResolvedValueOnce({ ok: false, issues: ["budget_below_call_timeout:reason-translate"] });
+    expect(await saveRuntimeLimits(null, form({ expectedRevision: "9", "value:routes.limits.reason-translate.timeoutMs": "60", "initial:routes.limits.reason-translate.timeoutMs": "45" })))
+      .toEqual({ issues: ["사유 번역 틱 예산이 호출 상한보다 짧습니다 — 예산 ≥ 상한 + 2초"] });
+    expect(await saveRuntimeLimits(null, form({ expectedRevision: "9", "value:jobs.reason-translate.batch": "4", "initial:jobs.reason-translate.batch": "4" })))
+      .toEqual({ issues: ["바뀐 값이 없습니다."] });
+    expect(await saveRuntimeLimits(null, form({ "value:jobs.reason-translate.batch": "6", "initial:jobs.reason-translate.batch": "4" })))
+      .toEqual({ issues: ["판 번호(revision)를 읽지 못했습니다. 새로고침해주세요."] });
+    expect(await saveRuntimeLimits(null, form({ expectedRevision: "9", "value:capacity.unknownHoldSeconds": "0", "initial:capacity.unknownHoldSeconds": "600" })))
+      .toEqual({ issues: ["모르는 설정입니다: capacity.unknownHoldSeconds"] });
+    mocks.admin.mockResolvedValue(null);
+    expect(await saveRuntimeLimits(null, form({ expectedRevision: "9" }))).toEqual({ issues: ["권한이 없습니다. 다시 로그인해주세요."] });
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("옮긴 칸의 폼 그리기", () => {
   it("모델 배정 읽기(3b-E) — assignments 묶음 폼: select 선택지·숨은 initial/stored·기본값 글·덮어쓴 칸의 「기본값으로」·compact 는 제목 없이", () => {
-    const html = renderToStaticMarkup(createElement(AssignmentsForm, { fields: model.assignments, revision: model.revision }));
+    const fields = buildAssignmentReadsControl(ROW).fields;
+    const html = renderToStaticMarkup(createElement(AssignmentsForm, { fields, revision: 3 }));
     expect(html).toContain('name="group" value="assignments"');
     expect(html).toContain('name="expectedRevision" value="3"');
     expect(html).toContain('<select name="value:assignments.tableReads"');
-    expect(html).toContain('aria-label="배정 표 읽기"');
     expect(html).toContain('<option value="off" selected="">끔 — 설정(legacy)으로 고른다</option>');
-    expect(html).toContain('<option value="on">켬 — 배정 표(live 행)로 고른다</option>');
     expect(html).toContain('name="initial:assignments.tableReads" value="off"');
     expect(html).toContain('name="stored:assignments.tableReads" value="0"');
-    expect(html).toContain("기본 끔 — 설정(legacy)으로 고른다");
     expect(html).toContain("배정 표 읽기</h3>");
     expect(html).not.toContain('name="reset:assignments.tableReads"');
-    expect(html).toContain("이 묶음 저장");
-    const on = view({ row: { ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } } });
-    const compact = renderToStaticMarkup(createElement(AssignmentsForm, { fields: on.assignments, revision: on.revision, compact: true }));
+    const on = buildAssignmentReadsControl({ ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } }).fields;
+    const compact = renderToStaticMarkup(createElement(AssignmentsForm, { fields: on, revision: 3, compact: true }));
     expect(compact).toContain('<option value="on" selected="">');
-    expect(compact).toContain("덮어씀");
     expect(compact).toContain('name="reset:assignments.tableReads"');
     expect(compact).not.toContain("배정 표 읽기</h3>");
-    const locked = renderToStaticMarkup(createElement(AssignmentsForm, { fields: model.assignments, revision: null, readOnly: true }));
+    const locked = renderToStaticMarkup(createElement(AssignmentsForm, { fields, revision: null, readOnly: true }));
     expect(locked).toMatch(/<select name="value:assignments\.tableReads"[^>]*disabled=""/);
     expect(locked).toContain("저장 행을 읽지 못해 읽기 전용입니다.");
   });
-  it("모델 장부 점유 — capacity 묶음 폼: 초 단위 정수 칸·기본값 글·저장 즉시 적용 안내", () => {
-    const html = renderToStaticMarkup(createElement(CapacityForm, { fields: model.capacity, revision: model.revision }));
+  it("결과 미확정 점유 — capacity 묶음 폼: 초 단위 정수 칸·기본값 글", () => {
+    const html = renderToStaticMarkup(createElement(CapacityForm, { fields: buildSettingsControl(ROW, UNKNOWN_HOLD_CONTROL).fields, revision: 3 }));
     expect(html).toContain('name="group" value="capacity"');
-    expect(html).toContain('name="expectedRevision" value="3"');
     expect(html).toContain('name="value:capacity.unknownHoldSeconds"');
     expect(html).toContain('aria-label="결과 미확정 점유 유지(초)"');
-    expect(html).toContain('value="600"');
     expect(html).toContain("기본 600초");
     expect(html).toContain("이 묶음 저장");
   });
-  it("번역·묶음 — 공개 번역과 잡별 묶음은 저장 묶음이 다른 두 폼이다", () => {
-    const html = renderToStaticMarkup(createElement(TranslationForm, { translation: model.translation, jobKnobs: model.jobKnobs, revision: model.revision }));
+  it("공개 번역 한도·동시 업무 — 그룹 하나의 폼, 단위와 고정 칸, 그려진 그대로 보내면 바뀐 것이 없다", () => {
+    const control = buildSettingsControl(ROW, TRANSLATION_LIMITS_CONTROL);
+    const html = renderToStaticMarkup(createElement(SettingsFieldsForm, { group: "translation", fields: control.fields, revision: 3,
+      units: { "translation.product.maxSourceChars": "자", "translation.product.maxAttempts": "회" } }));
     expect(html).toContain('name="group" value="translation"');
-    expect(html).toContain('name="group" value="jobs"');
-    for (const label of ["공개 번역 원문 글자 상한", "공개 번역 묶음 글자 임계", "공개 번역 요청 보류 한도", "공개 번역 최대 시도", "공개 번역 틱 여유(초)"]) expect(html).toContain(label);
+    expect(html).toContain('name="value:translation.product.batchChars"');
+    expect(html).not.toContain('name="value:translation.product.batchMax"');
     expect(html).toContain("고정");
-    expect(html).toContain("source_too_long");
-    for (const label of ["사유 번역", "소개 생성", "한국어 소개", "검색 키워드", "키워드 검수", "소개 검수", "최소 남은 시간(초)", "혼자 보내는 실패 수"]) expect(html).toContain(label);
-    expect(html).toContain('name="value:jobs.product-intro-check.callMs"');
+    expect(html).toContain("기본 4회");
+    const data = new FormData();
+    for (const match of html.matchAll(/<input([^>]*)>/g)) {
+      const name = /name="([^"]+)"/.exec(match[1])?.[1], value = /value="([^"]*)"/.exec(match[1])?.[1] ?? "";
+      if (name && !/type="checkbox"/.test(match[1])) data.append(name, value);
+    }
+    expect(runtimeSettingsPatchFromForm("translation", data)).toEqual({ patch: {}, changed: [], issues: [] });
+    const jobs = renderToStaticMarkup(createElement(SettingsFieldsForm, { group: "jobs", fields: buildSettingsControl(ROW, JOB_CONCURRENCY_CONTROL).fields, revision: 3 }));
+    expect(jobs).toContain('name="value:jobs.second-review.consumerConcurrency"');
+    expect(jobs).toContain('name="value:jobs.crawl-publish.classifierConcurrency"');
   });
-  it("틱 예산 — auto 풀이·감독 하한·지금 도는 틱·여유 경고·읽기 전용", () => {
-    const html = renderToStaticMarkup(createElement(BudgetsForm, { budgets: model.budgets, revision: model.revision }));
-    expect(html).toContain("= 호출 상한 290초 + 여유 15초 = 305초");
-    expect(html).toContain('name="auto:budgets.product-translate"');
-    expect(html).toContain("180초");
-    expect(html).toContain("도는 중 12초");
-    expect(html).toContain("알린 예산 315초");
-    expect(html).toContain("소개·사유 번역");
-    expect(html).toContain("키워드 검수 예산 여유가 15초보다 좁습니다");
-    const autoInput = html.split("<input").find(part => part.includes('name="value:budgets.product-translate"'))!;
-    expect(autoInput).toContain('readOnly=""');
-    expect(autoInput).not.toContain("disabled");
-    const secondsInput = html.split("<input").find(part => part.includes('name="value:budgets.crawl-tagline"'))!;
-    expect(secondsInput).not.toContain('readOnly=""');
-    const readOnly = renderToStaticMarkup(createElement(BudgetsForm, { budgets: model.budgets, revision: null, readOnly: true }));
-    expect(readOnly).toContain("읽기 전용");
-    expect(readOnly).toMatch(/<button[^>]*disabled/);
-    expect(readOnly.split("<input").find(part => part.includes('name="value:budgets.product-translate"'))).toContain('disabled=""');
-  });
-  it("읽은 판 줄에 역할별 env 등록부 배지를 단다", () => {
+  it("읽은 판 줄(크롤 설정 화면이 함께 쓴다)에 역할별 env 등록부 배지를 단다", () => {
     const apply = { savedVersion: "abcdef1234567890", allApplied: false, attention: null, roles: [
       { role: "text" as const, label: "소개·사유 번역", reportedVersion: "abcdef1234567890", observedAt: NOW.getTime() - 60_000, state: "applied" as const, lagging: false },
       { role: "crawler" as const, label: "프로젝트 수집", reportedVersion: "default", observedAt: NOW.getTime() - 60_000, state: "waiting" as const, lagging: false }] };
     const html = renderToStaticMarkup(createElement(SettingsApplyLine, { apply, now: NOW, badges: { text: { label: "env 등록부", title: "env" } } }));
-    expect(html).toContain("env 등록부");
     expect(html.match(/env 등록부/g)).toHaveLength(1);
     expect(html).toContain("vabcdef");
   });
@@ -467,7 +420,7 @@ describe("폼 그리기", () => {
 
 describe("pipeline-control status 의 실시간 한도 줄", () => {
   it("판·revision·source 와 env 등록부 여부를 한 줄로 낸다", () => {
-    const snapshot = { version: "abcdef1234567890", revision: 4, loadedAt: NOW.getTime(), source: "db" as const, settings: view().effective };
+    const snapshot = { version: "abcdef1234567890", revision: 4, loadedAt: NOW.getTime(), source: "db" as const, settings: resolveRuntimeSettings(STORED).settings };
     const readback = runtimeSettingsReadback(snapshot, { MODEL_REGISTRY_CONFIG: "" });
     expect(readback).toEqual({ version: "abcdef1234567890", shortVersion: "vabcdef", revision: 4, source: "db", loadedAt: NOW.toISOString(), registryEnv: false });
     expect(formatRuntimeSettingsLine(readback)).toBe("[runtime-settings] 판=vabcdef revision=4 source=db");
