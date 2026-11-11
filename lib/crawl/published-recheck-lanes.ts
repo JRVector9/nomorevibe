@@ -9,6 +9,9 @@
  *    그 다음 순위로 넘어가게 한다. 자기 줄은 그 기록을 보지 않는다 — 자기 순위는 틱마다 다시 물어본다(예전 CLI 동작 그대로). 답을 받으면 쉼을 지운다.
  *  - 감사 직접 경로의 도메인 증명이 한 항목을 거절하면(원본 짝이 맞지 않음 등) 그 항목에서만 그 순위를 RECHECK_ITEM_SKIP_MS 동안 건너뛴다 — 다른 줄이 그 항목을
  *    다음 순위로 묻는다(줄 맨 앞의 한 항목이 재판정 줄을 막지 않게).
+ *  - 순위의 호출이 미룸이 아닌 오류로 던지면(장부 guard 거절 23514·전송 정리 실패 등 — 2026-11-09~11 운영에서 OpenCode 감사 dispatch 가 매번 23514 로
+ *    거절되며 재판정 줄이 맨 앞 항목에서 매 틱 멈췄다) 그 순위를 RECHECK_RANK_FAILURE_PAUSE_MS 동안 두 줄 모두(자기 줄도) 건너뛰고, 그 항목에서는 그 순위를
+ *    RECHECK_ITEM_SKIP_MS 동안 건너뛴다 — 다른 순위·다른 항목은 그대로 묻는다. 답을 받으면 순위의 쉼을 지운다.
  *  - 같은 항목을 두 줄이 동시에 묻지 않게 묻는 동안 항목을 잡아 둔다.
  * 프로세스가 다시 뜨면 기록이 비어 처음부터 1순위다(쉼은 짧은 신호일 뿐이다). 이 모듈은 DB 를 읽지 않는다.
  */
@@ -24,7 +27,11 @@ export const RECHECK_RANK_PAUSE_MS = 150_000;
  */
 export const RECHECK_ITEM_SKIP_MS = 30 * 60_000;
 
+/** 한 순위의 호출이 미룸이 아닌 오류로 던진 뒤 두 줄 모두 그 순위를 건너뛰는 시간 — 자기 줄의 다음 틱(60초)도 한 번은 건너뛴다 */
+export const RECHECK_RANK_FAILURE_PAUSE_MS = RECHECK_RANK_PAUSE_MS;
+
 const pausedUntil = new Map<string, { until: number; reason: string }>();
+const failedUntil = new Map<string, number>();
 const itemSkips = new Map<string, number>();
 const claimed = new Set<number>();
 
@@ -37,9 +44,24 @@ export function noteRecheckRankPaused(reviewer: RankLike, reason: string, now = 
   pausedUntil.set(keyOf(reviewer), { until: now + RECHECK_RANK_PAUSE_MS, reason: reason.slice(0, 80) });
 }
 
-/** 그 순위가 답했다 — 쉼을 지운다 */
+/** 그 순위가 답했다 — 쉼(미룸·오류)을 지운다 */
 export function clearRecheckRankPause(reviewer: RankLike): void {
   pausedUntil.delete(keyOf(reviewer));
+  failedUntil.delete(keyOf(reviewer));
+}
+
+/** 그 순위의 호출이 미룸이 아닌 오류로 던졌다 — 두 줄 모두 RECHECK_RANK_FAILURE_PAUSE_MS 동안 그 순위를 건너뛴다 */
+export function noteRecheckRankFailed(reviewer: RankLike, now = Date.now()): void {
+  failedUntil.set(keyOf(reviewer), now + RECHECK_RANK_FAILURE_PAUSE_MS);
+}
+
+/** 그 순위가 오류 뒤 쉬는 중인가(두 줄 모두 본다) */
+export function recheckRankFailed(reviewer: RankLike, now = Date.now()): boolean {
+  const until = failedUntil.get(keyOf(reviewer));
+  if (until === undefined) return false;
+  if (until > now) return true;
+  failedUntil.delete(keyOf(reviewer));
+  return false;
 }
 
 /** 다른 줄이 그 순위를 쉼으로 적었는가 */
@@ -51,7 +73,7 @@ export function recheckRankPaused(reviewer: RankLike, now = Date.now()): boolean
   return false;
 }
 
-/** 그 항목에서 그 순위를 RECHECK_ITEM_SKIP_MS 동안 건너뛴다(감사 직접 경로의 도메인 증명이 그 항목을 거절했다) */
+/** 그 항목에서 그 순위를 RECHECK_ITEM_SKIP_MS 동안 건너뛴다(감사 직접 경로의 도메인 증명이 그 항목을 거절했다·그 항목의 호출이 오류로 던졌다) */
 export function noteRecheckItemRankRefused(itemId: number, reviewer: RankLike, now = Date.now()): void {
   if (itemSkips.size > 1_000) for (const [key, until] of itemSkips) if (until <= now) itemSkips.delete(key);
   itemSkips.set(`${itemId}|${keyOf(reviewer)}`, now + RECHECK_ITEM_SKIP_MS);
@@ -78,6 +100,7 @@ export function recheckTurn<T extends RankLike>(reviewers: readonly T[], lane: R
 /** 이 줄에서 그 순위를 지금 건너뛰는가(recheckTurn 과 같은 규칙 — 두 줄의 안쪽 순위 반복도 이것을 쓴다) */
 export function recheckSkips(reviewer: RankLike, lane: RecheckLane, pausedHere: ReadonlySet<number>, now = Date.now(), itemId?: number): boolean {
   if (itemId !== undefined && recheckItemRankRefused(itemId, reviewer, now)) return true;
+  if (recheckRankFailed(reviewer, now)) return true;
   return recheckLaneOf(reviewer) === lane ? pausedHere.has(reviewer.rank) : recheckRankPaused(reviewer, now);
 }
 
@@ -95,6 +118,7 @@ export function releaseRecheckItem(itemId: number): void {
 /** 시험 — 기록을 비운다 */
 export function resetRecheckLanes(): void {
   pausedUntil.clear();
+  failedUntil.clear();
   itemSkips.clear();
   claimed.clear();
 }

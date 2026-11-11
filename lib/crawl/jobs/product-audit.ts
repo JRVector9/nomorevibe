@@ -13,8 +13,8 @@ import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoS
 import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
 import { auditReviewer, QWEN_AUDIT_PROVIDER, type AuditReviewer } from "@/lib/crawl/product-audit-reviewer";
 import { recheckLimits, recheckReviewerPlan, recheckYields, rollingStream } from "@/lib/crawl/published-recheck";
-import { claimRecheckItem, clearRecheckRankPause, noteRecheckRankPaused, recheckLaneOf, recheckSkips, recheckTurn,
-  releaseRecheckItem } from "@/lib/crawl/published-recheck-lanes";
+import { claimRecheckItem, clearRecheckRankPause, noteRecheckItemRankRefused, noteRecheckRankFailed, noteRecheckRankPaused, recheckLaneOf, recheckSkips,
+  recheckTurn, releaseRecheckItem } from "@/lib/crawl/published-recheck-lanes";
 import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { ProductAuditCampaign } from "@/lib/db/schema";
@@ -22,6 +22,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { JobLeaseLostError } from "@/lib/jobs/lease";
 import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 import type { CliEngineSource } from "@/lib/llm/cli-engine-config";
+import { dbErrorTag, type DbErrorTag } from "@/lib/db/error-fields";
 
 /**
  * 틱의 길이와 새 호출을 시작할 여유.
@@ -72,9 +73,43 @@ async function askRecheckStreamSafely(ctx: JobContext<null>, settings: CrawlSett
   try { await askRecheckStream(ctx, settings); }
   catch (error) {
     if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
-    ctx.log("published_recheck.failed", { error: error instanceof ModelCapacityDeferredError ? `deferred:${error.reason}`
-      : error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error" });
+    ctx.log("published_recheck.failed", recheckErrorFields(error));
   }
+}
+
+/**
+ * 재판정 갈래가 로그에 싣는 오류 요약 — 식별자만 싣는다: 짧은 코드 message(아니면 "error"), 오류 갈래 이름, PostgreSQL SQLSTATE·제약·표 이름.
+ * message·detail·query·params 는 싣지 않는다 — drizzle 이 감싼 오류(DrizzleQueryError)의 message 에는 SQL 과 binding(params)이, detail 에는 행 값이 있다.
+ * 2026-11-09~11 운영에서 OpenCode 감사 dispatch 의 23514(model_capacity_requests_dispatch_check)가 {"error":"error"} 로만 남아 원인을 DB 에서 따로 찾아야 했다.
+ */
+export type RecheckErrorFields = { error: string; errorClass?: string; pgCode?: string; constraint?: string; table?: string };
+const RECHECK_ERROR_CODE = /^[a-z0-9_:.-]{1,80}$/;
+const ERROR_CLASS = /^[A-Za-z_$][A-Za-z0-9_$]{0,60}$/;
+function recheckDbTag(error: unknown, depth = 0): DbErrorTag | null {
+  if (depth > 4 || !error || typeof error !== "object") return null;
+  const tag = dbErrorTag(error);
+  if (tag) return tag;
+  // 정리 실패는 AggregateError([원래 오류, 정리 오류]) 로 온다 — 안의 드라이버 오류도 본다
+  if (error instanceof AggregateError) for (const inner of error.errors.slice(0, 4)) {
+    const found = recheckDbTag(inner, depth + 1);
+    if (found) return found;
+  }
+  return recheckDbTag((error as { cause?: unknown }).cause, depth + 1);
+}
+export function recheckErrorFields(error: unknown): RecheckErrorFields {
+  const fields: RecheckErrorFields = { error: error instanceof ModelCapacityDeferredError ? `deferred:${error.reason}`
+    : error instanceof Error && RECHECK_ERROR_CODE.test(error.message) ? error.message : "error" };
+  if (error instanceof Error) {
+    const name = error.constructor?.name && error.constructor.name !== "Error" ? error.constructor.name : error.name;
+    if (ERROR_CLASS.test(name)) fields.errorClass = name;
+  }
+  const tag = recheckDbTag(error);
+  if (tag) {
+    fields.pgCode = tag.code;
+    if (tag.constraint) fields.constraint = tag.constraint;
+    if (tag.table) fields.table = tag.table;
+  }
+  return fields;
 }
 
 /** 한 호출의 재료 — 감사 행(또는 재판정 줄)·묻는 심사자·원격 OpenCode 연결(없으면 Claude CLI·게이트웨이)·호출 상한 */
@@ -184,7 +219,7 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
   const remaining = () => deadlineAt - Date.now();
   // 이 틱에 열리지 않은 CLI 순위. API 순위(감사 직접 경로)는 Qwen 직접 감사 잡(audit-qwen)이 묻는다 — 그 줄이 적은 쉼만 본다(published-recheck-lanes.ts)
   const paused = new Set<number>();
-  let asked = 0, failed = 0, noSource = 0, passed = 0, handedOff = 0, busy = 0;
+  let asked = 0, failed = 0, noSource = 0, passed = 0, handedOff = 0, busy = 0, callFailed = 0;
   const deferred: string[] = [];
   // CLI 호출의 상한 — 사람이 연 감사의 CLI 심사자와 같다
   const ceiling = reviewCliTimeoutMs();
@@ -221,11 +256,26 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
         const callStartedAt = new Date();
         try { outcome = await callAuditReviewer(ctx, lease, ask, item, input, startable, remaining); }
         catch (error) {
-          if (!(error instanceof ModelCapacityDeferredError)) throw error;
-          // 이 심사자가 감사 경로에서 지금 열리지 않는다(경로 매핑 없음·계약 없음·포화·draining) — 이 틱에는 다음 순위로(다른 줄도 잠시 다음 순위로)
+          // 작업 lease 를 잃었거나 DR writer fence 에 막혔으면 이 틱 전체가 더 쓰면 안 된다
+          if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+          if (error instanceof ModelCapacityDeferredError) {
+            // 이 심사자가 감사 경로에서 지금 열리지 않는다(경로 매핑 없음·계약 없음·포화·draining) — 이 틱에는 다음 순위로(다른 줄도 잠시 다음 순위로)
+            paused.add(reviewer.rank);
+            noteRecheckRankPaused(reviewer, error.reason);
+            deferred.push(`${reviewer.rank}:${error.reason}`);
+            continue;
+          }
+          // 미룸이 아닌 호출 오류(장부 guard 거절·전송 정리 실패 등). 예전에는 갈래 밖으로 던져 이 틱을 끝냈고, 다음 틱도 줄 맨 앞의 같은 항목·같은 순위에서
+          // 같은 오류로 멈췄다(2026-11-09~11 운영: OpenCode 감사 dispatch 가 매번 23514). 이제 그 순위를 잠시 두 줄 모두 쉬게 하고, 이 항목에서는 그 순위를
+          // 한동안 건너뛰며, 이 항목은 다음 순위로 묻는다. 모델이 답한 실패가 아니므로 시도로 세지 않고 시도 행도 남기지 않는다
+          const fields = recheckErrorFields(error);
+          callFailed += 1;
+          ctx.log("published_recheck.call_failed", { stream: stream.id, itemId: item.id, rank: reviewer.rank, provider: reviewer.provider,
+            model: reviewer.model, ...fields });
           paused.add(reviewer.rank);
-          noteRecheckRankPaused(reviewer, error.reason);
-          deferred.push(`${reviewer.rank}:${error.reason}`);
+          noteRecheckRankFailed(reviewer);
+          noteRecheckItemRankRefused(item.id, reviewer);
+          deferred.push(`${reviewer.rank}:failed:${fields.pgCode ?? fields.error}`);
           continue;
         }
         if (outcome.kind === "passed") { passed += 1; continue items; }
@@ -248,7 +298,7 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
       }
     } finally { releaseRecheckItem(item.id); }
   }
-  ctx.log("published_recheck.asked", { stream: stream.id, lane: "cli", asked, failed, noSource, passed, handedOff, busy, deferred,
+  ctx.log("published_recheck.asked", { stream: stream.id, lane: "cli", asked, failed, noSource, passed, handedOff, busy, callFailed, deferred,
     reviewers: plan.reviewers.map((row) => `${row.rank}:${row.provider}:${row.model}`) });
 }
 
