@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { eq, sql } from "drizzle-orm";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 /**
  * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 옛 잎 verifyKeywords·verifyKeywordsInChunks 는
@@ -126,6 +127,46 @@ describe("검색 키워드 검수 잡", () => {
       .where(eq(productSearchProfiles.productId, newer));
 
     expect((await pendingVerifications(1))[0]?.product.id).toBe(older);
+  });
+
+  it("excludes handled products before the verification selection limit", async () => {
+    const first = await seed("first-window", ["first keyword"], []);
+    const second = await seed("second-window", ["second keyword"], []);
+    const later = await seed("behind-window", ["later keyword"], []);
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '1 day'` })
+      .where(eq(productSearchProfiles.productId, first));
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '12 hours'` })
+      .where(eq(productSearchProfiles.productId, second));
+
+    expect((await pendingVerifications(2)).map(task => task.product.id)).toEqual([first, second]);
+    // The head window remains eligible, like a target deferred by the capacity adapter.
+    expect((await pendingVerifications(2, [first, second])).map(task => task.product.id)).toEqual([later]);
+    expect((await pendingVerifications(2)).map(task => task.product.id)).toEqual([first, second]);
+  });
+
+  it("verifies a later product behind 16 deferred targets and retries the targets next tick", async () => {
+    const heldIds = new Set<number>();
+    for (let index = 0; index < 16; index++) heldIds.add(await seed(`deferred-${index}`, ["document tool"], []));
+    const later = await seed("behind-deferred-window", ["document tool"], []);
+    const original = capacityHook.verify!;
+    const request = gateway(() => ({}));
+    capacityHook.verify = async (task, options) => {
+      if (heldIds.has(task.product.id)) throw new ModelCapacityDeferredError("dispatched");
+      return original(task, options);
+    };
+    try {
+      expect(await tick(request)).toMatchObject({ status: "completed", done: false });
+      expect((await profile(later)).verifiedAt).not.toBeNull();
+      expect(request.calls).toEqual(["behind-deferred-window"]);
+      const pending = await pendingVerifications(64);
+      expect(pending).toHaveLength(16);
+      expect(pending.every(task => heldIds.has(task.product.id) && task.profile!.verifyAttempts === 0)).toBe(true);
+    } finally { capacityHook.verify = original; }
+
+    // The exclusion is local to one tick; it neither changes retry counters nor drops held work.
+    expect(await tick(request)).toMatchObject({ status: "completed", done: true });
+    expect(await pendingVerifications(64)).toEqual([]);
+    expect(request.calls).toHaveLength(17);
   });
 
   it("preserves the failure cause so explicitly requeued exhausted checks take the chunk leaf, which no longer sends", async () => {

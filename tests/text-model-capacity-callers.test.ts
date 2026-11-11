@@ -202,6 +202,38 @@ it("crawl-tagline still defers the whole tick on a saturation capacity refusal",
   expect(ctx.log).toHaveBeenLastCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 1, "unusable.1.capacity": expect.any(Number) }));
 });
 
+it.each(["dispatched", "work_busy", "ledger_mismatch"] as const)("search verification reaches work behind a full window of %s targets", async reason => {
+  const tasks = Array.from({ length: 17 }, (_, index) => ({ ...profileTask(index + 1),
+    profile: { keywordsEn: ["document tool"], keywordsKo: [], verifyError: null } }));
+  mocks.verifications.mockImplementation(async (_limit, excluded: number[] = []) =>
+    tasks.filter(task => !excluded.includes(task.product.id)).slice(0, 16));
+  mocks.verify.mockImplementation(async ({ evidence }: { evidence: { name: string } }) => {
+    if (evidence.name !== "Doc 17") throw new ModelCapacityDeferredError(reason);
+    return { ok: true, unsupported: [] };
+  });
+
+  expect(await verifySearchKeywords(context("product-search-verify"))).toEqual({ done: false });
+
+  expect(mocks.verifyWrite).toHaveBeenCalledTimes(1);
+  expect(mocks.verifyWrite.mock.calls[0][0].product.id).toBe(17);
+  expect(mocks.verify).toHaveBeenCalledTimes(17);
+});
+
+it("search verification visits a failed result CAS once before processing the next window", async () => {
+  const tasks = [1, 2].map(id => ({ ...profileTask(id),
+    profile: { keywordsEn: ["document tool"], keywordsKo: [], verifyError: null } }));
+  mocks.verifications.mockImplementation(async (_limit, excluded: number[] = []) => {
+    if (mocks.verifications.mock.calls.length > 4) throw new Error("repeated_verification_selection");
+    return tasks.filter(task => !excluded.includes(task.product.id)).slice(0, 1);
+  });
+  mocks.verify.mockResolvedValue({ ok: true, unsupported: [] });
+  mocks.verifyWrite.mockImplementation(async task => task.product.id !== 1);
+
+  expect(await verifySearchKeywords(context("product-search-verify"))).toEqual({ done: false });
+
+  expect(mocks.verifyWrite.mock.calls.map(call => call[0].product.id)).toEqual([1, 2]);
+});
+
 it.each(["dispatched", "work_busy"] as const)("product-translate passes a %s batch and translates the next demanded field in the same tick", async reason => {
   const first = { id: 1, name: "Doc", tagline: "문서를 관리하는 도구" }, second = { id: 2, name: "Pad", tagline: "메모를 정리하는 도구" };
   const task = (source: typeof first) => ({ source, field: "tagline", locale: "en", sourceHash: productTranslationSourceHash(source, "tagline"),
