@@ -17,7 +17,7 @@ export const MODELS_ADVANCED_LABEL = "고급 설정";
  */
 export const MODELS_ADVANCED_EDITORS = [
   { id: "limits", label: "실시간 한도", href: "/admin/models/limits",
-    purpose: "경로별 출력 토큰·동시 호출·호출 상한, 번역 묶음, 틱 예산을 바꿉니다. 시간 초과가 잦거나 묶음 크기를 바꿀 때 엽니다." },
+    purpose: "AI 작업마다 한 번 호출 상한·한 틱 시간·동시 호출을 24시간 실측과 함께 봅니다. 호출이 잘리거나 틱 끝에서 끊길 때 엽니다." },
   { id: "devices", label: "장비 한도", href: "/admin/models/devices",
     purpose: "장비(엔진)마다 동시에 처리하는 칸 수와 역할 순서를 바꿉니다. 한 장비가 늘 가득 차거나 칸 수를 고칠 때 엽니다." },
   // step 3(2026-11-08): 장비 한도의 칸을 작업 영역마다 보장·상한으로 나누는 배분표 — 장비 한도 바로 다음

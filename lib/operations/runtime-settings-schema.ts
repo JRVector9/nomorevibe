@@ -138,7 +138,9 @@ export const JOB_CALL_ROUTES: Readonly<Record<string, JobCallRoute>> = deepFreez
   "crawl-agent-review": { route: "review-gateway" },
   "second-review": { route: "review-gateway" },
   "split-tiebreak": { route: "split-tiebreak" },
-  "product-audit": { route: "review-gateway" },
+  // 제품 감사(product-audit 잡)의 1순위는 CLI(OpenCode·Claude)다 — 그 호출은 review-cli 상한을 쓴다(2026-11-11 한도 감사: 이 줄에 review-cli 가 빠져 있어
+  // CLI 상한을 올려도 감사 틱 예산 검사가 보지 못했다). 둘 중 긴 쪽이 이 잡의 호출 상한이다
+  "product-audit": { route: "review-gateway", orRoutes: ["review-cli"] },
   "audit-qwen": { route: "product-audit" },
   "audit-second-opinion": { route: "audit-second-opinion" },
   "human-deepseek-review": { route: "human-review" },
@@ -213,6 +215,10 @@ export function jobCallCeilingMs(job: string, settings: RuntimeSettings, models:
   const env = routePolicyEnv(settings, models);
   const ceilings = [call.route, ...(call.orRoutes ?? [])].map(route => routeTimeoutMs(route, env)).filter((value): value is number => value !== null);
   return ceilings.length ? Math.max(...ceilings) + extra : null;
+}
+/** 경로 하나의 실제 호출 상한(등록부 modelTimeoutMs 그대로 — 모델 상한과의 min·사다리 clientMs 포함). 못 풀면 null */
+export function routeCallCeilingMs(route: string, settings: RuntimeSettings, models: readonly ModelDefinition[] = DEFAULT_MODEL_DEFINITIONS): number | null {
+  return routeTimeoutMs(route, routePolicyEnv(settings, models));
 }
 export function effectiveJobBudgetMs(job: string, settings: RuntimeSettings, models: readonly ModelDefinition[] = DEFAULT_MODEL_DEFINITIONS): number {
   const budget = settings.budgets[job];

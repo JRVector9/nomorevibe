@@ -8,6 +8,8 @@ import { aiTaskSupportsWorkloadPool } from "@/lib/llm/ai-task-execution-config";
 import { AI_TASK_IMPORT_CONFIRM, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
 import { aiTaskSlotRevision, aiTaskTargetLabel, previewAiTaskImport, readAiTasksAdminView, type AiTaskSlotView } from "@/lib/operations/admin-ai-tasks-repository";
 import { readAssistControls } from "@/lib/operations/llm-assist-controls";
+import { JOB_CONCURRENCY_CONTROL, readSettingsControl } from "@/lib/operations/admin-runtime-settings";
+import { SettingsFieldsForm } from "../limits/SettingsFieldsForm";
 import { isRetiredAiTask, RETIRED_AI_TASKS } from "@/lib/llm/ai-tasks";
 import { readAiTaskExecutionAdminViews } from "@/lib/operations/admin-ai-task-execution";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
@@ -59,8 +61,9 @@ export default async function AiTasksPage({ searchParams }: Props) {
   const editId = one(params.edit);
   if (UUID.test(editId)) redirect(`/admin/models/llm?edit=${editId}#conn-${editId}`);
   const now = new Date();
-  const [view, preview, executionRead, assist] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null),
-    readAiTaskExecutionAdminViews().then(executions => ({ executions, failed: false }), () => ({ executions: [], failed: true })), readAssistControls()]);
+  const [view, preview, executionRead, assist, concurrency] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null),
+    readAiTaskExecutionAdminViews().then(executions => ({ executions, failed: false }), () => ({ executions: [], failed: true })), readAssistControls(),
+    readSettingsControl(JOB_CONCURRENCY_CONTROL)]);
   const readOnly = adminWorkspaceReadOnly();
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
@@ -113,6 +116,17 @@ export default async function AiTasksPage({ searchParams }: Props) {
             </section>;
           })}
       </div>
+    </details>
+    {/* 동시 업무(runtime_settings jobs.second-review.consumerConcurrency · jobs.crawl-publish.classifierConcurrency) — 2026-11-11 실시간 한도 개편으로 옮겼다 */}
+    <details className={FOLD}>
+      <summary className={SUMMARY}><h2>동시 업무</h2><span className="text-[13px] font-normal text-fg-3">2차 심사 소비자 {concurrency.fields[0]?.input ?? "?"}건 · 발행 분류 묶음 {concurrency.fields[1]?.input ?? "?"}개
+        — 호출 상한·틱 시간은 실시간 한도</span></summary>
+      <section id="concurrency" className="grid gap-2 px-3 pb-3 scroll-mt-6">
+        <p className="text-[13px] text-fg-3">작업 하나가 한꺼번에 맡는 일의 수입니다. 실제 동시 호출은 장비 한도가 막습니다. 저장하면 30초 안에 다음 틱부터 씁니다.</p>
+        {concurrency.rowError && <p role="alert" className="text-[13px] text-red-600">실시간 한도 행을 읽지 못했습니다({concurrency.rowError}) — 기본값을 보이며 저장할 수 없습니다.</p>}
+        <SettingsFieldsForm group="jobs" fields={concurrency.fields} revision={concurrency.revision} readOnly={readOnly || concurrency.revision === null}
+          units={{ "jobs.second-review.consumerConcurrency": "건", "jobs.crawl-publish.classifierConcurrency": "개" }} />
+      </section>
     </details>
     <section id="connections" className={`${FOLD} grid gap-1 px-3 py-2`} aria-labelledby="connections-title">
       <h2 id="connections-title" className="text-[15px] font-semibold">AI 연결</h2>

@@ -14,6 +14,9 @@ import { readReplicaOrHold } from "@/lib/operations/replica-hold";
 import { TranslationRetryForm } from "./TranslationRetryForm";
 import { translationOwnerText } from "./owner";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
+import { SettingsFieldsForm } from "@/app/(operator)/admin/models/limits/SettingsFieldsForm";
+import { readSettingsControl, TRANSLATION_LIMITS_CONTROL } from "@/lib/operations/admin-runtime-settings";
+import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "공개 번역 — NoMoreVibe", robots: { index: false, follow: false } };
@@ -47,8 +50,8 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   await ensureRuntimeSettings();
   const policy = productTranslationPolicy(), reasons = reasonTexts(policy);
   // 모델 호출 담당은 작업 배치 방식으로 정한다 — 새로 읽는 값이라 복제본에서만(못 읽으면 까닭과 함께 보류, 주 DB 로 넘기지 않는다)
-  const [queue, summary, batch] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor }), productTranslationAdminSummary(),
-    readReplicaOrHold("admin.translation_owner_unavailable", () => readJobBatchMode())]);
+  const [queue, summary, batch, limits] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor }), productTranslationAdminSummary(),
+    readReplicaOrHold("admin.translation_owner_unavailable", () => readJobBatchMode()), readSettingsControl(TRANSLATION_LIMITS_CONTROL)]);
   const owner = translationOwnerText(batch.ok ? { ok: true, value: batch.value.mode } : batch);
   const next = new URLSearchParams({ state, q });
   if (locale) next.set("locale", locale);
@@ -66,6 +69,19 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
         <td className="px-2 py-2">{formatDetailTime(row.oldestFailedAt)}</td><td className="px-2 py-2">{formatDetailTime(row.lastSavedAt)}</td>
       </tr>)}</tbody>
     </table></div>
+    {/* 번역 한도(runtime_settings translation.product) — 2026-11-11 실시간 한도 개편으로 이 화면에 옮겼다. 호출 상한·틱 시간·동시 호출은 실시간 한도의 「공개 번역」 줄이다 */}
+    <details className="rounded-xl border border-line text-[13px]">
+      <summary className="cursor-pointer px-4 py-3 text-[14px] font-semibold">번역 한도 <span className="font-normal text-fg-2">원문 글자 상한 {policy.maxSourceChars.toLocaleString("ko-KR")}자 ·
+        최대 시도 {policy.maxAttempts}회 · 묶음 글자 {policy.batchChars.toLocaleString("ko-KR")}자</span></summary>
+      <section id="limits" className="grid gap-2 border-t border-line p-4 scroll-mt-6">
+        <p className="text-fg-2">저장하면 번역 워커가 30초 안에 다음 틱부터 씁니다. 한 번 호출 상한·틱 시간·동시 호출은 <Link prefetch={false} href="/admin/models/limits#row-product-translate"
+          className="underline">실시간 한도의 공개 번역 줄</Link>에서 고칩니다.</p>
+        {limits.rowError && <p role="alert" className="text-red-600">실시간 한도 행을 읽지 못했습니다({limits.rowError}) — 기본값을 보이며 저장할 수 없습니다.</p>}
+        <SettingsFieldsForm group="translation" fields={limits.fields} revision={limits.revision} readOnly={adminWorkspaceReadOnly() || limits.revision === null}
+          units={{ "translation.product.maxSourceChars": "자", "translation.product.batchChars": "자", "translation.product.demandLimit": "건",
+            "translation.product.maxAttempts": "회", "translation.product.batchMax": "건" }} />
+      </section>
+    </details>
     <form action="/admin/translations" className="flex flex-wrap items-center gap-3 text-[14px]">
       <label>상태<select name="state" defaultValue={state} className="ml-2 min-h-11 rounded-lg border border-line px-2">{Object.entries(STATES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>언어<select name="locale" defaultValue={locale ?? ""} className="ml-2 min-h-11 rounded-lg border border-line px-2"><option value="">전체</option>{Object.entries(LOCALES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

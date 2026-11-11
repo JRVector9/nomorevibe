@@ -8,6 +8,7 @@ import { buildDeviceTableRows, staleRouteItems } from "@/lib/operations/admin-ca
 import { capacityRetireIssueMessage, readAdminStaleCapacityRoutes } from "@/lib/operations/admin-capacity-retire";
 import { listAiConnections } from "@/lib/operations/admin-ai-tasks-repository";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
+import { readSettingsControl, UNKNOWN_HOLD_CONTROL } from "@/lib/operations/admin-runtime-settings";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { cliTaskUsagesByDevice, readCliTaskUsages, type CliTaskUsageView } from "@/lib/operations/cli-task-usage";
 import { deviceDisplay } from "@/lib/operations/llm-display";
@@ -19,6 +20,7 @@ import { CliTaskRows } from "./CliTaskRows";
 import { DeviceLimitsTable, type DeviceCliRows } from "./DeviceLimitsTable";
 import { DeviceName, DeviceTable, type DeviceNames } from "./DeviceTable";
 import { StaleRoutesPanel } from "./StaleRoutesPanel";
+import { CapacityForm } from "../limits/CapacityForm";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 import "./devices.css";
 
@@ -36,9 +38,10 @@ const EDITOR = modelsAdvancedEditor("devices");
 export default async function CapacityDevicesPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   const now = new Date();
-  const [view, connections, observation, stale, cli] = await Promise.all([readCapacityDevicesAdminView(now), listAiConnections().catch(() => null),
+  const [view, connections, observation, stale, cli, unknownHold] = await Promise.all([readCapacityDevicesAdminView(now), listAiConnections().catch(() => null),
     readAdminModelsObservation({ throughput: false }).catch(() => null), readAdminStaleCapacityRoutes(),
-    readCliTaskUsages().catch((): CliTaskUsageView => ({ usages: [], unavailable: ["CLI 작업별 모델·추론 강도를 읽지 못했습니다."] }))]);
+    readCliTaskUsages().catch((): CliTaskUsageView => ({ usages: [], unavailable: ["CLI 작업별 모델·추론 강도를 읽지 못했습니다."] })),
+    readSettingsControl(UNKNOWN_HOLD_CONTROL)]);
   const { byDevice: cliByDevice, unmapped: cliUnmapped } = cliTaskUsagesByDevice(cli.usages);
   const cliRows: DeviceCliRows = Object.fromEntries(Object.entries(cliByDevice).map(([deviceId, usages]) => [deviceId, <CliTaskRows key={deviceId} usages={usages} columns={7} />]));
   // 장비 이름 = 그 장비를 쓰는 연결 이름(장비 id 는 정책 groupId 라 옆에 작게 둔다). 연결이 없는 장비는 「연결 없음」
@@ -76,6 +79,16 @@ export default async function CapacityDevicesPage() {
     {rows.length ? <DeviceLimitsTable rows={rows} cliRows={cliRows} /> : <p className="devlim-note">장비가 없습니다 — 아래 세부 설정에서 새 장비를 만들거나 정책을 적용하세요.</p>}
     <StaleRoutesPanel items={staleRouteItems(stale.candidates, connections, observation)} revision={stale.revision} readOnly={readOnly}
       error={stale.error ? capacityRetireIssueMessage(stale.error) : null} />
+    {/* 결과 미확정 점유(runtime_settings capacity.unknownHoldSeconds) — 2026-11-11 실시간 한도 개편으로 이 화면에 옮겼다. 입장 TX 가 행을 바로 읽어 저장 즉시 다음 입장부터 쓴다 */}
+    <details className="devlim-panel devlim-details">
+      <summary className="devlim-panel-head"><h2>결과 미확정 점유</h2> <span className="devlim-muted">미확정 호출이 장비 칸을 지금 {unknownHold.fields[0]?.input ?? "?"}초 동안 차지합니다</span></summary>
+      <section id="unknown-hold" className="grid gap-2 p-4 scroll-mt-6">
+        <p className="text-[13px] text-fg-3">결과를 확인하지 못한 호출(미확정)은 이 시간 동안 장비 칸을 계속 차지하고 새 호출을 그만큼 막습니다. 0.5초 만에 끝난 전송 실패도 같은 시간을 차지합니다.
+          실시간 한도 화면의 「지금 볼 것」이 틱 끝에서 끊긴 미확정을 따로 알립니다.</p>
+        {unknownHold.rowError && <p role="alert" className="devlim-refusal">실시간 한도 행을 읽지 못했습니다({unknownHold.rowError}) — 기본값을 보이며 저장할 수 없습니다.</p>}
+        <CapacityForm fields={unknownHold.fields} revision={unknownHold.revision} readOnly={adminWorkspaceReadOnly() || unknownHold.revision === null} />
+      </section>
+    </details>
     <details className="devlim-panel devlim-details">
       <summary className="devlim-panel-head"><h2>세부 설정</h2> <span className="devlim-muted">역할 순서 · 유휴 시간 · 비워 둘 칸 · 엔진 실제 동시 처리 수 · 서버 추가 · 최근 저장</span></summary>
       <div className="grid gap-6 p-4">

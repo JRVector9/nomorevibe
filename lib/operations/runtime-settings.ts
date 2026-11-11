@@ -29,7 +29,12 @@ export type RuntimeSettingsRefusal = "stale_form" | "site_fenced" | `unknown_rou
   | "model_timeout_ladder_mismatch" | `timeout_below_engine_bound:${string}` | `runtime_settings_invalid:${string}` | (string & {});
 
 export type RuntimeSettingsRow = { values: unknown; revision: number; updatedBy: string; updatedAt: string };
-export type SaveRuntimeSettingsOptions = { expectedRevision?: number; group: RuntimeSettingGroup };
+/**
+ * group 하나(예전 그대로 — patch 는 그룹 부분 문서거나 { <group>: {...} })이거나 그룹 여럿(2026-11-11 실시간 한도 개편 — 한 작업 줄의 호출 상한(routes)·틱 시간(budgets)·
+ * 묶음(jobs)을 한 번에 저장해야 교차 검사(예산 ≥ 상한 + 2초)가 중간 상태에서 거절하지 않는다). 여럿이면 patch 는 문서 모양 { routes: {...}, budgets: {...} } 이고
+ * 한 TX·한 revision 으로 저장하며 감사는 그룹마다 한 줄(같은 revision)이다.
+ */
+export type SaveRuntimeSettingsOptions = { expectedRevision?: number; group: RuntimeSettingGroup | readonly RuntimeSettingGroup[] };
 export type SaveRuntimeSettingsResult = { ok: true; revision: number; version: string } | { ok: false; issues: string[] };
 
 const ROW_ID = 1;
@@ -99,11 +104,17 @@ export async function readRuntimeSettingsRow(): Promise<RuntimeSettingsRow> {
  * operations_audit(RUNTIME_SETTINGS_AUDIT_ACTION, before/after/changes/revision). 거절은 { ok: false, issues } 로 돌려주고 던지지 않는다.
  */
 export async function saveRuntimeSettings(patch: unknown, actor: string, options: SaveRuntimeSettingsOptions): Promise<SaveRuntimeSettingsResult> {
-  const { group, expectedRevision } = options;
+  const { expectedRevision } = options;
+  const groups: readonly RuntimeSettingGroup[] = typeof options.group === "string" ? [options.group] : [...new Set(options.group)];
   if (!actor.trim() || actor.length > 120) return { ok: false, issues: ["invalid_actor"] };
-  if (!(RUNTIME_SETTING_GROUPS as readonly string[]).includes(group)) return { ok: false, issues: [`unknown_group:${String(group)}`] };
+  if (!groups.length) return { ok: false, issues: ["unknown_group:"] };
+  for (const group of groups) if (!(RUNTIME_SETTING_GROUPS as readonly string[]).includes(group)) return { ok: false, issues: [`unknown_group:${String(group)}`] };
   if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) return { ok: false, issues: ["stale_form"] };
+  // 그룹 여럿: 문서 모양 patch 의 그룹 키가 고른 그룹과 같아야 한다(다른 그룹 키를 조용히 버리지 않는다)
+  if (groups.length > 1 && (!isPlainObject(patch) || Object.keys(patch).some(key => !groups.includes(key as RuntimeSettingGroup))))
+    return { ok: false, issues: ["runtime_settings_invalid:patch"] };
   const models = await overlaidRegistryForSave();
+  const group = groups[0];
   const target = runtimeSettingsAuditTarget(group);
   try {
     return await onPrimary(() => db.transaction(async tx => {
@@ -112,28 +123,41 @@ export async function saveRuntimeSettings(patch: unknown, actor: string, options
       await tx.insert(runtimeSettingsTable).values({ id: ROW_ID, values: { version: RUNTIME_SETTINGS_VERSION }, updatedBy: actor }).onConflictDoNothing();
       const [row] = await tx.select().from(runtimeSettingsTable).where(eq(runtimeSettingsTable.id, ROW_ID)).for("update");
       const current = Number(row.revision);
+      // 그룹 여럿이면 감사에 함께 저장한 그룹을 적는다(한 그룹 저장의 detail 모양은 예전 그대로)
+      const together = groups.length > 1 ? { groups: [...groups] } : {};
       const refuse = async (issues: string[], detail: Record<string, unknown>): Promise<SaveRuntimeSettingsResult> => {
         await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: RUNTIME_SETTINGS_AUDIT_ACTION, target,
-          detail: { group, revision: current, ...detail }, ok: false, error: issues.join(" · ") }));
+          detail: { group, ...together, revision: current, ...detail }, ok: false, error: issues.join(" · ") }));
         return { ok: false, issues };
       };
       if (expectedRevision !== undefined && current !== expectedRevision) return refuse(["stale_form"], { expectedRevision });
 
       const before = resolveRuntimeSettings(row.values, { models });
-      const applied = applyRuntimeSettingsPatch(row.values, group, patch);
+      let applied: { stored: Record<string, unknown>; issues: string[] } = { stored: isPlainObject(row.values) ? row.values : {}, issues: [] };
+      const patchIssues: string[] = [];
+      for (const each of groups) {
+        // 한 그룹이면 patch 그대로(그룹 부분 문서도 받는다), 여럿이면 그 그룹의 몫만 문서 모양으로 넘긴다
+        const slice = groups.length === 1 ? patch : { [each]: (patch as Record<string, unknown>)[each] ?? {} };
+        applied = applyRuntimeSettingsPatch(applied.stored, each, slice);
+        patchIssues.push(...applied.issues);
+      }
       const after = resolveRuntimeSettings(applied.stored, { models });
       const changes = settingsChanges(before.settings, after.settings).map(change => ({ ...change, label: runtimeSettingLabel(change.path) }));
-      const issues = [...new Set([...applied.issues, ...after.issues])];
+      const issues = [...new Set([...patchIssues, ...after.issues])];
       if (!issues.length && JSON.stringify(applied.stored).length > STORED_DOCUMENT_MAX_CHARS) issues.push("runtime_settings_too_large");
       if (issues.length) return refuse(issues, { changes });
 
       const revision = current + 1, version = storedSettingsVersion(applied.stored);
       await tx.update(runtimeSettingsTable).set({ values: applied.stored, revision, updatedBy: actor, updatedAt: sql`clock_timestamp()` })
         .where(and(eq(runtimeSettingsTable.id, ROW_ID), eq(runtimeSettingsTable.revision, current)));
-      await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: RUNTIME_SETTINGS_AUDIT_ACTION, target,
-        detail: { group, revision, version, changes, before: groupSlice(before.settings, group), after: groupSlice(after.settings, group) } }));
+      // 감사는 그룹마다 한 줄 — 작업 로그·「최근 저장」이 그룹 이름으로 읽는다. 한 그룹 저장은 예전처럼 모든 바뀐 칸을 그 줄에 적는다
+      for (const each of groups) {
+        const mine = groups.length === 1 ? changes : changes.filter(change => change.path.startsWith(`${each}.`));
+        await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: RUNTIME_SETTINGS_AUDIT_ACTION, target: runtimeSettingsAuditTarget(each),
+          detail: { group: each, ...together, revision, version, changes: mine, before: groupSlice(before.settings, each), after: groupSlice(after.settings, each) } }));
+      }
       // 한도가 바뀌면 틱의 결과가 바뀐다 — "왜 이때부터 달라졌지"를 되짚을 수 있어야 한다
-      logger.info("runtime_settings.saved", { actor, group, revision, version, changes: changes.map(change => change.path) });
+      logger.info("runtime_settings.saved", { actor, group: groups.join(","), revision, version, changes: changes.map(change => change.path) });
       return { ok: true, revision, version };
     }));
   } catch (error) {
