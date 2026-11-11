@@ -47,6 +47,8 @@ import { talkVisibility } from "@/lib/social/flags";
 import { productTalk, type ProductTalk } from "@/lib/social/talk";
 import { productFollowSlots } from "@/components/me/FollowSlot";
 import { tryPanelMessages } from "@/components/feedback/try-messages";
+import { detailClientProduct, detailFreshness, timelineSummary } from "@/components/product-detail/client-data";
+import { compactCardItem } from "@/components/home/compact-item";
 
 export const dynamic = "force-dynamic";
 
@@ -143,6 +145,10 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
     repoUrl: product.repoUrl, repoGone: product.repoGone, image: product.ogImage, languages,
   });
 
+  // 브라우저 부품에는 읽는 칸만 넘긴다(client-data.ts) — 한 객체를 여러 부품이 받아도 RSC 데이터에는 한 번만 실린다
+  const clientProduct = detailClientProduct(product);
+  const relatedCards = related.map((item) => compactCardItem(item, locale));
+
   return (
     <I18nProvider locale={locale} dictionaries={{}} now={now.toISOString()}><main className="wrap pb-14">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />
@@ -155,7 +161,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         <span className="min-w-0 truncate text-fg">{product.name}</span>
       </nav>
 
-      <ProductHero product={product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} talkRank={talk?.qualifies ? talk.rank : null} health={detail.health} languages={languages}
+      <ProductHero product={clientProduct} unclaimed={detail.unclaimed} risingRank={detail.risingRank} talkRank={talk?.qualifies ? talk.rank : null} health={detail.health} languages={languages}
         repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null} follow={productFollowSlots(product, detail.repository?.facts?.repositoryUrl ?? null)}
         personalGithubStar={githubStarEnabled() && !product.repoGone && product.repoUrl && parseGithubRepository(product.repoUrl)
           ? <GithubStarButton key={product.slug} slug={product.slug} stars={product.stars} /> : undefined}
@@ -166,14 +172,14 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
         <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-9">
-          <FactsStrip product={product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
+          <FactsStrip product={clientProduct} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
           <IntroSection product={product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed}>
             <Suspense fallback={<ReadmeFallback product={product} readmeExcerpt={detail.readmeExcerpt} pending />}>
               <ReadmeSection product={product} readmeExcerpt={detail.readmeExcerpt} />
             </Suspense>
           </IntroSection>
           <LanguageBar repository={detail.repository} />
-          <UpdateTimeline updates={detail.updates} now={now} />
+          <UpdateTimeline summary={timelineSummary(detail.updates, now)} now={now} />
           {productFeedbackEnabled() && (
             <section id="feedback" className="scroll-mt-24 space-y-4 border-t border-line pt-5" aria-label={t("page.feedback")}>
               <FeedbackList key={product.slug} slug={product.slug}
@@ -185,8 +191,8 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         </div>
 
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
-          <InfoCard product={product} repository={detail.repository} freshness={detail.freshness} unclaimed={detail.unclaimed} />
-          <PreviewFigure product={product} media={detail.media} />
+          <InfoCard product={clientProduct} repository={detail.repository} freshness={detailFreshness(detail.freshness)} unclaimed={detail.unclaimed} />
+          <PreviewFigure product={clientProduct} media={detail.media} />
           {detail.unclaimed && (
             <UnclaimedOwnerContact productId={product.id} repoUrl={product.repoUrl} slug={product.slug} installable={product.accessMode === "installable"}
               authEnabled={publicUserAuthEnabled()} githubEnabled={githubStarEnabled()} />
@@ -202,7 +208,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         </aside>
       </div>
 
-      <RelatedRow category={product.category} items={related} total={risingTotal} basis={detail.relatedBasis} />
+      <RelatedRow category={product.category} items={relatedCards} total={risingTotal} basis={detail.relatedBasis} />
     </main></I18nProvider>
   );
 }

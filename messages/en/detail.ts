@@ -122,6 +122,7 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "readme.excerpt": "Saved README excerpt",
   "readme.body": "README content",
   "readme.empty": "The README has no content to display.",
+  "readme.truncated": "This is the beginning of the README. Read the rest at the original.",
   "languages.title": "Languages",
   "languages.other": "Other",
   "languages.rest": "{name} and others",

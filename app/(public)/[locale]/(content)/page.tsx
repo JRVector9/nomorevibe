@@ -27,6 +27,7 @@ import {
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { CompactCard } from "@/components/home/CompactCard";
+import { compactCardItem } from "@/components/home/compact-item";
 import { starGrowthNote } from "@/components/home/star-growth-copy";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
@@ -383,7 +384,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
         </div>
         {failed ? <p>{t("error.list")} {t("error.retry")}</p>
           : items.length === 0 ? <p>{t("new.empty", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}</p>
-            : <div className="compact-grid">{items.map((product, index) => <CompactCard key={product.slug} product={product} trailing="listed" priority={index < 3} headingLevel={2} />)}</div>}
+            : <div className="compact-grid">{items.map((product, index) => <CompactCard key={product.slug} product={compactCardItem(product, locale)} trailing="listed" priority={index < 3} headingLevel={2} />)}</div>}
         {!failed && pages > 1 && <nav className="row-head" aria-label={t("new.pages")}>
           {page > 1 && <Link prefetch={false} href={href(page - 1)}>{t("nav.previous")}</Link>}
           <span>{count(page)} / {count(pages)}</span>
@@ -654,7 +655,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
                 ? t("growth.empty")
                 : t("growth.delayed")}</p> : undefined}
           more={{ href: strip ? `/rising?${new URLSearchParams({ cycle: strip.snapshot.asOf })}` : "/rising", label: t("nav.all") }}
-          items={strip?.items ?? []} trailing="category" />
+          items={(strip?.items ?? []).map((item) => compactCardItem(item, locale))} trailing="category" />
       )}
 
       <section id="projects" aria-labelledby="projects-title" className="feed">
@@ -732,7 +733,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
       )}
       {!filtered && (
         <CompactRow id="new" title={t("new.title")} note={t("new.note", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}
-          more={{ href: "/?new=1", label: t("nav.all") }} items={fresh} trailing="listed" />
+          more={{ href: "/?new=1", label: t("nav.all") }} items={fresh.map((item) => compactCardItem(item, locale))} trailing="listed" />
       )}
       {!scoped && (
         <div className="two-col">

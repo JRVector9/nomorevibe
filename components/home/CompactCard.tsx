@@ -8,8 +8,7 @@ import { ProjectTile } from "@/components/home/ProjectTile";
 import { translatedCategory } from "./i18n";
 import { useLocale, useTranslations, useServerNow } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
-import type { ProductListItem } from "@/lib/domain/products/view";
-import type { StarGrowthItem } from "@/lib/domain/products/star-growth";
+import type { CompactCardItem } from "./compact-item";
 import { formatDate } from "@/lib/i18n/format";
 import "./cards.css";
 
@@ -21,7 +20,8 @@ import "./cards.css";
  * 신규 띠(listed)는 GitHub 저장소 생성일이 있으면 그 날을 붙인다.
  */
 export function CompactCard({ product, trailing, priority = false, headingLevel = 3 }: {
-  product: ProductListItem & { starGrowth?: StarGrowthItem["starGrowth"] };
+  /** 카드가 읽는 칸만(compact-item.ts compactCardItem) */
+  product: CompactCardItem;
   trailing: "category" | "listed";
   /** 화면 첫 줄의 띠('지금 뜨는') — 커버 그림을 먼저 받는다(PERF-03) */
   priority?: boolean;
