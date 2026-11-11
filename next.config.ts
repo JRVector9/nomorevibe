@@ -2,13 +2,24 @@ import type { NextConfig } from "next";
 import { LOCALES } from "./lib/i18n/locales";
 import { localePath } from "./lib/i18n/routing";
 import { RENDER_RECOVERY_COOKIE, RENDER_RECOVERY_COOKIE_VALUE } from "./lib/web/recovery-cache";
+import { takeReleaseBuildId } from "./lib/web/release-build-id";
+
+/** 릴리스 값(NEXT_DEPLOYMENT_ID)을 읽고 그 환경변수를 지운다 — Next 가 deploymentId 로 쓰지 않게(lib/web/release-build-id.ts) */
+const releaseBuildId = takeReleaseBuildId();
+
+/** 상세의 지난 사본을 엣지가 먼저 줄 수 있는 시간 — 아래 headers() 의 edge 설명 */
+const DETAIL_STALE_SECONDS = 86_400;
 
 const nextConfig: NextConfig = {
   // Docker/Dokploy 배포용 — .next/standalone만 복사해도 동작하게
   output: "standalone",
 
-  // 두 웹 인스턴스와 롤링 배포 사이의 asset/action 버전 불일치를 감지한다.
-  deploymentId: process.env.NEXT_DEPLOYMENT_ID || undefined,
+  /**
+   * 두 웹 인스턴스와 롤링 배포 사이의 버전 불일치는 빌드 ID 로 감지한다 — RSC 응답의 `b` 가 첫 화면과 다르면 전체 새로고침.
+   * deploymentId 는 쓰지 않는다: 정적 파일마다 `?dpl=` 이 붙어 배포마다 엣지·브라우저 캐시가 비었다(lib/web/release-build-id.ts).
+   * 릴리스 값이 없으면(로컬 빌드) Next 가 빌드마다 임의 ID 를 짓는다.
+   */
+  generateBuildId: async () => releaseBuildId ?? null,
 
   /**
    * next build 안의 타입 검사는 프로젝트 전체 `tsc` 를 한 번 더 돈다(CI 약 1분, arm 이미지 약 34초).
@@ -52,17 +63,23 @@ const nextConfig: NextConfig = {
     const tag = (value: string) => [{ key: "Cache-Tag", value }];
     /**
      * Cloudflare 만 읽는 캐시 시간 — 방문자에게 가는 Cache-Control(private, no-store)은 그대로다.
-     * 목록 60초·상세 240초 뒤 60초 동안은 지난 사본을 주며 뒤에서 새로 받는다(최대 2분·5분 늦음).
+     * max-age 동안은 그 사본(HIT), 그 뒤 stale-while-revalidate 동안은 지난 사본을 곧바로 주며 뒤에서 새로 받는다(UPDATING —
+     * Free 도 2026-02 부터 비동기). 목록은 60초+60초(최대 2분 늦음).
+     * 상세는 240초+하루(2026-11-11): 사본은 4분 동안 그대로 쓰고, 그 뒤 첫 요청 하나가 지난 사본을 받으며 새로 받게 한다. 상세 제품이
+     * 8만 개 남짓이고 같은 제품을 5분 안에 다시 보는 일이 드물어 60초 창으로는 거의 모두 원 서버를 기다렸다. 내린 제품(트리거 0057)·사람이
+     * 고친 제품(lib/cdn/detail-purge.ts)·웹 릴리스가 바뀐 뒤의 옛 HTML(lib/jobs/products/cdn-purge.ts)은 지우기로 없앤다 — 지운 사본은
+     * 지난 사본으로도 주지 않는다. 스타·가동·방문 수·급상승·관련 목록처럼 저절로 바뀌는 값은 그 첫 요청에만 지난 렌더 값이 보인다.
      * 원 서버가 5xx 면 1시간까지 지난 사본을 준다. s-maxage 는 Cloudflare 의 SWR 을 꺼서 쓰지 않는다.
      * 관리자(쿠키)·검색(q, 응답 뒤 검색 기록을 남긴다)은 저장하지 않는다.
      */
-    const edge = (seconds: number) => ({
+    const edge = (seconds: number, staleSeconds = 60) => ({
       missing: [{ type: "cookie" as const, key: "nmv_admin" }, { type: "cookie" as const, key: "nmv_user" },
         { type: "cookie" as const, key: "nmv_login_nonce" }, { type: "query" as const, key: "q" },
         { type: "cookie" as const, key: RENDER_RECOVERY_COOKIE, value: RENDER_RECOVERY_COOKIE_VALUE }],
-      headers: [{ key: "Cloudflare-CDN-Cache-Control", value: `max-age=${seconds}, stale-while-revalidate=60, stale-if-error=3600` }],
+      headers: [{ key: "Cloudflare-CDN-Cache-Control",
+        value: `max-age=${seconds}, stale-while-revalidate=${staleSeconds}, stale-if-error=3600` }],
     });
-    const pages = [
+    const pages: { path: string; tags: string; seconds: number; staleSeconds?: number }[] = [
       { path: "/", tags: "html,lists", seconds: 60 },
       { path: "/c/:category", tags: "html,lists", seconds: 60 },
       { path: "/popular", tags: "html,lists", seconds: 60 },
@@ -71,11 +88,11 @@ const nextConfig: NextConfig = {
       { path: "/policy", tags: "html", seconds: 600 },
       { path: "/launch", tags: "html", seconds: 600 },
       { path: "/rankings/:key", tags: "html,lists", seconds: 60 },
-      { path: "/p/:slug", tags: "html,p-:slug", seconds: 240 },
+      { path: "/p/:slug", tags: "html,p-:slug", seconds: 240, staleSeconds: DETAIL_STALE_SECONDS },
     ];
     const localized = LOCALES.flatMap((locale) => pages.flatMap((page) => [
       { source: localePath(locale, page.path), headers: tag(page.tags) },
-      { source: localePath(locale, page.path), ...edge(page.seconds) },
+      { source: localePath(locale, page.path), ...edge(page.seconds, page.staleSeconds) },
     ]));
     const noStore = [{ key: "Cloudflare-CDN-Cache-Control", value: "no-store" }];
     return [

@@ -15,6 +15,8 @@ import { firstReviewers } from "@/lib/crawl/first-reviewers";
 import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
 import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { sharedStore } from "@/lib/cache/shared";
+// 고친 상세만 새로 받는 지우기 줄은 내린 제품이 아니고 맨 뒤 차례라 몰리면 10분을 넘길 수 있다 — '안 지워진 내린 제품' 수에서 뺀다
+import { DETAIL_EDIT_PURGE, DETAIL_STATUS_PURGE } from "@/lib/cdn/purge";
 import { sharedLoader } from "./shared-cache";
 import { kstDayStart, type FreshWindows } from "./windows";
 
@@ -431,7 +433,8 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
         (SELECT count(*)::int FROM ${products}
           WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website') AS websites,
         (SELECT count(*)::int FROM ${cdnPurges} WHERE ${cdnPurges.confirmedAt} IS NULL
-          AND ${cdnPurges.createdAt} < ${at(now)} - interval '10 minutes') AS purges,
+          AND ${cdnPurges.createdAt} < ${at(now)} - interval '10 minutes'
+          AND ${cdnPurges.reason} NOT IN (${DETAIL_EDIT_PURGE}, ${DETAIL_STATUS_PURGE})) AS purges,
         (SELECT count(*)::int FROM ${products}
           WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} <> 'website' AND ${repoGone}) AS gone_installable,
         (SELECT count(*)::int FROM ${products}

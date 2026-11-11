@@ -148,9 +148,9 @@ describe("관리자 처리", () => {
     expect(closed.every((row) => row.outcome === "fixed" && row.handledBy === "jr")).toBe(true);
     // 다른 제품은 그대로
     expect((await db.select().from(products).where(eq(products.id, other.id)))[0].tagline).toBe("Web service for HWP");
-    // 고친 뒤에도 노출은 그대로, CDN 지우기도 없다
+    // 고친 뒤에도 노출은 그대로다. 상세만 새로 받게 하는 지우기 줄 하나(edited — 목록·팔로 알림과 무관, lib/cdn/purge.ts)
     expect(await indexable("hwp-tool")).toEqual({ detail: true, sitemap: true });
-    expect(await db.select().from(cdnPurges)).toEqual([]);
+    expect(await db.select({ slug: cdnPurges.slug, reason: cdnPurges.reason }).from(cdnPurges)).toEqual([{ slug: "hwp-tool", reason: "edited" }]);
 
     // 이미 닫힌 요청으로 다시 고치지 않는다
     expect(await fixIntroFromRequest(mine[1], "또 다른 소개", "jr")).toBeNull();

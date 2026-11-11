@@ -14,6 +14,7 @@ FROM node:24.22.1-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# 릴리스 값 — next.config.ts 가 Next 의 빌드 ID 로 쓴다(deploymentId 가 아니다, lib/web/release-build-id.ts)
 ARG NEXT_DEPLOYMENT_ID
 # CI 이미지 빌드만 1 을 넘긴다 — 같은 트리를 CI typecheck 잡이 검사하고, 그 `check` 가 통과한 이미지만 배포한다(next.config.ts).
 ARG SKIP_NEXT_TYPECHECK=0
@@ -90,7 +91,7 @@ ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "--import", "tsx", "scripts/watch-failover-readiness.ts"]
 
 FROM node:24.22.1-alpine AS emergency-web
-# 비상 최소 웹/관리자(PR16) — runner 와 같은 builder 산출물(같은 deploymentId·서버 액션 키)만 담는다.
+# 비상 최소 웹/관리자(PR16) — runner 와 같은 builder 산출물(같은 빌드 ID·서버 액션 키)만 담는다.
 # 수집기·모델 CLI·잡 코드는 없고, 일정 관리(scheduler)는 Oracle native release 의 launcher 관문 아래에서 따로 돈다.
 # HOSTNAME 을 고정해 Docker 가 넣는 컨테이너 이름 대신 모든 주소에서 듣는다.
 WORKDIR /app

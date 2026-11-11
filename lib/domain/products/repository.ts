@@ -8,6 +8,8 @@ import { and, desc, eq, inArray, isNotNull, isNull, like, ne, notInArray, or, sq
 import { db } from "@/lib/db";
 import { productMakerMembers, userFollows } from "@/lib/db/me-schema";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
+import { queueDetailPurge } from "@/lib/cdn/detail-purge";
+import { DETAIL_EDIT_PURGE, DETAIL_STATUS_PURGE } from "@/lib/cdn/purge";
 import { DOWN_THRESHOLD } from "./health";
 import { uptimeNegativeAllowed } from "./uptime-negative-gate";
 import {
@@ -723,6 +725,9 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     // 소개를 고쳐 쓰면 그 소개는 쓴 사람의 것이다 — "AI가 요약" 표시를 뗀다
     const wroteTagline = values.tagline !== undefined && values.taglineSource === undefined ? { taglineSource: "maker" as const } : {};
     const [product] = await tx.update(products).set({ ...values, ...resetStats, ...wroteTagline, updatedAt: new Date() }).where(eq(products.id, id)).returning();
+    // 메이커·관리자가 고친 것은 엣지의 지난 상세 사본에 남지 않게 지운다(lib/cdn/detail-purge.ts). 상태는 여기서 바꾸지 않는다
+    await queueDetailPurge(tx, current.slug, DETAIL_EDIT_PURGE);
+    if (product.slug !== current.slug) await queueDetailPurge(tx, product.slug, DETAIL_EDIT_PURGE);
     // A new website starts a new current streak. Historical daily measurements still describe past visits.
     if (values.url !== undefined && values.url !== locked.url) {
       await tx.delete(productHealth).where(eq(productHealth.slug, current.slug));
@@ -767,6 +772,8 @@ export async function markVerified(
       ))
       .returning();
     if (!updated) return false;
+    // 검증 전 안내가 빠지고 메이커 값이 들어간다 — 트리거(0057)는 공개로 오는 바뀜을 적지 않는다
+    await queueDetailPurge(tx, slug, DETAIL_STATUS_PURGE);
     // 주인이 생겼다 — 감사 보류는 주인 없는 것에만 건다. 같은 세대 잠금 안에서 풀어 목록에 돌려놓는다(검증된 제품은 보류된 채로 두지 않는다)
     await releaseAuditHold(tx, { productId: id, slug, actor: "system:verified", reason: "owned" });
     const repository = updated.repoUrl ? normalizeTypedLink("repository", updated.repoUrl) : null;
@@ -900,6 +907,10 @@ export async function setStatusWithAudit(input: {
       .where(and(eq(products.id, input.id), eq(products.slug, input.slug)))
       .returning({ id: products.id });
     if (updated.length !== 1) return false;
+    // 공개에서 빠지는 바뀜은 트리거(0057)가 지우기 줄을 적는다. 그 밖(차단 해제·비공개였던 것의 차단)은 상세만 새로 받게 한다 —
+    // 엣지가 지난 404·상세를 오래 들고 있다(next.config.ts)
+    const publicStatus = (status: string | undefined) => status === "seeded" || status === "verified";
+    if (!(publicStatus(current?.status) && !publicStatus(input.status))) await queueDetailPurge(tx, input.slug, DETAIL_STATUS_PURGE);
     await tx.insert(productEvidenceAudit).values({
       slug: input.slug,
       actor: input.actor ?? "admin",
