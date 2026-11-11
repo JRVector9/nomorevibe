@@ -1,5 +1,6 @@
 import { publicationApiLogicalSql } from "@/lib/llm/publication-classify-api-sql";
 import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
+import { OPENCODE_TASK_FIX_FROM, OPENCODE_TASK_FIX_TAG, OPENCODE_TASK_FIX_TO, generateOpencodeTaskFiles } from "@/scripts/ops/generate-opencode-task-sql";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
@@ -25,7 +26,7 @@ function checkHistory(name: string) {
   // Each additive migration replaces these CHECKs. Compare the final schema with the
   // last replacement for that constraint, even when the latest migration changes other tables.
   const pattern = new RegExp(`ADD CONSTRAINT\\s+"?${name}"?\\s+CHECK\\s*\\(([\\s\\S]*)\\);\\s*$`);
-  const history: { idx: number; tag: string; expression: string }[] = [];
+  const history: { idx: number; tag: string; expression: string; leaf?: string }[] = [];
   for (const migration of migrations) for (const statement of migration.statements) {
     const match = pattern.exec(statement);
     if (match) history.push({ idx: migration.idx, tag: migration.tag, expression: match[1] });
@@ -72,7 +73,18 @@ function checkHistory(name: string) {
         expect(preflight).toContain(`r.source='${migration.tag}'`);
         expect(statement).toContain(`$branch$,'${migration.tag}'`);
       } else expect(statement).toContain(`COUNT(*) FILTER (WHERE source = '${migration.tag}') = 0`);
-      history.push({ idx: migration.idx, tag: migration.tag, expression: `(${previous!.expression}) OR (${rule[2]})` });
+      history.push({ idx: migration.idx, tag: migration.tag, expression: `(${previous!.expression}) OR (${rule[2]})`, leaf: rule[2] });
+    }
+    // 0175 rewrites one provider literal inside rules rows another migration added (same ordinal): replace exactly that leaf, once.
+    const repair = /UPDATE model_capacity_check_rules r\s+SET predicate = replace\(r\.predicate, \$from\$([\s\S]*?)\$from\$, \$to\$([\s\S]*?)\$to\$\), source = '([^']+)'[\s\S]*?r\.source = '([^']+)'/.exec(statement);
+    if (repair && new RegExp(`\\('(?:model_capacity_requests|model_capacity_events)','${name}','[a-f0-9]{64}'\\)`).test(statement)) {
+      const [, from, to, source, target] = repair;
+      expect(source).toBe(migration.tag);
+      const previous = history.at(-1), added = history.find(entry => entry.tag === target);
+      expect(previous, `${name}: repair predecessor`).toBeDefined();
+      expect(added?.leaf, `${name}: ${target} leaf to repair`).toBeDefined();
+      expect(previous!.expression.split(`(${added!.leaf})`), `${name}: ${target} leaf occurs once`).toHaveLength(2);
+      history.push({ idx: migration.idx, tag: migration.tag, expression: previous!.expression.replace(`(${added!.leaf})`, () => `(${added!.leaf!.replaceAll(from, to)})`) });
     }
   }
   return history;
@@ -161,12 +173,17 @@ it("0168은 검토된 정본의 네 규칙만 기존 ordinal 다음에 추가하
   expect(journal.entries[index]).toMatchObject({ idx: 168, when: 1794086401079, tag, version: "7", breakpoints: true });
   expect(journal.entries[index - 1]).toMatchObject({ idx: 167, when: 1794086401078, tag: "0167_ai_task_repeated_models" });
   expect(journal.entries.filter(entry => entry.idx === 168 || entry.tag === tag)).toHaveLength(1);
+  // 0168 is applied history: its dispatch/events-terminal twins kept the JSON provider '"claude-cli"'::jsonb, which 0175 replaces in place.
+  // The file is pinned above; the corrected constants are exactly its text with that one literal swapped (and logical/members are unchanged).
+  const as0168 = (sql: string) => sql.replaceAll(OPENCODE_TASK_FIX_TO, OPENCODE_TASK_FIX_FROM);
   const targets = [
     ["model_capacity_requests", "model_capacity_requests_logical_check", opencodeTaskLogicalSql, "7100b78079ef5c520d55827bf55f0d8911e5feb2b58f666ec1eed9088b7230e8"],
     ["model_capacity_requests", "model_capacity_requests_members_check", opencodeTaskMembersSql, "4df244a508df2a634137064ac33535b4fbe536c4ea85369c4da562b2889edb0f"],
-    ["model_capacity_requests", "model_capacity_requests_dispatch_check", opencodeTaskDispatchSql, "3138ab71997730a7044f8a18474d261d710cdb671b14b54c67ea4accb406c15c"],
-    ["model_capacity_events", "model_capacity_events_terminal_check", opencodeTaskEventTerminalSql, "1253e3d9345a9e68813395bc117a7148553b985851d57746f114cfda320bc66b"],
+    ["model_capacity_requests", "model_capacity_requests_dispatch_check", as0168(opencodeTaskDispatchSql), "3138ab71997730a7044f8a18474d261d710cdb671b14b54c67ea4accb406c15c"],
+    ["model_capacity_events", "model_capacity_events_terminal_check", as0168(opencodeTaskEventTerminalSql), "1253e3d9345a9e68813395bc117a7148553b985851d57746f114cfda320bc66b"],
   ] as const;
+  for (const sql of [opencodeTaskLogicalSql, opencodeTaskMembersSql]) expect(sql).not.toContain(OPENCODE_TASK_FIX_TO);
+  for (const sql of [opencodeTaskDispatchSql, opencodeTaskEventTerminalSql]) expect(sql.split(OPENCODE_TASK_FIX_TO)).toHaveLength(3);
   const rules = [...migration.matchAll(/SELECT '(model_capacity_requests|model_capacity_events)', '([^']+)', COALESCE\(MAX\(ordinal\), 0\) \+ 1, \$branch\$([\s\S]*?)\$branch\$, '([^']+)'/g)];
   expect(rules.map(match => match.slice(1))).toEqual(targets.map(([table, name, branch]) => [table, name, branch, tag]));
   expect(migration.match(/INSERT INTO model_capacity_check_rules \(/g)).toHaveLength(4);
@@ -190,6 +207,44 @@ it("0168은 검토된 정본의 네 규칙만 기존 ordinal 다음에 추가하
   for (const table of ["model_capacity_requests", "model_capacity_events"]) {
     expect(migration.indexOf("DO $opencode_postflight$")).toBeLessThan(migration.indexOf(`SELECT nmv_model_capacity_check_guard_rebuild('${table}')`));
   }
+});
+
+it("0175는 0168의 OpenCode dispatch·events terminal 두 행만 같은 자리에서 고친 생성 글로 바꾸고 guard 를 다시 만든다", () => {
+  const migration = readFileSync(`drizzle/${OPENCODE_TASK_FIX_TAG}.sql`, "utf8");
+  const index = journal.entries.findIndex(entry => entry.tag === OPENCODE_TASK_FIX_TAG);
+  expect(journal.entries[index]).toEqual({ idx: 175, version: "7", when: 1794172801085, tag: OPENCODE_TASK_FIX_TAG, breakpoints: true });
+  expect(journal.entries[index - 1]).toMatchObject({ idx: 174, when: 1794172801084, tag: "0174_gateway_http_rejected" });
+  // 생성기의 출력과 글자 그대로 같다(손으로 고친 마이그레이션·상수가 아니다)
+  const files = generateOpencodeTaskFiles(file => readFileSync(file, "utf8"));
+  expect(migration).toBe(files.migration);
+  expect(readFileSync("lib/llm/opencode-task-binding-sql.ts", "utf8")).toBe(files.bindingModule);
+  expect(files.rows).toEqual([
+    { table: "model_capacity_requests", name: "model_capacity_requests_dispatch_check", oldHash: "3138ab71997730a7044f8a18474d261d710cdb671b14b54c67ea4accb406c15c",
+      newHash: createHash("sha256").update(opencodeTaskDispatchSql).digest("hex"), literals: 2 },
+    { table: "model_capacity_events", name: "model_capacity_events_terminal_check", oldHash: "1253e3d9345a9e68813395bc117a7148553b985851d57746f114cfda320bc66b",
+      newHash: createHash("sha256").update(opencodeTaskEventTerminalSql).digest("hex"), literals: 2 }]);
+  const statements = migration.split("--> statement-breakpoint").map(statement => statement.trim());
+  expect(statements[0].endsWith("SET LOCAL lock_timeout='5s';")).toBe(true);
+  expect(statements[1]).toBe("LOCK TABLE model_capacity_check_rules IN SHARE ROW EXCLUSIVE MODE;");
+  expect(statements[2].startsWith("DO $opencode_task_fix_preflight$")).toBe(true);
+  expect(statements[3].startsWith("UPDATE model_capacity_check_rules r")).toBe(true);
+  expect(statements[4].startsWith("DO $opencode_task_fix_postflight$")).toBe(true);
+  expect(statements.slice(5)).toEqual(["SELECT nmv_model_capacity_check_guard_rebuild('model_capacity_requests');",
+    "SELECT nmv_model_capacity_check_guard_rebuild('model_capacity_events');"]);
+  // 장부 표를 잠그거나 고치지 않는다 — rules 표의 두 행 UPDATE 만, INSERT·DELETE·DDL·권한 없음
+  const code = migration.split("\n").filter(line => !line.trimStart().startsWith("--")).join("\n");
+  expect(code.match(/\bUPDATE\s+\w+/g)).toEqual(["UPDATE model_capacity_check_rules"]);
+  expect(code).not.toMatch(/\b(?:DELETE|TRUNCATE|INSERT|CREATE|GRANT|ALTER|DROP)\s|LOCK TABLE model_capacity_(?:requests|events)/);
+  expect(statements[3]).toContain(`replace(r.predicate, $from$${OPENCODE_TASK_FIX_FROM}$from$, $to$${OPENCODE_TASK_FIX_TO}$to$)`);
+  expect(statements[3]).toContain("r.source = '0168_opencode_task_cli'");
+  for (const row of files.rows) {
+    expect(statements[2]).toContain(`('${row.table}','${row.name}','${row.oldHash}','${row.newHash}')`);
+    expect(statements[3]).toContain(`('${row.table}','${row.name}','${row.oldHash}')`);
+    expect(statements[4]).toContain(`('${row.table}','${row.name}','${row.oldHash}','${row.newHash}')`);
+  }
+  // Drizzle 선언은 고친 상수를 쓰고(위 「현재 Drizzle의 네 CHECK」가 0175 를 마지막 교체로 본다) 어느 OpenCode 가지에도 claude-cli 가 없다
+  for (const name of ["model_capacity_requests_dispatch_check", "model_capacity_events_terminal_check"]) expect(checkHistory(name).at(-1)!.tag).toBe(OPENCODE_TASK_FIX_TAG);
+  for (const sql of [opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql]) expect(sql).not.toContain("claude-cli");
 });
 
 it("0118은 기존 네 CHECK 분기를 보존하고 typed direct 분기를 덧붙인다", () => {
