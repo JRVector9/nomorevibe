@@ -76,7 +76,18 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   if (publicationSourceChanged(candidate, document)) return { ok: false, reason: "source_changed" };
   const settings = await getSettings();
   const starAutoApproved = candidateStarAutoApproval(candidate, document, settings) !== null;
-  if (candidate.signals?.starAutoApproval && !starAutoApproved) return { ok: false, reason: "review_approval_changed" };
+  /**
+   * 별 표지(signals.starAutoApproval)는 자동 판정(auto)이 그 표지로 승인했을 때만 승인의 근거다.
+   * 사람(admin)의 승인과 사람 몫 위임 검수의 승인은 그 자체가 근거라, 앞서 남은 표지를 다시 재지 않는다 —
+   * 발행 트랜잭션의 assertReviewApproval 과 같은 갈래다(관리자는 그대로 통과, 위임은 위임 승인으로 대조).
+   *
+   * 전에는 표지만 보고 막아, 표지가 남은 관리자 승인이 매 틱 review_approval_changed 가 됐다.
+   * candidateStarAutoApproval 은 auto 가 아니면 늘 null 이라 그 후보는 영영 발행되지 못했고, approved(대기 목록)에
+   * 남아 같은 후보를 계속 다시 집었다 — 발행 워커가 1~2시간마다 no_progress 로 재시작했다(2026-11-10 운영, 후보 3건).
+   */
+  const starApprovalClaimed = candidate.decidedBy === "auto" && !isDelegatedApproval(candidate)
+    && Boolean(candidate.signals?.starAutoApproval);
+  if (starApprovalClaimed && !starAutoApproved) return { ok: false, reason: "review_approval_changed" };
   const access = accessFromDocument(document, settings);
   const url = access?.url;
   if (!url) return { ok: false, reason: "no_url" };

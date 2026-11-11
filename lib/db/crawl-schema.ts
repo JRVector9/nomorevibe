@@ -153,7 +153,12 @@ export type DecisionReason =
    * 발행하려는데 페이지 설명도 레포 설명도 없어 소개를 만들 수 없다. 사람이 소개를 보고 가른다 — AI 심사가 다시
    * 집지 않는다. "ambiguous" 로 두었을 때 enforce 에서 보류 → AI 승인 → 발행 실패 → 보류가 AI 호출마다 되풀이됐다.
    */
-  | "no_description";
+  | "no_description"
+  /**
+   * 발행 직전에 승인 근거(별 자동승인 표지·AI 승인·2차 표)를 지금 원본으로 다시 확인하지 못했다(2026-11-10). 사람이 가른다 —
+   * AI 심사·규칙 재판정이 다시 집지 않는다. approved 에 남겨 두었을 때 같은 후보를 매 틱 다시 집어 발행 워커가 멈춘 것으로 보였다.
+   */
+  | "review_approval_changed";
 
 export const crawlCandidates = pgTable(
   "crawl_candidates",

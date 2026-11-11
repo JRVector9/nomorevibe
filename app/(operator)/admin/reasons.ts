@@ -23,6 +23,7 @@ export const REASON_LABELS: Record<string, string> = {
   repo_deleted: "레포 삭제됨",
   suspected_spam: "스팸·악성 의심",
   no_description: "소개 문구 없음 — 사람 확인",
+  review_approval_changed: "발행 직전 승인 근거 바뀜 — 사람 확인",
 };
 
 /**

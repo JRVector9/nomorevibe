@@ -208,9 +208,12 @@ it("rechecks the exact approval in the product insert transaction", async () => 
     await db.update(crawlReviewAttempts).set({ state: "superseded" }).where(eq(crawlReviewAttempts.id, attempt!.id));
     return "Dev";
   });
-  expect(await tick()).toMatchObject({ status: "completed", done: false });
+  // 승인이 바뀐 후보(review_approval_changed)는 approved 에 두지 않고 사람에게 넘긴다(2026-11-10 운영자 결정) —
+  // 대기 목록에 남기면 같은 후보를 다시 집어 발행 워커가 처리 0 으로 재시작될 수 있었다. 제품은 여전히 넣지 않는다
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
   expect(await db.select().from(products)).toHaveLength(0);
-  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "approved" }]);
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "needs_review", reason: "review_approval_changed",
+    decidedBy: "auto", signals: { stoppedAt: { rule: "발행 조건" } } }]);
 });
 
 it("rejects writes by a publisher whose lease was replaced during classification", async () => {

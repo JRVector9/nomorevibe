@@ -157,6 +157,8 @@ describe("conveyor model", () => {
 
   it("links a hold only to review causes the queue can filter", () => {
     expect(holdHref("no_description")).toBe("/admin/review?cause=no_description#review-list");
+    // 발행이 사람에게 넘긴 승인 근거 바뀜도 심사 큐 갈래로 이어진다 — 모든 링크는 CAUSE_GUIDE 의 열쇠다
+    expect(holdHref("review_approval_changed")).toBe("/admin/review?cause=review_approval_changed#review-list");
     expect(holdHref("ambiguous")).toBeNull();
   });
 });

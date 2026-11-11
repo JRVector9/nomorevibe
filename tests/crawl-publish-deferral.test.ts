@@ -55,7 +55,8 @@ describe("publication snapshot conflict progress", () => {
 
   it.each([
     ["publication_state_changed", "publication_state_changed"],
-    ["review_approval_changed", "review_approval_changed"],
+    // 승인 근거가 바뀐 것은 사람에게 넘기는 기록(CAS)을 거친다 — 그 CAS 가 지면 다른 갈래처럼 기록하고 건너뛴다
+    ["review_approval_changed", "publication_failure_cas"],
     ["profile", "profile_failure_cas"],
     ["stale_judgement", "rejudge_failure_cas"],
     ["no_description", "publication_failure_cas"],
@@ -72,7 +73,7 @@ describe("publication snapshot conflict progress", () => {
     expect([...pending.keys()]).toEqual([1]); // The protected source/human decision was never overwritten.
     expect(boundary.prepare).toHaveBeenCalledTimes(12); // No reclassification of the excluded candidate.
     expect(boundary.publish.mock.calls.filter(([row]) => row.id === 1)).toHaveLength(reason === "profile" ? 0 : 1);
-    expect(boundary.recordFailure).toHaveBeenCalledTimes(["profile", "stale_judgement", "no_description"].includes(reason) ? 1 : 0);
+    expect(boundary.recordFailure).toHaveBeenCalledTimes(["profile", "stale_judgement", "no_description", "review_approval_changed"].includes(reason) ? 1 : 0);
     const retryPredicate = boundary.candidates.mock.calls[1][2] as SQL;
     const query = dialect.sqlToQuery(retryPredicate);
     expect(query.sql).toContain('"crawl_candidates"."id" not in');
@@ -81,6 +82,22 @@ describe("publication snapshot conflict progress", () => {
     expect(ctx.log).toHaveBeenCalledWith("crawl.publish_done", { published: 11, skipped: 0, conflicts: 1, drained: false });
     expect(boundary.agent).not.toHaveBeenCalled();
     expect(boundary.classify).not.toHaveBeenCalled();
+  });
+
+  it("hands a review_approval_changed candidate to a person instead of leaving it in the approved queue", async () => {
+    const { pending, ctx } = queue(1);
+    boundary.publish.mockResolvedValue({ ok: false, reason: "review_approval_changed" });
+    // 기록이 이기면 후보는 approved(대기 목록)를 떠난다 — 다음 LIMIT 에 다시 나오지 않는다
+    boundary.recordFailure.mockImplementation(async (candidate: { id: number }) => pending.delete(candidate.id));
+    expect(await publishCandidates(ctx)).toEqual({ done: true });
+    expect(boundary.recordFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 1 }), {
+      state: "needs_review", reason: "review_approval_changed", existing: undefined,
+      stoppedAt: { rule: "발행 조건", detail: expect.stringContaining("승인 근거") },
+    }, undefined);
+    expect(boundary.publish).toHaveBeenCalledTimes(1);
+    expect(ctx.log).toHaveBeenCalledWith("crawl.publish_skipped_candidate", { repo: "owner/tool-1", reason: "review_approval_changed" });
+    expect(ctx.log).not.toHaveBeenCalledWith("crawl.publication_changed", expect.anything());
+    expect(ctx.log).toHaveBeenCalledWith("crawl.publish_done", { published: 0, skipped: 1, conflicts: 0, drained: true });
   });
 
   it("does not mark a conflict-only queue drained or count it as progress", async () => {
