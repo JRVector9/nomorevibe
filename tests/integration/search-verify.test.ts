@@ -169,6 +169,25 @@ describe("검색 키워드 검수 잡", () => {
     expect(request.calls).toHaveLength(17);
   });
 
+  it("stores completed verification after the tick budget aborts its internal signal", async () => {
+    const id = await seed("completed-at-budget", ["document tool"], []);
+    const original = capacityHook.verify!;
+    let budget = true;
+    capacityHook.verify = async (_task, options) => {
+      budget = false;
+      await new Promise(resolve => setTimeout(resolve, 300));
+      expect(options.signal?.aborted).toBe(true);
+      return { kind: "result", result: { ok: true, unsupported: [] } };
+    };
+    try {
+      const outcome = await runJob<null>("product-search-verify", ctx => verifySearchKeywords({ ...ctx,
+        hasBudget: () => budget && ctx.hasBudget() }));
+      expect(outcome).toMatchObject({ status: "completed", done: false });
+      expect((await profile(id)).verifiedAt).not.toBeNull();
+      expect((await profile(id)).verifyAttempts).toBe(1);
+    } finally { capacityHook.verify = original; }
+  });
+
   it("preserves the failure cause so explicitly requeued exhausted checks take the chunk leaf, which no longer sends", async () => {
     const keys = Array.from({ length: 12 }, (_, i) => `key-${i}`);
     const id = await seed("reconciled-chunks", keys, []);

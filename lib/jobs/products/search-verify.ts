@@ -102,7 +102,9 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                   return "stop";
                 }
                 const result = outcome.result;
-                if (signal.aborted) return "stop";
+                // A tick-budget abort stops admission, but a completed success still reaches the
+                // fenced writer. External shutdown and incomplete/unknown outcomes keep stopping.
+                if (ctx.signal?.aborted || (signal.aborted && !result.ok)) return "stop";
                 if (!result.ok) {
                   // A shorter deadline comes from this tick's remaining time, not the product.
                   // Keep it eligible for the next tick instead of consuming a retry.
