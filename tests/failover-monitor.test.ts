@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
-import { combineMonitorStatus, exitCodeFor } from '@/lib/operations/failover-monitor';
+import { combineMonitorStatus, exitCodeFor, parseCapacityModeObservation } from '@/lib/operations/failover-monitor';
 import { pushKumaStatus, runMonitorCycle, type MonitorCycleState } from '@/scripts/watch-failover-readiness';
 import { monitorHeartbeatIsFresh } from '@/scripts/monitor-healthcheck';
 
@@ -18,6 +18,26 @@ it('combines readiness and progress without downgrading alarms or unknowns', () 
   expect(exitCodeFor('ok')).toBe(0);
   expect(exitCodeFor('unknown')).toBe(1);
   expect(exitCodeFor('alarm')).toBe(2);
+});
+
+it('carries the model admission mode as an observation only: DRAINING never changes overall', () => {
+  const draining = { mode: 'draining' as const, changedAt: 1_000 };
+  expect(combineMonitorStatus(ready, progress, undefined, draining)).toMatchObject({ overall: 'ok', capacityMode: draining });
+  expect(combineMonitorStatus(ready, { ...progress, overall: 'alarm' }, undefined, draining)).toMatchObject({ overall: 'alarm', capacityMode: draining });
+  expect(combineMonitorStatus(null, progress, undefined, draining).overall).toBe('unknown');
+  expect(combineMonitorStatus(ready, progress)).not.toHaveProperty('capacityMode');
+});
+
+it('moves the database-measured mode age onto this process clock and rejects malformed rows', () => {
+  expect(parseCapacityModeObservation({ mode: 'draining', age_ms: 95_500.7 }, 1_000_000)).toEqual({ mode: 'draining', changedAt: 904_499 });
+  expect(parseCapacityModeObservation({ mode: 'open', age_ms: '0' }, 1_000_000)).toEqual({ mode: 'open', changedAt: 1_000_000 });
+  expect(parseCapacityModeObservation({ mode: 'disabled', age_ms: 5_000 }, 1_000)).toEqual({ mode: 'disabled', changedAt: 0 });
+  for (const row of [undefined, { mode: 'paused', age_ms: 1 }, { mode: 'open', age_ms: -1 }, { mode: 'open', age_ms: Number.NaN },
+    { mode: 'open', age_ms: '' }, { mode: 'open', age_ms: 'x' }, { mode: 'open', age_ms: null }, { mode: 'open' }, { age_ms: 1 },
+    { mode: 'open', age_ms: Number.POSITIVE_INFINITY }]) {
+    expect(() => parseCapacityModeObservation(row, 1_000_000)).toThrow('capacity_mode_invalid');
+  }
+  expect(() => parseCapacityModeObservation({ mode: 'open', age_ms: 1 }, 1.5)).toThrow('capacity_mode_invalid');
 });
 
 it('pushes down after two bad samples and immediately pushes recovery', async () => {

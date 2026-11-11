@@ -185,6 +185,26 @@ def capacity_pending(value):
     return bool(value['requests']) or value['truncated']
 
 
+# 2026-11-11: the monitor's read of model_capacity_control: its mode and the seconds since the row's updated_at (the last
+# mode or policy write), measured on the monitor container's own clock. Observation only: it never changes a row's
+# ok/reason/recoverable. The Oracle watchdog holds pipeline_alarm notifications, bounded, while the mode is 'draining'
+# (a deploy window's DRAIN; incident_notifications.DRAIN_HOLD_SECONDS).
+CAPACITY_MODES = ('open', 'draining', 'disabled')
+
+
+def valid_capacity_mode(value):
+    return (isinstance(value, dict) and set(value) == {'mode', 'ageSeconds'} and isinstance(value['mode'], str) and
+            value['mode'] in CAPACITY_MODES and type(value['ageSeconds']) is int and 0 <= value['ageSeconds'] <= 10 ** 9)
+
+
+def merge_capacity_modes(values):
+    """Every fresh replica must report the same mode, else the mode is unread (absent: Oracle behaves as before). The
+    oldest age wins, so replicas that disagree on age can only shorten an Oracle hold, never lengthen it."""
+    if not values or not all(valid_capacity_mode(value) for value in values) or len({value['mode'] for value in values}) != 1:
+        return None
+    return {'mode': values[0]['mode'], 'ageSeconds': max(value['ageSeconds'] for value in values)}
+
+
 def merge_capacity_unknowns(items, complete):
     """A fleet summary needs every replica's explicit observation. An incomplete
     read is unknown: partial review rows cannot clear a previously known alarm.
@@ -233,9 +253,13 @@ return ((v.status==='review'||v.status==='alarm')===(rows.length>0||v.truncated)
 if(!n(v.count)||!n(v.stuckDispatched)||!(v.oldestAgeSeconds===null||n(v.oldestAgeSeconds))||!Array.isArray(v.alarmReasons)||v.alarmReasons.length>3
 ||!v.alarmReasons.every(k=>['dispatch_stuck','review_backlog','review_stale'].includes(k)))return unknown;
 return {...base,count:v.count,oldestAgeSeconds:v.oldestAgeSeconds,stuckDispatched:v.stuckDispatched,alarmReasons:[...v.alarmReasons]};};
+const mode=j.capacityMode,modeNow=Date.now();
+const modeKnown=mode&&typeof mode==='object'&&!Array.isArray(mode)&&['open','draining','disabled'].includes(mode.mode)
+&&Number.isSafeInteger(mode.changedAt)&&mode.changedAt>=0&&mode.changedAt-modeNow<=1000;
 console.log(JSON.stringify({fresh:Number.isSafeInteger(j.checkedAt)&&Date.now()-j.checkedAt>=-1000&&Date.now()-j.checkedAt<90000,
 overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
 ...(j.capacityUnknowns!==undefined?{capacityUnknowns:capacity(j.capacityUnknowns)}:{}),
+...(modeKnown?{capacityMode:{mode:mode.mode,ageSeconds:Math.min(1e9,Math.max(0,Math.floor((modeNow-mode.changedAt)/1000)))}}:{}),
 ...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{}),
 ...(reviewKnown?{reviewFailures:j.reviewFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{}),
 ...(stageKnown?{stageFailures:j.stageFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{})}));}
@@ -325,6 +349,9 @@ def observe(key, cfg, run=command, now=None):
                             stages[failure['stage']] = failure['reason']
                     if not conflict:
                         result['stageFailures'] = [{'stage': stage, 'reason': stages[stage]} for stage in sorted(stages)]
+                mode = merge_capacity_modes([check.get('capacityMode') for check in checks])
+                if mode is not None:
+                    result['capacityMode'] = mode
                 capacity = []
                 for check in checks:
                     if 'capacityUnknowns' in check:

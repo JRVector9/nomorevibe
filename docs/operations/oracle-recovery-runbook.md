@@ -57,8 +57,32 @@ monitor heartbeat의 `capacityUnknowns`는 다음 뜻이다.
 두 번째 관측에서 알린다. 복구 판단(`bad`·`actionable`)은 바뀌지 않았다.
 monitor 의 `pipeline_alarm` 은 함대 전체의 진행을 보므로 그 사건의 `restartSeconds` 는 monitor 자신이 아니라 모든 대상 중 가장 최근 재시작이다
 (2026-11-10 10:28Z: 배포 창에서 text·maintenance 가 다시 뜨는 동안 monitor 재시작 전 진행 경보가 알림이 됐다). DRAIN 만 걸고 아직 아무 앱도 다시 뜨지 않은
-때의 진행 경보는 유예되지 않는다. 메시지 머리는 `NoMoreVibe 장애 알림`, 줄마다 사유 코드 뒤에 한국어 설명이 붙는다
+때의 진행 경보는 이 재시작 유예가 아니라 아래 DRAIN 유예가 맡는다. 메시지 머리는 `NoMoreVibe 장애 알림`, 줄마다 사유 코드 뒤에 한국어 설명이 붙는다
 (`scripts/ops/incident_notifications.py` `SERVICE_TEXT`).
+
+**배포 창 DRAIN 동안의 진행 경보 유예(2026-11-11, 운영자: 「배포 동안은 단계 멈춤 알람을 붙잡아 두자」).** 배포 창은 T+0 에 모델 접수를
+DRAINING 으로 두고 잡 ~10개를 멈추며 첫 앱 재시작은 2~3분 뒤다. 그 사이의 `pipeline_alarm` 은 재시작 유예를 받지 못했다(03:52:50Z
+`m3/monitor-m3 pipeline_alarm`, `faultSeconds` 35·`restartSeconds` 3880 — DRAIN 03:48:59Z, 마지막 재시작은 65분 전 배포). 하루 여섯 창마다 났다.
+
+- 신호: monitor 가 주기마다 `model_capacity_control`(id=1)의 `mode` 와 `updated_at` 나이를 DB 시계로 읽어 heartbeat 에 `capacityMode: {mode, changedAt}`
+  (monitor 컨테이너 시계 epoch ms)로 남긴다. gateway `MONITOR_PROBE` 가 같은 컨테이너 시계로 `{mode, ageSeconds}` 로 바꾸고, 모든 신선한 replica 가
+  같은 모드일 때만 행에 붙인다(나이는 가장 오래된 쪽). 행의 `ok`·`reason`·`recoverable`·overall 은 바뀌지 않는다 — monitor overall·Kuma Push·배포 관문·
+  운영 홈은 지금처럼 경보를 본다. Oracle 에는 DB 자격을 주지 않는다.
+- DRAIN 시계(Oracle `observe_drain`, 상태 `targets[<monitor>].drain = {since, seen}`): 처음 본 DRAIN 의 시작 = 보고 나이와 자기 관측 중 이른 쪽.
+  `updated_at` 은 정책 쓰기에도 바뀌므로 같은 창 안의 정책 쓰기나 OPEN↔DRAIN 되풀이는 시계를 다시 시작하지 않는다. DRAIN 을 마지막으로 본 지
+  `DRAIN_CONTINUITY_SECONDS`(600초)가 지나야 다음 DRAIN 을 새 창으로 본다. 칸이 빠진 표본(monitor 재시작·읽기 실패)은 마지막 DRAIN 관측
+  `DRAIN_CARRY_SECONDS`(150초) 안에서만 DRAIN 으로 이어 본다. 사건에 `drainSeconds` 로 넘긴다.
+- 유예(`incident_notifications.drain_hold`): `pipeline_alarm` 이고 `drainSeconds`·`faultSeconds` 가 모두 `DRAIN_HOLD_SECONDS`(**1200초 = 20분**,
+  보통 창 15분 안팎)보다 짧을 때만 알림을 만들지 않는다. DRAIN 이 20분을 넘기면(멈춘 DRAIN — 감시가 처음 보는 DRAIN 이어도 보고 나이로 잰다)
+  또는 경보가 끊김 없이 20분 이어지면 예전 문구 그대로 알린다. 모드가 `open`·`disabled` 이거나 칸이 없으면(옛 monitor·gateway·watchdog) 예전대로
+  두 번째 관측에서 알린다. 재시작 유예와 둘 중 하나라도 맞으면 유예다.
+- 바뀌지 않는 것: `pipeline_alarm` 밖의 사유(웹·복제본·DB·`monitor_stale` 등), 단계별 `progress-*`·AI 1차·2차·공급자 30분·장부(`capacity/*`) 알림,
+  Oracle Kuma DOWN·복구 판단. DR fence 가 접수를 DRAINING 으로 두는 때와 운영 요청 실행기(ops-runner)의 DRAIN 에도 같은 20분 유예가 걸린다.
+- 확인할 것: monitor 읽기 역할이 `updated_at` 을 읽을 수 있어야 한다(읽지 못하면 칸이 빠지고 유예 없이 예전대로다). watcher 주기 로그에
+  `"capacityMode":"open"` 이 찍히는지, 또는 `SELECT has_column_privilege('nomorevibe_monitor_20261022', 'public.model_capacity_control', 'updated_at', 'SELECT');`.
+- 적용 순서는 아래와 같다(Oracle 세 파일 → M3/mini gateway → monitor 앱). 새 `oracle_watchdog.py` 는 Oracle 의 `recovery_gateway.py` 에서
+  `valid_capacity_mode` 를 가져오므로 Oracle 세 파일은 함께 바꾼다. 새 gateway 는 새 monitor 가 칸을 쓸 때만 `capacityMode` 를 보내는데, 구 Oracle
+  validator 는 그 행을 거절해 호스트 전체가 `probe_unknown` 이 된다. 새 monitor + 구 gateway 는 칸을 버린다(지금과 같다).
 
 2026-11-10 소유자 결정: 검토 행은 아무것도 막지 않으므로 검토 문턱만 넘은 장부로 monitor를 DOWN으로 만들지 않는다(11-09 배포 창이
 indeterminate 35건·가장 오래된 41시간의 `review_stale` 때문에 `monitor_push_state_not_up`으로 멈췄다). 문턱 값은 그대로이고,
@@ -117,6 +141,8 @@ ssh onetwoday 'sudo ssh -F /dev/null -p 22222 -o BatchMode=yes -o ConnectTimeout
 python3 -B -m unittest discover -s tests -p 'test_recovery*.py'
 python3 -B -m unittest discover -s tests -p 'test_oracle_watchdog*.py'
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32784/nomorevibe_test npm run test:integration -- tests/integration/text-stage-progress.test.ts tests/integration/review-stage-progress.test.ts
+npx vitest run tests/failover-monitor.test.ts tests/monitor-heartbeat.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32784/nomorevibe_test npm run test:integration -- tests/integration/monitor-capacity-mode.test.ts
 ```
 
 전 페이지 측정·개선은 `2026-10-25-page-reliability-audit.md`, 보안 점검은 `2026-10-25-security-reliability-audit.md`, 최신 실행 상태와 다음 명령은 `docs/CODEX_HANDOFF.md`를 참조한다.

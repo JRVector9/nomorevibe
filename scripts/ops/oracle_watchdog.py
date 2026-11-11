@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 from recovery_gateway import (PROVIDER_STAGES, UNKNOWN_CAPACITY, bounded_output, capacity_alarm, capacity_pending, save,
-                              valid_review_failures, valid_stage_failures, validate_capacity_unknowns)
+                              valid_capacity_mode, valid_review_failures, valid_stage_failures, validate_capacity_unknowns)
 from incident_notifications import notify, validate_destination
 
 
@@ -30,6 +30,30 @@ REASONS = {'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warmi
 # (review_backlog/review_stale/dispatch_stuck) and keeps no per-request clock or per-request incident.
 # 2026-11-10: an alarm of review_* reasons only with no stuck dispatched row (recovery_gateway.capacity_review_only) is not
 # an Oracle alarm or DOWN; the monitor's UP push carries the review message. Its one Telegram notice per reason is kept.
+# 2026-11-11 배포 창 DRAIN: monitor 가 보고한 모델 접수 모드(capacityMode)로 DRAIN 이 언제 시작됐는지 감시가 스스로 잰다(drainSeconds).
+# DRAIN 시계는 처음 본 DRAIN 의 시작(보고 나이와 자기 관측 중 이른 쪽)에 묶인다 — 같은 창 안에서 OPEN↔DRAIN 을 되풀이해도,
+# 정책 쓰기가 updated_at 을 당겨도 다시 시작하지 않는다. DRAIN 을 마지막으로 본 지 DRAIN_CONTINUITY_SECONDS 가 지나야 새 창으로 본다.
+# 칸이 없는 표본(monitor 재시작·한 번의 읽기 실패)은 마지막 DRAIN 관측이 DRAIN_CARRY_SECONDS 안일 때만 DRAIN 으로 이어 본다.
+# 알림 유예 자체(20분 상한)는 incident_notifications.drain_hold 가 정한다. 복구 판단·Kuma DOWN 은 바뀌지 않는다.
+DRAIN_CONTINUITY_SECONDS = 600
+DRAIN_CARRY_SECONDS = 150
+
+
+def observe_drain(previous, mode, now):
+    """(저장할 DRAIN 창 또는 None, 이 표본이 DRAIN 인가). 창은 {'since': DRAIN 시작, 'seen': 마지막 DRAIN 관측}."""
+    window = None
+    if isinstance(previous, dict):
+        since, seen = previous.get('since'), previous.get('seen')
+        if (all(type(value) in (int, float) and math.isfinite(value) for value in (since, seen)) and
+                0 <= since <= seen <= now and now - seen <= DRAIN_CONTINUITY_SECONDS):
+            window = {'since': since, 'seen': seen}
+    if mode is None:
+        # 칸 없음(옛 monitor·gateway, 읽기 실패, monitor 재시작): 창은 지우지 않고, 짧게만 DRAIN 으로 이어 본다.
+        return window, window is not None and now - window['seen'] <= DRAIN_CARRY_SECONDS
+    if mode['mode'] != 'draining':
+        return window, False  # 명시적 OPEN·disabled: 유예 없음. 창은 이어지는 DRAIN 이 다시 시작하지 않게 남긴다.
+    start = max(0, now - mode['ageSeconds'])
+    return {'since': min(window['since'], start) if window else start, 'seen': now}, True
 
 
 def validate_report(report):
@@ -37,7 +61,7 @@ def validate_report(report):
         raise ValueError('invalid_report')
     keys = set()
     for row in report['services']:
-        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'stageFailures', 'capacityUnknowns'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'stageFailures', 'capacityUnknowns', 'capacityMode'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
                 not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
                 row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
                 not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
@@ -52,6 +76,8 @@ def validate_report(report):
             raise ValueError('invalid_review_failures')
         if 'stageFailures' in row and not valid_stage_failures(row['stageFailures']):
             raise ValueError('invalid_stage_failures')
+        if 'capacityMode' in row and not valid_capacity_mode(row['capacityMode']):
+            raise ValueError('invalid_capacity_mode')
 
         if 'capacityUnknowns' in row:
             capacity = validate_capacity_unknowns(row['capacityUnknowns'])
@@ -137,6 +163,9 @@ def cycle(config, state, reports, *, now=None, recover=None):
             restarted = now if row['reason'] == 'warming_up' else stamp(old.get('restartedAt'))
             if restarted is not None and now - restarted < 86400:
                 target['restartedAt'] = restarted
+            drain, draining = observe_drain(old.get('drain'), row.get('capacityMode'), now)
+            if drain is not None:
+                target['drain'] = drain
             # Provider retries refresh database timestamps. The independent,
             # durable observer measures uninterrupted failure instead of the
             # age of the last retry. Releases alone do not reset this clock.
@@ -233,6 +262,8 @@ def cycle(config, state, reports, *, now=None, recover=None):
                 event['faultSeconds'] = round(now - target['faultSince'])
             if 'restartedAt' in target:
                 event['restartSeconds'] = round(now - target['restartedAt'])
+            if draining and 'faultSince' in target:
+                event['drainSeconds'] = round(now - target['drain']['since'])
             events.append(event)
         if report is not None:
             state['targets'].pop(host + '/host', None)

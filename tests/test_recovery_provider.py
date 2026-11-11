@@ -270,5 +270,78 @@ class CapacityProbeTests(unittest.TestCase):
         self.assertEqual(mixed, {'status': 'review', 'truncated': False, 'requests': [self.request]})
 
 
+class CapacityModeProbeTests(unittest.TestCase):
+    """2026-11-11: the monitor's model admission mode crosses the boundary as {mode, ageSeconds} only, never changing the row."""
+    def setUp(self):
+        self.gateway = load('recovery_gateway_mode', ROOT / 'scripts/ops/recovery_gateway.py')
+        self.fixtures = load('recovery_mode_fixtures', ROOT / 'tests/test_recovery_observation.py')
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is needed for the actual probe')
+    def test_actual_node_probe_measures_age_on_the_container_clock_and_drops_bad_shapes(self):
+        now = 1_800_000_000_000
+        with tempfile.TemporaryDirectory() as directory:
+            heartbeat = Path(directory) / 'health.json'
+            for value, expected in [({'mode': 'draining', 'changedAt': now - 95_500}, {'mode': 'draining', 'ageSeconds': 95}),
+                                    ({'mode': 'open', 'changedAt': now}, {'mode': 'open', 'ageSeconds': 0}),
+                                    ({'mode': 'disabled', 'changedAt': now + 900}, {'mode': 'disabled', 'ageSeconds': 0}),
+                                    ({'mode': 'draining', 'changedAt': 0}, {'mode': 'draining', 'ageSeconds': 10 ** 9}),
+                                    ({'mode': 'draining', 'changedAt': now - 1000, 'note': 'private-token'},
+                                     {'mode': 'draining', 'ageSeconds': 1}),
+                                    ({'mode': 'draining', 'changedAt': now + 1001}, None),
+                                    ({'mode': 'draining', 'changedAt': -1}, None),
+                                    ({'mode': 'draining', 'changedAt': 1.5}, None),
+                                    ({'mode': 'draining', 'changedAt': str(now)}, None),
+                                    ({'mode': 'private-token', 'changedAt': now}, None),
+                                    ({'changedAt': now}, None), (['draining', now], None), ('draining', None), (None, None)]:
+                with self.subTest(value=value):
+                    heartbeat.write_text(json.dumps({'checkedAt': now, 'overall': 'ok', 'capacityMode': value}))
+                    result = subprocess.run(['node', '-e', 'Date.now=()=>' + str(now) + ';' + self.gateway.MONITOR_PROBE],
+                                            check=True, timeout=10, capture_output=True,
+                                            env={'PATH': os.environ.get('PATH', ''), 'MONITOR_HEALTH_PATH': str(heartbeat)})
+                    report = json.loads(result.stdout)
+                    self.assertEqual((report['fresh'], report['overall']), (True, 'ok'))
+                    if expected is None:
+                        self.assertNotIn('capacityMode', report)
+                    else:
+                        self.assertEqual(report['capacityMode'], expected)
+                    self.assertNotIn(b'private-token', result.stdout)
+            heartbeat.write_text(json.dumps({'checkedAt': now, 'overall': 'ok'}))  # monitor before 2026-11-11
+            result = subprocess.run(['node', '-e', 'Date.now=()=>' + str(now) + ';' + self.gateway.MONITOR_PROBE], check=True,
+                                    timeout=10, capture_output=True,
+                                    env={'PATH': os.environ.get('PATH', ''), 'MONITOR_HEALTH_PATH': str(heartbeat)})
+            self.assertEqual(json.loads(result.stdout), {'fresh': True, 'overall': 'ok'})
+
+    def observe(self, *values, overall='ok'):
+        fixture = self.fixtures.DockerFixture(self.gateway, kind='monitor')
+        for cid, value in zip(self.fixtures.IDS, values):
+            fixture.monitor[cid]['overall'] = overall
+            if value is not None:
+                fixture.monitor[cid]['capacityMode'] = value
+        return fixture.observe()
+
+    def test_one_mode_crosses_only_when_every_fresh_replica_agrees_and_never_changes_the_row(self):
+        draining = {'mode': 'draining', 'ageSeconds': 120}
+        for overall, reason in (('ok', 'ok'), ('alarm', 'pipeline_alarm'), ('unknown', 'pipeline_alarm')):
+            with self.subTest(overall=overall):
+                row = self.observe(draining, {**draining, 'ageSeconds': 150}, overall=overall)
+                self.assertEqual(row['capacityMode'], {'mode': 'draining', 'ageSeconds': 150})  # the older age only shortens a hold
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']), (reason, overall == 'ok', False))
+        for values in [(draining, {'mode': 'open', 'ageSeconds': 120}), (draining, None), (None, None),
+                       (draining, {'mode': 'draining', 'ageSeconds': -1}), (draining, {'mode': 'draining', 'ageSeconds': True}),
+                       (draining, {**draining, 'changedAt': 1})]:
+            with self.subTest(values=values):
+                row = self.observe(*values)
+                self.assertNotIn('capacityMode', row)
+                self.assertEqual((row['reason'], row['ok']), ('ok', True))
+        fixture = self.fixtures.DockerFixture(self.gateway, kind='monitor')
+        for check in fixture.monitor.values():
+            check['capacityMode'] = draining
+        fixture.monitor[self.fixtures.IDS[1]]['fresh'] = False
+        row = fixture.observe()
+        self.assertEqual(row['reason'], 'monitor_stale')
+        self.assertNotIn('capacityMode', row)
+        self.assertNotIn('capacityMode', self.fixtures.DockerFixture(self.gateway, kind='web').observe())
+
+
 if __name__ == '__main__':
     unittest.main()
