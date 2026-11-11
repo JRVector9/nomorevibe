@@ -5,7 +5,7 @@ import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments } from "@/lib/db/schema";
-import { taglineEvidence, crawlTaglineGatewayWire } from "@/lib/crawl/tagline";
+import { taglineEvidence, taglineHash, crawlTaglineGatewayWire } from "@/lib/crawl/tagline";
 import { pendingTaglines, prepareCrawlTaglineDispatch, recordTaglineResult, type TaglineTask } from "@/lib/crawl/taglines";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
@@ -31,6 +31,14 @@ if (process.env.TEST_DATABASE_URL !== TEST_DATABASE_URL) throw new Error("crawl_
 const serving = vi.hoisted(() => ({ contract: null as CrawlTaglineServingContract | null }));
 vi.mock("@/lib/llm/crawl-tagline-serving-contract", async load => ({ ...await load<typeof import("@/lib/llm/crawl-tagline-serving-contract")>(),
   resolveCrawlTaglineServingContract: () => serving.contract }));
+const recording = vi.hoisted(() => ({ beforeWrite: null as null | (() => Promise<void>) }));
+vi.mock("@/lib/crawl/taglines", async load => {
+  const actual = await load<typeof import("@/lib/crawl/taglines")>();
+  return { ...actual, recordTaglineResult: async (...args: Parameters<typeof actual.recordTaglineResult>) => {
+    if (recording.beforeWrite) { const change = recording.beforeWrite; recording.beforeWrite = null; await change(); }
+    return actual.recordTaglineResult(...args);
+  } };
+});
 type Raw = Record<string, unknown>;
 // 「작업 ↔ 모델」 순위(PR B)의 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
 const TAGLINE_MODEL = "qwen3.6-35b-heretic";
@@ -181,7 +189,7 @@ beforeEach(async () => { pinTextRanks({ [jobName]: TAGLINE_MODEL }); setServingC
   await admin`INSERT INTO crawl_settings(id,values) VALUES(1,'{"enabled":true}') ON CONFLICT(id) DO UPDATE SET values=crawl_settings.values||'{"enabled":true}'::jsonb`;
   await elect();
 });
-afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs();
+afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { recording.beforeWrite = null; serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs();
   resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end({ timeout: 5 }),
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
@@ -204,6 +212,41 @@ it("uses two independent actual requests/native proofs but one attempt and publi
     expect((await admin`SELECT attempts,tagline FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0]).toEqual({ attempts: 1, tagline: "Document manager" });
     expect(Number((await admin`SELECT requested_version FROM jobs WHERE name='crawl-publish'`)[0].requested_version)).toBe(Number(before[0]?.requested_version ?? 0) + 1);
     expect((await admin`SELECT requested_version=processed_version AS ack FROM jobs WHERE name=${jobName}`)[0].ack).toBe(true);
+  });
+}), 20_000);
+
+it.each(["reuse", "no-evidence"])("keeps a source-change %s CAS rejection unresolved while processing its follower and retries next tick", exerciseCase(async branch => {
+  const task = await seed(), repo = task.candidate.repo;
+  if (branch === "reuse") {
+    await admin`INSERT INTO crawl_taglines(repo,tagline,source,model,source_hash,document_at,attempts)
+      SELECT repo,'','page','',${taglineHash(taglineEvidence(repo, task.document))},fetched_at,1 FROM crawl_documents WHERE repo=${repo}`;
+    await admin`UPDATE crawl_documents SET fetched_at=fetched_at+interval '1 second' WHERE repo=${repo}`;
+  } else {
+    await admin`UPDATE crawl_documents SET page_meta='{}'::jsonb,fetched_at=fetched_at+interval '1 second' WHERE repo=${repo}`;
+  }
+  const follower = await seed();
+  await admin`INSERT INTO crawl_taglines(repo,tagline,source,model,source_hash,document_at,attempts,error_code,retry_at)
+    SELECT repo,'','page','fixture',${"a".repeat(64)},fetched_at,2,'http_502',clock_timestamp()-interval '1 minute'
+    FROM crawl_documents WHERE repo=${follower.candidate.repo}`;
+  expect((await pendingTaglines(2)).map(row => row.candidate.repo)).toEqual([repo, follower.candidate.repo]);
+  recording.beforeWrite = async () => {
+    await admin`UPDATE crawl_documents SET page_meta=page_meta||'{"textSample":"New evidence: organize and share documents"}'::jsonb,
+      fetched_at=fetched_at+interval '1 second' WHERE repo=${repo}`;
+  };
+  await server(async ({ bodies }) => {
+    expect(await tick()).toMatchObject({ status: "completed", done: false });
+    expect((await pendingTaglines(64)).map(row => row.candidate.repo)).toEqual([repo]);
+    expect(await admin`SELECT state FROM crawl_candidates WHERE repo=${repo}`).toEqual([{ state: "needs_review" }]);
+    expect(await admin`SELECT state FROM crawl_candidates WHERE repo=${follower.candidate.repo}`).toEqual([{ state: "approved" }]);
+    expect(bodies).toHaveLength(1);
+    if (branch === "reuse") {
+      expect(await admin`SELECT attempts,tagline FROM crawl_taglines WHERE repo=${repo}`).toEqual([{ attempts: 1, tagline: "" }]);
+    } else expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=${repo}`).toEqual([]);
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(2);
+    expect(await pendingTaglines(64)).toEqual([]);
+    expect(await admin`SELECT state FROM crawl_candidates WHERE repo=${repo}`).toEqual([{ state: "approved" }]);
   });
 }), 20_000);
 

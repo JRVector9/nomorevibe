@@ -76,13 +76,16 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
     const passed = new Set<number>();
     // A completed cache reuse or a concurrently changed source must not monopolize this tick.
     const seen = new Set<number>();
+    // Exclusion is not completion: retain CAS rejects and candidate-local deferrals until the next tick.
+    const unresolved = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
       const tasks = (await pendingTaglines(batch, { skipBusy: true, exclude: [...seen] }))
         .filter(task => !seen.has(task.candidate.id));
       if (tasks.length === 0) {
-        ctx.log("tagline.done", { written, empty, failed, released, passed: passed.size, drained: true });
-        return { done: true };
+        const drained = unresolved.size === 0;
+        ctx.log("tagline.done", { written, empty, failed, released, passed: passed.size, unresolved: unresolved.size, drained });
+        return { done: drained };
       }
 
       let next = 0, skipped = false;
@@ -92,6 +95,7 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
             if (skipped || blocked || ranks.exhausted || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
             seen.add(task.candidate.id);
+            unresolved.add(task.candidate.id);
             try {
               const { candidate, document, written: stored } = task;
               const evidence = taglineEvidence(candidate.repo, document);
@@ -108,12 +112,14 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 const saved = await recordTaglineResult(task, lease, { kind: "reuse" });
                 if (saved.released) released++;
                 if (!saved.stored) return;
+                unresolved.delete(task.candidate.id);
                 continue;
               }
               // 읽을 글이 아무 데도 없다. 모델을 불러도 지을 수 없으므로 사람에게 남긴다
               if (!evidence.pageText && !evidence.readme && !evidence.pageTitle) {
                 const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: "", source: "page", model: "" });
                 if (!saved.stored) return;
+                unresolved.delete(task.candidate.id);
                 empty++;
                 continue;
               }
@@ -157,6 +163,7 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 if (!result.ok) {
                   const saved = await save({ kind: "failure", error: result.error });
                   if (!saved.stored) { skipped = capacity.kind === "result"; return "stop"; }
+                  unresolved.delete(task.candidate.id);
                   failed++;
                   // 그 후보의 실패로 남겼다(같은 증거에만 502 를 돌려주는 긴 페이지 글이 있었다 — 2026-09-20). 엔진이 모든 후보에 대해
                   // 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 후보는 다음 순위로 간다
@@ -167,6 +174,7 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 ranks.answered(binding);
                 const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: textTaskModel(JOB) });
                 if (!saved.stored) { skipped = capacity.kind === "result"; return "stop"; }
+                unresolved.delete(task.candidate.id);
                 if (!result.tagline) { empty++; return "next"; }
                 written++;
                 if (saved.released) released++;

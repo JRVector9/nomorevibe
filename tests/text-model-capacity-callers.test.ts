@@ -186,10 +186,11 @@ it.each(["dispatched", "work_busy"] as const)("crawl-tagline passes one candidat
     return { ok: true, tagline: "Document manager", source: "page" };
   });
   const ctx = context("crawl-tagline");
-  expect(await writeTaglines(ctx)).toEqual({ done: true });
+  expect(await writeTaglines(ctx)).toEqual({ done: false });
   expect(mocks.tagWrite.mock.calls.map(call => call[0].candidate.id).sort()).toEqual([2, 3]);
   expect(mocks.tagTasks.mock.calls.map(call => call[1])).toEqual([{ skipBusy: true, exclude: [] }, { skipBusy: true, exclude: [1, 2, 3] }]);
   expect(ctx.log).toHaveBeenCalledWith("tagline.passed", { repo: "fixture/doc-1", reason });
+  expect(ctx.log).toHaveBeenCalledWith("tagline.done", expect.objectContaining({ drained: false, unresolved: 1 }));
 });
 
 it("crawl-tagline handles an unchanged empty cache once per tick and reaches the next candidate", async () => {
