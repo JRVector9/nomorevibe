@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { ProductIcon } from "@/components/ProductIcon";
 import { ProductTagline } from "@/components/ProductTagline";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import type { DetailClientProduct } from "./client-data";
 import { repositoryOperator } from "@/lib/domain/products/github-owner";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
 import { InstallPrompt } from "./InstallPrompt";
@@ -49,7 +50,7 @@ function HealthStatus({ health }: { health: ProductDetailView["health"] }) {
  * 사이트 주소는 정보 카드의 '웹사이트' 줄이 보여 준다.
  */
 export function ProductHero({ product, unclaimed, risingRank, talkRank = null, health, languages, repositoryUrl = null, personalGithubStar, tryPanel, follow }: {
-  product: ProductDetailView["product"];
+  product: DetailClientProduct;
   unclaimed: boolean;
   risingRank: number | null;
   /** SNS 화제 '지금' 순위(lib/social/talk.ts productTalk) — 화제 화면이 보일 때만 넘긴다 */

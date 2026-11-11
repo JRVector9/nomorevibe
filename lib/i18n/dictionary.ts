@@ -55,6 +55,14 @@ export async function getDictionary<N extends Namespace>(locale: Locale, namespa
   return loaders[locale][namespace]() as Promise<Dictionary[N]>;
 }
 
+/**
+ * 브라우저로 넘길 사전 — 한국어 detail·browse 는 그 화면의 JS 조각(lib/i18n/bundled)에 함께 실리므로 null.
+ * 다른 언어는 서버가 고른 사전을 넘긴다.
+ */
+export async function bundledOrDictionary<N extends "detail" | "browse">(locale: Locale, namespace: N): Promise<Dictionary[N] | null> {
+  return locale === "ko" ? null : getDictionary(locale, namespace);
+}
+
 export async function getTranslator<N extends Namespace>(locale: Locale, namespace: N): Promise<Translator<N>> {
   return createTranslator(namespace, await getDictionary(locale, namespace));
 }

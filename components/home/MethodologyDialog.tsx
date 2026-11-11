@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/home/icons";
@@ -52,6 +52,12 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
   const rawMetric = params.get("metric") ?? "";
   const metric = rawMetric === "rising" ? "star-growth" : rawMetric;
   const open = isBrowsePath(pathname) && ["all", "born", "updates", "active", "categories", "ai", "tools", "popular", "rising", "star-growth"].includes(metric);
+  /*
+   * 본문(지표 설명·표)은 한 번 열린 뒤에만 그린다 — 닫힌 창의 본문이 홈 HTML 마다 11KB 를 차지했다(2026-11-11 HTML 줄이기).
+   * 주소에 metric 이 있으면 서버도 같은 값으로 그리므로 수화 결과가 같다. 한 번 그린 본문은 닫아도 남긴다 — 닫히는 틈에 빈 창이 보이지 않게.
+   */
+  const [shown, setShown] = useState(open);
+  if (open && !shown) setShown(true);
 
   useEffect(() => {
     const node = dialog.current;
@@ -215,7 +221,7 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
           <Icon name="close" />
         </Link>
       </div>
-      <div className="modal-body">
+      {shown && <div className="modal-body">
         <div className="notice">
           {t("method.notice")}
         </div>
@@ -223,7 +229,7 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
         <p className="method-foot">{metric === "star-growth"
           ? starGrowth ? t("method.growthFoot", { time: time(starGrowth.asOf), version: starGrowth.policyVersion ?? t("method.policyUnknown") }) : t("method.growthFootUnknown")
           : t("method.foot", { time: time(pulse.asOf), version: pulse.methodVersion })}</p>
-      </div>
+      </div>}
     </dialog>
   );
 }
