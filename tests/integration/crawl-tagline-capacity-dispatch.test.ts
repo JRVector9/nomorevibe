@@ -8,6 +8,7 @@ import { crawlCandidates, crawlDocuments } from "@/lib/db/schema";
 import { taglineEvidence, taglineHash, crawlTaglineGatewayWire } from "@/lib/crawl/tagline";
 import { pendingTaglines, prepareCrawlTaglineDispatch, recordTaglineResult, type TaglineTask } from "@/lib/crawl/taglines";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
+import type { CrawlTaglineCapacityResult } from "@/lib/crawl/tagline-model-capacity";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { prepareCrawlTaglineGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { requestCrawlTaglineModelSlot, cancelReservedModelSlot, closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
@@ -193,6 +194,89 @@ afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanu
   resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end({ timeout: 5 }),
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
+
+const afterNative = vi.hoisted(() => ({ run: null as null | ((result: CrawlTaglineCapacityResult) => Promise<void>) }));
+vi.mock("@/lib/crawl/tagline-model-capacity", async load => {
+  const actual = await load<typeof import("@/lib/crawl/tagline-model-capacity")>();
+  return { ...actual, writeCrawlTaglineWithModelCapacity: async (...args: Parameters<typeof actual.writeCrawlTaglineWithModelCapacity>) => {
+    const result = await actual.writeCrawlTaglineWithModelCapacity(...args);
+    await afterNative.run?.(result); // Fault injection after the real HTTP and SQL settlement.
+    return result;
+  } };
+});
+// The helper also resets in finally; this covers a failed test before helper completion.
+afterEach(() => { afterNative.run = null; });
+
+async function tickAfterBudgetEndsAt(ordinal: 1 | 2) {
+  let budget = true, injected = false;
+  afterNative.run = async result => {
+    if (result.kind !== "result" || result.askOrdinal !== ordinal) return;
+    expect(result.result.ok).toBe(true);
+    afterNative.run = null; injected = true; budget = false;
+    await new Promise(resolve => setTimeout(resolve, 300)); // Run the actual 250ms ownership poll.
+  };
+  await tracked(requestJob(jobName));
+  try {
+    const result = await tracked(runJob(jobName, (ctx: JobContext<null>) => writeTaglines({ ...ctx,
+      hasBudget: () => budget && ctx.hasBudget() }), { requestedOnly: true, roleLease: role }));
+    expect(injected).toBe(true);
+    return result;
+  } finally { afterNative.run = null; }
+}
+
+it.each(["Document manager", ""])("continues ask2 on the next tick after a budget-ended first empty reply (second=%j)", exerciseCase(async secondLine => {
+  const task = await seed();
+  await server(async ({ bodies, setReply }) => {
+    let asks = 0;
+    setReply(response => response.end(JSON.stringify(replyBody(++asks === 1 ? "" : secondLine))));
+
+    expect(await tickAfterBudgetEndsAt(1)).toMatchObject({ status: "completed", done: false });
+
+    expect(bodies).toHaveLength(1);
+    expect(await admin`SELECT tagline,attempts FROM crawl_taglines WHERE repo=${task.candidate.repo}`).toEqual([]);
+    const firstPhase = await phases(task.candidate.repo);
+    expect(firstPhase.map(row => [row.state, row.ask])).toEqual([["settled", 1]]);
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+
+    expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT state,reason FROM crawl_candidates WHERE id=${task.candidate.id}`)[0])
+      .toEqual(secondLine ? { state: "approved", reason: "passed" } : { state: "needs_review", reason: "no_description" });
+    expect((await admin`SELECT tagline,attempts,error_code FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0])
+      .toEqual({ tagline: secondLine, attempts: 1, error_code: null });
+    expect((await phases(task.candidate.repo)).map(row => [row.state, row.ask])).toEqual([["settled", 1], ["settled", 2]]);
+    // A final second reply is cached; a third tick must not send a third question.
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(2);
+  });
+}), 20_000);
+
+it("stores a final empty second reply even if its completion exhausts the budget", exercise(async () => {
+  const task = await seed();
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => response.end(JSON.stringify(replyBody(""))));
+
+    expect(await tickAfterBudgetEndsAt(2)).toMatchObject({ status: "completed", done: false });
+
+    expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT tagline,attempts,error_code FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0])
+      .toEqual({ tagline: "", attempts: 1, error_code: null });
+    expect((await admin`SELECT state FROM crawl_candidates WHERE id=${task.candidate.id}`)[0].state).toBe("needs_review");
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(2);
+  });
+}), 20_000);
+
+it("stores a single nonempty completed reply after the budget aborts", exercise(async () => {
+  const task = await seed();
+  await server(async ({ bodies }) => {
+    expect(await tickAfterBudgetEndsAt(1)).toMatchObject({ status: "completed", done: false });
+    expect(bodies).toHaveLength(1);
+    expect((await admin`SELECT tagline,attempts FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0])
+      .toEqual({ tagline: "Document manager", attempts: 1 });
+    expect((await admin`SELECT state FROM crawl_candidates WHERE id=${task.candidate.id}`)[0].state).toBe("approved");
+  });
+}), 20_000);
 
 it("uses two independent actual requests/native proofs but one attempt and publish wakeup", exercise(async () => {
   const task = await seed();
