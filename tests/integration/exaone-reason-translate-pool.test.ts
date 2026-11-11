@@ -213,6 +213,57 @@ describe("심사 사유 번역 작업 분산(m1-gemma + EXAONE)", () => {
   });
 });
 
+describe("한국어 소개 번역 순위의 추론 토큰 여유(2026-11-11)", () => {
+  it("여유 없이 만든 계약은 경고하고, 계약을 끈 뒤 순위를 다시 저장하면 연결의 여유(8196)로 계약을 새로 만들어 wire 에 더한다", async () => {
+    // 운영 꼴: EXAONE 연결을 한국어 소개 번역에도 쓰도록 허락하고, 처음에는 여유 없이 순위를 저장했다(운영 계약 42 와 같은 모양)
+    const { row: first } = await exaoneConnection({ reasoningTokenReserve: "", "allowedTask.product-tagline-ko": "1" });
+    const { saveAiTaskRanksAction, saveAiConnectionAction } = await actions();
+    const rankForm = (revision: string) => form({ task: "product-tagline-ko", slot: "1", revision, rank1Connection: first.id, rank1Model: MODEL });
+    expect(await saveAiTaskRanksAction(null, rankForm(EMPTY_REVISION))).toMatchObject({ ok: true });
+    const contracts = () => client<{ id: number; enabled: boolean; contract: Record<string, unknown> }[]>`
+      SELECT id, enabled, contract FROM model_serving_contracts WHERE route_id = 'product-tagline-ko' AND model = ${MODEL} ORDER BY id`;
+    const [old] = await contracts();
+    expect(old).toMatchObject({ enabled: true, contract: { protocol: "abcllm-product-tagline-ko-total-bound-v1", model: MODEL, totalTokenBound: 524_288 } });
+    expect(old.contract).not.toHaveProperty("reasoningTokenReserve");
+
+    // 운영자가 연결의 「추론 토큰 여유」를 8196 으로 바꾼다 — 계약은 그대로라 다시 저장하면 끄고 다시 저장하라고 알린다
+    const current = await connection("LG EXAONE");
+    expect(await saveAiConnectionAction(null, form({ id: current.id, expectedVersion: String(current.version), kind: "api", label: "LG EXAONE", baseUrl: EXAONE_BASE,
+      deviceId: "exaone-api", capacitySlots: "1", contextTokens: "524288", manualModels: MODEL, reasoningTokenReserve: "8196",
+      "allowedTask.reason-translate": "1", "allowedTask.product-tagline-ko": "1" }))).toMatchObject({ ok: true });
+    expect((await connection("LG EXAONE")).options).toMatchObject({ reasoningTokenReserve: 8196 });
+    const { aiTaskSlotRevision, listAiTaskRows } = await import("@/lib/operations/admin-ai-tasks-repository");
+    const revision = async () => aiTaskSlotRevision((await listAiTaskRows()).filter(row => row.task === "product-tagline-ko" && row.slot === 1));
+    const warned = await saveAiTaskRanksAction(null, rankForm(await revision()));
+    expect(warned).toMatchObject({ ok: true });
+    expect(warned?.warnings?.join("\n")).toContain("계약의 추론 토큰 여유(없음)가 연결의 값(8196)과 다릅니다");
+    expect((await contracts()).map(row => [row.id, row.enabled])).toEqual([[old.id, true]]);
+
+    // 경고대로: 서빙 계약 화면에서 그 계약을 끄고(같은 저장 함수) 순위를 그대로 다시 저장한다
+    const { disableAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    expect(await disableAdminServingContract("product-tagline-ko", MODEL, "operator")).toBe(true);
+    calls = [];
+    const rebuilt = await saveAiTaskRanksAction(null, rankForm(await revision()));
+    expect(rebuilt).toMatchObject({ ok: true });
+    expect(rebuilt?.warnings ?? []).toEqual([]);
+    // 목록 없는 서버라 1토큰 시험만 한다
+    expect(calls.map(call => `${call.method} ${call.url}`)).toEqual([`POST ${EXAONE_BASE}/chat/completions`]);
+    const after = await contracts();
+    expect(after.map(row => [row.id === old.id, row.enabled])).toEqual([[true, false], [false, true]]);
+    expect(after[1].contract).toMatchObject({ protocol: "abcllm-product-tagline-ko-total-bound-v1", model: MODEL, totalTokenBound: 524_288, reasoningTokenReserve: 8196 });
+
+    // 실행 쪽: 새 계약 스냅숏으로 준비한 호출의 wire = 예전 답 몫 + 8196(wireHash 로 확인 — 실제 EXAONE 은 부르지 않는다)
+    const [{ ensureServingContracts }, { prepareProductTaglineKoGatewayCall }, { productTaglineKoGatewayWire }] = await Promise.all([
+      import("@/lib/llm/serving-contract-store"), import("@/lib/crawl/agent-review-gateway"), import("@/lib/crawl/translate")]);
+    await ensureServingContracts(0);
+    const items = [{ name: "Doc", tagline: "Document management tools" }];
+    const call = prepareProductTaglineKoGatewayCall(items, { model: MODEL, timeoutMs: 45_000 });
+    const sha = (wire: string) => createHash("sha256").update(wire).digest("hex");
+    expect(call).toMatchObject({ kind: "prepared", provider: "abcllm", totalTokenBound: 524_288, wireHash: sha(productTaglineKoGatewayWire(items, MODEL, 8196)) });
+    expect(JSON.parse(productTaglineKoGatewayWire(items, MODEL, 8196)).max_tokens).toBe(750 + 8196);
+  });
+});
+
 describe("appendCompatibleRoutes 선언 맵(2026-11-10)", () => {
   const route = { routeId: "reason-translate", provider: "abcllm", model: "new-model", providerBudgetId: "new-dev", groupId: "new-dev" };
   it("값을 주지 않으면 예전처럼 정책이 파싱되지 않아 아무것도 쓰지 않고, 값을 모르면 model_capacity_route_undeclared", async () => {

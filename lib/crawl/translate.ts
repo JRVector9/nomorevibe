@@ -175,10 +175,11 @@ export function compactTranslationNoise(text: string): string {
  */
 export function reasonTranslationGatewayWire(texts: readonly string[], model: string, reasoningTokenReserve = 0): string {
   const sent = texts.map(compactTranslationNoise);
-  const reserve = Number.isSafeInteger(reasoningTokenReserve) && reasoningTokenReserve > 0 ? reasoningTokenReserve : 0;
   return chatWire({ system: SYSTEM, user: JSON.stringify(sent), temperature: 0.1,
-    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(sent.join("").length * 1.2)) + reserve }, model);
+    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(sent.join("").length * 1.2)) + reasoningReserve(reasoningTokenReserve) }, model);
 }
+/** 계약의 추론 토큰 여유(양의 정수만, 아니면 0) — 사유 번역·한국어 소개 wire 가 답 몫 위에 더한다 */
+function reasoningReserve(value: number): number { return Number.isSafeInteger(value) && value > 0 ? value : 0; }
 
 async function chat(
   body: { system: string; user: string; maxTokens: number; temperature: number;
@@ -216,19 +217,24 @@ const TAGLINE_SYSTEM = [
 ].join(" ");
 
 export type ProductTaglineKoGatewayItem = Readonly<{ name: string; tagline: string }>;
-function productTaglineKoChatBody(items: readonly ProductTaglineKoGatewayItem[], model: string, profile: KoreanTranslationProfile = "native") {
+function productTaglineKoChatBody(items: readonly ProductTaglineKoGatewayItem[], model: string, profile: KoreanTranslationProfile = "native",
+  reasoningTokenReserve = 0) {
   return {
     routeId: "product-tagline-ko" as const,
     system: (profile === "expanded" ? koreanTranslationRuntimePrompt(model, items.length) : null)
       ?? translationSystemPrompt(TAGLINE_SYSTEM, "product-tagline-ko", model, items.length),
     user: JSON.stringify(items), temperature: 0.1,
     // legacy는 한 줄당450토큰·기본1800으로 확대. 예약 증명의 native wire는 기존150·600을 유지한다.
-    maxTokens: koreanTranslationMaxOutputTokens(items.length, profile),
+    maxTokens: koreanTranslationMaxOutputTokens(items.length, profile) + reasoningReserve(reasoningTokenReserve),
   };
 }
-/** Same ordered model-specific Korean tagline request as legacy HTTP, without raw/schema/thinking additions. */
-export function productTaglineKoGatewayWire(items: readonly ProductTaglineKoGatewayItem[], model: string): string {
-  return chatWire(productTaglineKoChatBody(items, model), model);
+/**
+ * Same ordered model-specific Korean tagline request as legacy HTTP, without raw/schema/thinking additions.
+ * reasoningTokenReserve(계약의 칸, 2026-11-11): 추론 토큰이 max_tokens 에 포함되는 모델(LG EXAONE)이면 답 몫(줄 수 식) 위에 추론 몫을 더한다 — 운영에서
+ * EXAONE 소개 호출 97건 중 37건이 추론만으로 max_tokens(750·900·1050)를 다 써 content 가 비었다(finish length → invalid_output). 없으면(0) 예전 wire 그대로다.
+ */
+export function productTaglineKoGatewayWire(items: readonly ProductTaglineKoGatewayItem[], model: string, reasoningTokenReserve = 0): string {
+  return chatWire(productTaglineKoChatBody(items, model, "native", reasoningTokenReserve), model);
 }
 /** Enlarged legacy request; the reserved native gateway wire above remains frozen. */
 export function productTaglineKoLegacyWire(items: readonly ProductTaglineKoGatewayItem[], model: string): string {

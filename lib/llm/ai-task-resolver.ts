@@ -16,6 +16,7 @@ import { ensureServingContracts, servingContractRowAccess, servingContractSnapsh
 import type { AiTaskExecutionConfig, AiTaskPoolRuntime } from "./ai-task-execution-config";
 import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from "./ai-task-execution-snapshot";
 import { chooseTaskWorkloadMember } from "./ai-task-workload-selector";
+import { providerRateLimitedUntil } from "./provider-rate-limit";
 import { cliEngineBearer } from "./cli-engine-auth";
 import { cliEngineEndpoint, cliEngineRevision, isCliEngineConnection, isCliEngineTask, parseCliEngineRevision, type CliEngineSource } from "./cli-engine-config";
 
@@ -65,6 +66,7 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
   helper_ineligible: "도우미 경로가 닫힘",
   route_quota: "이 장비에서 이 작업 경로의 몫(상한)이 가득 참",
   model_quota: "이 장비에서 이 모델의 상한이 가득 참",
+  rate_limited: "공급자가 요청 빈도 한도(HTTP 429)로 거절해 Retry-After·backoff 만큼 쉼",
   engine_network: "엔진에 닿지 않음(연결 거절이 잇따름)",
   engine_no_key: "엔진이 키를 거절함",
   engine_model_unavailable: "엔진에 이 모델이 없음",
@@ -256,8 +258,9 @@ export type TextRankStatus = Readonly<{ routeId: string; at: string; status: Tex
 const bindingKey = (binding: Pick<TextTaskRankBinding, "rank" | "memberId">): string => binding.memberId ? `member.${binding.memberId}` : String(binding.rank);
 const candidateKey = (candidate: TextRankCandidate): string => candidate.memberId ? `member.${candidate.memberId}` : String(candidate.rank.rank);
 
-// route_quota(경로 몫 상한, step 2)·model_quota(모델 상한, 0170)도 포화다 — 그 칸이 풀리면 곧 다시 부를 수 있다(다음 순위가 없으면 잡은 model_capacity 로 미룬다)
-const SATURATION = new Set(["capacity", "queue_full", "route_quota", "model_quota"]);
+// route_quota(경로 몫 상한, step 2)·model_quota(모델 상한, 0170)도 포화다 — 그 칸이 풀리면 곧 다시 부를 수 있다(다음 순위가 없으면 잡은 model_capacity 로 미룬다).
+// rate_limited(공급자 429 뒤 쉼, 2026-11-11)도 같다 — 공급자 쪽 칸이 찬 것이고 쉼이 끝나면 곧 다시 부른다(잡이 degraded 로 알리지 않는다)
+const SATURATION = new Set(["capacity", "queue_full", "route_quota", "model_quota", "rate_limited"]);
 const statusHolder = globalThis as unknown as { __nmvTextRankStatus?: Map<string, TextRankStatus> };
 const statuses = () => (statusHolder.__nmvTextRankStatus ??= new Map());
 /** 이 프로세스가 마지막으로 남긴 순위 사정(웹 경로: 검색어 번역). 없으면 null. */
@@ -318,7 +321,7 @@ export class TextTaskRanks {
     const preferred = options.prefer ? order.findIndex(binding => binding.identity === options.prefer) : -1;
     if (preferred > 0) order.unshift(...order.splice(preferred, 1));
     for (const binding of order) {
-      if (this.paused.has(bindingKey(binding))) continue;
+      if (this.paused.has(bindingKey(binding)) || this.coolingDown(binding)) continue;
       try {
         const value = await runInTextTaskRank(binding, () => work(binding));
         const key = bindingKey(binding);
@@ -336,7 +339,9 @@ export class TextTaskRanks {
   /** Choose once per independent work/batch; never fan out one callback to several models. */
   private async runPool<T>(work: (binding: TextTaskRankBinding) => Promise<T>, options: Readonly<{ prefer?: string | null }>): Promise<TextRankRun<T>> {
     const execution = this.execution!;
-    const candidates = this.usable().flatMap(binding => binding.memberId ? [{ ...binding, memberId: binding.memberId }] : []);
+    // 공급자 429 로 쉬는 구성원은 고르지 않는다 — 고른 뒤의 미룸은 이 일을 다른 구성원에 넘기지 않으므로(아래), 쉬는 동안 같은 구성원이 뽑혀 분산 전체가 멈추지 않게 한다
+    const candidates = this.usable().filter(binding => !this.coolingDown(binding))
+      .flatMap(binding => binding.memberId ? [{ ...binding, memberId: binding.memberId }] : []);
     if (!candidates.length) {
       this.exhausted = true;
       return { kind: "unusable" };
@@ -358,6 +363,13 @@ export class TextTaskRanks {
       // work unit can choose another member; existing retries resume this one.
       throw error;
     }
+  }
+
+  /** 이 순위(구성원)의 경로·공급자·장부 모델이 공급자 429 뒤 쉬는 중이면 rate_limited 로 쉬게 하고 true(provider-rate-limit.ts, 2026-11-11). */
+  private coolingDown(binding: TextTaskRankBinding): boolean {
+    if (providerRateLimitedUntil({ routeId: binding.routeId, provider: binding.provider, model: binding.identity }) === null) return false;
+    this.pause(binding, "rate_limited");
+    return true;
   }
 
   /** 엔진이 이 일에 실패했다(그 일의 시도는 이미 적혔다). 엔진이 내려갔음이 증명되면(engine-down.ts) 그 순위를 쉬게 하고 true. */

@@ -65,6 +65,7 @@ const REASON_SHORT: Readonly<Record<string, string>> = Object.freeze({
   // 용량·정책
   unmapped: "정책 경로 없음", device_unconfigured: "장비 행 없음", capacity: "칸 가득", queue_full: "대기열 가득",
   blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", route_quota: "경로 몫 가득", model_quota: "모델 상한 가득", model_paused: "쉬는 중",
+  rate_limited: "빈도 한도(429) 쉼", rate_limit: "빈도 한도(429)",
   // 작업
   no_task_models: "순위 없음", all_ranks_unusable: "쓸 수 있는 순위 없음", task_models_unreadable: "순위 못 읽음",
 });

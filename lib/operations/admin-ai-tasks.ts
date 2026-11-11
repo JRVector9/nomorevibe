@@ -33,7 +33,7 @@ export type AiConnectionView = Readonly<{
   manualModels?: readonly string[];
   /** 이 연결을 쓸 수 있는 작업(options.allowedTasks). 비었거나 없으면 모든 작업 */
   allowedTasks?: readonly string[];
-  /** 추론 토큰이 max_tokens 에 포함되는 모델의 여유(options.reasoningTokenReserve) — 심사 사유 번역 계약을 만들 때 계약에 들어간다 */
+  /** 추론 토큰이 max_tokens 에 포함되는 모델의 여유(options.reasoningTokenReserve) — 심사 사유 번역·한국어 소개 계약을 만들 때 계약에 들어간다 */
   reasoningTokenReserve?: number | null;
   /** 마지막으로 키를 넣은 시각(options.keySetAt, ISO)과 운영자가 적은 키 유효 기간(일, options.keyValidDays) — 만료 안내만 한다 */
   keySetAt?: string | null;
@@ -109,10 +109,13 @@ export const AI_CONNECTION_CONTEXT_MAX = 2_097_152;
 /** 목록 없는 서버에 적는 모델 이름(2026-11-10) — 엔진 이름 그대로(밑줄 포함, 예: k-exaone_v2.5). 계약·장부 이름(200자)에 들어간다 */
 const MANUAL_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
 export const AI_CONNECTION_MANUAL_MODELS_MAX = 16;
-/** 추론 토큰 여유 상한 — 사유 번역 요청 하나의 max_tokens 에 더하는 값이다 */
+/** 추론 토큰 여유 상한 — 사유 번역·한국어 소개 요청 하나의 max_tokens 에 더하는 값이다 */
 export const AI_REASONING_TOKEN_RESERVE_MAX = 32_768;
-/** 추론 여유를 계약에 싣는 작업(경로) — 그 경로의 wire 만 이 값을 max_tokens 에 더한다(reason-translation-serving-contract.ts) */
-export const AI_REASONING_RESERVE_TASKS: readonly string[] = Object.freeze(["reason-translate"]);
+/**
+ * 추론 여유를 계약에 싣는 작업(경로) — 그 경로의 wire 만 이 값을 max_tokens 에 더한다(reason-translation-serving-contract.ts #894,
+ * product-tagline-ko-serving-contract.ts 2026-11-11). 계약 모양에 reasoningTokenReserve 칸이 있는 경로와 같아야 한다(engineRouteContract 가 그 칸을 보고 싣는다).
+ */
+export const AI_REASONING_RESERVE_TASKS: readonly string[] = Object.freeze(["reason-translate", "product-tagline-ko"]);
 /** 「쓸 수 있는 작업」 체크 칸 이름 */
 export const aiAllowedTaskField = (taskId: string) => `allowedTask.${taskId}`;
 
@@ -439,7 +442,7 @@ export type AiReadinessInput = Readonly<{
     cliVersion?: string | null;
     /** CLI 엔진 계약의 배포 리비전 — prepared source와 다르면 계약을 새로 만든다. */
     deploymentRevision?: string | null;
-    /** 계약에 실린 추론 토큰 여유(사유 번역 계약만, 2026-11-10) — 연결의 값과 다르면 알린다 */
+    /** 계약에 실린 추론 토큰 여유(사유 번역 2026-11-10·한국어 소개 2026-11-11 계약만) — 연결의 값과 다르면 알린다 */
     reasoningTokenReserve?: number | null }>[];
   /** 고정 로컬 경로의 계약(backendId = 정책 route 의 providerBudgetId) */
   localContract: (backendId: string) => Readonly<{ model: string; endpoint: string | null }> | null;
@@ -676,7 +679,8 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
         warnings.push(`${head}: 이 작업의 요청은 연결의 추론 토큰 여유(${reserve})를 쓰지 않습니다 — 추론 토큰이 max_tokens 에 들어가는 모델이면 답이 잘릴 수 있습니다.`);
       else if (!createContract && own.length && AI_REASONING_RESERVE_TASKS.includes(task.id) && (own[0].reasoningTokenReserve ?? null) !== reserve)
         warnings.push(`${head}: 계약의 추론 토큰 여유(${own[0].reasoningTokenReserve ?? "없음"})가 연결의 값(${reserve ?? "없음"})과 다릅니다 — 계약의 값으로 부릅니다. `
-          + `바꾸려면 서빙 계약 화면에서 ${routeId} · ${identity} 계약을 끈 뒤 이 설정을 다시 저장하세요.`);
+          + `바꾸려면 서빙 계약 화면(/admin/models/contracts)에서 ${routeId} · ${identity} 계약을 끈 뒤 이 작업의 순위(또는 작업 분산)를 그대로 다시 저장하세요 — `
+          + "저장이 1토큰 시험 뒤 연결의 지금 값으로 계약을 새로 만듭니다.");
       return result();
     }
     case "audit-direct": case "assist-direct": {

@@ -27,6 +27,7 @@ vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn() }));
 import { translateKoreanTaglinesWithModelCapacity as translateInRank } from "@/lib/domain/products/korean-tagline-model-capacity";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { inTextRank, pinTextRanks, textContract } from "./text-task-ranks-fixture";
+import { recordProviderRateLimit, resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 // GPT 경로의 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 깊은 함수는 순위 범위 안에서 부르고, 잡은 순위 스냅숏을 읽는다.
 const KOREAN_TAGLINE_MODEL = "korean-tagline-unit";
 const inRank = <T>(run: () => T): T => inTextRank("product-tagline-ko", KOREAN_TAGLINE_MODEL, run);
@@ -60,7 +61,7 @@ beforeEach(() => {
   mocks.native.mockResolvedValue({ result, terminal }); mocks.reconcile.mockResolvedValue({ kind: "settled" });
   mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true); mocks.legacy.mockResolvedValue(result);
 });
-afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); });
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); resetProviderRateLimitsForTest(); });
 it("preserves the disabled legacy ordered shortened wire and original rejection identity", async () => {
   mocks.control.mockResolvedValue({ mode: "disabled" });
   expect(await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, { timeoutMs: 45_000 })).toEqual({ kind: "result", result });
@@ -86,6 +87,18 @@ it("reuses the same pending ID and settles before returning a committed writer e
     workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: KOREAN_TAGLINE_MODEL })}` }), members);
   expect(mocks.native).toHaveBeenCalledWith([item], dispatch, call, expect.objectContaining({ timeoutMs: 45_000 }));
   expect(mocks.reconcile).toHaveBeenCalledWith(terminal); expect(mocks.legacy).not.toHaveBeenCalled();
+});
+// 2026-11-11: 이 경로·모델이 공급자 429 뒤 쉬는 중이면 장부에 묻지 않고(대기·전송 행 없음) 모델 단위 미룸 rate_limited 로 다음 순위에 넘긴다
+it("defers only this model while the provider's 429 cooldown runs, before any ledger read or request", async () => {
+  recordProviderRateLimit({ routeId: "product-tagline-ko", provider: "abcllm", model: KOREAN_TAGLINE_MODEL }, 60_000);
+  await expect(translateKoreanTaglinesWithModelCapacity([task], [], job, options())).rejects.toMatchObject({ name: "ModelCapacityDeferredError", reason: "rate_limited" });
+  expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.pending).not.toHaveBeenCalled();
+  expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled(); expect(mocks.legacy).not.toHaveBeenCalled();
+  // 다른 경로·모델의 쉼은 이 순위를 막지 않는다
+  resetProviderRateLimitsForTest();
+  recordProviderRateLimit({ routeId: "reason-translate", provider: "abcllm", model: KOREAN_TAGLINE_MODEL }, 60_000);
+  recordProviderRateLimit({ routeId: "product-tagline-ko", provider: "abcllm", model: "other-model" }, 60_000);
+  expect(await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, options())).toEqual({ kind: "result", result, expectation });
 });
 it("refuses unsupported production before reserving", async () => {
   mocks.call.mockReturnValue({ kind: "unsupported", reason: "provider_contract_unavailable" });

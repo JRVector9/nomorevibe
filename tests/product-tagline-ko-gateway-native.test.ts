@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import { translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
@@ -11,6 +11,7 @@ import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGatewa
   readProductTranslationGatewayTerminal, readReasonTranslationGatewayTerminal,
   type PreparedProductTaglineKoGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
+import { providerRateLimitedUntil, resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 
 const fixture = vi.hoisted(() => ({ contract: null as ProductTaglineKoServingContract | null }));
 vi.mock("@/lib/llm/product-tagline-ko-serving-contract", async original => ({
@@ -97,7 +98,7 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
   if (failed && errors.length) throw new AggregateError([original, ...errors], "native_fixture_failed", { cause: original });
   if (failed) throw original; if (errors.length) throw new AggregateError(errors);
 }
-afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); resetProviderRateLimitsForTest(); });
 it("sends the original ordered tagline batch once and issues an immutable opaque terminal", async () => {
   await server(async ({ bodies }) => {
     const batch = items(), call = prepared(batch), owned = dispatch(batch, call);
@@ -263,5 +264,51 @@ it("keeps invalid endpoint and descriptor validation in the strict leaf result",
       expect(leaf.productTaglineKoServingContractSchema.safeParse({ ...fixture.contract, ...change }).success).toBe(false);
     }
     expect(leaf.productTaglineKoServingContractHash(fixture.contract!)).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+// 2026-11-11 LG EXAONE(K-EXAONE, 추론이 늘 켜짐)을 한국어 소개 2순위로: 계약의 추론 토큰 여유가 답 몫(줄 수 식) 위에 더해지고 wireHash 에 묶인다.
+// 여유가 없는 계약(gpt-oss 등 지금 계약)의 wire·hash 는 한 글자도 바뀌지 않는다. 운영 값이 아니다 — 로컬 fixture 계약이다
+it("adds the contract's reasoning reserve to the native max_tokens and keeps the reserve-less wire byte-identical", async () => {
+  await server(async ({ bodies, reply }) => {
+    const batch = items(), sha = (wire: string) => createHash("sha256").update(wire).digest("hex");
+    const plain = prepared(batch);
+    expect(plain.wireHash).toBe(sha(originalWire(batch, model)));
+    expect(productTaglineKoGatewayWire(batch, model, 0)).toBe(originalWire(batch, model));
+    expect(productTaglineKoGatewayWire(batch, model)).toBe(originalWire(batch, model));
+    await send(batch, dispatch(batch, plain), plain);
+    expect(bodies[0]).toBe(originalWire(batch, model));
+    fixture.contract = { ...fixture.contract!, reasoningTokenReserve: 8196 } as ProductTaglineKoServingContract; pinDirect(fixture.contract);
+    reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant", content: `\n\n${JSON.stringify(outputs)}`,
+      reasoning_content: "생각" }, finish_reason: "stop" }], usage: { prompt_tokens: 80, completion_tokens: 2_000, total_tokens: 2_080, reasoning_tokens: 1_900 } }))));
+    const reserved = prepared(batch), outcome = await send(batch, dispatch(batch, reserved), reserved);
+    const expected = JSON.stringify({ ...JSON.parse(originalWire(batch, model)), max_tokens: 900 + 8196 });
+    expect(bodies[1]).toBe(expected);
+    expect(reserved.wireHash).toBe(sha(expected));
+    expect(reserved.wireHash).not.toBe(plain.wireHash);
+    expect(reserved.servingContractHash).not.toBe(plain.servingContractHash);
+    expect(reserved.totalTokenBound).toBe(8192);
+    expect(outcome.result).toEqual({ ok: true, outputs });
+    expect(readProductTaglineKoGatewayTerminal(outcome.terminal)).toMatchObject({ finishReason: "stop",
+      actualUsage: { inputTokens: 80, outputTokens: 2_000, totalTokens: 2_080 }, provenance: "upstream_reported" });
+  });
+});
+// 2026-11-11: 공급자의 429 는 결과 코드(rate_limit)·장부(terminal 없음 → 결과 미확정)를 바꾸지 않고, 이 경로·공급자·모델만 Retry-After 만큼 쉬게 한다
+it("cools only this route and model after a 429, honours Retry-After, and clears on the next non-429 answer", async () => {
+  await server(async ({ bodies, reply }) => {
+    const key = { routeId: "product-tagline-ko", provider: "abcllm", model };
+    reply(response => { response.statusCode = 429; response.setHeader("retry-after", "120"); response.end('{"result_code":429,"description":"rate limit"}'); });
+    const batch = items(), before = Date.now(), call = prepared(batch);
+    expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: "rate_limit" }, terminal: null });
+    expect(bodies).toHaveLength(1);
+    const until = providerRateLimitedUntil(key);
+    expect(until).not.toBeNull();
+    expect(until! - before).toBeGreaterThanOrEqual(120_000);
+    expect(until! - Date.now()).toBeLessThanOrEqual(120_000);
+    expect(providerRateLimitedUntil({ ...key, routeId: "reason-translate" })).toBeNull();
+    // 시험이 가짜로 쉼을 지난 뒤처럼 다시 보내 200 을 받으면 쉼이 지워진다(이 함수는 쉼을 보지 않는다 — 장부에 묻기 전의 용량 호출자가 본다)
+    reply(response => response.end(JSON.stringify(envelope())));
+    const next = prepared(batch);
+    expect((await send(batch, dispatch(batch, next), next)).result).toEqual({ ok: true, outputs });
+    expect(providerRateLimitedUntil(key)).toBeNull();
   });
 });
