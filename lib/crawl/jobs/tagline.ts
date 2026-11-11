@@ -150,7 +150,9 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 }
                 const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
                   ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
-                if (signal.aborted) return "stop";
+                // A completed answer can outlive this tick's admission budget. The writer
+                // still checks its lease and source; external shutdown and unknown failures keep resting.
+                if (ctx.signal?.aborted || signal.aborted && !result.ok) return "stop";
                 if (!result.ok) {
                   const saved = await save({ kind: "failure", error: result.error });
                   if (!saved.stored) { skipped = capacity.kind === "result"; return "stop"; }

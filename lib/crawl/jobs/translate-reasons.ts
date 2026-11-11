@@ -115,7 +115,9 @@ async function translateReasonsWithRanks(ctx: JobContext<null>, ranks: TextTaskR
             { timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), signal });
           if (prepared.kind === 'skipped') return { kind: "stop" };
           const result = prepared.result;
-          if (signal.aborted) return { kind: "stop" };
+          // Settled successful responses survive an internal budget abort; the writer still
+          // validates lease/source authority. External shutdown and unknown outcomes are unchanged.
+          if (ctx.signal?.aborted || signal.aborted && (!result.ok || prepared.kind === 'ready' && prepared.unknown)) return { kind: "stop" };
           const rows = (prepared.kind === 'ready' ? prepared.batch : batch).map((item, index) => ({
             hash: item.hash,
             translated: result.ok ? result.translations[index] : null,
