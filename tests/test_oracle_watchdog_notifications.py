@@ -141,6 +141,159 @@ class NotificationTests(unittest.TestCase):
         self.assertFalse(self.n.restart_grace({'reason': 'warming_up', 'bad': 3, 'faultSeconds': 600}))
         self.assertFalse(self.n.restart_grace({'reason': 'database_unavailable', 'bad': 2, 'faultSeconds': 60, 'restartSeconds': 30}))
 
+    # 2026-11-11 배포 창 DRAIN: monitor 행의 capacityMode = {'mode', 'ageSeconds'}(gateway 가 monitor 시계로 잰 updated_at 나이)
+    def monitor_at(self, now, reason='ok', mode='draining', changed=None, version=12):
+        row = {**self.row('monitor', reason), 'version': version}
+        if mode is not None:
+            row['capacityMode'] = {'mode': mode, 'ageSeconds': max(0, round(now - (now if changed is None else changed)))}
+        self.rows[:] = [row if item['key'] == 'monitor' else item for item in self.rows]
+
+    def pipeline_event(self, result):
+        return next(event for event in result['events'] if event.get('target') == 'm3/monitor' and 'stage' not in event
+                    and 'recovery' not in event)
+
+    def test_pipeline_alarm_in_drain_before_any_restart_is_held(self):
+        # 2026-11-11 03:52:50Z 그대로: 마지막 재시작은 65분 전, DRAIN 03:48:59Z, 3분 뒤 진행 경보 두 표본(35초) 뒤 정상
+        self.set_row('web', 'warming_up', version=13)
+        self.cycle(1000)
+        self.set_row('web', 'ok', version=13)
+        self.cycle(1035)
+        drain = 4880
+        for now in (drain + 30, drain + 65, drain + 100, drain + 135, drain + 170):
+            self.monitor_at(now, changed=drain)
+            self.cycle(now)
+        for now in (drain + 205, drain + 240):
+            self.monitor_at(now, 'pipeline_alarm', changed=drain)
+            result, _ = self.cycle(now)
+        event = self.pipeline_event(result)
+        self.assertEqual((event['reason'], event['bad'], event['faultSeconds']), ('pipeline_alarm', 2, 35))
+        self.assertGreaterEqual(event['restartSeconds'], 600)  # 재시작 유예는 받지 못한다
+        self.assertEqual(event['drainSeconds'], 240)
+        self.assertTrue(self.n.drain_hold(event))
+        self.monitor_at(drain + 275, changed=drain)
+        self.cycle(drain + 275)
+        self.assertEqual(self.messages, [])
+        self.assertEqual(self.state['notifications']['incidents'], {})
+
+    def test_old_monitor_without_mode_and_explicit_open_alert_as_before(self):
+        for mode in (None, 'open', 'disabled'):
+            with self.subTest(mode=mode):
+                self.state, self.messages = {'targets': {}}, []
+                for now in (5000, 5035):
+                    self.monitor_at(now, 'pipeline_alarm', mode=mode, changed=4000)
+                    result, _ = self.cycle(now)
+                self.assertNotIn('drainSeconds', self.pipeline_event(result))
+                self.assertEqual(len(self.messages), 1)
+                self.assertIn('m3/monitor pipeline_alarm — 파이프라인 단계가 멈춤 — 운영 홈 확인', self.messages[0])
+
+    def test_alarm_through_a_stuck_drain_pages_once_after_twenty_minutes(self):
+        drain = 1000
+        sent_at = []
+        for now in range(drain + 35, drain + 1400, 35):
+            self.monitor_at(now, 'pipeline_alarm', changed=drain)
+            result, _ = self.cycle(now)
+            if self.messages and not sent_at:
+                sent_at.append(now)
+                self.assertGreaterEqual(self.pipeline_event(result)['drainSeconds'], self.n.DRAIN_HOLD_SECONDS)
+        self.assertEqual(len(self.messages), 1)
+        self.assertTrue(drain + self.n.DRAIN_HOLD_SECONDS <= sent_at[0] < drain + self.n.DRAIN_HOLD_SECONDS + 35)
+        self.assertEqual(self.messages[0], 'NoMoreVibe 장애 알림\n- m3/monitor pipeline_alarm — 파이프라인 단계가 멈춤 — 운영 홈 확인')
+
+    def test_drain_already_older_than_the_bound_pages_on_the_second_observation(self):
+        # 감시가 처음 보는 DRAIN 이어도 monitor 가 보고한 나이(updated_at)가 20분을 넘으면 붙잡지 않는다(멈춘 DRAIN)
+        for now in (5000, 5035):
+            self.monitor_at(now, 'pipeline_alarm', changed=5000 - 1500)
+            self.cycle(now)
+        self.assertEqual(len(self.messages), 1)
+
+    def test_drain_clock_is_not_restarted_by_toggles_or_policy_writes(self):
+        drain = 1000
+        for now in range(drain + 30, drain + 600, 35):
+            self.monitor_at(now, changed=drain)
+            self.cycle(now)
+        # 같은 창 안에서 정책 쓰기가 updated_at 을 당긴다 — 보고 나이는 0 이 되지만 DRAIN 시계는 처음 DRAIN 에 묶인다
+        self.monitor_at(drain + 640, changed=drain + 630)
+        self.cycle(drain + 640)
+        self.assertEqual(self.state['targets']['m3/monitor']['drain']['since'], drain)
+        # OPEN 뒤 5분 안에 다시 DRAIN: 새 updated_at 이지만 시계는 이어진다
+        for now in range(drain + 675, drain + 900, 35):
+            self.monitor_at(now, mode='open')
+            self.cycle(now)
+        sent_at = None
+        for now in range(drain + 920, drain + 1500, 35):
+            self.monitor_at(now, 'pipeline_alarm' if now >= drain + 990 else 'ok', changed=drain + 910)
+            result, _ = self.cycle(now)
+            if self.messages and sent_at is None:
+                sent_at = now
+                self.assertGreaterEqual(self.pipeline_event(result)['drainSeconds'], self.n.DRAIN_HOLD_SECONDS)
+        self.assertEqual(len(self.messages), 1)
+        self.assertTrue(drain + self.n.DRAIN_HOLD_SECONDS <= sent_at < drain + self.n.DRAIN_HOLD_SECONDS + 35)
+
+    def test_next_window_after_ten_minutes_open_gets_a_fresh_hold(self):
+        for now in range(1000, 1600, 35):
+            self.monitor_at(now, changed=1000)
+            self.cycle(now)
+        for now in range(1600, 2150, 35):
+            self.monitor_at(now, mode='open')
+            self.cycle(now)
+        self.assertEqual(self.state['targets']['m3/monitor']['drain']['since'], 1000)  # 마지막 DRAIN 뒤 10분 동안은 남는다
+        for now in range(2150, 2300, 35):
+            self.monitor_at(now, mode='open')
+            self.cycle(now)
+        self.assertNotIn('drain', self.state['targets']['m3/monitor'])
+        drain = 2400
+        for now in range(drain + 30, drain + 200, 35):
+            self.monitor_at(now, changed=drain)
+            self.cycle(now)
+        self.assertEqual(self.state['targets']['m3/monitor']['drain']['since'], drain)
+        for now in (drain + 205, drain + 240, drain + 275):
+            self.monitor_at(now, 'pipeline_alarm', changed=drain)
+            self.cycle(now)
+        self.assertEqual(self.messages, [])
+
+    def test_a_sample_without_mode_carries_the_drain_only_briefly(self):
+        # 칸이 빠진 표본(읽기 실패·monitor 재시작)은 마지막 DRAIN 관측 150초 안에서만 DRAIN 으로 이어 본다
+        drain = 1000
+        self.monitor_at(drain + 30, changed=drain)
+        self.cycle(drain + 30)
+        sent_at = None
+        for now in range(drain + 65, drain + 400, 35):
+            self.monitor_at(now, 'pipeline_alarm', mode=None)
+            self.cycle(now)
+            if self.messages and sent_at is None:
+                sent_at = now
+        self.assertEqual(len(self.messages), 1)
+        self.assertTrue(drain + 30 + self.w.DRAIN_CARRY_SECONDS < sent_at <= drain + 30 + self.w.DRAIN_CARRY_SECONDS + 35)
+
+    def test_other_faults_during_drain_alert_as_before(self):
+        drain = 1000
+        self.fail_service('web', 'web_page_failed')
+        for now in (drain + 30, drain + 65):
+            self.monitor_at(now, changed=drain)
+            self.cycle(now)
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn('m3/web web_page_failed', self.messages[0])
+        for reason in ('web_page_failed', 'database_unavailable', 'replicas_missing', 'web_not_ready', 'container_unhealthy', 'monitor_stale'):
+            self.assertFalse(self.n.drain_hold({'reason': reason, 'bad': 2, 'faultSeconds': 60, 'drainSeconds': 60}))
+        hold = {'reason': 'pipeline_alarm', 'bad': 2, 'faultSeconds': 60, 'drainSeconds': 60}
+        self.assertTrue(self.n.drain_hold(hold))
+        for change in ({'drainSeconds': 1200}, {'faultSeconds': 1200}, {'drainSeconds': None}, {'drainSeconds': -1},
+                       {'drainSeconds': float('nan')}, {'drainSeconds': True}, {'drainSeconds': '60'}, {'faultSeconds': None}):
+            with self.subTest(change=change):
+                self.assertFalse(self.n.drain_hold({**hold, **change}))
+        self.assertFalse(self.n.drain_hold({'reason': 'pipeline_alarm', 'bad': 2, 'faultSeconds': 60}))
+
+    def test_report_mode_field_is_validated(self):
+        valid = {**self.row('monitor'), 'capacityMode': {'mode': 'draining', 'ageSeconds': 30}}
+        self.w.validate_report({'services': [valid]})
+        for value in ({'mode': 'private-token', 'ageSeconds': 30}, {'mode': 'open', 'ageSeconds': -1},
+                      {'mode': 'open', 'ageSeconds': True}, {'mode': 'open', 'ageSeconds': 1.5},
+                      {'mode': 'open', 'ageSeconds': 10 ** 9 + 1}, {'mode': 'open'}, ['open', 30],
+                      {'mode': 'open', 'ageSeconds': 30, 'changedAt': 1}, {'mode': ['open'], 'ageSeconds': 30}):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.w.validate_report({'services': [{**valid, 'capacityMode': value}]})
+
     def test_new_fault_alerts_while_aggregate_is_already_down_and_ack_survives_reload(self):
         self.fail_service()
         self.cycle(1000)

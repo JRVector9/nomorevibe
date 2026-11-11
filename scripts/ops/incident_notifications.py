@@ -28,6 +28,13 @@ FAULTS = frozenset({'probe_unknown', 'replica_intent_changed', 'replicas_missing
 # 고장이 끊김 없이 RESTART_GRACE_SECONDS 넘게 이어지면(크래시 루프·재시작 뒤 멈춤) 예전처럼 알린다. 감시가 시각을 주지 않으면(옛 판) 예전대로 알린다.
 RESTART_GRACE_REASONS = frozenset({'warming_up', 'replicas_missing', 'web_not_ready', 'pipeline_alarm'})
 RESTART_GRACE_SECONDS = 600
+# 2026-11-11 운영자: 「배포 동안은 단계 멈춤 알람을 붙잡아 두자」. 배포 창은 T+0 에 모델 접수를 DRAINING 으로 두고 잡 ~10개를 멈추며,
+# 첫 앱 재시작은 2~3분 뒤다 — 그 사이의 pipeline_alarm 은 위 재시작 유예를 받지 못해 알림이 됐다(03:52:50Z faultSeconds 35·restartSeconds 3880).
+# monitor 가 보고한 접수 모드가 DRAINING 인 동안(감시가 잰 DRAIN 나이 drainSeconds) pipeline_alarm 은 DRAIN 나이와 끊김 없는 고장 길이가
+# 모두 DRAIN_HOLD_SECONDS 보다 짧을 때만 붙잡아 둔다. 보통 창은 15분 안팎이라 20분이다. DRAIN 이 20분을 넘기면(멈춘 DRAIN) 또는
+# 경보가 끊김 없이 20분 이어지면 예전 문구 그대로 알린다. OPEN·disabled 이거나 감시가 모드를 주지 않으면(옛 monitor·gateway·watchdog) 예전대로다.
+# pipeline_alarm 밖의 사유(웹·복제본·DB·단계별 progress-*·검수·공급자·장부)는 바뀌지 않는다.
+DRAIN_HOLD_SECONDS = 1200
 # 알림 한 줄의 한국어 설명 — 무슨 상황인지 알 수 있게(2026-11-10). 영어 사유 코드는 그대로 앞에 둔다(로그·감시 기록과 맞춰 찾기)
 SERVICE_TEXT = {
     'probe_unknown': '감시가 이 호스트의 상태를 읽지 못함 — 호스트·게이트웨이 확인',
@@ -65,6 +72,13 @@ def restart_grace(event):
         return True
     restart = _seconds(event.get('restartSeconds'))
     return restart is not None and restart < RESTART_GRACE_SECONDS
+
+
+def drain_hold(event):
+    """배포 창 DRAIN 동안의 진행 경보면 True — 알림을 만들지 않는다. DRAIN 이나 경보가 20분을 넘기면 False(알린다)."""
+    fault, drain = _seconds(event.get('faultSeconds')), _seconds(event.get('drainSeconds'))
+    return (event.get('reason') == 'pipeline_alarm' and fault is not None and drain is not None and
+            fault < DRAIN_HOLD_SECONDS and drain < DRAIN_HOLD_SECONDS)
 
 
 def valid_review_failures(value):
@@ -322,7 +336,7 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
                 (_stage_signature(stage, reason) and type(event.get('bad')) is int and event['bad'] >= 2) or
                 (stage == 'capacity' and reason in CAPACITY_REASONS) or
                 (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2
-                 and not restart_grace(event))):
+                 and not restart_grace(event) and not drain_hold(event))):
             continue
         signature = event['target'] + '/' + stage + '/' + reason
         incidents.setdefault(signature, {'sent': False, 'firstSeen': now})
