@@ -21,7 +21,7 @@ import { auditChangeLines, buildAssignmentReadsControl, buildRuntimeSettingsAdmi
   runtimeSettingsPatchFromForm, type AdminObservation } from "@/lib/operations/admin-runtime-settings";
 import type { AdminLogRow } from "@/lib/operations/admin-log";
 import { formatRuntimeSettingsLine, runtimeSettingsReadback } from "@/lib/operations/pipeline-control-status";
-import { RUNTIME_SETTING_LABELS } from "@/lib/operations/runtime-settings-schema";
+import { RUNTIME_SETTING_LABELS, type RuntimeSettingGroup } from "@/lib/operations/runtime-settings-schema";
 
 const NOW = new Date("2026-10-30T12:00:00.000Z");
 // 공개 번역 호출 상한 290초(모델 m1:translation 의 300초보다 짧아 경로 값이 실제 상한이 된다 — 둘 중 작은 값이 쓰인다)
@@ -249,6 +249,74 @@ describe("폼 → sparse patch", () => {
     expect(runtimeSettingsPatchFromForm("budgets", form({ "value:budgets.product-translate": "315", "initial:budgets.product-translate": "315", "initialAuto:budgets.product-translate": "1",
       "auto:budgets.product-translate": "on", "stored:budgets.product-translate": "1", "reset:budgets.product-translate": "on" })).patch)
       .toEqual({ budgets: { "product-translate": null } });
+  });
+
+  // 그려진 폼을 브라우저가 보내는 그대로 모은다 — 폼마다(숨은 group 칸으로 가름) 이름 있는 칸, disabled 제외, 체크박스는 켜진 것만, select 는 고른 option
+  const submittedForms = (html: string) => {
+    const decode = (value: string) => value.replace(/&quot;/g, "\"").replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    const attr = (tag: string, name: string) => { const match = new RegExp(`\\s${name}="([^"]*)"`).exec(tag); return match ? decode(match[1]) : null; };
+    const forms = new Map<string, FormData>();
+    for (const part of html.split("<form").slice(1)) {
+      const body = part.slice(0, part.indexOf("</form>")), data = new FormData();
+      for (const [tag] of body.matchAll(/<input[^>]*>/g)) {
+        const name = attr(tag, "name");
+        if (!name || /\sdisabled=""/.test(tag) || (attr(tag, "type") === "checkbox" && !/\schecked=""/.test(tag))) continue;
+        data.append(name, attr(tag, "value") ?? (attr(tag, "type") === "checkbox" ? "on" : ""));
+      }
+      for (const [, open, options] of body.matchAll(/<select([^>]*)>([\s\S]*?)<\/select>/g)) {
+        const name = attr(open, "name");
+        if (!name || /\sdisabled=""/.test(open)) continue;
+        const chosen = /<option[^>]*\sselected=""[^>]*>/.exec(options)?.[0] ?? /<option[^>]*>/.exec(options)?.[0] ?? "";
+        data.append(name, attr(chosen, "value") ?? "");
+      }
+      forms.set(String(data.get("group")), data);
+    }
+    return forms;
+  };
+
+  it("그려진 틱 예산 폼 그대로 — 예산을 적지 않아 빈칸인 소개 생성이 있어도 손댄 칸만 저장한다(2026-11-11 틱 예산 저장이 늘 거절됨)", () => {
+    // 운영 행처럼 예산을 덮어쓰지 않은 문서 — 소개 생성(crawl-tagline)은 예산이 없어 빈칸으로 그려진다
+    const model = buildRuntimeSettingsAdminView({ row: { ...ROW, values: { version: 1 } }, observations: [], now: NOW, audit: [] });
+    expect(model.budgets.find(row => row.job === "crawl-tagline")).toMatchObject({ declared: false, auto: false, field: { input: "", overridden: false } });
+    const budgets = (rows = model.budgets) => submittedForms(renderToStaticMarkup(createElement(BudgetsForm, { budgets: rows, revision: 3 }))).get("budgets")!;
+    const edit = (change: (data: FormData) => void, rows = model.budgets) => { const data = budgets(rows); change(data); return runtimeSettingsPatchFromForm("budgets", data); };
+    expect(budgets().get("value:budgets.crawl-tagline")).toBe("");
+    expect(budgets().get("auto:budgets.product-translate")).toBe("on");
+    // 아무것도 안 바꾸면 거절도 바뀐 것도 없다
+    expect(edit(() => {})).toEqual({ patch: {}, changed: [], issues: [] });
+    // 다른 잡 하나만 고치면 그 칸만 저장한다(소개 생성 빈칸 때문에 거절되지 않는다)
+    expect(edit(data => data.set("value:budgets.product-search-profile", "60")))
+      .toEqual({ patch: { budgets: { "product-search-profile": 60_000 } }, changed: ["budgets.product-search-profile"], issues: [] });
+    // 빈칸이던 소개 생성에 값을 넣으면 저장한다
+    expect(edit(data => data.set("value:budgets.crawl-tagline", "50")))
+      .toEqual({ patch: { budgets: { "crawl-tagline": 50_000 } }, changed: ["budgets.crawl-tagline"], issues: [] });
+    // auto 켜기 — 빈칸 그대로여도 "auto"
+    expect(edit(data => data.set("auto:budgets.crawl-tagline", "on"))).toEqual({ patch: { budgets: { "crawl-tagline": "auto" } }, changed: ["budgets.crawl-tagline"], issues: [] });
+    // auto 끄기 — 글자를 그대로 두면 지금 auto 값(315초)을 숫자로 저장한다
+    expect(edit(data => data.delete("auto:budgets.product-translate")))
+      .toEqual({ patch: { budgets: { "product-translate": 315_000 } }, changed: ["budgets.product-translate"], issues: [] });
+    // 손댄 칸의 잘못된 값은 여전히 같은 문장으로 거절한다
+    expect(edit(data => data.set("value:budgets.crawl-tagline", "많이"))).toEqual({ patch: {}, changed: [], issues: ["소개 생성 틱 예산(초): 초 단위 숫자를 넣어주세요"] });
+    expect(edit(data => data.set("value:budgets.product-search-profile", ""))).toEqual({ patch: {}, changed: [],
+      issues: [`${fieldLabel("budgets.product-search-profile")}: 초 단위 숫자를 넣어주세요`] });
+    // 덮어쓴 예산의 「기본값으로」 — 저장 문서에서 키를 지운다(null)
+    const stored = view().budgets;
+    expect(edit(() => {}, stored)).toEqual({ patch: {}, changed: [], issues: [] });
+    expect(edit(data => data.set("reset:budgets.crawl-tagline", "on"), stored))
+      .toEqual({ patch: { budgets: { "crawl-tagline": null } }, changed: ["budgets.crawl-tagline"], issues: [] });
+  });
+
+  it("다른 묶음도 그려진 그대로 보내면 거절도 바뀐 것도 없다 — 빈칸을 숫자 검사보다 먼저 건너뛴다", () => {
+    for (const row of [{ ...ROW, values: { version: 1 } }, ROW]) {
+      const model = buildRuntimeSettingsAdminView({ row, observations: [], now: NOW, audit: [] });
+      const html = [createElement(RoutesForm, { routes: model.routes, ladders: model.ladders, revision: 3 }),
+        createElement(TranslationForm, { translation: model.translation, jobKnobs: model.jobKnobs, revision: 3 }),
+        createElement(BudgetsForm, { budgets: model.budgets, revision: 3 }), createElement(AssignmentsForm, { fields: model.assignments, revision: 3 }),
+        createElement(CapacityForm, { fields: model.capacity, revision: 3 })].map(element => renderToStaticMarkup(element)).join("");
+      const forms = submittedForms(html);
+      expect([...forms.keys()].sort()).toEqual(["assignments", "budgets", "capacity", "jobs", "routes", "translation"]);
+      for (const [group, data] of forms) expect(runtimeSettingsPatchFromForm(group as RuntimeSettingGroup, data), group).toEqual({ patch: {}, changed: [], issues: [] });
+    }
   });
 });
 

@@ -433,6 +433,9 @@ export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup, form: F
     if (kind === "budget") {
       const autoNow = text(form.get(`auto:${path}`)) === "on", autoBefore = text(form.get(`initialAuto:${path}`)) === "1";
       if (autoNow) { if (!autoBefore) { setLeaf(patch, path, "auto"); changed.push(path); } continue; }
+      // auto 를 끄지 않았고 처음 그린 글자 그대로면 바뀐 칸이 아니다 — 예산을 적지 않은 잡(소개 생성 crawl-tagline)은 빈칸으로 그려져
+      // 숫자 검사를 먼저 하면 다른 잡의 예산을 고쳐도 묶음 저장이 늘 거절됐다(2026-11-11, 경로 한도의 2026-11-07 거절과 같은 꼴). auto 를 끈 칸은 그 값으로 저장한다
+      if (!autoBefore && raw === initial) continue;
       const value = parseFieldInput("ms", raw);
       if (value === undefined || value === null) { issues.push(`${label}: 초 단위 숫자를 넣어주세요`); continue; }
       const tooLargeBudget = secondsTooLarge(label, raw, value);
