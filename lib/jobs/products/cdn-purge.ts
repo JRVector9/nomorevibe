@@ -16,8 +16,8 @@ export const CONFIRM_AFTER_SECONDS = 60;
 /**
  * 웹 릴리스가 바뀐 뒤 옛 HTML 지우기(2026-11-11).
  *
- * 엣지가 들고 있는 옛 HTML·RSC 는 옛 빌드의 JS·CSS 이름을 가리키고, 새 이미지에는 바뀐 파일의 옛 이름이 없다. 상세는 엣지가 지난 사본을
- * 오래(stale-while-revalidate, next.config.ts) 들고 있다가 먼저 주므로 배포 뒤 한 번 지워야 한다. 배포 도구(deploy_shared_images.py
+ * 엣지가 들고 있는 옛 HTML·RSC 는 옛 빌드의 JS·CSS 이름을 가리키고, 새 이미지에는 바뀐 파일의 옛 이름이 없다. 엣지는 그 사본을
+ * 최대 5분(next.config.ts) 더 주므로 배포 뒤 한 번 지운다. 배포 도구(deploy_shared_images.py
  * purge_html)도 같은 일을 하지만 지우기 토큰이 macOS 키체인에만 있어 Linux 운영 호스트에서는 매번 건너뛰었다(no_purge_token).
  * 그래서 토큰을 가진 발행 워커가 웹의 생존 관측(service:app:*, 15초마다, lib/operations/web-observer.ts)을 보고 한다:
  * 지난 WEB_FRESH_SECONDS 안에 관측된 웹이 모두 같은 릴리스를 말하고 그것이 지난번에 지운 릴리스와 다르면 html 태그를 지운다.

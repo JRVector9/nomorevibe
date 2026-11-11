@@ -53,9 +53,9 @@ describe("Next.js multi-instance configuration", () => {
     expect(edge("/")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
     expect(edge("/popular")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
     expect(edge("/rankings/:key")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
-    // 상세는 4분 동안 그 사본, 그 뒤 하루 동안은 첫 요청이 지난 사본을 받으며 새로 받게 한다 — 고친 것·내린 것은 지우기가 없앤다
-    expect(edge("/p/:slug")?.headers[0].value).toBe("max-age=240, stale-while-revalidate=86400, stale-if-error=3600");
-    expect(edge("/en/p/:slug")?.headers[0].value).toBe("max-age=240, stale-while-revalidate=86400, stale-if-error=3600");
+    // 상세는 4분 + 지난 사본 1분 — 운영자 결정: 어떤 경우에도 5분을 넘지 않는다(2026-11-11). 고친 것·내린 것은 지우기가 더 빨리 없앤다
+    expect(edge("/p/:slug")?.headers[0].value).toBe("max-age=240, stale-while-revalidate=60, stale-if-error=3600");
+    expect(edge("/en/p/:slug")?.headers[0].value).toBe("max-age=240, stale-while-revalidate=60, stale-if-error=3600");
     expect(edge("/c/:category")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
     for (const source of ["/", "/popular", "/rankings/:key", "/p/:slug"]) {
       expect(edge(source)?.missing).toEqual([{ type: "cookie", key: "nmv_admin" }, { type: "cookie", key: "nmv_user" },
@@ -67,6 +67,21 @@ describe("Next.js multi-instance configuration", () => {
     expect(rules.find(rule => rule.has?.some(condition => condition.type === "cookie" && condition.key === "nmv_render_recovery")))
       .toMatchObject({ source: "/:path*", has: [{ type: "cookie", key: "nmv_render_recovery", value: "1" }],
         headers: [{ key: "Cloudflare-CDN-Cache-Control", value: "no-store" }] });
+  });
+
+  /** 운영자 결정(2026-11-11): 상세는 어떤 경우에도 5분을 넘지 않는다 — 모든 언어의 /p/:slug 에서 max-age + stale-while-revalidate ≤ 300초 */
+  it("never lets any detail page be served more than 5 minutes stale", async () => {
+    const { default: config } = await import("../next.config");
+    const rules = await config.headers!();
+    const detail = rules.filter((rule) => /(^|\/)p\/:slug$/.test(rule.source)
+      && rule.headers.some((header) => header.key === "Cloudflare-CDN-Cache-Control" && header.value !== "no-store"));
+    expect(detail.map((rule) => rule.source).sort()).toEqual(["/en/p/:slug", "/p/:slug", "/zh-Hans/p/:slug", "/zh-Hant/p/:slug"]);
+    for (const rule of detail) {
+      const value = rule.headers.find((header) => header.key === "Cloudflare-CDN-Cache-Control")!.value;
+      const seconds = (name: string) => Number(new RegExp(`(?:^|,\\s*)${name}=(\\d+)`).exec(value)?.[1] ?? NaN);
+      expect(seconds("max-age") + seconds("stale-while-revalidate"), `${rule.source}: ${value}`).toBeLessThanOrEqual(300);
+      expect(value, rule.source).not.toMatch(/s-maxage/);
+    }
   });
 
   it("does not invent a deployment ID or build ID for local builds", async () => {

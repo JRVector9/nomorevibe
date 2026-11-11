@@ -23,8 +23,8 @@ export function purgeConfig(env: Record<string, string | undefined> = process.en
 
 /**
  * 상세만 새로 받게 하는 줄(cdn_purges.reason) — 목록에서 빠지는 것이 아니다(2026-11-11 상세 엣지 캐시).
- * 상세는 엣지가 지난 사본을 오래(stale-while-revalidate, next.config.ts) 들고 있다가 먼저 주고 뒤에서 새로 받는다. 사람이 고친 것은
- * 그 지난 사본에 남지 않게 여기서 지운다. 목록(lists)은 지우지 않는다 — 목록은 늦어도 2분이면 스스로 새로 받고, 목록을 지우면
+ * 상세는 엣지가 사본을 최대 5분(next.config.ts) 들고 있다. 사람이 고친 것은 그 5분을 기다리지 않고 1~2분 안에 보이게
+ * 여기서 지운다. 목록(lists)은 지우지 않는다 — 목록은 늦어도 2분이면 스스로 새로 받고, 목록을 지우면
  * 홈의 지난 사본까지 사라져 다음 방문이 원 서버를 기다린다. 팔로 알림(lib/jobs/me/notifications.ts)도 이 줄을 읽지 않는다.
  * edited: 메이커·관리자의 제품 수정, 소개·이름 고치기. status: 트리거(0057)가 적지 않는 상태 바뀜(차단 해제·검증·비공개였던 것의 차단).
  */

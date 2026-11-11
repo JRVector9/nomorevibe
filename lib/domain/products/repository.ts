@@ -725,7 +725,7 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     // 소개를 고쳐 쓰면 그 소개는 쓴 사람의 것이다 — "AI가 요약" 표시를 뗀다
     const wroteTagline = values.tagline !== undefined && values.taglineSource === undefined ? { taglineSource: "maker" as const } : {};
     const [product] = await tx.update(products).set({ ...values, ...resetStats, ...wroteTagline, updatedAt: new Date() }).where(eq(products.id, id)).returning();
-    // 메이커·관리자가 고친 것은 엣지의 지난 상세 사본에 남지 않게 지운다(lib/cdn/detail-purge.ts). 상태는 여기서 바꾸지 않는다
+    // 메이커·관리자가 고친 것은 엣지의 상세 사본(최대 5분)을 기다리지 않게 지운다(lib/cdn/detail-purge.ts). 상태는 여기서 바꾸지 않는다
     await queueDetailPurge(tx, current.slug, DETAIL_EDIT_PURGE);
     if (product.slug !== current.slug) await queueDetailPurge(tx, product.slug, DETAIL_EDIT_PURGE);
     // A new website starts a new current streak. Historical daily measurements still describe past visits.
@@ -908,7 +908,7 @@ export async function setStatusWithAudit(input: {
       .returning({ id: products.id });
     if (updated.length !== 1) return false;
     // 공개에서 빠지는 바뀜은 트리거(0057)가 지우기 줄을 적는다. 그 밖(차단 해제·비공개였던 것의 차단)은 상세만 새로 받게 한다 —
-    // 엣지가 지난 404·상세를 오래 들고 있다(next.config.ts)
+    // 엣지는 404·상세 사본을 최대 5분 들고 있다(next.config.ts)
     const publicStatus = (status: string | undefined) => status === "seeded" || status === "verified";
     if (!(publicStatus(current?.status) && !publicStatus(input.status))) await queueDetailPurge(tx, input.slug, DETAIL_STATUS_PURGE);
     await tx.insert(productEvidenceAudit).values({

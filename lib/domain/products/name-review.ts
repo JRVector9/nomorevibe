@@ -94,7 +94,7 @@ export async function applyNameChanges(changes: NameChange[]): Promise<NameChang
       const changed = await tx.update(products).set({ name: change.after, updatedAt: new Date() })
         .where(and(eq(products.slug, change.slug), unclaimedPublic, eq(products.name, change.before)))
         .returning({ id: products.id });
-      // 사람이 고른 이름 바꾸기 — 엣지의 지난 상세 사본에 옛 이름이 남지 않게 지운다(lib/cdn/detail-purge.ts)
+      // 사람이 고른 이름 바꾸기 — 엣지의 상세 사본(최대 5분)에 옛 이름이 남지 않게 바로 지운다(lib/cdn/detail-purge.ts)
       if (changed.length) await queueDetailPurge(tx, change.slug, DETAIL_EDIT_PURGE);
       return changed;
     });

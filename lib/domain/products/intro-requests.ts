@@ -139,7 +139,7 @@ export async function fixIntroFromRequest(
     await tx.update(products).set({ tagline, taglineSource: "editor", searchKeywords: null, ...(sameText ? { description: tagline } : {}),
       updatedAt: sql`now()` }).where(eq(products.id, request.productId));
     await tx.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, request.productId));
-    // 사람이 고친 소개는 엣지의 지난 상세 사본에 남지 않게 지운다(lib/cdn/detail-purge.ts)
+    // 사람이 고친 소개는 엣지의 상세 사본(최대 5분)에 남지 않게 바로 지운다(lib/cdn/detail-purge.ts)
     await queueDetailPurge(tx, request.slug, DETAIL_EDIT_PURGE);
     const closed = open.map((row) => row.id);
     await tx.update(introCorrectionRequests).set({ handledAt: new Date(), handledBy: admin, outcome: "fixed" })

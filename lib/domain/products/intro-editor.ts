@@ -63,7 +63,7 @@ export async function editIntro(slug: string, line: string): Promise<{ before: s
     await tx.update(products).set({ tagline, taglineSource: "editor", searchKeywords: null, ...(sameText ? { description: tagline } : {}),
       updatedAt: sql`now()` }).where(eq(products.id, product.id));
     await tx.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id));
-    // 사람이 고친 소개는 엣지의 지난 상세 사본에 남지 않게 지운다(lib/cdn/detail-purge.ts)
+    // 사람이 고친 소개는 엣지의 상세 사본(최대 5분)에 남지 않게 바로 지운다(lib/cdn/detail-purge.ts)
     await queueDetailPurge(tx, slug, DETAIL_EDIT_PURGE);
     return { before: locked.tagline };
   });
