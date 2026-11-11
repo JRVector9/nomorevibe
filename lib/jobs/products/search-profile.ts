@@ -100,7 +100,9 @@ async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTa
                 const outcome = await writeKeywordsWithModelCapacity(task, lease, { signal, timeoutMs, roleLease });
                 if (outcome.kind === "skipped") return "stop";
                 const result = outcome.result;
-                if (signal.aborted) return "stop";
+                // Keep an already completed answer after the internal budget abort. The
+                // fenced writer checks current ownership; external shutdown/failures still stop.
+                if (ctx.signal?.aborted || signal.aborted && !result.ok) return "stop";
                 if (!result.ok) {
                   // A shorter deadline comes from this tick's remaining time, not the product.
                   // Keep it eligible for the next tick instead of consuming a retry.

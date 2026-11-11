@@ -242,6 +242,42 @@ it("commits real text role/job dispatch, one native POST, historical terminal, o
       .rejects.toMatchObject({ code: "23514" });
   });
 }));
+it("stores a completed native answer after the internal tick budget aborts during terminal reconciliation", exercise(async () => {
+  const task = await seed(), arrived = latch(), reply = latch(), held = latch(), unlock = latch();
+  let budget = true;
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => { arrived.resolve(); tracked(reply.promise.then(() => { response.end(JSON.stringify(replyBody())); })); });
+    await tracked(requestJob(jobName));
+    const running = tracked(runJob(jobName, (ctx: JobContext<null>) => writeSearchProfiles({ ...ctx,
+      hasBudget: () => budget && ctx.hasBudget() }), { requestedOnly: true, roleLease: role, budgetMs: 55_000 }));
+    await arrived.promise;
+    const holder = postgres(TEST_DATABASE_URL, { max: 1, prepare: false });
+    const holding = tracked(holder.begin(async tx => {
+      await tx`SELECT id FROM model_capacity_control WHERE id=1 FOR UPDATE`;
+      held.resolve(); await unlock.promise;
+    }));
+    try {
+      await held.promise;
+      reply.resolve();
+      // Wait until HTTP has completed and only the historical terminal write is blocked.
+      await until(async () => (await admin`SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+        WHERE datname=current_database() AND wait_event_type='Lock' AND state='active'
+          AND query ILIKE '%model_capacity_control%') AS waiting`)[0].waiting);
+      budget = false;
+      await new Promise(resolve => setTimeout(resolve, 300)); // Internal ownership poll aborts admission.
+    } finally {
+      reply.resolve(); unlock.resolve();
+      await steps([async () => { await holding; }, () => holder.end()]);
+    }
+    expect(await running).toMatchObject({ status: "completed", done: false });
+    expect(bodies).toHaveLength(1);
+    const [request] = await admin`SELECT state,terminal_evidence->>'kind' AS kind FROM model_capacity_requests
+      WHERE logical_work_key=${`text:profile:${task.product.id}`}`;
+    expect(request).toEqual({ state: "settled", kind: "text_profile_gateway_terminal" });
+    const [saved] = await admin`SELECT keywords_en,keywords_ko,attempts FROM product_search_profiles WHERE product_id=${task.product.id}`;
+    expect(saved).toEqual({ keywords_en: ["expense tracker"], keywords_ko: ["가계부"], attempts: 1 });
+  });
+}));
 it("preserves production unsupported, a disabled original leaf that no longer sends, and source-hash reuse without capacity rows", exercise(async () => {
   // PR B: 전송 계약이 아직 없다(mock resolver null) — 그 모델만의 까닭(provider_contract_unavailable)이라 1순위를 쉬게 하고, 다른 순위가 없으니
   // 예전처럼 틱 전체를 미루지 않고 「모든 순위를 쓸 수 없음」으로 제 일 못 한 틱을 남긴다. 장부 행은 없다.

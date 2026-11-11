@@ -59,12 +59,15 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
     let verified = 0, removed = 0, failed = 0, blocked = "";
     /** 이 틱에 넘긴 제품(이 제품만의 미룸) — 다시 고르지 않는다. 같은 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다 */
     const passed = new Set<number>();
+    // Even a skipped snapshot or a declined result CAS can stay eligible in the DB.
+    const visited = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
-      const fetched = await pendingVerifications(batch), tasks = fetched.filter(task => !passed.has(task.product.id));
+      const fetched = await pendingVerifications(batch, [...visited]), tasks = fetched.filter(task => !visited.has(task.product.id));
       if (fetched.length === 0) {
-        ctx.log("search_verify.done", { verified, removed, failed, drained: true });
-        return { done: true };
+        const drained = passed.size === 0;
+        ctx.log("search_verify.done", { verified, removed, failed, passed: passed.size, drained });
+        return { done: drained };
       }
       if (tasks.length === 0) {
         ctx.log("search_verify.done", { verified, removed, failed, passed: passed.size, drained: false });
@@ -76,6 +79,7 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
           for (let index = next++; index < tasks.length; index = next++) {
             if (blocked || ranks.exhausted || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
+            visited.add(task.product.id);
             const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
             const chunked = ["invalid_output", "timeout"].includes(task.profile!.verifyError ?? "");
             let attempt: TextRankRun<Flow>;
@@ -89,7 +93,7 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
               }
               attempt = await ranks.run(async (binding): Promise<Flow> => {
                 const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked, minStepMs: minCallMs });
-                if (outcome.kind === "skipped") return "stop";
+                if (outcome.kind === "skipped") { passed.add(task.product.id); return "stop"; }
                 // The original shared deadline ended while waiting for a permit: no attempt or failure.
                 // The product rests instead of staying at the queue head; each tick would otherwise restart it from step one forever (prod 11-10).
                 if (outcome.kind === "expired") {
@@ -98,7 +102,9 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                   return "stop";
                 }
                 const result = outcome.result;
-                if (signal.aborted) return "stop";
+                // A tick-budget abort stops admission, but a completed success still reaches the
+                // fenced writer. External shutdown and incomplete/unknown outcomes keep stopping.
+                if (ctx.signal?.aborted || (signal.aborted && !result.ok)) return "stop";
                 if (!result.ok) {
                   // A shorter deadline comes from this tick's remaining time, not the product.
                   // Keep it eligible for the next tick instead of consuming a retry.
@@ -109,6 +115,7 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                   const failure = { kind: "failure" as const, error: result.error };
                   if (await (outcome.expectation ? recordVerificationResult(task, lease, failure, outcome.expectation)
                     : recordVerificationResult(task, lease, failure))) failed++;
+                  else passed.add(task.product.id);
                   // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 제품은 다음 순위로 간다
                   if (ranks.failed(binding, result.error)) ctx.log("search_verify.rank_down", binding.memberId
                     ? { memberId: binding.memberId, configRevision: binding.configRevision } : { rank: binding.rank });
@@ -117,7 +124,7 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                 ranks.answered(binding);
                 const success = { kind: "success" as const, removed: result.unsupported, model: textTaskModel(JOB) };
                 if (!await (outcome.expectation ? recordVerificationResult(task, lease, success, outcome.expectation)
-                  : recordVerificationResult(task, lease, success))) return "next";
+                  : recordVerificationResult(task, lease, success))) { passed.add(task.product.id); return "next"; }
                 verified++;
                 removed += result.unsupported.length;
                 return "next";

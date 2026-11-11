@@ -34,7 +34,7 @@ const { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlTagl
 const crawl = await import("@/lib/crawl/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
-const { taglineEvidence, writeTagline } = await import("@/lib/crawl/tagline");
+const { taglineEvidence, taglineHash, writeTagline } = await import("@/lib/crawl/tagline");
 capacityHook.tagline = async (task, options) => ({ kind: "result", result: await writeTagline(taglineEvidence(task.candidate.repo, task.document),
   { signal: options.signal, timeoutMs: options.timeoutMs }), askOrdinal: options.previous ? 2 as const : 1 as const, parent: null, expectation: undefined });
 const { pendingTaglines, recordTaglineResult } = await import("@/lib/crawl/taglines");
@@ -54,6 +54,23 @@ const answer = (tagline: string, source = "page") =>
   ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ tagline, source }) } }] }) }) as unknown as Response;
 
 const tick = () => runJob("crawl-tagline", writeTaglines);
+
+async function recordSelected(repo: string, result: Parameters<typeof recordTaglineResult>[2]) {
+  const task = (await pendingTaglines(64)).find(task => task.candidate.repo === repo)!;
+  expect(task).toBeDefined();
+  const outcome = await runJob("crawl-tagline", async ctx => {
+    expect(await recordTaglineResult(task, ctx.lease!, result)).toMatchObject({ stored: true, released: false });
+    return { done: true };
+  });
+  expect(outcome).toMatchObject({ status: "completed" });
+}
+
+async function expectExactDocumentTime(repo: string) {
+  const [row] = await db.execute<{ exact: boolean }>(sql`
+    select t.document_at = d.fetched_at as exact
+    from crawl_taglines t join crawl_documents d on d.repo = t.repo where t.repo = ${repo}`);
+  expect(row.exact).toBe(true);
+}
 
 const gateway = vi.fn();
 
@@ -81,6 +98,88 @@ afterAll(async () => {
 });
 
 describe("소개 짓기 잡", () => {
+  it.each([
+    { kind: "success", tagline: "", source: "page", model: "" },
+    { kind: "failure", error: "http_502" },
+  ] as const)("preserves microseconds after $kind so unchanged input leaves the ready queue", async result => {
+    const repo = "precision/first-result";
+    await held(repo, {});
+    await db.update(crawlDocuments).set({ fetchedAt: sql`timestamp '2026-11-01 06:03:45.755064'` })
+      .where(eq(crawlDocuments.repo, repo));
+
+    await recordSelected(repo, result);
+
+    await expectExactDocumentTime(repo);
+    // A successful empty result waits for new evidence; a failure waits for retry_at.
+    expect(await pendingTaglines(12)).toEqual([]);
+  });
+
+  it("repairs a legacy truncated empty cache on reuse without spending another attempt", async () => {
+    const repo = "precision/legacy-cache";
+    await held(repo, {});
+    await db.update(crawlDocuments).set({ fetchedAt: sql`timestamp '2026-11-01 06:03:45.755064'` })
+      .where(eq(crawlDocuments.repo, repo));
+    const document = (await crawl.getDocument(repo))!;
+    await db.insert(crawlTaglines).values({ repo, tagline: "", source: "page", model: "",
+      sourceHash: taglineHash(taglineEvidence(repo, document)), documentAt: document.fetchedAt, attempts: 1 });
+
+    await recordSelected(repo, { kind: "reuse" });
+
+    await expectExactDocumentTime(repo);
+    expect(await pendingTaglines(12)).toEqual([]);
+    expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ attempts: 1, tagline: "", errorCode: null });
+    expect(gateway).not.toHaveBeenCalled();
+  });
+
+  it("drains a full batch of legacy empty caches and reaches a retry behind them", async () => {
+    for (let index = 0; index < 12; index++) {
+      const repo = `precision/empty-${index}`;
+      await held(repo, {});
+      await db.update(crawlDocuments).set({ fetchedAt: sql`timestamp '2026-11-01 06:03:45.755064'` })
+        .where(eq(crawlDocuments.repo, repo));
+      const document = (await crawl.getDocument(repo))!;
+      await db.insert(crawlTaglines).values({ repo, tagline: "", source: "page", model: "",
+        sourceHash: taglineHash(taglineEvidence(repo, document)), documentAt: document.fetchedAt, attempts: 1 });
+    }
+    const repo = "precision/retry-behind-caches";
+    await held(repo);
+    const document = (await crawl.getDocument(repo))!;
+    await db.insert(crawlTaglines).values({ repo, tagline: "", source: "page", model: "fixture",
+      sourceHash: "a".repeat(64), documentAt: document.fetchedAt, attempts: 2,
+      errorCode: "http_502", retryAt: sql`now() - interval '1 minute'` });
+    const firstBatch = await pendingTaglines(12);
+    expect(firstBatch).toHaveLength(12);
+    expect(firstBatch.every(task => task.candidate.repo.startsWith("precision/empty-"))).toBe(true);
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+
+    expect(gateway).toHaveBeenCalledTimes(1);
+    expect(await crawl.getCandidate(repo)).toMatchObject({ state: "approved" });
+    expect(await pendingTaglines(12)).toEqual([]);
+    const [row] = await db.execute<{ mismatches: number }>(sql`
+      select count(*)::int as mismatches from crawl_taglines t join crawl_documents d on d.repo = t.repo
+      where t.document_at is distinct from d.fetched_at`);
+    expect(row.mismatches).toBe(0);
+  });
+
+  it("still selects a genuine source change within the same millisecond", async () => {
+    const repo = "precision/changed-source";
+    await held(repo, {});
+    await db.update(crawlDocuments).set({ fetchedAt: sql`timestamp '2026-11-01 06:03:45.755064'` })
+      .where(eq(crawlDocuments.repo, repo));
+    await recordSelected(repo, { kind: "success", tagline: "", source: "page", model: "" });
+    expect(await pendingTaglines(12)).toEqual([]);
+
+    await db.update(crawlDocuments).set({ fetchedAt: sql`timestamp '2026-11-01 06:03:45.755065'`,
+      pageMeta: { title: "Bar finder", textSample: "바를 등록하면 손님이 찾을 수 있습니다" } })
+      .where(eq(crawlDocuments.repo, repo));
+
+    expect((await pendingTaglines(12)).map(task => task.candidate.repo)).toEqual([repo]);
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(gateway).toHaveBeenCalledTimes(1);
+    expect(await crawl.getCandidate(repo)).toMatchObject({ state: "approved" });
+  });
+
   it("preserves the tagline retry budget when its tokenizer is unavailable", async () => {
     await held("tokenizer/unavailable");
     for (let iteration = 0; iteration < 2; iteration++) {
