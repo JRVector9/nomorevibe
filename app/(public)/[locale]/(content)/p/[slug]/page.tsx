@@ -27,7 +27,8 @@ import { getProductDetail, getProductIdentity } from "@/lib/domain/products/deta
 import { productIndexable } from "@/lib/domain/products/indexing";
 import { translatedCategory } from "@/components/home/i18n";
 import { I18nProvider } from "@/lib/i18n/context";
-import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
+import { bundledOrDictionary, getDictionary, getTranslator } from "@/lib/i18n/dictionary";
+import { DetailMessages } from "@/lib/i18n/bundled/detail";
 import type { Locale } from "@/lib/i18n/locales";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { localePath } from "@/lib/i18n/routing";
@@ -100,14 +101,14 @@ export default async function ProductPage({ params }: Props) {
   const locale = await getRequestLocale();
   const identity = await identityOf(slug);
   if (!identity) notFound();
-  const dictionary = await getDictionary(locale, "detail");
+  const dictionary = await bundledOrDictionary(locale, "detail");
   const now = new Date();
   return (
-    <I18nProvider locale={locale} dictionaries={{ detail: dictionary }} now={now.toISOString()}>
+    <DetailMessages locale={locale} messages={dictionary} now={now.toISOString()}>
       <Suspense fallback={<DetailSkeleton />}>
         <ProductDetail slug={slug} locale={locale} />
       </Suspense>
-    </I18nProvider>
+    </DetailMessages>
   );
 }
 

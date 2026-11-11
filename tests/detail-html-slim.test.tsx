@@ -7,7 +7,7 @@ import type { ProductListItem } from "@/lib/domain/products/view";
 import type { HomePulseView } from "@/components/home/types";
 
 /**
- * 상세·홈 HTML 줄이기(2026-11-11) — 브라우저 부품에는 읽는 칸만, 닫힌 창의 속은 열 때.
+ * 상세·홈 HTML 줄이기(2026-11-11) — 브라우저 부품에는 읽는 칸만, 닫힌 창의 속은 열 때, 상세·홈의 한국어 사전은 그 화면의 JS 조각으로.
  * 보이는 첫 화면은 그대로이고 RSC 데이터(HTML 안 self.__next_f)에 실리는 값만 줄인다.
  */
 
@@ -21,6 +21,8 @@ const { detailClientProduct, detailFreshness, timelineSummary, TIMELINE_LIMIT } 
 const { compactCardItem } = await import("@/components/home/compact-item");
 const { LicenseDialog } = await import("@/components/product-detail/LicenseDialog");
 const { MethodologyDialog } = await import("@/components/home/MethodologyDialog");
+const { DetailMessages } = await import("@/lib/i18n/bundled/detail");
+const { BrowseMessages } = await import("@/lib/i18n/bundled/browse");
 
 const product: PublicProduct = {
   id: 7, slug: "simple-hwp", url: "https://github.com/example/simple-hwp", accessMode: "installable", name: "Simple HWP",
@@ -128,5 +130,24 @@ describe("닫힌 창의 속은 열 때 그린다", () => {
     expect(closed).not.toContain("modal-body");
     navigation.metric = "all";
     expect(renderToStaticMarkup(createElement(MethodologyDialog, { pulse }))).toContain("modal-body");
+  });
+});
+
+describe("한국어 사전은 JS 조각으로", () => {
+  it("한국어는 서버 사전 없이 그리고, 다른 언어는 서버 사전이 꼭 있어야 한다", () => {
+    const child = <p>본문</p>;
+    expect(renderToStaticMarkup(<DetailMessages locale="ko" messages={null} now="2026-11-11T00:00:00Z">{child}</DetailMessages>)).toBe("<p>본문</p>");
+    expect(renderToStaticMarkup(<BrowseMessages locale="ko" messages={null}>{child}</BrowseMessages>)).toBe("<p>본문</p>");
+    expect(() => renderToStaticMarkup(<DetailMessages locale="en" messages={null}>{child}</DetailMessages>)).toThrow("Missing detail messages: en");
+    expect(() => renderToStaticMarkup(<BrowseMessages locale="zh-Hans" messages={null}>{child}</BrowseMessages>)).toThrow("Missing browse messages: zh-Hans");
+  });
+
+  it("상세·홈은 한국어 사전을 RSC 데이터로 넘기지 않는다", () => {
+    const detail = readFileSync("app/(public)/[locale]/(content)/p/[slug]/page.tsx", "utf8");
+    expect(detail).toContain('bundledOrDictionary(locale, "detail")');
+    expect(detail).not.toContain("dictionaries={{ detail");
+    const home = readFileSync("app/(public)/[locale]/(content)/page.tsx", "utf8");
+    expect(home).not.toContain("dictionaries={{ browse");
+    expect(home.match(/<BrowseMessages /g)).toHaveLength(2);
   });
 });

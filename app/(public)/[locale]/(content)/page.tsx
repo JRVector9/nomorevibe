@@ -45,8 +45,8 @@ import type { SearchQuery } from "@/lib/domain/products/search";
 import type { Category } from "@/lib/domain/products/schema";
 import { translatedCategory } from "@/components/home/i18n";
 import { getRequestLocale } from "@/lib/i18n/server";
-import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
-import { I18nProvider } from "@/lib/i18n/context";
+import { bundledOrDictionary, getTranslator } from "@/lib/i18n/dictionary";
+import { BrowseMessages } from "@/lib/i18n/bundled/browse";
 import { localePath } from "@/lib/i18n/routing";
 import type { Locale } from "@/lib/i18n/locales";
 import type { Translator } from "@/lib/i18n/messages";
@@ -344,7 +344,7 @@ export async function HomeScreen({ params, titleAction }: { params: HomeParams; 
 /** 신규 모두 보기는 일반 최신순·필터와 독립된 목록이다. 기간은 매 요청 서버에서 정한다. */
 async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
   const locale = await getRequestLocale();
-  const [t, dictionary] = await Promise.all([getTranslator(locale, "browse"), getDictionary(locale, "browse")]);
+  const [t, dictionary] = await Promise.all([getTranslator(locale, "browse"), bundledOrDictionary(locale, "browse")]);
   const count = (n: number) => formatNumber(n, locale);
   const now = new Date();
   const { weekStart, asOf } = completedWindows(now);
@@ -370,7 +370,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
   items = await localizeProductList(items,locale);
   const href = (next: number) => localePath(locale, `/?${new URLSearchParams({ new: "1", page: String(next) })}`);
   return (
-    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap">
+    <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap">
       {failed && <RenderReadRecovery key={now.toISOString()} />}
       <section id="new" className="row-section" aria-labelledby="new-title">
         <div className="row-head">
@@ -391,7 +391,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
           {page < pages && <Link prefetch={false} href={href(page + 1)}>{t("nav.next")}</Link>}
         </nav>}
       </section>
-    </main></I18nProvider>
+    </main></BrowseMessages>
   );
 }
 
@@ -425,7 +425,7 @@ function FeedSkeleton({ title, busy, label }: { title?: string; busy: string; la
 
 export async function HomeContent({ params, titleAction }: { params: HomeParams; titleAction?: ReactNode }) {
   const locale = await getRequestLocale();
-  const [t, labels, dictionary] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels"), getDictionary(locale, "browse")]);
+  const [t, labels, dictionary] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels"), bundledOrDictionary(locale, "browse")]);
   const count = (n: number) => formatNumber(n, locale);
   if (firstValue(params.new) === "1") return NewRepositories({ pageParam: params.page });
   const sortParam = firstValue(params.sort);
@@ -641,7 +641,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   const feedPriority = !filtered && (strip?.items.length ?? 0) > 0 ? 0 : FEED_PRIORITY_TILES;
 
   return (
-    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap">
+    <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap">
       {dbDown && <RenderReadRecovery key={now.toISOString()} />}
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
       {!filtered && talk && <TalkHero lead={talk.lead} rest={talk.rest} sources={talk.sources} preview={talk.preview} t={t} locale={locale} />}
@@ -747,6 +747,6 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
       <Suspense>
         <MethodologyDialog pulse={serializePulse(pulse, now, locale)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={filtered ? undefined : strip?.snapshot ?? null} />
       </Suspense>
-    </main></I18nProvider>
+    </main></BrowseMessages>
   );
 }
