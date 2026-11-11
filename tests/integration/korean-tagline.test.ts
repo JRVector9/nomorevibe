@@ -66,8 +66,6 @@ beforeEach(async () => {
   gateway.mockReset();
   setServingContractSnapshotForTest([textContract("product-tagline-ko", KOREAN_TAGLINE_MODEL)]);
   pinTextRanks({ "product-tagline-ko": KOREAN_TAGLINE_MODEL });
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   vi.stubGlobal("fetch", gateway);
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
@@ -87,46 +85,36 @@ describe("한국어 한 줄 소개 잡", () => {
     }
   });
 
-  it("한 잡 lease로 GPT와 직접 Qwen의 서로 다른 묶음을 병렬 처리하고 실제 모델을 남긴다", async () => {
+  it("Qwen 직접 경로는 없앴다 — 옛 env(KOREAN_TRANSLATION_QWEN_ENABLED·_RECOVERY_ENABLED)가 켜져 있어도 한 틱은 순위의 모델만 부른다", async () => {
     vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
-    for (let i = 0; i < 16; i++) await seed();
-    let release!: () => void;
-    const held = new Promise<void>(resolve => { release = resolve; });
-    const calls: { model: string; names: string[] }[] = [];
-    gateway.mockImplementation(async (_url: string, init: RequestInit) => {
-      const body = JSON.parse(String(init.body));
-      const items = JSON.parse(body.messages[1].content) as { name: string; tagline: string }[];
-      calls.push({ model: body.model, names: items.map(item => item.name) });
-      if (body.model !== "qwen3.8-flash-next") await held;
-      return new Response(JSON.stringify({ model: body.model,
-        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(items.map(korean)) } }] }));
-    });
-    const running = tick();
-    try {
-      await vi.waitFor(() => expect(calls).toHaveLength(2));
-      expect(calls.map(call => call.names.length)).toEqual([8, 8]);
-      expect(new Set(calls.flatMap(call => call.names)).size).toBe(16);
-    } finally { release(); await running; }
-    const rows = await db.select().from(productKoreanTaglines);
-    expect(rows).toHaveLength(16);
-    expect(rows.every(row => row.attempts === 1 && row.errorCode === null && !!row.taglineKo)).toBe(true);
-    expect(rows.filter(row => row.model === "qwen3.8-flash-next")).toHaveLength(8);
-    expect(rows.filter(row => row.model !== "qwen3.8-flash-next")).toHaveLength(8);
-  });
-
-  it("Qwen HTTP 장애가 같은 회차의 GPT 성공을 덮거나 막지 않는다", async () => {
-    vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
+    vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
     for (let i = 0; i < 9; i++) await seed();
+    const models: string[] = [];
     gateway.mockImplementation(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
-      if (body.model === "qwen3.8-flash-next") return new Response("unavailable", { status: 503 });
+      models.push(body.model);
       const items = JSON.parse(body.messages[1].content) as { name: string; tagline: string }[];
-      return new Response(JSON.stringify({ model: body.model, choices: [{ message: { content: JSON.stringify(items.map(korean)) } }] }));
+      return new Response(JSON.stringify({ model: body.model, choices: [{ finish_reason: "stop", message: { content: JSON.stringify(items.map(korean)) } }] }));
     });
     await tick();
+    expect(models.length).toBeGreaterThan(0);
+    expect(new Set(models)).toEqual(new Set([KOREAN_TAGLINE_MODEL]));
     const rows = await db.select().from(productKoreanTaglines);
-    expect(rows.filter(row => row.errorCode === null)).toHaveLength(8);
-    expect(rows.find(row => row.model === "qwen3.8-flash-next")).toMatchObject({ errorCode: "http_503", taglineKo: null, attempts: 1 });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(row => row.model === KOREAN_TAGLINE_MODEL)).toBe(true);
+  });
+
+  it("품질 한도에 닿은 소개는 옛 회복 env 가 켜져 있어도 다시 고르지 않고 「품질 검사 중단」으로 센다(회복 선택은 없앴다)", async () => {
+    vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
+    vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
+    const { koreanTaglineQueue } = await import("@/lib/domain/products/korean-taglines");
+    const row = await seed({ slug: "exhausted-general", tagline: "Track your daily habits" });
+    await db.insert(productKoreanTaglines).values({ productId: row.id, sourceTagline: "Track your daily habits",
+      attempts: 4, qualityRejections: 4, errorCode: "rejected:empty", model: KOREAN_TAGLINE_MODEL });
+    expect(await pendingKoreanTaglines(10, [])).toEqual([]);
+    const queue = await koreanTaglineQueue([]);
+    expect(queue).toMatchObject({ eligible: 1, ready: 0, blocked: 1 });
+    expect(queue).not.toHaveProperty("recoveryReady");
   });
 
   it("keeps the cumulative quality limit after a home retry fails on the network and leaves home", async () => {

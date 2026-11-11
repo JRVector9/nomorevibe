@@ -1,4 +1,3 @@
-import { KOREAN_TRANSLATION_QWEN_MODEL, KOREAN_TRANSLATION_QWEN_SERVER } from "@/lib/crawl/korean-translation-config";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -11,7 +10,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 vi.mock("server-only", () => ({}));
 
 const now = ACTION_NOW.toISOString();
-const queue = { eligible: 10, done: 4, ready: 3, recoveryReady: 0, retryScheduled: 2, blocked: 1, lastHour: 2, measuredAt: now };
+const queue = { eligible: 10, done: 4, ready: 3, retryScheduled: 2, blocked: 1, lastHour: 2, measuredAt: now };
 const base = (over: Partial<OwnerContext> = {}): OwnerContext => ({ settings: {}, batch: null, agent: undefined, models: null,
   now, roles: [{ role: "text", ownerInstanceId: "m3-text", ownerKind: "primary", ownerRelease: "release-a", secondsUntilExpiry: 40 }],
   instances: [{ role: "text", instanceId: "m3-text", observedAt: now,
@@ -117,21 +116,20 @@ describe("한국어 번역의 실제 프로세스", () => {
 });
 
 
-it("shows both configured Korean translation backends and the expanded request budgets", () => {
+it("shows the ranked Korean translation model and the expanded request budgets — the Qwen direct path is gone even with its old env on", () => {
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
   try {
     const ctx = runtime(null);
     const owners = resolveWorkOwners({ jobs: ["product-tagline-ko"] }, ctx);
-    expect(owners?.models.some((row) => row.full === "qwen3.8-flash-next"
-      && row.rows.some((entry) => entry.runsOn === "gpu3090 Qwen 직접 연결"))).toBe(true);
+    expect(owners?.models.some((row) => row.rows.some((entry) => entry.runsOn === "gpu3090 Qwen 직접 연결"))).toBe(false);
     const html = renderToStaticMarkup(createElement(KoreanTranslationStatus, {
-      queue: { ok: true, value: { ...queue, ready: 5, recoveryReady: 2 } }, owners,
+      queue: { ok: true, value: { ...queue, ready: 5 } }, owners,
       runtime: koreanTranslationRuntime(ctx), hasLastError: false, now,
     }));
     expect(html).toContain("3,600");
     expect(html).toContain("2,250~5,400");
-    expect(html).toContain(`${KOREAN_TRANSLATION_QWEN_SERVER} · ${KOREAN_TRANSLATION_QWEN_MODEL} 직접 연결`);
-    expect(html).toContain("Qwen 제한 재검토 2건");
+    expect(html).not.toContain("직접 연결");
+    expect(html).not.toContain("Qwen");
   } finally { vi.unstubAllEnvs(); }
 });

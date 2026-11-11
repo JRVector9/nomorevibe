@@ -6,7 +6,6 @@ import { legacyFirstReviewers } from "@/lib/crawl/first-reviewers";
 import { underlyingReviewModel } from "@/lib/crawl/review-model-identity";
 import { resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
-import { koreanTranslationQwenEnabled } from "@/lib/crawl/korean-translation-config";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { qwenDirectConfig } from "@/lib/crawl/qwen-direct-review";
@@ -16,7 +15,7 @@ import { tableStageSelections, withAdminModelStage, withAdminStagePools } from "
 import { ADMIN_MODEL_STAGES, type AdminModelStage } from "@/lib/llm/admin-model-stages";
 import { AI_TASKS, aiCliToolOfProvider, type AiTaskDef, type AiTextTaskId } from "@/lib/llm/ai-tasks";
 import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
-import { resolveTextTaskRanks, textRankUnusableText } from "@/lib/llm/ai-task-resolver";
+import { resolveTextTaskRanks, taskModels, textRankUnusableText } from "@/lib/llm/ai-task-resolver";
 import type { ModelCapacityPolicy } from "@/lib/llm/capacity";
 import type { AssignmentStage } from "@/lib/llm/capacity-helpers";
 import { configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
@@ -224,11 +223,6 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
               : "작업 ↔ 모델 표를 아직 읽지 못했습니다(task_models_unreadable)." }) }));
           break;
         }
-        case "korean-translation-direct":
-          out.push(koreanTranslationQwenEnabled(sources.env) ? stageUses(task, purposeRead("korean-translation-direct", "local-direct"), "local-direct")
-            : slot(task, { source: "env KOREAN_TRANSLATION_QWEN_ENABLED", skip: "지금 꺼져 있습니다(KOREAN_TRANSLATION_QWEN_ENABLED) — 켜지 않은 경로는 옮기지 않습니다.",
-              skipStatus: "꺼 둠(KOREAN_TRANSLATION_QWEN_ENABLED)" }));
-          break;
         case "human-review": {
           const slot = stageUses(task, purposeRead("human-review", "local-direct"), "local-direct");
           const note = sources.settings.humanReview.enabled ? "자동 위임 켜짐" : "자동 위임 꺼짐 · 사람이 직접 판단";
@@ -259,9 +253,20 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
         }
         case "assist-review": case "assist-audit": {
           const lane = task.id === "assist-audit" ? "audit" : "regular";
-          if (!sources.env.LLM_ASSIST_BACKENDS) { out.push(slot(task, { source: "env LLM_ASSIST_BACKENDS", skip: "LLM_ASSIST_BACKENDS 가 없어 지금 돌지 않습니다." })); break; }
+          // 2026-11-11: 순위가 있으면 실행 쪽이 순위만 읽는다(lib/domain/llm-assist/rank-backends.ts) — 지금 쓰는 모델 = 저장한 순위(1순위부터, 쓸 수 없는 순위는
+          // 준비 상태·실행 줄이 까닭을 보인다). 순위가 없을 때만 아래의 옛 env LLM_ASSIST_BACKENDS 다(가져오기 출처)
+          const ranked = taskModels(task.id, 1);
+          if (ranked.length) {
+            out.push(slot(task, { source: "작업 ↔ 모델(실행 쪽이 이 표를 읽는다)", uses: ranked.map(rank => rank.connection.kind === "cli"
+              ? cli(task, "opencode-cli", rank.model, `작업 ↔ 모델 ${rank.rank}순위`, { note: "LLM 보강은 CLI 를 받지 않습니다 — 이 순위는 쓰이지 않습니다" })
+              : api(task, rank.model, "local-direct", `작업 ↔ 모델 ${rank.rank}순위`, rank.connection.baseUrl, { deviceId: rank.connection.deviceId })) }));
+            break;
+          }
+          // 이 웹 프로세스에 env 가 없어도 워커(reviewer)의 env 로 돌 수 있다 — 꺼졌다고 하지 않는다(장부의 호출 수가 실제를 보인다)
+          if (!sources.env.LLM_ASSIST_BACKENDS) { out.push(slot(task, { source: "env LLM_ASSIST_BACKENDS(이 프로세스에 없음)",
+            notes: ["작업 ↔ 모델에 순위가 없어 워커가 옛 env LLM_ASSIST_BACKENDS 로 돕니다(워커에 있으면). 순위를 저장하면 순위로 돕니다."] })); break; }
           const drains = withAdminStagePools(pools, `ai-task-current:${task.id}`, () => assistBackendDrains(process.env, lane));
-          out.push(slot(task, { source: "env LLM_ASSIST_BACKENDS + 로컬 계약", uses: drains.map(drain => {
+          out.push(slot(task, { source: "env LLM_ASSIST_BACKENDS + 로컬 계약(순위 없음 — 옮기는 동안의 옛 설정)", uses: drains.map(drain => {
             const source = parseCliEngineRevision(drain.contract.deploymentRevision);
             const extra = { baseUrl: baseOf(drain.contract.endpoint), deviceId: drain.contract.physicalGroup,
               ...(source?.reasoningEffort ? { options: { reasoningEffort: source.reasoningEffort } } : {}) };

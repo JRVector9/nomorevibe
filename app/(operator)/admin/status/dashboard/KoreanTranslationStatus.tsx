@@ -9,8 +9,7 @@ import { jobHref } from "../action-links";
 import type { OwnerContext, WorkOwners } from "../work-owners";
 import { WorkOwnerButtons } from "./WorkOwnerButtons";
 import { taskModels } from "@/lib/llm/ai-task-resolver";
-import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS, KOREAN_TRANSLATION_QWEN_MODEL, KOREAN_TRANSLATION_QWEN_SERVER,
-  koreanTranslationMaxOutputTokens, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
+import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS, koreanTranslationMaxOutputTokens } from "@/lib/crawl/korean-translation-config";
 
 const JOB = "product-tagline-ko";
 const n = (value: number) => value.toLocaleString("ko-KR");
@@ -47,7 +46,7 @@ export function KoreanTranslationStatus({ queue, owners, runtime, hasLastError, 
 }) {
   const stats = queue?.ok ? queue.value : null;
   const job = owners?.jobs.find((row) => row.name === JOB);
-  // GPT 경로의 모델은 「작업 ↔ 모델」 순위다(PR B) — 이 화면을 그린 프로세스의 순위 스냅숏
+  // 모델은 「작업 ↔ 모델」 순위다(PR B) — 이 화면을 그린 프로세스의 순위 스냅숏. 장부 밖 Qwen 직접 경로는 2026-11-11 없앴다
   const ranked = taskModels(JOB).map((row) => `${row.rank}순위 ${row.connection.label} · ${row.model}`).join(", ") || "작업 ↔ 모델 순위 없음";
   return <section id="korean-translation" className="dash-card dash-8" aria-label="제품 소개 한국어 번역">
     <div className="dash-card-h"><h2>제품 소개 한국어 번역</h2><small>{stats ? `집계 ${formatAgo(stats.measuredAt, now)}` : "집계 미확인"}</small></div>
@@ -55,8 +54,7 @@ export function KoreanTranslationStatus({ queue, owners, runtime, hasLastError, 
     <p className="dash-note">번역 요청 한도: 최대 {KOREAN_TRANSLATION_MAX_ITEMS}건·소개 합계 {n(KOREAN_TRANSLATION_LEGACY_MAX_CHARS)}자,
       출력 {n(koreanTranslationMaxOutputTokens(1))}~{n(koreanTranslationMaxOutputTokens(KOREAN_TRANSLATION_MAX_ITEMS))}토큰.
       {" "}엄격 용량 제어에서는 기존 요청 한도를 유지합니다.</p>
-    <p className="dash-note">사용 모델 설정: {ranked}{koreanTranslationQwenEnabled() ? ` + ${KOREAN_TRANSLATION_QWEN_SERVER} · ${KOREAN_TRANSLATION_QWEN_MODEL} 직접 연결` : " (Qwen 추가 연결 꺼짐)"}.
-      {koreanTranslationQwenRecoveryEnabled() && " 품질 검사 기준을 유지하며 한도 도달 항목을 Qwen으로 제한 재검토합니다."}</p>
+    <p className="dash-note">사용 모델 설정: {ranked}.</p>
     {stats ? <dl className="mt-3 grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
       <div><dt className="text-fg-3">즉시 처리</dt><dd className="font-mono text-lg">{n(stats.ready)}건</dd></div>
       <div><dt className="text-fg-3">재시도 예약</dt><dd className="font-mono text-lg">{n(stats.retryScheduled)}건</dd></div>
@@ -64,8 +62,6 @@ export function KoreanTranslationStatus({ queue, owners, runtime, hasLastError, 
       <div><dt className="text-fg-3">지난 1시간 완료</dt><dd className="font-mono text-lg">{n(stats.lastHour)}건</dd></div>
     </dl> : <p className="dash-note">대기 수 미확인{queue && !queue.ok ? ` — ${replicaHoldText(queue.reason)}` : " — 집계를 읽지 못했습니다"}. 0건을 뜻하지 않습니다.</p>}
     {stats && <p className="dash-note">현재 원문 번역 완료 {n(stats.done)} / 대상 {n(stats.eligible)}건. 이미 한국어인 소개는 제외합니다. 품질 검사 중단은 자동 재시도 한도에 닿은 제품입니다.</p>}
-    {stats && koreanTranslationQwenRecoveryEnabled() && <p className="dash-note">즉시 처리 중 Qwen 제한 재검토 {n(stats.recoveryReady)}건.
-      기존 실패 횟수는 유지하며, 재검토 결과도 같은 품질 검사를 통과해야 저장합니다.</p>}
     <dl className="mt-3 grid gap-1 text-[13px]">
       <div><dt className="inline text-fg-3">작업 상태 </dt><dd className="inline">{job?.state ?? "실행 기록 미확인"}{hasLastError ? " · 최근 실패 기록 있음" : ""}</dd></div>
       <div><dt className="inline text-fg-3">프로세스 상태 </dt><dd className="inline">{runtime}</dd></div>

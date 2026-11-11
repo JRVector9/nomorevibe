@@ -5,9 +5,8 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 // 잡 시험만 대기열·호출을 바꾼다. 검사·정리(korean-tagline.ts)는 실제 함수다.
 const m = vi.hoisted(() => ({ control: vi.fn(), pending: vi.fn(), write: vi.fn(), gpt: vi.fn() }));
 vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: async () => [], pendingKoreanTaglines: m.pending,
-  pendingKoreanTaglineRecovery: async () => [], recordKoreanTaglines: m.write, koreanTaglineSource: (task: { tagline: string }) => task.tagline }));
+  recordKoreanTaglines: m.write, koreanTaglineSource: (task: { tagline: string }) => task.tagline }));
 vi.mock("@/lib/domain/products/korean-tagline-model-capacity", () => ({ translateKoreanTaglinesWithModelCapacity: m.gpt }));
-vi.mock("@/lib/crawl/korean-translation-qwen", () => ({ translateKoreanTaglinesWithQwen: vi.fn() }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: m.control }));
 const { checkKoreanTagline, checkKoreanTaglineOutput, leadClause, KOREAN_TAGLINE_MAX } = await import("@/lib/domain/products/korean-tagline");
 const { writeKoreanTaglines } = await import("@/lib/jobs/products/korean-tagline");
@@ -123,7 +122,7 @@ describe("writeKoreanTaglines — 정리된 줄을 저장하고 미룸 사유를
   const ctx = () => ({ lease: { name: "product-tagline-ko", token: "lease", requestedVersion: 1 },
     hasBudget: () => true, log: vi.fn(), signal: undefined }) as unknown as JobContext<null> & { log: ReturnType<typeof vi.fn> };
   beforeEach(() => {
-    vi.clearAllMocks(); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
+    vi.clearAllMocks();
     // GPT opens only on an admin engine row connected directly (transport direct); the abcLLM gateway key was removed (2026-10-30).
     // PR B: 모델은 「작업 ↔ 모델」 순위가 고른다 — 그 순위의 연결을 가리키는 계약이 있어야 연다
     pinTextRanks({ "product-tagline-ko": "[MLX] gpt-oss-120b" });

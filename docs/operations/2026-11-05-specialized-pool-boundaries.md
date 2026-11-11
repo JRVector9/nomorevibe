@@ -61,7 +61,7 @@ readiness는 이 기존 정책 경로와 로컬 계약이 정확히 있어야 �
 | `assist-audit` | 같은 assist 실행의 audit lane 및 [audit-runtime.ts](../../lib/domain/llm-assist/audit-runtime.ts). 원판정과 독립 model family 조건, backend/result 계약 hash, terminal 증거를 검증한다. | 일반 assist의 경계에 더해 원판정과 다른 감사 family를 유지해야 한다. 빈 장비라는 이유로 같은 모델 family에 감사를 배정하지 않는다. |
 | `product-intro-check` | [intro-check-model-capacity.ts](../../lib/domain/products/intro-check-model-capacity.ts)의 `capturedClaudeCliRun`. 1–10개 묶음 member lock과 model/input hash를 plan/prove 양쪽에서 확인하며 기존 로컬 CLI argv/stdin/parser·인증 계약을 쓴다. | 지원하는 CLI 연결의 실제 실행/인증 계약을 먼저 묶고 같은 묶음의 durable pending을 유지해야 한다. 임의 API나 원격 CLI의 도구/응답 호환성을 추정하지 않는다. |
 | `publish-classify` | [publication-classify-capacity.ts](../../lib/crawl/publication-classify-capacity.ts). publisher 역할/잡 lease, payload/member/definitions hash, config generation/version 및 CLI primary/fallback가 하나의 authority로 묶인다. | 기존 분류 CLI/transport·설정 세대·발행 권한을 함께 고정하는 어댑터가 필요하다. pool을 기존 fallback 정책이나 발행 권한의 우회 경로로 쓰지 않는다. |
-| `korean-translation-direct` | [korean-tagline.ts](../../lib/jobs/products/korean-tagline.ts)의 Qwen branch는 `control.mode === "disabled"`에서 기존 스위치가 켜진 경우에만 실행된다. GPT/text7 경로와 별개이며 공통 route가 없다. | 용량 장부 밖의 legacy branch를 다중 호출로 확장하지 않는다. 별도 capped route 및 기존 번역 batch/generation/cache 계약을 먼저 연결해야 한다. 이 PR은 GPT/text7 경로도 수정하지 않는다. |
+| `korean-translation-direct`(2026-11-11 없앰 — [작업 ↔ 모델 「2026-11-11」](2026-11-02-ai-task-model-ranks.md)) | [korean-tagline.ts](../../lib/jobs/products/korean-tagline.ts)의 Qwen branch는 `control.mode === "disabled"`에서 기존 스위치가 켜진 경우에만 실행된다. GPT/text7 경로와 별개이며 공통 route가 없다. | 용량 장부 밖의 legacy branch를 다중 호출로 확장하지 않는다. 별도 capped route 및 기존 번역 batch/generation/cache 계약을 먼저 연결해야 한다. 이 PR은 GPT/text7 경로도 수정하지 않는다. |
 
 ## 실제 어댑터를 추가할 때 지켜야 하는 선택 순서
 

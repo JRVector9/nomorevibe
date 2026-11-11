@@ -1,5 +1,5 @@
 import type { AssistWorkTask } from "@/lib/domain/llm-assist/work";
-import { AI_CLI_TOOL_LABELS, AI_TASKS, aiCliToolOfProvider, aiTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_TASKS, aiCliToolOfProvider, aiTask, aiTaskOwnsLedgerRoute, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import { aiConnectionLabel, type AiConnectionView } from "./admin-ai-tasks";
 import type { AdminModelsObservation } from "./admin-models-observation";
 import { modelStageId, modelStageLabel } from "./admin-models-view";
@@ -123,9 +123,9 @@ export function helperRouteOf(routeId: string): HelperRoute | null {
 }
 /** 쓰지 않게 된 옛 경로 id(예: product-tagline-ko-qwen-legacy) */
 export const isLegacyRouteId = (routeId: string) => /-legacy$/.test(routeId);
-/** 장부 route → AI 작업(작업 목록의 routeId, 없으면 단계 id). */
+/** 장부 route → AI 작업(작업 목록의 routeId, LLM 보강이면 보강 일의 local-assist-<일>-<backend>, 없으면 단계 id). */
 export function taskOfRoute(routeId: string): AiTaskDef | null {
-  return AI_TASKS.find(task => task.routeId === routeId) ?? aiTask(modelStageId(routeId));
+  return AI_TASKS.find(task => task.routeId === routeId) ?? AI_TASKS.find(task => aiTaskOwnsLedgerRoute(task, routeId)) ?? aiTask(modelStageId(routeId));
 }
 function knownRouteLabel(routeId: string): string | null {
   const helper = helperRouteOf(routeId);

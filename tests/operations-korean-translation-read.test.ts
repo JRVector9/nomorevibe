@@ -6,7 +6,7 @@ vi.mock("@/lib/cache/shared", () => ({ sharedStore: null }));
 vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: read.home, koreanTaglineQueue: read.queue }));
 vi.mock("@/lib/observability/logger", () => ({ logger: { warn: read.warn } }));
 
-const value = { eligible: 10, done: 4, ready: 3, recoveryReady: 0, retryScheduled: 2, blocked: 1, lastHour: 2,
+const value = { eligible: 10, done: 4, ready: 3, retryScheduled: 2, blocked: 1, lastHour: 2,
   measuredAt: "2026-10-23T18:00:00.000Z" };
 beforeEach(() => {
   vi.resetModules();
@@ -64,29 +64,12 @@ describe("한국어 번역 상태 읽기", () => {
 });
 
 
-it("does not reuse queue counts from before alternate-model recovery was enabled", async () => {
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
+it("옛 Qwen 회복 env 를 켜고 꺼도 같은 캐시 열쇠다 — 회복 선택은 없앴다(제어 행도 읽지 않는다)", async () => {
   const { readKoreanTranslationQueue } = await import("@/lib/operations/korean-translation");
   expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value });
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
-  const expanded = { ...value, ready: 5, recoveryReady: 2 };
-  read.queue.mockResolvedValue(expanded);
-  expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value: expanded });
-  expect(read.queue).toHaveBeenCalledTimes(2);
-});
-
-
-it("does not retain disabled-mode recovery counts after the capacity gate closes", async () => {
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
-  const { readKoreanTranslationQueue } = await import("@/lib/operations/korean-translation");
-  const expanded = { ...value, ready: 5, recoveryReady: 2 };
-  read.queue.mockResolvedValue(expanded);
-  expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value: expanded });
-  read.control.mockResolvedValue([{ mode: "open" }]);
-  read.queue.mockResolvedValue(value);
   expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value });
-  expect(read.queue).toHaveBeenCalledTimes(2);
+  expect(read.queue).toHaveBeenCalledTimes(1);
+  expect(read.control).not.toHaveBeenCalled();
 });

@@ -1,5 +1,9 @@
 # 한국어 제품 소개 번역: GPT-OSS와 GPU Qwen
 
+> **2026-11-11:** 아래 GPU Qwen 직접 경로(`KOREAN_TRANSLATION_QWEN_ENABLED`·`KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED`, 장부 밖 호출)와 회복 선택은
+> 운영자 결정으로 없앴다. 한국어 소개 번역은 「작업 ↔ 모델」 `product-tagline-ko` 순위만 부르고, 모든 호출을 용량 장부에서 센다.
+> [작업 ↔ 모델 문서의 「2026-11-11」](2026-11-02-ai-task-model-ranks.md)을 따른다. 아래는 옛 기록이다.
+
 `product-tagline-ko`는 기존 text 역할과 잡 lease를 유지하며 전용 `korean-translation`
 실행 줄에서 돈다. GPT와 Qwen은 서로 다른 제품 묶음을 맡고, 모델마다 동시에 한 번만
 호출한다. 저장 전 현재 원문·공개 상태·잡 소유권과 기존 한국어 품질 검사를 적용한다.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiTask, isAiLiveTask } from "@/lib/llm/ai-tasks";
+import { aiTask, aiTaskReadsRanks } from "@/lib/llm/ai-tasks";
 import type { AiCurrentSlot, AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
 import type { AiTaskRuntimeView } from "@/lib/operations/admin-ai-tasks-repository";
 import { buildAdminModelsObservation, unavailableAdminModels, type AdminModelMetrics } from "@/lib/operations/admin-models-observation";
@@ -15,7 +15,7 @@ function slotOf(taskId: string, slot = 1, patch: Partial<TaskAssignSlotInput> = 
   return { task, slot, label: task.slots > 1 ? `${task.label} · 투표자 ${slot}` : task.label, rows: own, options: [], current: null, sameAsCurrent: null,
     readiness: own.map(row => ({ rank: row.rank, connectionId: row.connectionId, model: row.model, identity: row.model, blocking: [], warnings: [], createDevice: null,
       createContract: null, appendRoute: null, createCliContract: null, provider: null } as TaskAssignSlotInput["readiness"][number])),
-    live: isAiLiveTask(taskId), runtime: llmRuntime[taskId] ?? null, ...patch };
+    live: aiTaskReadsRanks(taskId, own.length > 0), runtime: llmRuntime[taskId] ?? null, ...patch };
 }
 const ALL = ["first-review#1", "second-review#1", "second-review#2", "second-review#3", "crawl-tagline#1", "product-search-profile#1", "product-search-verify#1",
   "search-query-translate#1", "product-embedding#1", "product-intro-check#1", "publish-classify#1"];
@@ -335,15 +335,49 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
   });
 
   it("F6 장부 밖 작업은 「정상」이라 하지 않는다 — 「장부 밖」(확인 불가 수준), 정상 수에 세지 않는다", () => {
-    const slots = [slotOf("product-embedding", 1, { current: current("product-embedding", "bge-m3") }),
-      slotOf("assist-review", 1, { current: current("assist-review", "qwen3.8-flash-next") }), slotOf("assist-audit")];
+    const slots = [slotOf("product-embedding", 1, { current: current("product-embedding", "bge-m3") }), slotOf("search-rerank", 1, { current: current("search-rerank", "rerank") })];
     const view = buildTaskAssignView(input({ slots }));
     expect(rowOf(view, "product-embedding#1").status).toEqual({ level: "unknown", text: "장부 밖", reason: "호출을 세지 않아 이 표로는 확인하지 못함", detail: null });
-    expect(rowOf(view, "assist-review#1").status).toMatchObject({ level: "unknown", text: "장부 밖" });
-    // 실제 적용 설정을 못 읽은 장부 밖 작업은 그 까닭이 앞선다
-    expect(rowOf(view, "assist-audit#1").status).toMatchObject({ level: "unknown", text: "확인 불가", reason: "실제 적용 설정을 읽지 못함" });
+    expect(rowOf(view, "search-rerank#1").status).toMatchObject({ level: "unknown", text: "장부 밖" });
     expect(view.rows.map(row => row.status.text)).not.toContain("정상");
-    expect(view.counts).toMatchObject({ ok: 0, unknown: 3 });
+    expect(view.counts).toMatchObject({ ok: 0, unknown: 2 });
+  });
+
+  it("LLM 보강은 장부 안 작업이다(2026-11-11) — 보강 일마다의 local-assist-<일>-<backend> 호출을 한 작업으로 세고, 감사 일은 독립 감사 줄로 간다", () => {
+    const metrics = [metric("local-assist-uptime-gpu3090-qwen", "local-direct", "qwen3.8-flash-next", "gpu3090-qwen", 22),
+      metric("local-assist-intro_recheck-gpu3090-qwen", "local-direct", "qwen3.8-flash-next", "gpu3090-qwen", 47, { failed1h: 1 }),
+      metric("local-assist-decision_audit-m3-deepseek", "local-direct", "deepseek-v4.1-flash-1017", "m3-mlx", 5)];
+    const view = buildTaskAssignView(input({ observation: observationWith(metrics), slots: [
+      slotOf("assist-review", 1, { current: current("assist-review", "qwen3.8-flash-next") }),
+      slotOf("assist-audit", 1, { current: current("assist-audit", "deepseek-v4.1-flash-1017") })] }));
+    const review = rowOf(view, "assist-review#1"), audit = rowOf(view, "assist-audit#1");
+    // 순위가 없으면 옛 env 로 도는 「실제 적용 설정」 줄이다 — 그래도 장부를 센다
+    expect(review).toMatchObject({ mode: "effective", manage: { href: "#assist-controls", label: "보강 켜기·끄기" } });
+    expect(review.actual).toMatchObject({ tracked: true, settled: 70, failed: 1, empty: null });
+    expect(review.actual.calls.map(call => [call.position, call.model, call.settled])).toEqual([[1, "qwen3.8-flash-next", 70]]);
+    expect(review.status).toMatchObject({ level: "warn", reason: "1시간 실패 1건 / 정산 70" });
+    expect(audit.actual).toMatchObject({ tracked: true, settled: 5 });
+    expect(audit.status).toMatchObject({ level: "ok", text: "정상", reason: "1시간 정산 5" });
+    expect(JSON.stringify(view)).not.toContain("장부 밖");
+  });
+
+  it("LLM 보강: 순위를 저장하면 대체 실행 줄이 되고, 보내기를 모두 끈 작업은 「의도적 중지」 — 호출이 없어도 「24시간 성공 0건」이라 하지 않는다", () => {
+    const rows = [{ task: "assist-review", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {}, enabled: true }];
+    const ranked = slotOf("assist-review", 1, {}, rows);
+    expect(ranked.live).toBe(true);
+    const on = rowOf(buildTaskAssignView(input({ observation: observationWith([]), slots: [ranked],
+      facts: { auditRunning: null, connectionsRead: true, assistOff: { "assist-review": false, "assist-audit": true } } })), "assist-review#1");
+    expect(on).toMatchObject({ mode: "fallback", modeText: "대체 실행" });
+    expect(on.choices.map(choice => [choice.position, choice.connection, choice.model])).toEqual([[1, "gpu3090-qwen", "qwen3.8-flash-next"]]);
+    expect(on.actual).toMatchObject({ tracked: true, settled: 0, empty: "호출 없음 (최근 1시간)" });
+    expect(on.status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    const off = rowOf(buildTaskAssignView(input({ observation: observationWith([]), slots: [ranked],
+      facts: { auditRunning: null, connectionsRead: true, assistOff: { "assist-review": true, "assist-audit": true } } })), "assist-review#1");
+    expect(off.status).toMatchObject({ level: "idle", text: "의도적 중지", reason: "LLM 보강 보내기 꺼짐(LLM 보강 제어)" });
+    expect(off.actual.empty).toBe("호출 없음 (보강 보내기 꺼짐)");
+    // 모르면(제어를 못 읽음) 지금 규칙 그대로
+    const unknown = rowOf(buildTaskAssignView(input({ observation: observationWith([]), slots: [ranked] })), "assist-review#1");
+    expect(unknown.status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
   });
 
   it("F7 검색 재정렬의 주소 없음은 상태 칸에 상태의 말로 — 가져오기 계획의 「옮기지 않습니다」를 쓰지 않는다", () => {

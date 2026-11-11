@@ -14,7 +14,6 @@ export const ADMIN_MODEL_STAGES = [
   { id: "reason-translate", label: "심사 사유 번역", purpose: "reason-translate", provider: "abcllm" },
   { id: "product-translate", label: "제품 다국어 번역 · M1 포함", purpose: "product-translate", provider: "abcllm" },
   { id: "product-tagline-ko", label: "한국어 소개 번역", purpose: "product-tagline-ko", provider: "abcllm" },
-  { id: "korean-translation-direct", label: "한국어 소개 번역 · 직접 모델", purpose: "korean-translation-direct", provider: "local-direct" },
   { id: "search-query-translate", label: "검색 질의 번역", purpose: "search-query-translate", provider: "abcllm" },
   { id: "product-search-profile", label: "검색 키워드·프로필 생성", purpose: "product-search-profile", provider: "abcllm" },
   { id: "product-search-verify", label: "검색 키워드 검증", purpose: "product-search-verify", provider: "abcllm" },
@@ -24,9 +23,18 @@ export const ADMIN_MODEL_STAGES = [
   { id: "assist-audit", label: "LLM 보강 · 감사", purpose: "assist-audit", provider: "local-direct" },
 ] as const;
 export type AdminModelStage = typeof ADMIN_MODEL_STAGES[number]["id"];
-export const adminStagePoolsSchema = z.partialRecord(z.enum(ADMIN_MODEL_STAGES.map(stage => stage.id)),
+/**
+ * 없앤 관리자 단계 — 저장된 설정(crawl_settings.stageModelPools)에 그 풀이 남아 있을 수 있다. 읽을 때 버린다: 모르는 칸 하나로 크롤 설정 전체가
+ * 기본값으로 떨어지지 않게(mergeWithDefaults). 다음 저장이 그 칸 없이 쓴다.
+ * - korean-translation-direct: 한국어 소개 번역의 Qwen 직접 경로(2026-11-11 운영자 결정으로 없앰 — 장부를 거치는 product-tagline-ko 순위가 같은 일을 한다)
+ */
+export const RETIRED_ADMIN_MODEL_STAGES: readonly string[] = Object.freeze(["korean-translation-direct"]);
+const withoutRetiredStages = (value: unknown) => value && typeof value === "object" && !Array.isArray(value)
+  && RETIRED_ADMIN_MODEL_STAGES.some(stage => stage in value)
+  ? Object.fromEntries(Object.entries(value).filter(([stage]) => !RETIRED_ADMIN_MODEL_STAGES.includes(stage))) : value;
+export const adminStagePoolsSchema = z.preprocess(withoutRetiredStages, z.partialRecord(z.enum(ADMIN_MODEL_STAGES.map(stage => stage.id)),
   z.array(z.string().regex(/^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/)).max(8)
-    .refine(keys => new Set(keys).size === keys.length, "같은 모델을 중복 선택할 수 없습니다."));
+    .refine(keys => new Set(keys).size === keys.length, "같은 모델을 중복 선택할 수 없습니다.")));
 export type AdminStagePools = z.infer<typeof adminStagePoolsSchema>;
 
 /** One eligibility rule shared by the stage editor and its runtime selection. */
@@ -36,6 +44,5 @@ export function adminStageAcceptsModel(stage: typeof ADMIN_MODEL_STAGES[number],
   const nativeIntro = stage.id === "product-intro-check" && model.provider === "opencode-cli" && !!model.cliEngine
     && model.purposes.includes(stage.purpose);
   if (!nativeIntro && model.provider !== stage.provider) return false;
-  if (stage.id === "korean-translation-direct" && model.cliEngine) return false;
   return !(stage.id.startsWith("assist-") || stage.id === "screen-review") || model.purposes.includes(stage.purpose);
 }

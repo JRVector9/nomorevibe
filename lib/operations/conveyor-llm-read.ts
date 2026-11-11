@@ -2,7 +2,7 @@ import "server-only";
 import { asc, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { aiTaskModels } from "@/lib/db/schema";
-import { AI_TASKS, isAiLiveTask } from "@/lib/llm/ai-tasks";
+import { AI_TASKS, isAiAssistTask, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import { logger } from "@/lib/observability/logger";
 import { listAiConnections, readAiTaskRuntime } from "./admin-ai-tasks-repository";
 import { aiConnectionBaseUrl, aiConnectionLabel } from "./admin-ai-tasks";
@@ -92,7 +92,8 @@ export async function readLlmInputs(now: string): Promise<LlmInputs> {
         };
         const out: Record<string, LlmEffectiveConfig> = {};
         for (const slot of slots) {
-          if (isAiLiveTask(slot.task)) continue;
+          // LLM 보강은 순위가 없으면 옛 env 로 돈다 — 그때 보일 실제 적용 설정을 늘 만든다(순위가 있으면 화면이 쓰지 않는다)
+          if (isAiLiveTask(slot.task) && !isAiAssistTask(slot.task)) continue;
           const previous = out[slot.task];
           const models = slot.uses.map(use => ({ model: use.model, where: whereOf(use) }));
           out[slot.task] = { source: previous?.source ?? slot.source, models: [...(previous?.models ?? []), ...models],

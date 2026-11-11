@@ -43,10 +43,13 @@ it("저장한 번역 선택은 같은 환경변수를 공유하는 검색 질의
     expect(scopedModel("search-query-translate", "query-fallback")).toBe("query-fallback");
   });
 });
-it("text 다섯 잡은 단계 풀 범위를 열지 않는다 — 순위가 모델을 고른다(PR B); 한국어 소개는 Qwen 직접 경로 때문에 남는다", () => {
-  for (const job of ["reason-translate", "crawl-tagline", "product-translate", "product-search-profile", "product-search-verify"])
+it("text 여섯 잡은 단계 풀 범위를 열지 않는다 — 순위가 모델을 고른다(PR B; 한국어 소개의 Qwen 직접 경로는 2026-11-11 없앴다)", () => {
+  for (const job of ["reason-translate", "crawl-tagline", "product-translate", "product-search-profile", "product-search-verify", "product-tagline-ko"])
     expect(MODEL_POOL_JOBS.has(job)).toBe(false);
-  expect(MODEL_POOL_JOBS.has("product-tagline-ko")).toBe(true);
+});
+it("없앤 단계(korean-translation-direct)의 저장된 풀은 읽을 때 버린다 — 크롤 설정 전체가 기본값으로 떨어지지 않는다", () => {
+  expect(validateAdminStagePools({ "korean-translation-direct": ["gpu3090:review"], "reason-translate": ["mlx:text"] }))
+    .toEqual({ "reason-translate": ["mlx:text"] });
 });
 it("사유 번역 wire 이름은 저장한 단계 풀이 아니라 순위가 정하고, 옛 게이트웨이 번역 클라이언트는 보내지 않는다", async () => {
   // 게이트웨이(abcLLM)는 2026-10-30 제거됐다 — 옛 클라이언트는 no_key 로 끝난다. 단계 풀에 다른 모델을 저장해 두어도(PR B 전의 선택)

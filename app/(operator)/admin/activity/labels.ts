@@ -126,7 +126,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "search-model-settings-save": "검색 모델 설정 저장",
   "ops-runner-state": "모델 운영 작업(접수·재시작·해제) 진행",
   "ops-runner-control": "모델 운영 작업 실행기 제어",
-  "llm-assist-control": "LLM 보조 제어",
+  "llm-assist-control": "LLM 보강 제어",
   "export": "목록 내보내기",
   "operator-name": "내 이름 적기",
   // 검수·재요청 화면(피드백 검수·써봤어요 검수·공개 번역)과 SNS 화제 — 전에는 이름이 없어 코드 그대로 어느 갈래에도 들지 않았다
@@ -208,6 +208,7 @@ export const ACTION_GROUPS = {
     "github-collector-app-save", "github-collector-app-enable", "github-collector-app-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply",
     "ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-model-hide", "ai-task-models-save", "ai-task-models-import", "ai-connection-key-fill", "ai-task-execution-save",
+    "llm-assist-control",
     "runtime-settings-save", "model-capacity-device-save", "model-capacity-route-quota-save", "model-capacity-model-limit-save", "model-capacity-device-retire", "model-capacity-routes-prune", "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save",
     "model-registry-override-disable", "model-assignment-save", "model-helper-save", "model-helper-mode", "model-capacity-unknown-reviewed", "job-pause", "job-resume"] },
   // LLM 운영 화면에서 한 번에 거르는 갈래 — 연결·순위·한도 저장(「설정·연결」과 겹침)과 접수·미확정·경계 해제·연결 확인 같은 조치

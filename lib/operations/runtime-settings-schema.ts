@@ -440,7 +440,7 @@ export const ROUTE_LABELS: Readonly<Record<string, string>> = {
   "split-confirm": "갈림 확인", "product-audit": "제품 감사", "grok-review": "Grok 심사", "grok-session": "Grok 세션", "classify-cli": "분류(CLI)",
   "screen-review": "화면 판별", "review-gateway": "AI 심사", "ai1-preset": "AI1 심사", "ai2-direct": "AI2 직접 연결", "ai2-cli": "AI2 CLI",
   "ai2-grok": "AI2 Grok", "assist-primary": "LLM 보조(1차)", "assist-audit": "LLM 보조 감사", "assist-legacy-family": "LLM 보조(레거시)",
-  "korean-translation-direct": "한국어 번역 직접 연결", "classify-primary": "분류(1차)", "classify-fallback": "분류(예비)", "first-review": "1차 심사",
+  "classify-primary": "분류(1차)", "classify-fallback": "분류(예비)", "first-review": "1차 심사",
 };
 export const JOB_LABELS: Readonly<Record<string, string>> = {
   "reason-translate": "사유 번역", "crawl-tagline": "소개 생성", "product-tagline-ko": "한국어 소개", "product-search-profile": "검색 키워드",

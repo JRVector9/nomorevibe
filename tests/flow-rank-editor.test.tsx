@@ -43,7 +43,7 @@ describe("처리 LLM 바꾸기 — 서랍의 줄 (2026-11-04 5차)", () => {
     for (const station of ["discover", "fetch", "judge", "sink"] as const) expect(flowRankLinesFor(editor, station), station).toEqual([]);
     expect(flowRankLinesFor(editor, "second").map((entry) => entry.label)).toEqual(["2차 AI 검수 · 투표자 1", "2차 AI 검수 · 투표자 2", "2차 AI 검수 · 투표자 3"]);
     expect(flowRankLinesFor(editor, "profile").map((entry) => entry.task)).toEqual(
-      ["crawl-tagline", "product-tagline-ko", "korean-translation-direct", "product-translate", "reason-translate", "product-intro-check"]);
+      ["crawl-tagline", "product-tagline-ko", "product-translate", "reason-translate", "product-intro-check"]);
     expect(flowRankLinesFor(null, "first")).toEqual([]);
   });
 

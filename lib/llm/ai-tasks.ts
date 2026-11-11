@@ -5,7 +5,8 @@
  * 「작업 ↔ 모델」(ai_task_models)에 저장한 것만이다. 여기 있는 것은 작업 id·쉬운 이름·종류(chat·vision·embedding·rerank)·받는 연결 종류·칸 수와,
  * 오늘의 실행 경로를 가리키는 이름(용량 route id·지금 고르기 출처의 단계 id·잡 이름)뿐이다. 이 이름들은 PR B~D 가 실행 쪽을 옮길 때 같은 작업을 찾는 열쇠다.
  *
- * PR B 부터 text 일곱 작업, PR C1 부터 심사 둘(1차·2차)과 Grok 로그인 유지가 이 목록과 표를 읽는다. 나머지는 관리 화면이 저장·비교만 한다.
+ * PR B 부터 text 일곱 작업, PR C1 부터 심사 둘(1차·2차)과 Grok 로그인 유지, 2026-11-11 부터 LLM 보강 둘(assist-review·assist-audit)이 이 목록과 표를 읽는다.
+ * 나머지는 관리 화면이 저장·비교만 한다.
  */
 
 export const AI_CLI_TOOLS = Object.freeze(["claude", "codex", "grok", "opencode"] as const);
@@ -28,15 +29,23 @@ export const AI_TASK_KIND_LABELS: Readonly<Record<AiTaskKind, string>> = Object.
  *   같은 모델을 다른 연결에도 두면 연결로 가른 장부 이름(PR C1). CLI 순위는 연결의 CLI 버전으로 CLI 계약 행을 만든다(PR C1).
  * - review-ai2: 2차 — 1차와 같다(PR C1: 2차 계약도 순위 저장이 만든다 — 예전에는 이미 있는 계약만 받았다).
  * - local-direct: 고정 로컬 경로(local-*) — 이미 있는 정책 route 와 로컬 계약(장비 backend)만. 예산·장비 이름이 계약과 같아야 열려 만들지 않는다.
- * - uncapped: 용량 장부를 거치지 않는다(임베딩·재정렬·한국어 Qwen 직접 경로). 확인할 계약·경로가 없다.
- * - deferred: 경로 규칙이 아직 없다(보강 assist 는 작업·장비마다 route 가 다르고, 감사 캠페인은 시작할 때 모델을 굳힌다) — 저장은 받고 확인하지 않았다고 알린다.
+ * - uncapped: 용량 장부를 거치지 않는다(임베딩·재정렬). 확인할 계약·경로가 없다.
+ * - deferred: 경로 규칙이 아직 없다 — 저장은 받고 확인하지 않았다고 알린다.
+ * - assist-direct: LLM 보강(2026-11-11) — API 순위를 보강 일(assistWork)마다의 로컬 직접 경로(local-assist-<일>-<backend>, 잡 product-llm-assist-*)로 부른다.
+ *   저장이 그 연결·모델의 검증된 로컬 계약(local-openai-chat-v1 — 같은 주소·모델의 계약이 있으면 그것, 없으면 연결 주소 readback + 1토큰 시험으로 만든다)과
+ *   일마다의 정책 route(local-assist-<일>-<backend> / local-direct / 모델 → 계약의 장비)를 둔다. CLI 는 받지 않는다.
  * - audit-direct: 「발행분 감사 · 변경 재판정」(2026-11-09)의 API 순위 — 감사 직접 경로(route local-audit, 잡 audit-qwen)로 부른다. 저장이 그 연결·모델의
  *   검증된 로컬 계약(local-openai-chat-v1, 연결 주소 readback + 1토큰 시험)과 정책 route(local-audit / local-direct / 모델)를 만든다(이미 있으면 그대로 쓴다).
  *   CLI 순위는 감사 경로(routeId product-audit)의 CLI 계약을 만든다(예전 그대로).
  */
-export type AiTaskApiWiring = "engine-route" | "review-ai1" | "review-ai2" | "local-direct" | "uncapped" | "deferred" | "audit-direct";
+export type AiTaskApiWiring = "engine-route" | "review-ai1" | "review-ai2" | "local-direct" | "uncapped" | "deferred" | "audit-direct" | "assist-direct";
 /** 「발행분 감사 · 변경 재판정」의 API 순위가 쓰는 감사 직접 경로(장부 route — local-model-capacity-contract.ts localModelRoute 의 audit 목적) */
 export const AUDIT_DIRECT_ROUTE = "local-audit";
+/**
+ * LLM 보강의 장부 route(local-model-capacity-contract.ts localModelRoute 의 assist 갈래와 같은 꼴) — 보강 일 × 로컬 계약 backend 마다 하나다.
+ * 한 AI 작업(assist-review·assist-audit)이 여러 route 를 갖는다: 화면은 aiTaskOwnsLedgerRoute 로 장부 줄을 작업에 모은다.
+ */
+export const aiAssistRouteId = (work: string, backendId: string) => `local-assist-${work}-${backendId}`;
 
 export type AiTaskGroup = "review" | "text" | "search" | "audit" | "cli";
 export const AI_TASK_GROUP_LABELS: Readonly<Record<AiTaskGroup, string>> = Object.freeze({
@@ -57,6 +66,11 @@ export type AiTaskDef = Readonly<{
   slotLabel: string | null;
   /** 오늘의 용량 route id(장부·계약·장비 순위의 이름). 장부를 거치지 않거나 작업·장비마다 다르면 null */
   routeId: string | null;
+  /**
+   * LLM 보강 작업이 맡는 보강 일(llm_assist_work.task — lib/domain/llm-assist/work.ts assistWorkTaskSchema). 장부 route 는 일 × backend 마다
+   * local-assist-<일>-<backend> 다(aiAssistRouteId). 보강 작업이 아니면 빈 목록
+   */
+  assistWork: readonly string[];
   wiring: AiTaskApiWiring;
   /** 2·3순위도 1순위와 같은 모델이어야 한다(벡터·점수 공간이 모델마다 다르다) */
   sameModelAcrossRanks: boolean;
@@ -71,10 +85,11 @@ export type AiTaskDef = Readonly<{
   description: string;
 }>;
 
-type Draft = Omit<AiTaskDef, "slots" | "slotLabel" | "routeId" | "sameModelAcrossRanks" | "sameModelAs" | "adminStage" | "assignmentStage" | "cliTools">
-  & Partial<Pick<AiTaskDef, "slots" | "slotLabel" | "routeId" | "sameModelAcrossRanks" | "sameModelAs" | "adminStage" | "assignmentStage" | "cliTools">>;
+type Draft = Omit<AiTaskDef, "slots" | "slotLabel" | "routeId" | "sameModelAcrossRanks" | "sameModelAs" | "adminStage" | "assignmentStage" | "cliTools" | "assistWork">
+  & Partial<Pick<AiTaskDef, "slots" | "slotLabel" | "routeId" | "sameModelAcrossRanks" | "sameModelAs" | "adminStage" | "assignmentStage" | "cliTools" | "assistWork">>;
 const task = (draft: Draft): AiTaskDef => Object.freeze({ slots: 1, slotLabel: null, routeId: null, sameModelAcrossRanks: false, sameModelAs: null,
-  adminStage: null, assignmentStage: null, cliTools: Object.freeze([]), ...draft, jobs: Object.freeze([...draft.jobs]) });
+  adminStage: null, assignmentStage: null, cliTools: Object.freeze([]), ...draft, jobs: Object.freeze([...draft.jobs]),
+  assistWork: Object.freeze([...draft.assistWork ?? []]) });
 const tools = (...values: AiCliTool[]) => Object.freeze(values);
 
 /** 화면 순서 = 이 순서. id 는 바꾸지 않는다(ai_task_models.task 에 저장된다). */
@@ -102,8 +117,6 @@ export const AI_TASKS: readonly AiTaskDef[] = Object.freeze([
     jobs: ["product-translate"], adminStage: "product-translate", assignmentStage: "translate", description: "공개 제품의 글을 여러 언어로 옮깁니다." }),
   task({ id: "product-tagline-ko", label: "한국어 소개 번역", group: "text", kind: "chat", api: true, cliTools: tools("opencode"), routeId: "product-tagline-ko", wiring: "engine-route",
     jobs: ["product-tagline-ko"], adminStage: "product-tagline-ko", assignmentStage: "ko", description: "공개 제품의 한 줄 소개를 한국어로 옮깁니다." }),
-  task({ id: "korean-translation-direct", label: "한국어 소개 번역 · 직접 경로", group: "text", kind: "chat", api: true, wiring: "uncapped",
-    jobs: ["product-tagline-ko"], adminStage: "korean-translation-direct", description: "직접 API 경로입니다. CLI는 상한이 있는 product-tagline-ko를 씁니다." }),
   // 검색
   task({ id: "search-query-translate", label: "검색어 번역", group: "search", kind: "chat", api: true, cliTools: tools("opencode"), routeId: "search-query-translate", wiring: "engine-route",
     jobs: [], adminStage: "search-query-translate", description: "웹 검색 요청의 검색어를 번역합니다." }),
@@ -133,10 +146,14 @@ export const AI_TASKS: readonly AiTaskDef[] = Object.freeze([
   task({ id: "product-audit", label: "발행분 감사 · 변경 재판정", group: "audit", kind: "chat", api: true, cliTools: tools("claude", "opencode"), routeId: "product-audit",
     wiring: "audit-direct", jobs: ["product-audit", "audit-qwen"],
     description: "사람이 연 발행분 감사와, 내용이 바뀐 공개 제품의 재판정이 이 순위로 모델을 부릅니다. 재판정은 1·2·3순위를 차례로 씁니다(API 연결은 감사 직접 경로로). 사람이 연 감사는 시작할 때 CLI 순위 중 가장 앞의 것을 고정합니다(API 연결은 재판정만)." }),
-  task({ id: "assist-review", label: "LLM 보강", group: "audit", kind: "chat", api: true, cliTools: tools("opencode"), wiring: "deferred", jobs: ["product-llm-assist-review"],
-    adminStage: "assist-primary", assignmentStage: "assist", description: "응답 점검·저장소 이동 등 보강 작업을 모델에 묻습니다." }),
-  task({ id: "assist-audit", label: "LLM 보강 독립 감사", group: "audit", kind: "chat", api: true, cliTools: tools("opencode"), wiring: "deferred", jobs: ["product-llm-assist-audit-review"],
-    adminStage: "assist-audit", assignmentStage: "assist-audit", description: "자동 보강 결과를 다른 모델이 감사합니다." }),
+  // LLM 보강(2026-11-11 다시 연결) — 순위가 있으면 실행 쪽이 순위만 읽는다(lib/domain/llm-assist/rank-backends.ts). 순위가 없을 때만 옛 env 의 보강 백엔드 목록(config.ts assistBackendDrains).
+  // 호출은 보강 일마다의 장부 route(local-assist-<일>-<backend>)로 센다. 켜기·끄기(보내기·반영)는 llm_assist_controls(작업 배정 화면의 「LLM 보강 제어」)
+  task({ id: "assist-review", label: "LLM 보강", group: "audit", kind: "chat", api: true, wiring: "assist-direct", jobs: ["product-llm-assist-review"],
+    adminStage: "assist-primary", assignmentStage: "assist", assistWork: ["uptime", "repo_move", "intro_recheck", "news"],
+    description: "연결 확인·저장소 이동·소개 재검수·소식 보강을 모델에 묻습니다." }),
+  task({ id: "assist-audit", label: "LLM 보강 독립 감사", group: "audit", kind: "chat", api: true, wiring: "assist-direct", jobs: ["product-llm-assist-audit-review"],
+    adminStage: "assist-audit", assignmentStage: "assist-audit", assistWork: ["decision_audit", "semantic_exception"],
+    description: "자동 판정·의미 예외를 다른 계열의 모델이 감사합니다." }),
   // CLI 전용
   task({ id: "product-intro-check", label: "소개 검수", group: "cli", kind: "chat", api: false, cliTools: tools("claude", "opencode"), routeId: "product-intro-check",
     wiring: "deferred", jobs: ["product-intro-check"], adminStage: "product-intro-check", assignmentStage: "intro", description: "AI 소개·메이커 소개를 근거와 대조해 고칩니다." }),
@@ -166,8 +183,35 @@ export const AI_TEXT_TASK_IDS = Object.freeze(["crawl-tagline", "reason-translat
   "search-query-translate", "product-search-profile", "product-search-verify"] as const);
 export type AiTextTaskId = (typeof AI_TEXT_TASK_IDS)[number];
 export const isAiTextTask = (id: string): id is AiTextTaskId => (AI_TEXT_TASK_IDS as readonly string[]).includes(id);
-/** 순위를 실행 쪽이 읽는 작업(PR B text 일곱 + PR C1 심사 둘 + Grok 로그인 유지). 화면이 「실행」 줄을 보인다. */
-export const isAiLiveTask = (id: string): boolean => isAiTextTask(id) || isAiReviewTask(id) || id === "grok-session-check" || id === "product-audit";
+/**
+ * LLM 보강 작업(2026-11-11) — 실행 쪽(잡 product-llm-assist-review·product-llm-assist-audit-review)이 순위를 읽는다. 순위가 하나도 없을 때만 옛 env
+ * 보강 백엔드 목록(lib/domain/llm-assist/config.ts)으로 돈다(옮기는 동안의 길 — 배포 뒤 순위를 저장하면 env 를 지울 수 있다).
+ */
+export const AI_ASSIST_TASK_IDS = Object.freeze(["assist-review", "assist-audit"] as const);
+export type AiAssistTaskId = (typeof AI_ASSIST_TASK_IDS)[number];
+export const isAiAssistTask = (id: string): id is AiAssistTaskId => (AI_ASSIST_TASK_IDS as readonly string[]).includes(id);
+/** 순위를 실행 쪽이 읽는 작업(PR B text 일곱 + PR C1 심사 둘 + Grok 로그인 유지 + 재판정 + LLM 보강 둘). 화면이 「실행」 줄을 보인다. */
+export const isAiLiveTask = (id: string): boolean => isAiTextTask(id) || isAiReviewTask(id) || id === "grok-session-check" || id === "product-audit"
+  || isAiAssistTask(id);
+/**
+ * 지금 실행 쪽이 이 작업의 순위를 읽는가 — LLM 보강은 순위가 하나라도 있을 때만(없으면 옛 env 의 보강 백엔드 목록으로 돈다), 나머지는 isAiLiveTask 그대로.
+ * 화면은 이것이 false 면 「실제 적용 설정」(지금 실제로 쓰는 모델)을 보인다.
+ */
+export const aiTaskReadsRanks = (id: string, hasRanks: boolean): boolean => isAiLiveTask(id) && (!isAiAssistTask(id) || hasRanks);
+/** 장부 route 가 이 작업의 것인가 — 작업의 route id 그대로이거나, LLM 보강이면 그 보강 일의 local-assist-<일>-<backend> */
+export const aiTaskOwnsLedgerRoute = (row: Pick<AiTaskDef, "routeId" | "assistWork">, routeId: string): boolean =>
+  row.routeId === routeId || row.assistWork.some(work => {
+    const prefix = aiAssistRouteId(work, "");
+    return routeId.length > prefix.length && routeId.startsWith(prefix);
+  });
+/** 이 작업의 호출이 용량 장부에 남는가(작업 배정의 「지금 실제」를 셀 수 있는가) */
+export const aiTaskLedgerTracked = (row: Pick<AiTaskDef, "routeId" | "assistWork">): boolean => !!row.routeId || row.assistWork.length > 0;
+/**
+ * 없앤 작업 — 저장된 순위 행(ai_task_models)이 남아 있을 수 있다. 화면은 이 이름으로 「옛 순위 기록」을 보이고 지우기만 받는다(실행 쪽은 읽지 않는다).
+ * - korean-translation-direct: 한국어 소개 번역의 Qwen 직접 경로(2026-11-11 운영자 결정으로 없앰 — 장부를 거치는 product-tagline-ko 가 같은 일을 한다)
+ */
+export const RETIRED_AI_TASKS: Readonly<Record<string, string>> = Object.freeze({ "korean-translation-direct": "한국어 소개 번역 · 직접 경로(없앤 작업)" });
+export const isRetiredAiTask = (id: string): boolean => Object.prototype.hasOwnProperty.call(RETIRED_AI_TASKS, id);
 /**
  * 순위가 없거나(no_task_models)·표를 못 읽었거나(task_models_unreadable)·모든 순위를 쓸 수 없을 때(all_ranks_unusable) 잡이 남기는 degraded 코드.
  * 재시작으로 고쳐지지 않는 설정의 일이라 진행 감시가 재시작하지 않는다(lib/operations/worker-progress-query.ts applyAllSkippedBlock).

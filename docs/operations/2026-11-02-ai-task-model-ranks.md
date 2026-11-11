@@ -2,7 +2,8 @@
 
 상태: **PR A — 표·관리 화면·가져오기(#794).** **PR B — 글 짓기·번역·검색 text 일곱 작업이 이 표만 읽는다(공통 resolver·순위 대체, #795).**
 **PR C1 — 1차 AI 검수·2차 AI 검수(투표자 1·2·3)·Grok 로그인 유지가 이 표만 읽는다(심사 계약 묶기·칸별 대체·CLI 계약 DB 행).**
-직접 모델 단계·보강·감사·소개 검수·분류·벡터 작업은 아직 오늘의 설정으로 고른다(PR C2~D). 운영 적용(배포·migration)은 이 문서가 하지 않는다 — 순서는 아래 「운영 적용 순서」.
+**2026-11-11 — 한국어 소개 번역 Qwen 직접 경로(korean-translation-direct)를 없앴고, LLM 보강·LLM 보강 독립 감사가 순위를 읽고 장부 안에서 센다(아래 「2026-11-11」).**
+직접 모델 단계·감사·소개 검수·분류·벡터 작업은 아직 오늘의 설정으로 고른다(PR C2~D). 운영 적용(배포·migration)은 이 문서가 하지 않는다 — 순서는 아래 「운영 적용 순서」.
 
 ## 소유자 결정 (2026-11-02)
 
@@ -55,6 +56,7 @@ CHECK: 종류별 칸(API 는 주소, CLI 는 도구·모델 이름 1~32개이고
 | 심사 | 1차 AI 검수 · 2차 AI 검수(투표자 1·2·3) · 사람 몫 위임 검수 · 2차 갈림 재확인 · 2차 갈림 판가름 · 보류 재심사 |
 | 글 짓기·번역 | 수집 소개 짓기 · 심사 사유 번역 · 제품 다국어 번역 · 한국어 소개 번역 · 한국어 소개 번역 직접 경로 |
 | 검색 | 검색어 번역 · 검색 키워드 짓기 · 검색 키워드 검수 · 제품 의미 검색 벡터 · 검색어 벡터 · 검색 재정렬 |
+|  | (2026-11-11: 「한국어 소개 번역 직접 경로」는 없앴다 — 남은 순위 행은 작업 배정 화면 「없앤 작업의 옛 순위 기록」에서 지운다) |
 | 감사·보강 | 발행분 감사 직접 모델 · 감사 두 번째 의견 · 공개분 추가 검수 · 화면 판별 · 발행분 감사 캠페인 · LLM 보강 · LLM 보강 독립 감사 |
 | CLI 전용 | 소개 검수(Claude) · 카테고리 분류(Codex·Claude) · Grok 로그인 유지(Grok) |
 
@@ -366,6 +368,78 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
 - `m3-mlx`·`m3-mlx (2)` 연결 hasKey·모델 목록(화면 위 알림이 사라짐, 최근 기록 「키 자동 채움」), 멈춘 잡 셋 재개(상태 화면 「제 일 못 함」이 사라짐).
 - 결과 미확정 3건은 이 변경이 회수하지 않는다 — 정식 회수 CLI 로 처리한다.
 
+## 2026-11-11 — 한국어 Qwen 직접 경로 없앰 · LLM 보강 다시 연결
+
+운영자 원칙: 모든 모델 호출은 그 장비의 칸(용량 장부 `model_capacity_requests`, 장비 `model_capacity_devices`, 정책 route) 안에서 센다.
+작업 배정(`/admin/models/tasks`)에서 「장부 밖 작업 — 호출 수를 세지 않습니다」로 보이던 작업 중 셋을 정리했다(벡터·재정렬은 그대로 — PR D).
+
+### 1. 한국어 소개 번역 · 직접 경로(korean-translation-direct) 없앰 — 운영자 결정 「없애자」
+
+- 무엇이었나: `KOREAN_TRANSLATION_QWEN_ENABLED`(운영 true)이면 `product-tagline-ko` 잡이 GPT 묶음 옆에 gpu3090 Qwen 묶음을 장부 밖에서 따로 불렀다.
+  실제로는 용량 제어가 `disabled` 일 때만 돌았고(운영은 open — 24시간 쓰기 0), 회복 선택(`KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED`, 운영 true)도
+  `model_capacity_control.mode = 'disabled'` 에서만 행을 골랐다. 장부를 거치는 `product-tagline-ko` 순위가 같은 일을 이미 한다.
+- 지운 것: env 두 개 읽기(`lib/crawl/korean-translation-config.ts`), `lib/crawl/korean-translation-qwen.ts`, 잡의 Qwen 묶음·회복 묶음
+  (`lib/jobs/products/korean-tagline.ts` — 장부가 꺼진 틱도 순위만 부른다), 회복 선택(`pendingKoreanTaglineRecovery`, 대기열 술어의 `recovery`·`recoveryReady`,
+  집계 칸 `recoveryReady`), AI 작업 정의, 관리자 단계 `korean-translation-direct`, 등록부 용도 `korean-translation-direct`(gpu3090:review 의 purposes),
+  흐름 칸 `tagline-ko-qwen`, 실시간 한도 이름표, 컨베이어 줄, 「지금 실제로 쓰는 모델」 갈래, 상태 카드의 Qwen 문구, `.env.example` 두 줄.
+  `product-tagline-ko` 잡은 더는 단계 풀 범위를 열지 않는다(`MODEL_POOL_JOBS` 에서 뺌 — 그 잡의 모델은 순위만 고른다).
+- 남은 데이터는 깨뜨리지 않는다:
+  - 저장된 단계 풀(`crawl_settings.values.stageModelPools["korean-translation-direct"]`)은 읽을 때 버린다(`RETIRED_ADMIN_MODEL_STAGES` — 모르는 칸 하나로
+    크롤 설정 전체가 기본값으로 떨어지지 않게). 다음 설정 저장이 그 칸 없이 쓴다.
+  - 남은 순위 행(`ai_task_models.task = 'korean-translation-direct'`, 화면의 「옛 순위 기록 1개」)은 실행 쪽이 읽지 않는다. 작업 배정 화면 위 「없앤 작업의 옛 순위 기록」에서
+    판을 맞춰 「기록 지우기」로 지운다(감사 한 줄 `ai-task-models-save` reason `unread_records_cleared`). LLM 운영의 연결 칩은 그 행을 「한국어 소개 번역 · 직접 경로(없앤 작업)」 옛 기록으로 보인다.
+    SQL 로 지울 필요는 없다.
+  - 실시간 한도에 `routes.*.korean-translation-direct` 를 저장해 두었다면 읽을 때 `unknown_route` 로 건너뛴다(값은 쓰이지 않는다).
+
+### 2. LLM 보강·LLM 보강 독립 감사 — 장부 안 작업으로 다시 연결, 관리자에서 관리 — 운영자 결정 「다시 연결하고 관리자에서 관리할 수 있도록」
+
+(a) 장부 표시
+- 보강 호출은 예전부터 장부를 거쳤다(`withLocalModelCapacity`, route `local-assist-<일>-<backend>` — 10-25 까지 intro_recheck 47·uptime 22·repo_move 1 건).
+  화면만 작업에 route id 가 없어 「장부 밖」이라 했다.
+- 작업 정의에 `assistWork`(보강 일) — LLM 보강 = uptime·repo_move·intro_recheck·news, 독립 감사 = decision_audit·semantic_exception.
+  `aiTaskOwnsLedgerRoute`·`aiTaskLedgerTracked`(lib/llm/ai-tasks.ts)로 한 작업이 여러 route 를 갖는다. `taskOfRoute`(llm-display)·작업 배정 표·컨베이어가 이것으로 센다.
+
+(b) 모델은 순위로(env 아님)
+- wiring `assist-direct`: API 순위만 받는다(CLI 없음). 순위 저장이 감사 직접 경로(audit-direct)와 같은 길로 준비한다 —
+  같은 주소·모델의 로컬 계약(관리 표 행 또는 웹 env 의 계약)이 있으면 그것, 없으면 readback + 1토큰 시험 뒤 `local-model:<api-…>` 계약을 만들고,
+  보강 일마다의 정책 route(`local-assist-<일>-<backend>` / local-direct / 모델 → 연결의 장비)를 덧붙인다(`appendCompatibleRoutes`, DRAIN 없음). 장비 행이 없으면 만든다.
+  막는 것: 감사 직접 경로와 같은 까닭 + **모델 계열** — 보강 판정은 등록부 `assist-primary` 의 family(기본 qwen3.8-flash-next), 독립 감사는 `assist-primary`·`assist-audit`
+  중 하나여야 한다(보강 결과의 독립 감사가 계열로 짝을 맞춘다 — 예전 env 길의 규칙 그대로).
+- 실행 쪽(`lib/domain/llm-assist/rank-backends.ts` `assistLanePlan`, 잡 `lib/jobs/products/llm-assist-review.ts`):
+  - 그 줄의 작업에 순위가 하나라도 있으면 순위만 읽는다 — env `LLM_ASSIST_BACKENDS`·`LLM_ASSIST_API_KEYS` 를 읽지 않는다. 키는 연결의 키(없으면 키 없이).
+    계약은 이 주소·모델로 고른다(`servingRevision: null` — 단계 풀의 CLI 리비전을 따르지 않는다).
+  - 쓸 수 있는 가장 앞 순위 하나로 그 틱의 줄을 돈다(대체 실행). 쓸 수 없는 순위의 까닭(`no_local_contract`·`assist_family_mismatch`·`assist_routes_missing`·
+    `assist_json_schema_missing`·연결 꺼짐 등)은 `ai_task.ranks` 로 남겨 작업 배정 「자세히」에 보인다. 포화는 장부가 기다리게 한다(다음 순위로 넘기지 않는다).
+    한 틱에 맡는 일은 1(예전 운영 env 의 maxClaims 와 같다 — `ASSIST_RANK_MAX_CLAIMS`).
+  - 모두 쓸 수 없으면 `all_ranks_unusable`(보내기가 켜진 일이 있을 때만 degraded — 끈 줄은 설정의 일이 아니다). 순위 표를 못 읽었으면 `task_models_unreadable` 로 부르지 않는다.
+  - **순위가 하나도 없으면 예전 env 길 그대로**(옮기는 동안). 이 PR 은 아무 것도 켜지 않는다.
+
+(c) 켜기·끄기(llm_assist_controls)를 관리자에서
+- 작업 배정 화면 아래 「LLM 보강 제어」(`#assist-controls`, 표의 보강 두 줄에 「보강 켜기·끄기 →」): 보강 일마다 단계(끔·그림자·확인 후 반영)·보내기·반영과
+  끝나지 않은 일 수. 저장은 판(revision) compare-and-set, DB 규칙 그대로(보내기는 그림자·확인에서만, 반영은 확인 + 보내기에서만, 확인 필수는 confirm 이면 켜지고
+  끌 수 없다 — 트리거). 판이 오르면 진행 중이던 그 일의 호출은 모델 호출 전에 멈춘다. 감사 한 줄 `llm-assist-control`(운영 SQL 때 쓰던 이름 그대로).
+- 보내기가 모두 꺼진 보강 작업은 작업 배정에서 「의도적 중지 · LLM 보강 보내기 꺼짐」이다.
+
+### 배포·운영 적용(이 PR 은 배포·env·운영 DB 를 바꾸지 않았다)
+
+1. migration 없음. 새 잡 없음(카탈로그 그대로) — scheduler-first 필요 없음. 웹(관리 화면)·reviewer(보강 잡)·text(한국어 소개 잡)·상태 집계가 바뀐다 —
+   범위는 `npm run deploy -- scope|plan` 으로 정한다.
+2. 배포만으로 정책·계약·장비는 바뀌지 않는다. 보강 순위를 저장할 때만 로컬 계약·route·장비 행이 생긴다(DRAIN 없음).
+3. 배포 직후 보강은 예전 그대로(순위 없음 → env, 운영은 6개 일 모두 dispatch false 라 아무 것도 부르지 않는다).
+   **주의**: 운영에 예전 가져오기로 생긴 assist-review·assist-audit 순위 행이 있으면 배포 즉시 그 순위가 env 를 대신한다(보내기가 꺼져 있어 부르지는 않는다) —
+   배포 전 `SELECT task, slot, rank, model FROM ai_task_models WHERE task IN ('assist-review','assist-audit','korean-translation-direct')` 로 확인한다.
+4. 보강을 순위로 옮기기: 작업 배정에서 LLM 보강·LLM 보강 독립 감사 「바꾸기」로 1순위를 저장한다(예: gpu3090 · qwen3.8-flash-next, M3 · deepseek-v4.1-flash-1017).
+   운영의 env 계약(`gpu3090-qwen`·`m3-deepseek`)을 웹이 읽을 수 있으면 그 계약과 이미 있는 `local-assist-*-gpu3090-qwen` route 를 그대로 쓴다. 웹이 그 계약을 못 읽으면
+   (워커 env 에만 있으면) 저장이 「계약 … 을 이 화면이 읽지 못해」로 막는다 — 서빙 계약 화면에서 그 계약을 표로 옮긴 뒤 저장한다.
+   키가 필요한 엔진(M3)은 AI 연결에 키를 넣어 둔다(`LLM_ASSIST_API_KEYS` 는 순위 길에서 읽지 않는다). 장비에 물리 상한이 있어야 경로가 열린다.
+5. 그 뒤 「LLM 보강 제어」에서 필요한 일만 보내기를 켠다(사람 결정).
+6. env 지우기:
+   - `KOREAN_TRANSLATION_QWEN_ENABLED`·`KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED`: 이 PR 배포 뒤 바로 지울 수 있다(코드가 읽지 않는다).
+   - `LLM_ASSIST_BACKENDS`·`LLM_ASSIST_API_KEYS`: 두 보강 작업 모두에 순위를 저장하고 작업 배정 「자세히」의 실행 줄이 순위로 도는 것을 본 뒤 reviewer 앱에서 지운다.
+     (그 env 를 읽는 남은 곳: 순위 없는 줄의 env 길 `assistBackendDrains`, 단계 풀 CLI 엔진 준비 `admin-cli-stage-resources.ts assistRoutes` — 보강 단계 풀 편집은 이제
+     화면에 없다, 「지금 실제로 쓰는 모델」의 순위 없는 갈래.) 코드 쪽 env 길은 PR E 가 지운다.
+   - Dokploy env 만 바꾸면 배포 도구의 `runtime_contract_matches` 가 그 앱을 다르다고 본다 — env 를 바꾼 앱은 같은 릴리스로 먼저 재배포하거나 릴리스 뒤 env 절차로 한다.
+
 ## 운영 적용 순서
 
 1. **PR A 배포**(migration 0162 — 새 표 둘, 기존 표·CHECK 는 그대로라 DRAIN 이 필요 없다).
@@ -399,7 +473,7 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
    `TextTaskRanks` 의 순위 대체·degraded·`ai_task.ranks` 요약은 그대로 쓸 수 있다(이름의 text 는 역사적 — 필요하면 일반화).
 3. 순위 대체가 포화(`capacity`) 때 다음 순위로 넘기면 앞 순위의 대기 행이 장부에 남는다(그 일이 다른 순위로 끝나면 TTL 로 사라진다). 1차 #792 와 같은 성질이다 — PR C 에서
    대기 행을 물리는 길이 필요한지 본다.
-4. `korean-translation-direct`(한국어 Qwen 직접 경로)는 아직 `KOREAN_TRANSLATION_QWEN_ENABLED`·단계 풀을 읽는다(PR C). product-tagline-ko 잡이 `MODEL_POOL_JOBS` 에 남은 까닭이다.
+4. ~~`korean-translation-direct`(한국어 Qwen 직접 경로)는 아직 `KOREAN_TRANSLATION_QWEN_ENABLED`·단계 풀을 읽는다~~ — 2026-11-11 없앴다(product-tagline-ko 잡도 `MODEL_POOL_JOBS` 에서 뺐다).
 5. PR E: 일곱 경로는 env·등록부 기본값을 더 읽지 않는다 — `ABCLLM_MODEL`·`ABCLLM_PROFILE_MODEL`·`SEARCH_VERIFY_MODEL`(+`_KEY`)은 소개 검수(`INTRO_CHECK_MODEL`)·
    직접 모델 단계가 더 읽지 않는지 확인한 뒤 지운다. `pipeline-control` 의 text route 판정은 provider 를 늘 `abcllm` 으로 적는다(local-direct 계약이면 「경로 없음」으로 보일 수 있다 — 예전 그대로).
 6. 「지금 실제로 쓰는 모델」(PR A)은 text 일곱 줄에서 이제 저장한 순위 그대로다 — 가져오기 계획도 그 줄은 「그대로」다.
@@ -416,9 +490,9 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
    local-direct 갈래)은 `tableLocalModelContracts` 에서 계약이 null 로 읽혀 같은 주소·모델의 env 계약을 `verifiedLocalModelContract` 에서 닫는다 — C2 가 로컬 계약을
    연결에서 만들 때 이 행과 겹치지 않게(또는 그 행을 함께 정리하게) 한다.
 3. C2 대상: 사람 몫 위임·2차 갈림 재확인·판가름·보류 재심사·감사 직접 모델·감사 두 번째 의견·공개분 추가 검수·화면 판별(`local-*` 단계 풀·등록부·env),
-   한국어 Qwen 직접 경로(`KOREAN_TRANSLATION_QWEN_ENABLED`·단계 풀 — product-tagline-ko 잡이 `MODEL_POOL_JOBS` 에 남은 까닭), 소개 검수(`INTRO_CHECK_MODEL`·
+   ~~한국어 Qwen 직접 경로~~(2026-11-11 없앰), 소개 검수(`INTRO_CHECK_MODEL`·
    env `CLI_SERVING_CONTRACTS`·`CLAUDE_CLI`), 발행분 감사 캠페인(시작이 옛 `firstReview` 를 읽는다 — 이제 편집 칸이 없어 마지막 저장값이 굳는다; 감사 작업 순위로 옮긴다),
-   LLM 보강(`LLM_ASSIST_BACKENDS`), 카테고리 분류(connect 에이전트 — env CLI 계약·`CODEX_CLI`·`CLAUDE_CLI`, 분류 기본값 `classificationDefaultConfig`).
+   ~~LLM 보강(`LLM_ASSIST_BACKENDS`)~~(2026-11-11 순위로 — 위 「2026-11-11」), 카테고리 분류(connect 에이전트 — env CLI 계약·`CODEX_CLI`·`CLAUDE_CLI`, 분류 기본값 `classificationDefaultConfig`).
    CLI 계약을 DB 행으로 옮기려면 `CLI_DB_CONTRACT_ROUTES` 에 route 를 더하고 `cli-db-contracts.ts` 에 그 route 의 argv 상한을 적는다(connect 에이전트는
    `probeCliServingContracts` 를 부르므로 같은 버전 확인을 탄다).
 4. **2차의 줄 대기 대체**(`capacity_wait_timeout`)는 첫 표가 엔진 직접(local-direct·abcllm 형)일 때만이다 — CLI 첫 표는 줄에서 기다려도 다른 순위로 넘기지 않는다
@@ -443,7 +517,8 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
    같은 주소·모델의 env 계약을 `verifiedLocalModelContract` 에서 닫는다. PR A 는 로컬 계약을 쓰지 않는다.
 4. **CLI 계약**(`CLI_SERVING_CONTRACTS`)은 connect 에이전트 쪽이라 웹이 확인하지 못한다. — **PR C1 이 1차·2차·Grok 로그인 유지를 옮겼다**(연결의 CLI 버전 → DB 행,
    버전은 워커가 견준다). 소개 검수·감사·분류는 PR C2.
-5. **보강 assist** 는 route 가 작업·장비마다 다르고(`local-assist-<작업>-<backend>`), **감사 캠페인** 은 시작할 때 모델을 굳힌다. PR C 가 규칙을 정한다.
+5. **보강 assist** 는 route 가 작업·장비마다 다르고(`local-assist-<작업>-<backend>`) — 2026-11-11 규칙을 정했다(위 「2026-11-11」: 보강 일 × 로컬 계약 backend 마다 route).
+   **감사 캠페인** 은 시작할 때 모델을 굳힌다.
 6. ~~Oracle 소비자 권한~~ — **PR B 가 더했다**(위 「Oracle 소비자 권한」).
 7. 「지금 실제로 쓰는 모델」은 **웹 프로세스 env** 기준이다. 워커의 env 가 다르면(예: `EMBEDDING_URL`) 다를 수 있다.
 8. 임베딩·재정렬은 요청에 모델 이름을 싣지 않는다. PR D 가 순위의 모델 이름을 서버 확인(목록에 있는가)에 쓴다.
@@ -454,13 +529,13 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
 
 - `AUDIT_SECOND_OPINION_URL`·`AUDIT_SECOND_OPINION_API_KEY`·`AUDIT_SECOND_OPINION_MODEL`·`AUDIT_SECOND_OPINION_LABEL`
 - `SCREEN_REVIEW_MODEL`·`SCREEN_REVIEW_MODEL_URL`·`SCREEN_REVIEW_MODEL_API_KEY`
-- `LLM_ASSIST_BACKENDS`·`LLM_ASSIST_API_KEYS`
+- `LLM_ASSIST_BACKENDS`·`LLM_ASSIST_API_KEYS`(2026-11-11 부터 순위가 있는 줄은 읽지 않는다 — 순위 없는 줄의 옮기는 길만 남았다)
 - `LOCAL_MODEL_SERVING_CONTRACTS`·`LOCAL_MODEL_VERIFIED_CONTRACT_HASHES`·`LOCAL_MODEL_PHYSICAL_LIMITS`·`AI2_DIRECT_SERVING_CONTRACTS`·`CLI_SERVING_CONTRACTS`
 - `LOCAL_MODEL_RELAY_MODEL`(`_KEY`)·`LOCAL_MODEL_RELAY_UPSTREAM_URL`
 - `EMBEDDING_URL`·`RERANK_URL`
 - `ABCLLM_BASE_URL`·`ABCLLM_MODEL`·`ABCLLM_PROFILE_MODEL`(그리고 `*_KEY` 선택자), `SEARCH_VERIFY_MODEL`(`_KEY`), `INTRO_CHECK_MODEL`(`_KEY`)
 - `MODEL_REGISTRY_CONFIG`·`MODEL_ASSIGNMENT_TABLE`
-- `KOREAN_TRANSLATION_QWEN_ENABLED`·`KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED`(켜기는 「한국어 소개 번역 · 직접 경로」에 순위가 있는가로)
+- ~~`KOREAN_TRANSLATION_QWEN_ENABLED`·`KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED`~~ — 2026-11-11 경로째 없앴다(코드가 읽지 않는다 — 운영 앱에서 지우기만 남았다)
 - CLI 실행 파일·로그인(`CLAUDE_CLI`·`GROK_CLI`·`CODEX_CLI`·`GROK_AUTH_PATH`·`CLAUDE_CODE_OAUTH_TOKEN`)은 모델 선택이 아니라 도구 위치·로그인이다 — 남길지 PR E 에서 정한다.
 
 코드 기본값:
@@ -469,7 +544,7 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
   `DEFAULT_MODEL_CANDIDATES`, `MODEL_PURPOSE_ENV`, 관리자 덮어쓰기 `model_registry_overrides`(0148)를 읽는 길.
 - 단계 풀(`stageModelPools`)·`firstReview`·`firstReviewAdditional`·`secondReview.voters`·`fallbacks`·배정 표(`model_helper_assignments` role primary)의 모델 고르기.
 - `lib/crawl/settings-schema.ts` 의 2차 기본 투표자(`modelForPurpose("ai2-cli")`), `lib/operations/classification-models.ts` 의 분류 기본값(`classificationDefaultConfig`).
-- `lib/crawl/korean-translation-config.ts`·`lib/crawl/qwen-direct-review.ts` 의 등록부 기본 주소·모델 읽기.
+- `lib/crawl/qwen-direct-review.ts` 의 등록부 기본 주소·모델 읽기(`korean-translation-config.ts` 의 것은 2026-11-11 없앴다).
 - `lib/domain/products/embedding.ts` 의 `EMBEDDING_MODEL` 은 벡터 공간 이름(저장된 벡터의 판)이라 모델 선택과 따로 남길지 PR D 가 정한다.
 
 ## 쓰는 순서 (운영자)
@@ -478,6 +553,17 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
 2. 확인 「가져오기」 + 적용 → 연결과 순위가 생긴다.
 3. 「작업 ↔ 모델」 줄마다 「저장한 순위 = 지금 동작」인지, 준비 상태에 빨간 줄이 없는지 본다.
 4. 필요하면 줄을 고쳐 저장한다(저장이 없는 계약·경로·장비를 만든다). 잡은 PR B 배포 전까지 이 순위를 읽지 않는다 — PR B 배포 뒤 text 일곱 작업은 저장 30초 안에 새 순위로 돈다.
+
+## 검증 (2026-11-11 — 한국어 직접 경로 없앰 · LLM 보강 다시 연결)
+
+- `npx next typegen` 뒤 `npx tsc --noEmit -p .`(시험 포함) 깨끗, 바뀐·새 TS 파일 56개의 eslint 깨끗.
+- 바뀐 모듈을 불러오는 단위 시험 239개 파일 — 3,437개 통과·실패 0. 새 시험: `tests/llm-assist-rank-backends.test.ts`(순위 → 줄·까닭·env 길·감사 줄),
+  `tests/llm-assist-controls.test.ts`, `tests/korean-tagline-ranked-path.test.ts`(옛 dual-model 시험을 순위 한 길로), `tests/ai-task-model-ranks.test.tsx` 의 assist-direct 준비,
+  `tests/llm-task-assign-view.test.ts` 의 보강 장부 세기·보내기 꺼짐, `tests/admin-task-assign-page.test.tsx` 의 보강 제어·없앤 작업 기록.
+- 바뀐 범위의 통합 시험 29개 파일(파일마다 DB 를 새로 만들어 하나씩, 자기 Postgres) 모두 통과. 새 통합 시험: `ai-task-model-ranks.test.ts` 의 보강 순위 저장
+  (로컬 계약·route 넷·장비 행 → DB 스냅숏 → `assistLanePlan`), 계열 거절, 없앤 작업 행 지우기, 보강 제어 저장(CAS·DB 규칙·감사·관리자 아님),
+  `llm-assist-dispatch.test.ts` 의 순위 길 끝까지(env 를 읽지 않고 연결 키로 같은 장부 route 정산·결과 반영·`ai_task.ranks`). 없앤 `korean-tagline-recovery.test.ts` 는 지웠다.
+- 전체 단위·전체 DB 시험은 정책대로 통합 단계에서 돈다(돌리지 않았다).
 
 ## 검증 (PR C1)
 

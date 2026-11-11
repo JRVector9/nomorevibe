@@ -319,7 +319,7 @@ DR fence → control FOR UPDATE(정책이 없어도 된다) → 배정 행 FOR U
 | --- | --- | --- |
 | ai1 (`lib/crawl/first-reviewers.ts`) | 풀 = ai1 live 행(abcllm·claude-cli·grok-cli), rank → assignment_id. `firstReviewers()` 는 표 전체(대체 포함)를 돌려준다 — 결과 유효성·route 목록. 새 후보 = `chooseModelForItem` 의 `(id − 1) mod n`(가장 낮은 rank), 손대지 않은 후보만 막힌·쉬는 모델을 비켜 가고 rank 1 이 모두 막히면 rank 2(대체). 활성 의도·재시도 고정은 같다 | **풀 모드(`firstReviewAdditional` 이 있다, [] 도 된다)일 때만** 표를 쓴다 — 1차 consumer·legacy 잡(PR 3a 소유)이 풀 모드에서만 후보마다 고르고 모델별로 쉰다. 아니면 `assignment_table_pool_mode_off:ai1` 한 번 + 예전. `firstReviewer(settings)`(AI2 정책 hash 의 1차)는 예전 그대로 |
 | ai2 (`lib/crawl/second-review-voters.ts`) | 투표자 = rank 1 · vote · live, 대체 = rank ≥ 2(rank 순), 같은 모델 한 번. **모든 2차 읽기**(올리기·입력 검증·정리·stale·결과 기록의 대체·대기 대체·공개 관문 SQL·보류 재심사·발견 관문·도우미 저장 검사·route 목록)가 이 두 함수를 읽어 함께 바뀐다. 항목마다 1차와 같은 가중치를 빼는 규칙은 그대로 | 투표자 행이 없으면 예전. AI2 정책 hash 는 저장된 설정을 그대로 hash(표가 바뀌어도 진행 중 receipt 가 hash 로 깨지지 않고, 빠진 모델은 입력 검증이 거른다). Grok 세션 점검 잡(`lib/crawl/jobs/grok-session.ts`, 3a 소유)은 예전 목록 |
-| human · audit · audit-second-opinion · screen · reason · translate · ko · profile · verify · tagline · intro (`lib/llm/admin-model-pools.ts`) | 저장 잡 범위(`withStoredAdminStagePools`)에서 대응 관리자 단계(`ADMIN_STAGE_ASSIGNMENTS`)의 풀 대신 표 행에서 **결정적** `chooseModelForItem`(같은 sha256 칸, 가장 낮은 rank). 「빈 grant 가 있는 첫 rank 1 행」은 이 동기 scope 가 표현하지 못해 쓰지 않았다(입장이 포화를 미룬다). 등록부·adapter·용도 검사와 wire = 등록부 요청 이름을 지나는 행만 | direct-review·published-filter·split-tiebreak·held-review-retry·split-confirm·korean-translation-direct·search-query-translate·assist-* 는 저장 풀. 명시 풀(`withAdminStagePools`, 준비 점검)은 바꾸지 않는다 |
+| human · audit · audit-second-opinion · screen · reason · translate · ko · profile · verify · tagline · intro (`lib/llm/admin-model-pools.ts`) | 저장 잡 범위(`withStoredAdminStagePools`)에서 대응 관리자 단계(`ADMIN_STAGE_ASSIGNMENTS`)의 풀 대신 표 행에서 **결정적** `chooseModelForItem`(같은 sha256 칸, 가장 낮은 rank). 「빈 grant 가 있는 첫 rank 1 행」은 이 동기 scope 가 표현하지 못해 쓰지 않았다(입장이 포화를 미룬다). 등록부·adapter·용도 검사와 wire = 등록부 요청 이름을 지나는 행만 | direct-review·published-filter·split-tiebreak·held-review-retry·split-confirm·search-query-translate·assist-* 는 저장 풀(korean-translation-direct 는 2026-11-11 없앴다). 명시 풀(`withAdminStagePools`, 준비 점검)은 바꾸지 않는다 |
 | 등록부 기본값 (`lib/llm/model-registry.ts`) | `configuredModel*`: 용도의 단계(`ASSIGNMENT_PURPOSE_STAGES`: profile·verify·tagline·reason·ko·translate·intro)에 live 행이 있으면 첫 행의 key 가 `*_KEY`·예전 env 보다 앞선다 — scope 밖 process env 만. 등록부 읽기는 import 시점에도 일어나 스냅숏을 다시 읽지 않는다(DB client 를 진입 확인보다 먼저 만들지 않는다) — 잡 길목(`withStoredAdminStagePools`)이 채운 스냅숏을 본다 | 단계 풀 scope 의 key, 호출자가 넘긴 env, 대응 없는 용도(search-query-translate·direct-review·relay)는 예전 순서 |
 
 - 인증된 용량 측정(`pipeline-capacity` manifest)은 표가 출처이면 `unsupported_capacity_assignment_table`, 실측 수집은 스위치가 켜진 프로세스에서
@@ -495,6 +495,9 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
   env 전용 `resolveLocalModelServingContract` 는 그대로다(테스트 유지).
 
 ### 설계 메모 — product-tagline-ko 의 Qwen env 스위치 흡수(3b-C 남은 일 2, 이 PR 범위 밖)
+
+> **2026-11-11 결론:** 흡수하지 않고 없앴다(운영자 결정). Qwen 직접 경로·회복 선택·`KOREAN_TRANSLATION_QWEN_*` env 읽기를 지웠다 — 한국어 소개 번역은
+> 장부를 거치는 `product-tagline-ko` 순위만 부른다. 자세한 것은 [작업 ↔ 모델 문서의 「2026-11-11」](2026-11-02-ai-task-model-ranks.md). 아래는 옛 메모다.
 
 - 지금: `KOREAN_TRANSLATION_QWEN_ENABLED=true` 면 `product-tagline-ko` 잡이 gpt 묶음 뒤에 Qwen 묶음을 따로 꾸려 등록부 목적 `korean-translation-direct`
   (`KOREAN_TRANSLATION_QWEN_BASE_URL`·`_MODEL`)로 legacy(expanded) wire 를 장부·계약 밖에서 바로 부른다(`lib/crawl/korean-translation-qwen.ts`).

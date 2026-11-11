@@ -181,6 +181,40 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     expect(html).toContain("LLM 운영 › 기록에서 전체 보기 →");
   });
 
+  it("2026-11-11: LLM 보강 제어 접힘(#assist-controls)·없앤 작업의 옛 순위 기록(지우기)·보강 줄의 「보강 켜기·끄기 →」", async () => {
+    vi.doMock("@/app/(operator)/admin/models/tasks/task-assign-slot", () => ({ TaskAssignSlot: () => <p data-slot="task-assign">표</p> }));
+    vi.doMock("@/lib/operations/llm-assist-controls", () => ({ readAssistControls: async () => ({ error: null, controls: [
+      { task: "uptime", mode: "confirm", confirmationRequired: true, dispatchEnabled: false, applyEnabled: false, revision: 7, updatedAt: null, label: "연결 확인",
+        aiTask: "assist-review", aiTaskLabel: "LLM 보강", queue: { queued: 24055 } }] }) }));
+    vi.doMock("@/app/(operator)/admin/models/tasks/assist-actions", () => ({ saveAssistControlAction: vi.fn() }));
+    vi.resetModules();
+    const { default: Page } = await import("@/app/(operator)/admin/models/tasks/page");
+    mocks.view.mockResolvedValue(adminView({ rows: [...llmRankRows, { task: "korean-translation-direct", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next",
+      options: {}, enabled: true }] }));
+    const html = renderToStaticMarkup(await Page({ searchParams: Promise.resolve({}) }));
+    vi.doUnmock("@/app/(operator)/admin/models/tasks/task-assign-slot");
+    vi.doUnmock("@/lib/operations/llm-assist-controls");
+    vi.doUnmock("@/app/(operator)/admin/models/tasks/assist-actions");
+    // 보강 제어: 일마다 단계·보내기·반영, 확인 필수는 끌 수 없다고 적는다, 대기 수
+    const assist = html.match(/<details id="assist-controls"[^]*?<\/details>/)![0];
+    expect(text(assist)).toContain("LLM 보강 제어");
+    expect(text(assist)).toContain("연결 확인 uptime · LLM 보강");
+    expect(text(assist)).toContain("대기 24,055");
+    expect(text(assist)).toContain("확인 후 반영 · 보내기 꺼짐 · 반영 꺼짐");
+    expect(text(assist)).toContain("확인 필수(끌 수 없음) — 옛 자동 내림이 보강 확인을 기다립니다");
+    expect(assist).toContain('name="mode"');
+    expect(assist).toContain('name="revision" value="7"');
+    // 없앤 작업의 옛 순위 행 — LLM 운영 칩이 거는 앵커로, 지우기만
+    expect(html).toContain('id="execution-korean-translation-direct-1"');
+    expect(text(html)).toContain("한국어 소개 번역 · 직접 경로(없앤 작업) · 순위 1개");
+    expect(html).toContain('aria-label="한국어 소개 번역 · 직접 경로(없앤 작업) 옛 순위 기록 1개 지우기"');
+    // 보강 표 줄의 링크(표 자체)
+    const table = renderToStaticMarkup(await TaskAssignSlot({ view: adminView(), executions: [], readOnly: false }));
+    expect(table.match(/<tr id="execution-assist-review-1"[^]*?<\/tr>/)![0]).toContain('href="#assist-controls"');
+    expect(table.match(/<tr id="execution-assist-audit-1"[^]*?<\/tr>/)![0]).toContain("보강 켜기·끄기 →");
+    expect(table.match(/<tr id="execution-crawl-tagline-1"[^]*?<\/tr>/)![0]).not.toContain("#assist-controls");
+  });
+
   it("옛 「연결 고치기」 주소(?edit=<연결>)는 LLM 운영의 그 행으로 넘긴다", async () => {
     await expect(AiTasksPage({ searchParams: Promise.resolve({ edit: MLX }) })).rejects.toThrow(`NEXT_REDIRECT:/admin/models/llm?edit=${MLX}#conn-${MLX}`);
     expect(mocks.view).not.toHaveBeenCalled();

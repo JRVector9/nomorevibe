@@ -1,11 +1,9 @@
-import { scopedModel } from "@/lib/llm/model-registry";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
 import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { productTaglineKoSourceHash } from "@/lib/crawl/translate";
-import { KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 import type { PreparedProductTaglineKoGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { displayProjectName } from "./display-name";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -14,12 +12,12 @@ import { productTaglineKoInputSchema, productTaglineKoDispatchBindingSchema, pro
   type ModelCapacityReservation, type ModelCapacityRequestIdentity, type ProductTaglineKoModelDispatch } from "@/lib/llm/capacity";
 import { lockModelCapacityCallerControl, lockProductTaglineKoModelCapacityDispatch,
   finishProductTaglineKoModelCapacityDispatch } from "@/lib/llm/capacity-repository";
-import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { db, onPrimary } from "@/lib/db";
 import { retryBackoffSql } from "@/lib/db/retry-backoff";
-import { modelCapacityControl, productKoreanTaglines, products, type ProductStatus } from "@/lib/db/schema";
+import { productKoreanTaglines, products, type ProductStatus } from "@/lib/db/schema";
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { slugArrayPredicate } from "@/lib/domain/ranking/refresh";
 import { leadClause, NEEDS_KOREAN } from "./korean-tagline";
@@ -43,8 +41,6 @@ export const MAX_REJECTIONS = 4;
  */
 export const MAX_GATEWAY_FAILURES = 10;
 export const PROVIDER_OUTAGE_ERRORS = ["network", "rate_limit", "rate_limited", "no_key", "model_unavailable", "tokenizer_unavailable"] as const;
-/** Qwen 회복 선택기의 누적 시도 상한(기존 값) */
-const RECOVERY_MAX_ATTEMPTS = 10;
 export function koreanTaglineFailureRetryAllowed(error: string | null, attempts: number, qualityRejections: number): boolean {
   return attempts - qualityRejections < MAX_GATEWAY_FAILURES
     || error !== null && ((PROVIDER_OUTAGE_ERRORS as readonly string[]).includes(error) || /^http_5\d\d$/.test(error));
@@ -114,14 +110,8 @@ export function koreanQueuePredicates(homeSlugs: readonly string[]) {
     or (${home} and ${k.qualityRejections} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS})))`;
   const retry = sql`(${current} and ${k.errorCode} is not null and ${allowance})`;
   const due = sql`(${k.retryAt} is null or ${k.retryAt} <= now())`;
-  // A bounded alternative-model review preserves the original quality history.
-  // Equality excludes rows already beyond the applicable general/home limit.
-  const recovery = koreanTranslationQwenRecoveryEnabled() ? sql`(${current} and ${k.errorCode} is not null
-    and exists (select 1 from ${modelCapacityControl} where ${modelCapacityControl.id} = 1 and ${modelCapacityControl.mode} = 'disabled')
-    and ${k.qualityRejections} = case when ${home} then ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}::int else ${MAX_REJECTIONS}::int end
-    and ${k.attempts} < ${RECOVERY_MAX_ATTEMPTS} and ${k.model} <> ${scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL)})` : sql`false`;
-  return { home, current, fresh, allowance, retry, due, recovery,
-    recoveryReady: sql`(${recovery} and ${due})`,
+  // 2026-11-11: 품질 한도에 닿은 원문을 Qwen 직접 경로로 다시 보던 회복 선택(recovery·recoveryReady)은 그 경로와 함께 없앴다
+  return { home, current, fresh, allowance, retry, due,
     ready: sql`(${fresh} or (${k.errorCode} is not null and ${allowance} and ${due}))` };
 }
 
@@ -129,13 +119,11 @@ export type KoreanTaglineQueue = {
   /** 이미 한국어인 소개·비공개 제품을 제외한 현재 대상 */
   eligible: number;
   done: number;
-  /** 정규 선택기와 활성 Qwen 회복 선택기가 지금 선택할 수 있는 합계 */
+  /** 선택기가 지금 선택할 수 있는 수 */
   ready: number;
-  /** ready 중 기존 품질 한도에 도달한 원문을 Qwen으로 유한 재검토할 수 있는 수 */
-  recoveryReady: number;
   /** 같은 원문의 실패이며 재시도 시각이 남은 수 */
   retryScheduled: number;
-  /** 품질 한도 소진 중 활성 회복으로 처리·예약할 수 없는 수 — 홈의 추가 두 번도 반영 */
+  /** 품질 한도 소진으로 더 시도하지 않는 수 — 홈의 추가 두 번도 반영 */
   blocked: number;
   lastHour: number;
   measuredAt: string;
@@ -147,16 +135,13 @@ export async function koreanTaglineQueue(homeSlugs: readonly string[]): Promise<
   const [row] = await db.select({
     eligible: sql<number>`count(*)::int`,
     done: sql<number>`(count(*) filter (where ${q.current} and ${k.errorCode} is null))::int`,
-    ready: sql<number>`(count(*) filter (where ${q.ready} or ${q.recoveryReady}))::int`,
-    recoveryReady: sql<number>`(count(*) filter (where ${q.recoveryReady}))::int`,
-    // Future alternative-model work is scheduled, not executable or exhausted.
-    retryScheduled: sql<number>`(count(*) filter (where (${q.retry} or ${q.recovery}) and not ${q.due}))::int`,
-    blocked: sql<number>`(count(*) filter (where ${q.current} and ${k.errorCode} is not null and not ${q.allowance} and not ${q.recovery}))::int`,
+    ready: sql<number>`(count(*) filter (where ${q.ready}))::int`,
+    retryScheduled: sql<number>`(count(*) filter (where ${q.retry} and not ${q.due}))::int`,
+    blocked: sql<number>`(count(*) filter (where ${q.current} and ${k.errorCode} is not null and not ${q.allowance}))::int`,
     lastHour: sql<number>`(count(*) filter (where ${q.current} and ${k.errorCode} is null and ${k.updatedAt} > now() - interval '1 hour'))::int`,
     measuredAt: sql<string>`now()::text`,
   }).from(products).leftJoin(k, eq(k.productId, products.id)).where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN));
   return { eligible: Number(row.eligible), done: Number(row.done), ready: Number(row.ready),
-    recoveryReady: Number(row.recoveryReady),
     retryScheduled: Number(row.retryScheduled), blocked: Number(row.blocked), lastHour: Number(row.lastHour),
     measuredAt: new Date(row.measuredAt).toISOString() };
 }
@@ -210,32 +195,6 @@ export async function pendingKoreanTaglineBatch(memberKeys: readonly string[], h
     return rows.length === ids.length ? ids.map(id => rows.find(row => row.productId === id)!)
       .map(row => ({ ...row, attempts: Number(row.attempts), qualityRejections: Number(row.qualityRejections) })) : null;
   });
-}
-
-/**
- * Opt-in Qwen-only candidates; callers also enforce fresh job/capacity ownership and the per-tick cap.
- * The cumulative attempt ceiling bounds home changes and later writes by another model.
- * Last-model equality is not a durable per-model attempt ledger.
- */
-export async function pendingKoreanTaglineRecovery(limit: number, homeSlugs: readonly string[],
-  excludedProductIds: readonly number[] = []): Promise<KoreanTaglineTask[]> {
-  if (!koreanTranslationQwenRecoveryEnabled() || !Number.isFinite(limit) || limit < 1) return [];
-  const { home, current: same, recoveryReady } = koreanQueuePredicates(homeSlugs);
-  const excluded = [...new Set(excludedProductIds.filter(id => Number.isSafeInteger(id) && id > 0))];
-  const tier = sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then 0
-    when ${home} then 1 else 2 end`;
-  const rows = await db.select({
-    productId: products.id, name: products.name, tagline: products.tagline, repoUrl: products.repoUrl,
-    attempts: sql<number>`case when ${same} then ${k.attempts} else 0 end`,
-    lastError: sql<string | null>`case when ${same} then ${k.errorCode} end`,
-    qualityRejections: sql<number>`case when ${same} then ${k.qualityRejections} else 0 end`,
-  }).from(products).leftJoin(k, eq(k.productId, products.id))
-    .where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN, recoveryReady, notBusy(capacityOwnerFromEnv()),
-      excluded.length ? notInArray(products.id, excluded) : undefined))
-    .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
-      sql`${products.stars} desc nulls last`, desc(products.id))
-    .limit(Math.min(8, Math.floor(limit)));
-  return rows.map(row => ({ ...row, attempts: Number(row.attempts), qualityRejections: Number(row.qualityRejections) }));
 }
 
 export type KoreanTaglineResult =

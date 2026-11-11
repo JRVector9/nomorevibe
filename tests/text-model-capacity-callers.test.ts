@@ -108,8 +108,6 @@ beforeEach(() => {
   // 순위 하나씩과 그 연결을 가리키는 직접 계약
   pinTextRanks(MODELS);
   setServingContractSnapshotForTest((Object.entries(MODELS) as [AiTextTaskId, string][]).map(([routeId, model]) => textContract(routeId, model)));
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
-  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   mocks.control.mockResolvedValue({ mode: "disabled" });
   mocks.tagWrite.mockResolvedValue({ stored: true, released: false });
   mocks.profileWrite.mockResolvedValue(true);

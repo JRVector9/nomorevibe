@@ -343,7 +343,7 @@ describe("공개 전 소개와 공개 후·보조 작업", () => {
     const support = models.support;
     if (profile.kind !== "llm" || support.kind !== "llm") throw new Error("llm");
     expect(profile.tasks.map((task) => task.task)).toEqual(["crawl-tagline"]);
-    expect(support.tasks.map((task) => task.task)).toEqual(["product-tagline-ko", "korean-translation-direct", "product-translate", "reason-translate", "product-intro-check"]);
+    expect(support.tasks.map((task) => task.task)).toEqual(["product-tagline-ko", "product-translate", "reason-translate", "product-intro-check"]);
     expect([...profile.tasks, ...support.tasks].map((task) => task.task)).toEqual(STATION_TASKS.profile);
     expect(support.more).toBe(2);
     // 분류 대기가 있어 프로필 준비가 쌓임이면 자세히가 프로필 준비로 열린다

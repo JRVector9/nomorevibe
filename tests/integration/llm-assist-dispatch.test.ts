@@ -16,6 +16,7 @@ import { localModelContractHash, sameLocalModelFamily, type LocalModelServingCon
 import { ASSIST_SCHEMA_VERSION } from "@/lib/domain/llm-assist/contracts";
 import { assistCandidateSourceHash } from "@/lib/domain/llm-assist/work";
 import type { JobContext } from "@/lib/jobs/runner";
+import { setAiTaskModelsForTest } from "@/lib/llm/ai-task-models-snapshot";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 const prefix = `assist-native-${randomUUID().slice(0, 8)}`;
@@ -27,7 +28,7 @@ const server = http.createServer();
 const ownedProducts: { id: number; slug: string; url: string }[] = [];
 let contract: LocalModelServingContract, policy: ModelCapacityPolicy;
 let originalCapacity: Record<string, unknown>, originalAssist: Record<string, unknown>, originalRole: Record<string, unknown> | null;
-let originalJobs: Record<string, unknown>[], calls: { requestId: string; body: Record<string, unknown> }[] = [];
+let originalJobs: Record<string, unknown>[], calls: { requestId: string; body: Record<string, unknown>; auth?: string }[] = [];
 let responseKind: "closed" | "alive" | "invalid" | "unclear_retain" | "hosting_disabled" | "hosting_paused" = "closed", onCall: (() => Promise<void>) | null = null;
 let hold: ((res: ServerResponse) => void) | null = null;
 let jobToken = "", sequence = 0;
@@ -128,7 +129,8 @@ beforeAll(async () => {
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      calls.push({ requestId: String(req.headers["x-nmv-relay-request-id"] ?? ""), body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+      calls.push({ requestId: String(req.headers["x-nmv-relay-request-id"] ?? ""), body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+        ...(req.headers.authorization ? { auth: String(req.headers.authorization) } : {}) });
       await onCall?.();
       if (hold) { hold(res); return; }
       res.writeHead(200, { "content-type": "application/json" });
@@ -257,6 +259,27 @@ describe("보강 소비자의 native dispatch와 최종 적용", () => {
     expect(await db.select().from(cdnPurges).where(eq(cdnPurges.slug, product.slug))).toHaveLength(1);
     await reviewLlmAssist(context());
     expect(calls).toHaveLength(1);
+  });
+  it("2026-11-11 「작업 ↔ 모델」 LLM 보강 순위가 있으면 env(LLM_ASSIST_BACKENDS·LLM_ASSIST_API_KEYS)를 읽지 않고 그 순위의 연결 키로 같은 장부 route 를 부른다", async () => {
+    const product = await fixtureProduct();
+    // env 길이면 없는 backend 라 던진다 — 순위 길이 env 를 읽지 않는다는 증거
+    vi.stubEnv("LLM_ASSIST_BACKENDS", JSON.stringify([{ backendId: "env-only-missing", tasks: ["uptime"], maxClaims: 1 }]));
+    vi.stubEnv("LLM_ASSIST_API_KEYS", JSON.stringify({ [backendId]: "env-key" }));
+    const logged: { event: string; data: Record<string, unknown> }[] = [];
+    setAiTaskModelsForTest([{ task: "assist-review", slot: 1, rank: 1, model, enabled: true, options: {}, connection: { id: randomUUID(), label: "gpu fixture",
+      kind: "api", baseUrl: contract.endpoint.replace(/\/chat\/completions$/, ""), cliTool: null, deviceId: "fixture-gpu", enabled: true, models: null,
+      contextTokens: null, apiKey: "rank-key", keyUnreadable: false } }]);
+    try {
+      await reviewLlmAssist({ ...context(), log: (event: string, data?: Record<string, unknown>) => { logged.push({ event, data: data ?? {} }); } } as JobContext<null>);
+    } finally { setAiTaskModelsForTest(null); }
+    expect(calls).toHaveLength(1);
+    expect(calls[0].auth).toBe("Bearer rank-key");
+    const [request] = await requests();
+    expect(request).toMatchObject({ state: "settled", route_id: routeId, provider: "local-direct", model });
+    expect(await work(product.id)).toMatchObject({ state: "done", attempts: 1 });
+    expect(await recordedResults()).toMatchObject([{ applied: true, backendId, capacityRequestId: request.request_id }]);
+    // 작업 배정 「실행」 줄 — 1순위가 한 건을 맡았다
+    expect(logged.find(entry => entry.event === "ai_task.ranks")?.data).toEqual({ ranks: 1, "served.1": 1 });
   });
   it("alive는 정식 실패 관측을 조작하지 않고 유지한다", async () => {
     const product = await fixtureProduct(); responseKind = "alive";
