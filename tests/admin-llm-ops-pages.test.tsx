@@ -236,6 +236,9 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     const m1 = address.match(new RegExp(`<article id="conn-${M1}"[^]*?</article>`))![0];
     expect(m1).toContain(`id="conn-${M1}-address" data-fix-field="address" data-fix="true">주소`);
     expect(text(m1)).toContain("주소·키를 확인하고 「저장하고 모델 읽기」를 누르세요.");
+    const context = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: M1, fix: "context", adding: false }));
+    expect(context).toMatch(new RegExp(`<label[^>]*id="conn-${M1}-context"[^>]*data-fix="true"[^>]*>컨텍스트 상한[^]*?<input[^>]*name="contextTokens"`));
+    expect(text(context)).toContain("엔진에 실제 설정된 컨텍스트 상한을 적고");
     // 한도가 같은 연결(m3-mlx)에는 맞추기 안내가 없다
     const mlx = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: "22222222-2222-4222-8222-222222222222", fix: "limit", adding: false }));
     expect(mlx.match(/<article id="conn-22222222-2222-4222-8222-222222222222"[^]*?<\/article>/)![0]).not.toContain("data-limit-hint");

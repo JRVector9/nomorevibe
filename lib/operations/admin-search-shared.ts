@@ -6,7 +6,16 @@ export const ADMIN_SEARCH_MIN = 2;
 export type AdminSearchProduct = { slug: string; name: string; url: string; repoUrl: string | null; status: string; href: string; publicHref: string; logHref: string };
 export type AdminSearchCandidate = { id: number; repo: string; state: string; productUrl: string | null; href: string; logHref: string };
 export type AdminSearchTarget = { target: string; count: number; lastAt: Date; href: string };
-export type AdminSearchResult = { q: string; products: AdminSearchProduct[]; candidates: AdminSearchCandidate[]; targets: AdminSearchTarget[] };
+export type AdminSearchEngine = { id: string; label: string; kind: "api" | "cli"; deviceId: string; baseUrl: string | null;
+  enabled: boolean; contextTokens: number | null; href: string; contextHref: string | null };
+export type AdminSearchModel = { connectionId: string; connectionLabel: string; deviceId: string; kind: "api" | "cli";
+  model: string; enabled: boolean; href: string };
+export type AdminSearchDestination = { id: string; title: string; detail: string; href: string };
+export type AdminSearchResult = { q: string; products: AdminSearchProduct[]; candidates: AdminSearchCandidate[]; targets: AdminSearchTarget[];
+  engines: AdminSearchEngine[]; models: AdminSearchModel[]; destinations: AdminSearchDestination[] };
+
+/** The connection editor, rather than a guessed default limit, resolves an unknown engine context. */
+export const contextSearch = (term: string) => /컨텍스트|문맥|context|max_model_len|engine_max_len|최대\s*길이/i.test(term);
 
 /** 찾는 글자 — 앞뒤 공백을 떼고 100자까지. 너무 짧으면 null(모든 행이 걸린다) */
 export function searchTerm(raw: string | null | undefined): string | null {

@@ -12,11 +12,20 @@ const WAIT_MS = 200;
 
 type Item = { key: string; href: string; title: string; detail: string; badge: string; extra?: { label: string; href: string }[] };
 
-/** 결과를 화살표로 오가는 한 줄 목록으로 — 묶음(제품·후보·기록) 차례 그대로 */
+/** 결과를 화살표로 오가는 한 줄 목록으로 — 범주 차례 그대로 */
 export function searchItems(result: AdminSearchResult | null): { group: string; items: Item[] }[] {
   if (!result) return [];
   return [
-    { group: "제품", items: result.products.map((p) => ({ key: `p:${p.slug}`, href: p.href, title: p.name, detail: p.repoUrl?.replace(/^https:\/\/github\.com\//, "") ?? p.url.replace(/^https?:\/\//, ""),
+    { group: "엔진·연결", items: (result.engines ?? []).map(engine => ({ key: `e:${engine.id}`, href: engine.href, title: engine.label,
+      detail: [engine.deviceId, engine.baseUrl, engine.contextTokens ? `컨텍스트 ${engine.contextTokens.toLocaleString("ko-KR")} 토큰` : null].filter(Boolean).join(" · "),
+      badge: !engine.enabled ? "연결 꺼짐" : engine.kind === "api" ? "API 엔진" : "CLI 연결",
+      ...(engine.contextHref ? { extra: [{ label: "컨텍스트 상한", href: engine.contextHref }] } : {}) })) },
+    { group: "모델", items: (result.models ?? []).map(model => ({ key: `m:${model.connectionId}:${model.model}`, href: model.href,
+      title: model.model, detail: `${model.connectionLabel} · ${model.deviceId}`,
+      badge: !model.enabled ? "연결 꺼짐" : model.kind === "api" ? "API 모델" : "CLI 모델" })) },
+    { group: "작업·설정", items: (result.destinations ?? []).map(page => ({ key: `s:${page.id}`, href: page.href,
+      title: page.title, detail: page.detail, badge: "이동" })) },
+    { group: "프로젝트", items: result.products.map((p) => ({ key: `p:${p.slug}`, href: p.href, title: p.name, detail: p.repoUrl?.replace(/^https:\/\/github\.com\//, "") ?? p.url.replace(/^https?:\/\//, ""),
       badge: PRODUCT_STATUS[p.status] ?? p.status, extra: [{ label: "공개 페이지", href: p.publicHref }, { label: "기록", href: p.logHref }] })) },
     { group: "심사 후보", items: result.candidates.map((c) => ({ key: `c:${c.id}`, href: c.href, title: c.repo, detail: c.productUrl?.replace(/^https?:\/\//, "") ?? "배포 주소 없음",
       badge: CANDIDATE_STATE[c.state] ?? c.state, extra: [{ label: "기록", href: c.logHref }] })) },
@@ -26,7 +35,7 @@ export function searchItems(result: AdminSearchResult | null): { group: string; 
 
 /**
  * 관리자 전역 검색(⌘K·Ctrl+K, 2026-10-08 UX 점검 ADM-05) — 사이드바 맨 위 단추나 단축키로 연다.
- * 제품 이름·slug·주소·저장소, 후보 저장소·배포 주소, 작업 로그 대상을 한 창에서 찾고, 줄을 고르면 그 화면으로 간다.
+ * 엔진·모델·작업·설정, 프로젝트·후보·작업 로그 대상을 한 창에서 찾고, 줄을 고르면 그 화면으로 간다.
  * 화살표로 줄을 옮기고 Enter 로 연다. 줄 끝의 작은 링크(공개 페이지·기록)는 마우스로 고른다.
  */
 export function CommandSearch({ appearance }: { appearance?: "prototype" } = {}) {
@@ -89,7 +98,7 @@ export function CommandSearch({ appearance }: { appearance?: "prototype" } = {})
   const activeItem = short ? null : items[active];
 
   return <>
-    <button type="button" className={appearance === "prototype" ? "search-launch" : "admin-search-trigger"} onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="제품·후보·작업 로그 찾기 (⌘K)">
+    <button type="button" className={appearance === "prototype" ? "search-launch" : "admin-search-trigger"} onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="엔진·모델·작업·프로젝트 찾기 (⌘K)">
       <AdminIcon name="search" size={15} /><span className="admin-sidebar-label">{appearance === "prototype" ? "전체 검색" : "찾기"}</span><kbd className="admin-sidebar-label">⌘K</kbd>
     </button>
     <dialog ref={dialog} className="admin-confirm admin-search" aria-label="관리자 전역 검색"
@@ -97,7 +106,7 @@ export function CommandSearch({ appearance }: { appearance?: "prototype" } = {})
       <div className="admin-search-body">
         <div className="admin-search-field">
           <AdminIcon name="search" size={16} />
-          <input ref={input} type="search" value={query} autoFocus placeholder="제품 이름·slug·주소·저장소, 후보, 작업 로그 대상"
+          <input ref={input} type="search" value={query} autoFocus placeholder="엔진·모델·연결·작업·설정·프로젝트 검색"
             role="combobox" aria-expanded={items.length > 0 && !short} aria-controls={listId} aria-autocomplete="list"
             aria-activedescendant={activeItem ? `${listId}-${activeItem.key}` : undefined} aria-label="찾을 말"
             onChange={(event) => setQuery(event.target.value)}
@@ -134,7 +143,7 @@ export function CommandSearch({ appearance }: { appearance?: "prototype" } = {})
           {short ? `${ADMIN_SEARCH_MIN}글자 이상 입력하면 찾습니다. ↑↓ 로 옮기고 Enter 로 엽니다.`
             : state === "loading" ? "찾는 중…"
             : state === "error" ? "찾지 못했습니다 — 잠시 뒤 다시 입력해 주세요."
-            : result && items.length === 0 ? `“${result.q}”에 맞는 제품·후보·기록이 없습니다.`
+            : result && items.length === 0 ? `“${result.q}”에 맞는 엔진·모델·작업·프로젝트·기록이 없습니다.`
             : `${items.length}건 · ↑↓ 로 옮기고 Enter 로 엽니다.`}
         </p>
       </div>
