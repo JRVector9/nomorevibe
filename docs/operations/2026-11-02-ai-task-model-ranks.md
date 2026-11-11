@@ -563,7 +563,8 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
 - 바뀐 범위의 통합 시험 29개 파일(파일마다 DB 를 새로 만들어 하나씩, 자기 Postgres) 모두 통과. 새 통합 시험: `ai-task-model-ranks.test.ts` 의 보강 순위 저장
   (로컬 계약·route 넷·장비 행 → DB 스냅숏 → `assistLanePlan`), 계열 거절, 없앤 작업 행 지우기, 보강 제어 저장(CAS·DB 규칙·감사·관리자 아님),
   `llm-assist-dispatch.test.ts` 의 순위 길 끝까지(env 를 읽지 않고 연결 키로 같은 장부 route 정산·결과 반영·`ai_task.ranks`). 없앤 `korean-tagline-recovery.test.ts` 는 지웠다.
-- 전체 단위·전체 DB 시험은 정책대로 통합 단계에서 돈다(돌리지 않았다).
+- 첫 CI 의 unit 실패 뒤 전체 단위 시험(800개 파일)을 로컬에서 돌려 3개 실패(새 화면 글자 12px — 13px 하한 규칙 2개, 쓰기 관문 server action 수 121)를 고쳤고,
+  그 파일들을 다시 돌려 통과했다. 전체 DB 시험은 정책대로 통합 단계에서 돈다(돌리지 않았다).
 
 ## 검증 (PR C1)
 
