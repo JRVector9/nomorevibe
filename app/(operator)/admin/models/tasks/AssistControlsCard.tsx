@@ -26,12 +26,12 @@ function ControlRow({ control, readOnly }: { control: AssistControlView; readOnl
   const [apply, setApply] = useState(control.applyEnabled);
   const confirmLocks = mode === "confirm" && !control.confirmationRequired;
   return <tr className="border-b border-line align-top" data-assist-task={control.task}>
-    <th scope="row" className="py-2 pr-3 text-left font-semibold">{control.label}<div className="text-[12px] font-normal text-fg-3">{control.task} · {control.aiTaskLabel}</div></th>
+    <th scope="row" className="py-2 pr-3 text-left font-semibold">{control.label}<div className="text-[13px] font-normal text-fg-3">{control.task} · {control.aiTaskLabel}</div></th>
     <td className="py-2 pr-3">{queueText(control.queue)}</td>
     <td className="py-2 pr-3">
       {MODES.find(([value]) => value === control.mode)?.[1] ?? control.mode} · 보내기 {control.dispatchEnabled ? "켜짐" : "꺼짐"} · 반영 {control.applyEnabled ? "켜짐" : "꺼짐"}
-      {control.confirmationRequired && <div className="text-[12px] text-fg-3">확인 필수(끌 수 없음){control.task === "uptime" ? " — 옛 자동 내림이 보강 확인을 기다립니다" : ""}</div>}
-      <div className="text-[12px] text-fg-3">판 {control.revision}</div>
+      {control.confirmationRequired && <div className="text-[13px] text-fg-3">확인 필수(끌 수 없음){control.task === "uptime" ? " — 옛 자동 내림이 보강 확인을 기다립니다" : ""}</div>}
+      <div className="text-[13px] text-fg-3">판 {control.revision}</div>
     </td>
     <td className="py-2 pr-3">
       {readOnly ? <span className="text-fg-3">읽기 전용</span> : <form action={action} className="grid gap-1">
@@ -46,7 +46,7 @@ function ControlRow({ control, readOnly }: { control: AssistControlView; readOnl
           onChange={event => { setDispatch(event.target.checked); if (!event.target.checked) setApply(false); }} />보내기(모델 호출)</label>
         <label className="flex items-center gap-2"><input type="checkbox" name="apply" checked={apply} disabled={pending || mode !== "confirm" || !dispatch}
           onChange={event => setApply(event.target.checked)} />반영(결과를 제품에 적용)</label>
-        {confirmLocks && <span role="note" className="text-[12px] text-amber-700">「확인 후 반영」으로 저장하면 확인 필수가 켜지고 다시 끌 수 없습니다(DB 규칙).</span>}
+        {confirmLocks && <span role="note" className="text-[13px] text-amber-700">「확인 후 반영」으로 저장하면 확인 필수가 켜지고 다시 끌 수 없습니다(DB 규칙).</span>}
         <button type="submit" disabled={pending} className={buttonSmall}>{pending ? "저장하는 중…" : "저장"}</button>
         {state?.ok && <span role="status" className="text-[13px]">{state.message}</span>}
         {state?.issues?.map(text => <span key={text} role="alert" className="text-[13px] text-red-600">{text}</span>)}

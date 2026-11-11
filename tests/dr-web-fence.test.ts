@@ -396,7 +396,8 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-09 장비 한도 표 개편: saveDeviceRowAction(한 줄 저장 — 운영 한도 + 모델 한도, 엔진 최대치는 그대로) 하나가 더해져 117.
   // 2026-11-09 admin/models/devices/cli-actions.ts: saveCliTaskModelAction(CLI 순위 모델·강도)·saveCliStageModelAction(소개 검수 CLI 모델·강도) 둘이 더해져 119.
   // 2026-11-09 admin/audit/actions.ts: saveRecheckLimits(공개분 변경 재판정 한도를 재판정 탭에서 저장 — 실시간 한도와 같은 saveRuntimeSettings) 하나가 더해져 120.
-  expect(wrapped).toBe(120);
+  // 2026-11-11 admin/models/tasks/assist-actions.ts: saveAssistControlAction(LLM 보강 제어 — 보강 일마다 단계·보내기·반영) 하나가 더해져 121.
+  expect(wrapped).toBe(121);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");
