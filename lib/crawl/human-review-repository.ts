@@ -46,12 +46,12 @@ export function delegatedApprovalRoute(evidenceAgeHours: number): DelegatedAppro
 /** 72시간 넘은 근거의 승인을 보류로 적은 시도 행의 표지(reason 칸) — 원본 재수집 요청과 재수집 결과 처리가 이 표지로 찾는다 */
 export const STALE_EVIDENCE_REFRESH = 'stale_evidence_refresh';
 /** 시도로 세지 않는 미룸 — 용량 미룸과 저장소 확인 미룸(GitHub 한도·전송 탈)은 그 입력 탓이 아니다 */
-const UNCOUNTED_DEFERRALS = ['model_capacity_deferred', 'repo_check_deferred'] as const;
+export const UNCOUNTED_DEFERRALS = ['model_capacity_deferred', 'repo_check_deferred'] as const;
 
 /** 한 틱이 고를 후보 수의 상한 배수 — 후보 고르기가 거른 뒤에도 claim 이 null 인 후보(드묾)가 머리를 막지 않게 조금 넉넉히 읽는다 */
 export const HUMAN_REVIEW_SCAN_FACTOR = 4;
 /** 같은 원본의 위임 시도 상한 — claim 의 시도 상한(3)과 같다 */
-const MAX_DELEGATED_ATTEMPTS = 3;
+export const MAX_DELEGATED_ATTEMPTS = 3;
 
 /**
  * 이번 틱에 맡을 후보 — 사람 큐에 가장 최근에 들어온 것부터(updatedAt 내림차순). 2026-11-09 운영자 결정:

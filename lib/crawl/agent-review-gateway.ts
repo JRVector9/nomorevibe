@@ -809,7 +809,7 @@ import { reasonTranslationModelDispatchSchema, reasonTranslationGatewayTerminalE
   type ReasonTranslationModelDispatch, type ReasonTranslationGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { reasonTranslationServingContractHash, reasonTranslationServingContractSchema, reasonTranslationRouteServingContractSchema,
   resolveReasonTranslationServingContract, type ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
-import { reasonTranslationGatewayWire, parseTranslations, textHash, type TranslateResult } from "./translate";
+import { reasonTranslationGatewayWire, parseTranslations, diagnoseTranslationOutput, textHash, type TranslateResult } from "./translate";
 import { ABCLLM_STRICT_TERMINAL_HEADER, ABCLLM_STRICT_TERMINAL_OPT_IN } from "@/lib/llm/gateway-serving-contract-config";
 /**
  * 번역 4경로(non-raw wire)의 native 호출만: 계약이 abcLLM PR3 엄격 terminal opt-in 이면 그 헤더를 "1" 로 붙인다.
@@ -890,13 +890,28 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
       ...gatewayNotSentWitness(owned, error) };
   }
   const completed = nativeTerminal(body, state.contract, directEngine);
-  if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
+  if (!completed) {
+    logReasonInvalidOutput(owned, { cause: "terminal_rejected", length: body.length });
+    return { result: { ok: false, error: "invalid_output" }, terminal: null };
+  }
   const terminal: ReasonTranslationGatewayTerminal = Object.freeze({ kind: "reason_translation_gateway_terminal" });
   reasonTranslationTerminals.set(terminal, freeze(reasonTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "reason_translation_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
-  const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
+  const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content ?? "";
   const exceeded = directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage);
-  return { result: exceeded ? { ok: false, error: "invalid_output" } : parseTranslations(content ?? "", snapshot), terminal };
+  const result: TranslateResult = exceeded ? { ok: false, error: "invalid_output" } : parseTranslations(content, snapshot);
+  // 장부 근거(responseHash = 받은 body 전체)는 위에서 이미 굳었다 — 아래 로그는 읽기만 한다
+  if (!result.ok) logReasonInvalidOutput(owned, { finishReason: completed.finishReason, outputUsage: completed.actualUsage?.outputTokens ?? null,
+    ...(exceeded ? { cause: "usage_over_budget", length: content.length } : diagnoseTranslationOutput(content, snapshot.length)) });
+  return { result, terminal };
+}
+/**
+ * 사유 번역의 invalid_output 한 줄(2026-11-11) — 원 출력은 어디에도 저장하지 않아(text_translations 는 error_code 만) 운영에서 까닭을 볼 길이 없었다.
+ * 장부 행(requestId)·모델·글자 수·JSON 오류 위치·앞 200자(diagnoseTranslationOutput)만 남긴다. 키·주소는 싣지 않는다.
+ */
+function logReasonInvalidOutput(owned: ReasonTranslationModelDispatch, fields: Record<string, unknown>): void {
+  logger.warn("reason_translate.invalid_output", { requestId: owned.requestId, model: owned.binding.model,
+    members: owned.binding.members.length, ...fields });
 }
 
 import { productTranslationModelDispatchSchema, productTranslationGatewayTerminalEvidenceSchema, type ProductTranslationModelDispatch,

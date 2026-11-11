@@ -1,12 +1,17 @@
-import { and, asc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { categoryDecisions, crawlCandidates, crawlReviewAttempts, crawlTaglines, modelCapacityRequests, products, productSearchProfiles,
-  productTranslations, secondReviews, textTranslations, type CrawlCandidate } from "@/lib/db/schema";
+import { categoryDecisions, crawlCandidates, crawlReviewAttempts, crawlTaglines, gateSplitTiebreaks, modelCapacityRequests, productAuditCampaigns,
+  productAuditItems, products, productSearchProfiles, productTranslations, secondReviews, textTranslations, type CrawlCandidate } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { requestJob } from "@/lib/jobs/control";
 import { HELD_QWEN_PROVIDER } from "@/lib/crawl/held-qwen-retry-policy";
-import { isReviewCandidate, REVIEW_RETRIABLE_REASONS } from "@/lib/crawl/agent-review-contract";
+import { isReviewCandidate, MAX_REVIEW_ATTEMPTS, REVIEW_RETRIABLE_REASONS } from "@/lib/crawl/agent-review-contract";
+import { DEEPSEEK_REVIEW_PROVIDER } from "@/lib/crawl/deepseek-review-policy";
+import { MAX_DELEGATED_ATTEMPTS, UNCOUNTED_DEFERRALS } from "@/lib/crawl/human-review-repository";
+import { SPLIT_TIEBREAK_MAX_FAILURES } from "@/lib/crawl/gate-split-tiebreak-read";
+import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
+import { localModelLogicalKey, localModelTargetSchema, type LocalModelTarget } from "@/lib/llm/local-model-capacity-contract";
 import { requeueReasonText, type RequeueOutcome, type RequeueReason, type RequeueSummary } from "./model-capacity-requeue-text";
 
 /**
@@ -16,7 +21,10 @@ import { requeueReasonText, type RequeueOutcome, type RequeueReason, type Requeu
  * - 장부 행은 물리 종료를 꾸며내지 않는다. 작업을 다시 큐에 넣었거나(requeued) 할 일이 이미 끝났거나 없어진(done) 행만 운영자 검토 근거(0151,
  *   dispatch_reviewed)로 withdrawn 닫고, 메모에 그 까닭을 남긴다.
  * - 라우트별로 실제 작업 큐를 되돌린다. 지원하지 않는 라우트·키를 읽지 못한 행은 닫지 않고(skipped) 까닭과 함께 남겨 사람이 보게 한다.
- * - 같은 호출을 두 번 넣어도 안전하도록 재시도 시각·시도 횟수만 되돌린다. 결과·원본·사람 결정·점유 규칙은 건드리지 않는다.
+ * - 같은 호출을 두 번 넣어도 안전하도록 재시도 시각(과 아래 단계의 시도 횟수)만 되돌린다. 결과·원본·사람 결정·점유 규칙은 건드리지 않는다.
+ *   시도 횟수는 그것이 상한이라 되돌려야 다시 집히는 단계(제품 번역·검색 키워드·검수·소개 짓기·2차 표·보류 Qwen)에서만 되돌린다.
+ *   시도 횟수가 홀로 보내기·물러나기를 정하는 사유 번역과, 2026-11-11 에 더한 로컬 단계(위임·갈림·감사)는 되돌리지 않는다 — 늘 실패하는 일을
+ *   곧바로 다시 되풀이하게 하지 않는다. 상한에 이미 닿은 로컬 단계의 일은 잡이 더 부르지 않으므로 닫는다(attempts_exhausted).
  * - 판정은 행마다 한다 — 한 묶음에 다시 넣은 행이 있다고 같은 묶음의 다른 행까지 닫지 않는다.
  */
 export type RequeueRowResult = Readonly<{ requestId: string; routeId: string; outcome: RequeueOutcome; reason: RequeueReason }>;
@@ -37,7 +45,7 @@ export type RequeueUnknownResult = { groups: RequeueGroupResult[]; closed: numbe
   leftRows: { requestId: string; routeId: string; reason: RequeueReason }[] };
 
 type UnknownRow = Pick<typeof modelCapacityRequests.$inferSelect,
-  "requestId" | "routeId" | "workKey" | "logicalWorkKey" | "logicalMemberKeys" | "dispatchedAt">;
+  "requestId" | "routeId" | "workKey" | "logicalWorkKey" | "logicalMemberKeys" | "dispatchedAt" | "dispatchBinding">;
 type Verdict = Readonly<{ outcome: RequeueOutcome; reason: RequeueReason }>;
 /** requestId → 결과. 빠진 행은 key_unreadable(남음)로 본다. */
 type Verdicts = Map<string, Verdict>;
@@ -268,7 +276,12 @@ async function requeueProductTranslation(tx: ProductTransaction, rows: readonly 
   return new Map(rows.map(row => { const targets = targetsOf(row); return [row.requestId, targets.length ? merge(targets.map(verdictOf)) : skipped("key_unreadable")]; }));
 }
 
-/** 사유 번역: 같은 원문 해시의 끝나지 않은 행을 다시 시도하게 한다. 이미 번역됐거나 원문 행이 없어진 것은 닫기만 한다. */
+/**
+ * 사유 번역: 같은 원문 해시의 끝나지 않은 행을 지금 다시 시도하게 한다(retry_at = 지금). 이미 번역됐거나 원문 행이 없어진 것은 닫기만 한다.
+ * 시도 횟수(attempts)·마지막 오류는 그대로 둔다(2026-11-11). 이 줄에는 시도 상한이 없고, 시도 횟수가 홀로 보내기(soloAttempts)·물러나기
+ * (5분×2^attempts)를 정한다 — 0 으로 되돌리면 늘 실패하는 글이 멀쩡한 글과 다시 묶여 곧바로 또 불린다. 운영 2026-11-10: 다시 넣은 독 글 하나가
+ * 묶음으로, 이어 홀로 다시 불려 몇 분 안에 결과 미확정 2건을 더 남겼다.
+ */
 async function requeueReasonTranslation(tx: ProductTransaction, rows: readonly UnknownRow[], apply: boolean): Promise<Verdicts> {
   const hashesOf = (row: UnknownRow) => parseMembers(asArray(row.logicalMemberKeys), "ko:").filter(hash => /^[a-f0-9]{64}$/.test(hash));
   const hashes = [...new Set(rows.flatMap(hashesOf))];
@@ -281,8 +294,7 @@ async function requeueReasonTranslation(tx: ProductTransaction, rows: readonly U
   };
   const pending = hashes.filter(hash => verdictOf(hash).outcome === "requeued");
   if (apply && pending.length) {
-    const updated = await tx.update(textTranslations).set({ status: "failed", attempts: 0, errorCode: null,
-      retryAt: timestampSql, updatedAt: timestampSql })
+    const updated = await tx.update(textTranslations).set({ status: "failed", retryAt: timestampSql, updatedAt: timestampSql })
       .where(and(inArray(textTranslations.sourceHash, pending), eq(textTranslations.targetLang, "ko"),
         sql`${textTranslations.status} <> 'done'`)).returning({ sourceHash: textTranslations.sourceHash });
     if (updated.length) await requestJob("reason-translate", tx);
@@ -363,7 +375,181 @@ async function requeueCrawlTagline(tx: ProductTransaction, rows: readonly Unknow
   return new Map(rows.map(row => { const id = idOf(row); return [row.requestId, id === null ? skipped("key_unreadable") : verdictOf(id)]; }));
 }
 
+// ─────────────────────────── 로컬 직접 경로(local-*, 2026-11-11) ───────────────────────────
+// 장부 binding(local_model_direct)의 대상(target)이 일의 주소다 — 논리 키(direct:<kind>:<id>:<purpose>)와 같은 대상일 때만 믿는다.
+// 시도 횟수·실패 수는 되돌리지 않는다(위 머리말). 다시 볼 시각만 지우고(NULL = 지금) 그 단계의 잡을 요청한다 — 잡은 자기 조건(상한·스위치·
+// 물러나기·자리)을 그대로 다시 잰다. 상한에 닿은 일은 잡이 더 부르지 않으므로 닫는다(attempts_exhausted).
+
+/** 장부 binding 의 로컬 대상 — 모양·kind·purpose 가 맞고 논리 키와 같은 대상일 때만. 아니면 null(key_unreadable) */
+function localTarget<K extends LocalModelTarget["kind"]>(row: UnknownRow, kind: K, purpose: string): Extract<LocalModelTarget, { kind: K }> | null {
+  const parsed = localModelTargetSchema.safeParse((row.dispatchBinding as { target?: unknown } | null)?.target);
+  if (!parsed.success || parsed.data.kind !== kind || parsed.data.purpose !== purpose) return null;
+  return localModelLogicalKey(parsed.data) === row.logicalWorkKey ? parsed.data as Extract<LocalModelTarget, { kind: K }> : null;
+}
+
+/**
+ * 사람 몫 위임 검수(local-human-deepseek → 잡 human-deepseek-review). 대상은 후보와 그 호출의 위임 시도(attemptId)다.
+ * - 후보가 없거나 위임이 보는 상태(needs_review · decided_by auto · 미발행)가 아니면 닫는다(candidate_gone · candidate_decided).
+ * - 그 시도부터 뒤의 DeepSeek 위임 시도가 성공했으면(판단 보류 포함 — 그 입력에서 모델의 판단은 끝이다) 닫는다(delegate_done).
+ *   운영 2026-11-10: 후보 597175 의 시도 232068 이 cancelled 로 끝나 결과 미확정 행이 남았는데, 40분 뒤 시도 232334 가 성공했다.
+ * - 그 시도와 같은 입력(입력·원본 해시·판)에서 센 시도가 상한(claim 의 MAX_DELEGATED_ATTEMPTS)에 닿았으면 잡이 더 부르지 않는다 — 닫는다(attempts_exhausted).
+ * - 그 밖이면 실패한 DeepSeek 위임 시도의 다시 볼 시각을 지우고 잡을 요청한다. 시도 행·횟수·후보는 바꾸지 않는다.
+ */
+async function requeueHumanDeepseek(tx: ProductTransaction, rows: readonly UnknownRow[], apply: boolean): Promise<Verdicts> {
+  const targetOf = (row: UnknownRow) => localTarget(row, "candidate", "human_deepseek");
+  const candidateIds = ids(rows.map(row => targetOf(row)?.candidateId ?? null));
+  const candidateQuery = tx.select({ id: crawlCandidates.id, state: crawlCandidates.state, decidedBy: crawlCandidates.decidedBy,
+    publishedSlug: crawlCandidates.publishedSlug }).from(crawlCandidates).where(inArray(crawlCandidates.id, candidateIds.length ? candidateIds : [0]));
+  const byId = new Map((apply ? await candidateQuery.for("update") : await candidateQuery).map(candidate => [candidate.id, candidate]));
+  const delegated = (candidates: number[]) => and(inArray(crawlReviewAttempts.candidateId, candidates.length ? candidates : [0]),
+    eq(crawlReviewAttempts.kind, "delegated"), eq(crawlReviewAttempts.provider, DEEPSEEK_REVIEW_PROVIDER));
+  const attempts = await tx.select({ id: crawlReviewAttempts.id, candidateId: crawlReviewAttempts.candidateId, state: crawlReviewAttempts.state,
+    errorCode: crawlReviewAttempts.errorCode, inputHash: crawlReviewAttempts.inputHash, sourceRevisionHash: crawlReviewAttempts.sourceRevisionHash,
+    actor: crawlReviewAttempts.actor }).from(crawlReviewAttempts).where(delegated(candidateIds));
+  const uncounted: readonly string[] = UNCOUNTED_DEFERRALS;
+  const verdictOf = (target: { candidateId: number; attemptId: number }): Verdict => {
+    const candidate = byId.get(target.candidateId);
+    if (!candidate) return done("candidate_gone");
+    if (candidateFinished(candidate) || candidate.state !== "needs_review" || candidate.decidedBy !== "auto") return done("candidate_decided");
+    const mine = attempts.filter(attempt => attempt.candidateId === target.candidateId);
+    if (mine.some(attempt => attempt.id >= target.attemptId && attempt.state === "succeeded")) return done("delegate_done");
+    const own = mine.find(attempt => attempt.id === target.attemptId);
+    const counted = own ? mine.filter(attempt => attempt.inputHash === own.inputHash && attempt.sourceRevisionHash === own.sourceRevisionHash
+      && attempt.actor === own.actor && !(attempt.state === "superseded" && uncounted.includes(attempt.errorCode ?? ""))) : [];
+    return counted.length >= MAX_DELEGATED_ATTEMPTS ? done("attempts_exhausted") : REQUEUED;
+  };
+  const verdicts: Verdicts = new Map(rows.map(row => { const target = targetOf(row); return [row.requestId, target ? verdictOf(target) : skipped("key_unreadable")]; }));
+  const pending = ids(rows.map(row => { const target = targetOf(row); return target && verdictOf(target).outcome === "requeued" ? target.candidateId : null; }));
+  if (apply && pending.length) {
+    await tx.update(crawlReviewAttempts).set({ retryAfter: null })
+      .where(and(delegated(pending), eq(crawlReviewAttempts.state, "failed"), isNotNull(crawlReviewAttempts.retryAfter)));
+    await requestJob("human-deepseek-review", tx);
+  }
+  return verdicts;
+}
+
+/** 갈림 판가름 행과 그 후보 — 판가름·확인이 보는 후보(2차 갈림으로 사람에게 온 자동 후보, 미발행)인가 */
+async function splitRows(tx: ProductTransaction, targets: readonly (Extract<LocalModelTarget, { kind: "split" }> | null)[], apply: boolean) {
+  const tiebreakIds = ids(targets.map(target => target?.tiebreakId ?? null)), candidateIds = ids(targets.map(target => target?.candidateId ?? null));
+  const rowQuery = tx.select().from(gateSplitTiebreaks).where(inArray(gateSplitTiebreaks.id, tiebreakIds.length ? tiebreakIds : [0]));
+  const tiebreaks = new Map((apply ? await rowQuery.for("update") : await rowQuery).map(row => [row.id, row]));
+  const candidates = new Map((candidateIds.length ? await tx.select({ id: crawlCandidates.id, state: crawlCandidates.state, reason: crawlCandidates.reason,
+    decidedBy: crawlCandidates.decidedBy, publishedSlug: crawlCandidates.publishedSlug }).from(crawlCandidates)
+    .where(inArray(crawlCandidates.id, candidateIds)) : []).map(candidate => [candidate.id, candidate]));
+  /** 공통 판정 — 행·후보가 그대로면 null(단계별 판정으로) */
+  const closed = (target: Extract<LocalModelTarget, { kind: "split" }>): Verdict | null => {
+    const row = tiebreaks.get(target.tiebreakId);
+    // 다른 후보·세대의 행이거나 지금 판(Qwen-v2 글 판)의 행이 아니면 잡은 이 행을 다시 묻지 않는다(지금 판의 행은 잡이 스스로 만든다)
+    if (!row || row.candidateId !== target.candidateId || row.generationKey !== target.generationKey || row.promptVersion !== QWEN_V2_PROMPT_VERSION)
+      return done("tiebreak_gone");
+    const candidate = candidates.get(target.candidateId);
+    if (!candidate) return done("candidate_gone");
+    if (candidateFinished(candidate) || candidate.state !== "needs_review" || candidate.reason !== "second_review_split" || candidate.decidedBy !== "auto")
+      return done("candidate_decided");
+    return null;
+  };
+  return { tiebreaks, closed };
+}
+
+/**
+ * 2차 갈림 판가름(local-qwen-tiebreak → 잡 split-tiebreak). 대상은 판가름 행(tiebreakId)이다.
+ * 이미 답을 받았거나 물을 수 없는 행(succeeded · ineligible)은 닫고(tiebreak_done), 실패가 상한(SPLIT_TIEBREAK_MAX_FAILURES)에 닿았으면 닫는다.
+ * 그 밖이면(실패 대기·끝나지 않은 running) 실패 행의 다시 볼 시각을 지우고 잡을 요청한다 — 남은 running 은 잡이 한 번의 실패로 센다(claimSplitTiebreak).
+ */
+async function requeueSplitTiebreak(tx: ProductTransaction, rows: readonly UnknownRow[], apply: boolean): Promise<Verdicts> {
+  const targets = rows.map(row => localTarget(row, "split", "qwen_tiebreak"));
+  const { tiebreaks, closed } = await splitRows(tx, targets, apply);
+  const verdictOf = (target: Extract<LocalModelTarget, { kind: "split" }>): Verdict => {
+    const early = closed(target);
+    if (early) return early;
+    const row = tiebreaks.get(target.tiebreakId)!;
+    if (row.state === "succeeded" || row.state === "ineligible") return done("tiebreak_done");
+    return row.failureCount >= SPLIT_TIEBREAK_MAX_FAILURES ? done("attempts_exhausted") : REQUEUED;
+  };
+  const verdicts: Verdicts = new Map(rows.map((row, index) => { const target = targets[index]; return [row.requestId, target ? verdictOf(target) : skipped("key_unreadable")]; }));
+  const pending = ids(targets.map(target => target && verdictOf(target).outcome === "requeued" ? target.tiebreakId : null));
+  if (apply && pending.length) {
+    await tx.update(gateSplitTiebreaks).set({ retryAfter: null }).where(and(inArray(gateSplitTiebreaks.id, pending),
+      eq(gateSplitTiebreaks.state, "failed"), lt(gateSplitTiebreaks.failureCount, SPLIT_TIEBREAK_MAX_FAILURES)));
+    await requestJob("split-tiebreak", tx);
+  }
+  return verdicts;
+}
+
+/**
+ * 2차 갈림의 DeepSeek 확인(local-deepseek-confirm → 잡 split-confirm). 대상은 판가름 행이다 — 확인은 Qwen-v2 거부가 확인을 기다릴 때(applied
+ * awaiting_deepseek)만 묻는다. 확인을 기다리지 않거나 이미 답을 받은 행은 닫고(confirm_done), 확인 실패가 상한에 닿았으면 닫는다.
+ * 그 밖이면 실패한 확인의 다시 볼 시각을 지우고 잡을 요청한다. 이 프로세스 안의 물러나기(deepseekConfirmBackoff)는 잡이 그대로 본다.
+ */
+async function requeueSplitConfirm(tx: ProductTransaction, rows: readonly UnknownRow[], apply: boolean): Promise<Verdicts> {
+  const targets = rows.map(row => localTarget(row, "split", "deepseek_confirm"));
+  const { tiebreaks, closed } = await splitRows(tx, targets, apply);
+  const verdictOf = (target: Extract<LocalModelTarget, { kind: "split" }>): Verdict => {
+    const early = closed(target);
+    if (early) return early;
+    const row = tiebreaks.get(target.tiebreakId)!;
+    if (row.state !== "succeeded" || row.applied !== "awaiting_deepseek" || row.deepseekState === null || row.deepseekState === "succeeded")
+      return done("confirm_done");
+    return row.deepseekFailureCount >= SPLIT_TIEBREAK_MAX_FAILURES ? done("attempts_exhausted") : REQUEUED;
+  };
+  const verdicts: Verdicts = new Map(rows.map((row, index) => { const target = targets[index]; return [row.requestId, target ? verdictOf(target) : skipped("key_unreadable")]; }));
+  const pending = ids(targets.map(target => target && verdictOf(target).outcome === "requeued" ? target.tiebreakId : null));
+  if (apply && pending.length) {
+    await tx.update(gateSplitTiebreaks).set({ deepseekRetryAfter: null }).where(and(inArray(gateSplitTiebreaks.id, pending),
+      eq(gateSplitTiebreaks.applied, "awaiting_deepseek"), eq(gateSplitTiebreaks.deepseekState, "failed"),
+      lt(gateSplitTiebreaks.deepseekFailureCount, SPLIT_TIEBREAK_MAX_FAILURES)));
+    await requestJob("split-confirm", tx);
+  }
+  return verdicts;
+}
+
+/**
+ * 발행분 감사 · 직접 모델(local-audit → 잡 audit-qwen — 사람이 연 감사의 Qwen 직접 갈래와 공개분 변경 재판정의 API 순위). 대상은 감사 항목(itemId)이다.
+ * 답이 이미 있거나(audit_done) 감사가 끝났거나 취소됐거나(audit_closed) 공개 상태가 아닌 제품(product_not_listed), 시도 상한·원본 없음으로
+ * 더 묻지 않는 항목(attempts_exhausted)은 닫는다. 그 밖이면 항목의 다시 볼 시각을 지우고 잡을 요청한다 — 시도 횟수는 그대로다.
+ */
+async function requeueAuditDirect(tx: ProductTransaction, rows: readonly UnknownRow[], apply: boolean): Promise<Verdicts> {
+  const targets = rows.map(row => localTarget(row, "audit", "audit"));
+  const itemIds = ids(targets.map(target => target?.itemId ?? null));
+  const itemQuery = tx.select({ id: productAuditItems.id, campaignId: productAuditItems.campaignId, productId: productAuditItems.productId,
+    aiDecision: productAuditItems.aiDecision, attempts: productAuditItems.attempts, errorCode: productAuditItems.errorCode })
+    .from(productAuditItems).where(inArray(productAuditItems.id, itemIds.length ? itemIds : [0]));
+  const items = new Map((apply ? await itemQuery.for("update") : await itemQuery).map(item => [item.id, item]));
+  const campaignIds = ids([...items.values()].map(item => item.campaignId)), productIds = ids([...items.values()].map(item => item.productId));
+  const openCampaigns = new Set(campaignIds.length ? (await tx.select({ id: productAuditCampaigns.id }).from(productAuditCampaigns)
+    .where(and(inArray(productAuditCampaigns.id, campaignIds), inArray(productAuditCampaigns.status, ["running", "rolling"])))).map(row => row.id) : []);
+  const listed = new Set(productIds.length ? (await tx.select({ id: products.id }).from(products)
+    .where(and(inArray(products.id, productIds), inArray(products.status, ["seeded", "verified"])))).map(row => row.id) : []);
+  const verdictOf = (itemId: number): Verdict => {
+    const item = items.get(itemId);
+    if (!item) return done("audit_item_gone");
+    if (item.aiDecision !== null) return done("audit_done");
+    if (!openCampaigns.has(item.campaignId)) return done("audit_closed");
+    if (!listed.has(item.productId)) return done("product_not_listed");
+    return item.attempts >= MAX_REVIEW_ATTEMPTS || item.errorCode === "no_source" ? done("attempts_exhausted") : REQUEUED;
+  };
+  const verdicts: Verdicts = new Map(rows.map((row, index) => { const target = targets[index]; return [row.requestId, target ? verdictOf(target.itemId) : skipped("key_unreadable")]; }));
+  const pending = itemIds.filter(id => verdictOf(id).outcome === "requeued");
+  if (apply && pending.length) {
+    await tx.update(productAuditItems).set({ retryAt: null })
+      .where(and(inArray(productAuditItems.id, pending), isNull(productAuditItems.aiDecision), isNotNull(productAuditItems.retryAt)));
+    await requestJob("audit-qwen", tx);
+  }
+  return verdicts;
+}
+
+/**
+ * 다시 대기열을 지원하는 단계. 로컬 직접 경로 중 지원하지 않는 것(남음 unsupported_route — 근거를 보고 한 건씩 닫는다):
+ * - local-second-opinion · local-published-filter(잡 audit-second-opinion) · local-screen(잡 audit-screen-review): 항목마다의 실패 기록과
+ *   그만 볼 판정이 DB 행이 아니라 잡이 읽고 고쳐 쓰는 관측 한 덩어리(operations_observations JSON failures)에 있다 — 여기서 고치면 잡의 읽고-쓰기와
+ *   부딪히고, 지울 다시 볼 시각도 없다(그만 보지 않은 항목은 잡이 스스로 다시 묻는다).
+ * - local-assist-<작업>-<백엔드>(LLM 보조): 작업 행(llm_assist work)의 claim·판이 따로 있고 그 기능을 다시 짓는 중이라 여기서 다루지 않는다.
+ */
 const HANDLERS: Readonly<Record<string, RequeueHandler>> = {
+  "local-human-deepseek": requeueHumanDeepseek,
+  "local-qwen-tiebreak": requeueSplitTiebreak,
+  "local-deepseek-confirm": requeueSplitConfirm,
+  "local-audit": requeueAuditDirect,
   "crawl-tagline": requeueCrawlTagline,
   "crawl-publish-classify": requeuePublicationClassify,
   "crawl-agent-review": requeueFirstReview,
@@ -383,7 +569,8 @@ async function readUnknownRows(scope: Scope & { requestIds?: readonly string[] }
   const limit = Math.max(1, Math.min(500, scope.limit ?? 500));
   return db.select({ requestId: modelCapacityRequests.requestId, routeId: modelCapacityRequests.routeId,
     workKey: modelCapacityRequests.workKey, logicalWorkKey: modelCapacityRequests.logicalWorkKey,
-    logicalMemberKeys: modelCapacityRequests.logicalMemberKeys, dispatchedAt: modelCapacityRequests.dispatchedAt })
+    logicalMemberKeys: modelCapacityRequests.logicalMemberKeys, dispatchedAt: modelCapacityRequests.dispatchedAt,
+    dispatchBinding: modelCapacityRequests.dispatchBinding })
     .from(modelCapacityRequests)
     .where(and(eq(modelCapacityRequests.state, "indeterminate"),
       scope.routeId ? eq(modelCapacityRequests.routeId, scope.routeId) : undefined,
