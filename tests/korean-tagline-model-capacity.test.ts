@@ -224,6 +224,94 @@ it("stops a positive zero-store before original success counters can certify wor
   expect(log.mock.calls.some(([event, data]) => event === "tagline_ko.done" && data.written > 0)).toBe(false);
 });
 
+function prepareJobResult() {
+  mocks.home.mockResolvedValue(["korean-unit"]);
+  mocks.tasks.mockResolvedValueOnce([task]).mockResolvedValue([]);
+  mocks.write.mockResolvedValue(1);
+  for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: "text", ROLE_LEASE_INSTANCE_ID: role.instanceId,
+    ROLE_LEASE_BOOT_ID: role.bootId, ROLE_LEASE_RELEASE: role.release, ROLE_LEASE_EPOCH: String(role.epoch) })) vi.stubEnv(key, value);
+}
+
+it.each([false, true])("writes the settled Korean result after tick budget exhaustion (internal abort: %s)", async internalAbort => {
+  prepareJobResult();
+  let budget = true;
+  if (internalAbort) vi.useFakeTimers();
+  mocks.native.mockImplementation(async (_items, _dispatch, _call, options: { signal: AbortSignal }) => {
+    budget = false;
+    if (internalAbort) {
+      await vi.advanceTimersByTimeAsync(250);
+      expect(options.signal.aborted).toBe(true);
+    }
+    return { result: { ok: true, outputs: ["Doc로 문서를 관리하는 도구"] }, terminal };
+  });
+  try {
+    const { writeKoreanTaglines } = await vi.importActual<typeof import("@/lib/jobs/products/korean-tagline")>("@/lib/jobs/products/korean-tagline");
+    expect(await writeKoreanTaglines({ lease: job, hasBudget: () => budget, log: vi.fn() } as unknown as Parameters<typeof writeKoreanTaglines>[0]))
+      .toEqual({ done: false });
+    expect(mocks.reconcile).toHaveBeenCalledExactlyOnceWith(terminal);
+    expect(mocks.write).toHaveBeenCalledExactlyOnceWith([{ task,
+      result: { kind: "success", line: "Doc로 문서를 관리하는 도구", model: KOREAN_TAGLINE_MODEL } }], job, expectation);
+    expect(mocks.reconcile.mock.invocationCallOrder[0]).toBeLessThan(mocks.write.mock.invocationCallOrder[0]);
+    expect(mocks.native).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("keeps the fenced writer's lease-loss rejection after tick budget exhaustion", async () => {
+  prepareJobResult();
+  let budget = true;
+  const failure = new Error("job_lease_lost");
+  mocks.native.mockImplementation(async () => { budget = false; return { result, terminal }; });
+  mocks.write.mockRejectedValue(failure);
+  const { writeKoreanTaglines } = await vi.importActual<typeof import("@/lib/jobs/products/korean-tagline")>("@/lib/jobs/products/korean-tagline");
+  await expect(writeKoreanTaglines({ lease: job, hasBudget: () => budget, log: vi.fn() } as unknown as Parameters<typeof writeKoreanTaglines>[0]))
+    .rejects.toBe(failure);
+  expect(mocks.reconcile).toHaveBeenCalledExactlyOnceWith(terminal);
+});
+
+it("still applies the output quality check to a complete response after the budget ends", async () => {
+  prepareJobResult();
+  let budget = true;
+  mocks.native.mockImplementation(async () => { budget = false; return { result, terminal }; });
+  const { writeKoreanTaglines } = await vi.importActual<typeof import("@/lib/jobs/products/korean-tagline")>("@/lib/jobs/products/korean-tagline");
+  await writeKoreanTaglines({ lease: job, hasBudget: () => budget, log: vi.fn() } as unknown as Parameters<typeof writeKoreanTaglines>[0]);
+  expect(mocks.write).toHaveBeenCalledExactlyOnceWith([{ task,
+    result: { kind: "failure", error: "rejected:name_lost", model: KOREAN_TAGLINE_MODEL } }], job, expectation);
+});
+
+it("still skips the settled result when the external shutdown signal aborts", async () => {
+  prepareJobResult();
+  const controller = new AbortController();
+  mocks.native.mockImplementation(async () => { controller.abort(); return { result, terminal }; });
+  const { writeKoreanTaglines } = await vi.importActual<typeof import("@/lib/jobs/products/korean-tagline")>("@/lib/jobs/products/korean-tagline");
+  expect(await writeKoreanTaglines({ lease: job, signal: controller.signal, hasBudget: () => true, log: vi.fn() } as unknown as Parameters<typeof writeKoreanTaglines>[0]))
+    .toEqual({ done: false });
+  expect(mocks.reconcile).toHaveBeenCalledExactlyOnceWith(terminal);
+  expect(mocks.write).not.toHaveBeenCalled();
+});
+
+it("preserves the existing no-charge behavior for a budget-aborted call without a complete response", async () => {
+  prepareJobResult();
+  let budget = true;
+  mocks.native.mockImplementation(async () => { budget = false; return { result: { ok: false, error: "cancelled" }, terminal: null }; });
+  const { writeKoreanTaglines } = await vi.importActual<typeof import("@/lib/jobs/products/korean-tagline")>("@/lib/jobs/products/korean-tagline");
+  expect(await writeKoreanTaglines({ lease: job, hasBudget: () => budget, log: vi.fn() } as unknown as Parameters<typeof writeKoreanTaglines>[0]))
+    .toEqual({ done: false });
+  expect(mocks.write).not.toHaveBeenCalled();
+});
+
+it("preserves the short tick-timeout policy without consuming a product attempt", async () => {
+  prepareJobResult();
+  vi.useFakeTimers();
+  mocks.tasks.mockReset().mockImplementationOnce(async () => { await vi.advanceTimersByTimeAsync(25_000); return [task]; }).mockResolvedValue([]);
+  mocks.native.mockResolvedValue({ result: { ok: false, error: "timeout" }, terminal: null });
+  try {
+    const { writeKoreanTaglines } = await vi.importActual<typeof import("@/lib/jobs/products/korean-tagline")>("@/lib/jobs/products/korean-tagline");
+    expect(await writeKoreanTaglines({ lease: job, hasBudget: () => true, log: vi.fn() } as unknown as Parameters<typeof writeKoreanTaglines>[0]))
+      .toEqual({ done: false });
+    expect(mocks.write).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
 function recoverKoreanBatch() {
   const restored = [task, { ...task, productId: 18, tagline: "Tools to manage documents for your team" }];
   const recoveredMembers = [members[0], { ...members[0], productId: 18, slug: "korean-unit-other" }];

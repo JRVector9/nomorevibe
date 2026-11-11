@@ -155,7 +155,11 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         const completedBatch = outcome.kind === "result" ? outcome.batch ?? entry.batch : entry.batch;
         completedBatch.forEach(task => visited.add(task.productId));
         const completedItems = completedBatch.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
-        if (signal.aborted || !ctx.hasBudget()) { skipped = true; return; }
+        // Admission budget stops new calls, not a complete response already reconciled by the adapter.
+        // The fenced writer still checks current lease/source/cache authority. External shutdown and
+        // budget-aborted failures keep their existing skip/retry behavior.
+        const completedResponse = outcome.kind === "result" && outcome.result.ok;
+        if (ctx.signal?.aborted || !completedResponse && (signal.aborted || !ctx.hasBudget())) { skipped = true; return; }
         const { backend } = entry;
         const batch = completedBatch, elapsedMs = Date.now() - calledAt;
         if (outcome.kind === "skipped") { skipped = true; return; }
