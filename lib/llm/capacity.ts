@@ -8,6 +8,7 @@ import { publicationPublisherRoleSchema, publicationClassifyInputSchema, type Pu
 export { publicationPublisherRoleSchema, publicationClassifyInputSchema, publicationClassifyMemberSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 import { createHash } from "node:crypto";
 import { MODEL_CAPACITY_INDETERMINATE_REASONS } from "./capacity-states";
+import { GATEWAY_HTTP_REJECTED_RETRY_AFTER_MAX_MS, GATEWAY_HTTP_REJECTED_STATUSES } from "./gateway-http-rejected-sql";
 import { z } from "zod";
 import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
 import { cliProcessTerminalEvidenceSchema, cliTransportSchema } from "@/lib/llm/cli-serving-contract";
@@ -1058,6 +1059,27 @@ export const gatewayNotStartedEvidenceSchema = z.object({ version: z.literal(1),
     z.lazy(() => localModelDispatchSchema).transform(value => value as LocalModelDispatch)]) }).strict();
 export type GatewayNotStartedEvidence = Readonly<z.infer<typeof gatewayNotStartedEvidenceSchema>>;
 export type GatewayNotStartedDispatch = GatewayNotStartedEvidence["dispatch"];
+/**
+ * 0174(2026-11-11): text 7경로 게이트웨이 dispatch 가 공급자에게서 "처리하지 않고 거절했다"는 완결된 HTTP 응답(429·401·403 —
+ * GATEWAY_HTTP_REJECTED_STATUSES)을 받았다. 정산은 gateway_not_started 와 같다(dispatched → settled 만, binding 의 C 그대로, 사용량 증거 없음).
+ * retryAfterMs 는 응답의 Retry-After(초 수·HTTP-date → ms, 1시간에서 자름)이고 없거나 읽을 수 없으면 null 이다.
+ * 저장된 JSON 은 권한이 아니다 — 게이트웨이 모듈이 응답을 받은 자리에서 낸 원본 증인(lib/llm/gateway-http-rejected.ts)만 정산한다.
+ */
+export const gatewayHttpRejectedEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("gateway_http_rejected"),
+  dispatch: z.union([textProfileModelDispatchSchema, reasonTranslationModelDispatchSchema, productTranslationModelDispatchSchema,
+    productTaglineKoModelDispatchSchema, crawlTaglineModelDispatchSchema, searchVerifyModelDispatchSchema, websearchQueryModelDispatchSchema]),
+  status: z.literal(GATEWAY_HTTP_REJECTED_STATUSES),
+  retryAfterMs: z.number().int().min(0).max(GATEWAY_HTTP_REJECTED_RETRY_AFTER_MAX_MS).nullable() }).strict();
+export type GatewayHttpRejectedEvidence = Readonly<z.infer<typeof gatewayHttpRejectedEvidenceSchema>>;
+export type GatewayHttpRejectedDispatch = GatewayHttpRejectedEvidence["dispatch"];
+export type GatewayHttpRejectedStatus = GatewayHttpRejectedEvidence["status"];
+/**
+ * 결과 없이 정산된 게이트웨이 단계 — 요청 바이트 0(gateway_not_started) 또는 공급자의 처리 전 거절(gateway_http_rejected). 결과가 없고, 단계 고유 색인이
+ * 있는 경로(crawl-tagline·product-search-verify·search-query-translate)에서는 같은 단계를 다시 보낼 수도 없다. 이어 읽는 쪽은 둘을 같게
+ * "실패 한 번으로 닫힌 단계"로 다룬다(2026-10-31 continuation_mismatch 사고 — 결과 없는 settled 행을 깨진 사슬로 읽으면 그 대상이 매 틱 멈춘다).
+ */
+export const gatewayNoOutcomeEvidenceSchema = z.union([gatewayNotStartedEvidenceSchema, gatewayHttpRejectedEvidenceSchema]);
+export type GatewayNoOutcomeEvidence = Readonly<z.infer<typeof gatewayNoOutcomeEvidenceSchema>>;
 
 const isoMillis = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/)
   .refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value, "invalid_timestamp");

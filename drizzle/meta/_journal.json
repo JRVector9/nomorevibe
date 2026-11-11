@@ -1212,6 +1212,13 @@
       "when": 1794172801083,
       "tag": "0173_review_attempt_model_outcome",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1794172801084,
+      "tag": "0174_gateway_http_rejected",
+      "breakpoints": true
     }
   ]
 }

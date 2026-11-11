@@ -15,8 +15,9 @@ import { ModelCapacityDeferredError } from "./capacity-deferred";
  *   요청하지 않는다(대기·전송 행 없음 — 모델 단위 미룸 `rate_limited`, capacity-deferred.ts). 모든 순위가 쉬면 잡은 model_capacity 로 미룬다.
  * - 공급자가 429 가 아닌 응답을 주면(성공·다른 오류) 연속 수를 지운다.
  * - 이 프로세스 메모리에만 있다(text 역할은 역할 lease 로 한 후보만 일한다). 다른 경로·모델·장비는 건드리지 않는다.
- * - 장부 정산은 바꾸지 않는다: 보낸 뒤 받은 429 는 지금처럼 결과 미확정으로 남는다(확정 실패로 정산하려면 장부 terminal 근거 kind 를 늘리는
- *   마이그레이션이 필요하다 — 이 모듈 밖의 일).
+ * - 장부 정산은 이 모듈의 일이 아니다: 보낸 뒤 받은 429(와 401·403)는 0174 부터 게이트웨이가 낸 처리 전 거절 증인(gateway_http_rejected,
+ *   lib/llm/gateway-http-rejected.ts)으로 용량 호출자가 확정 실패로 정산해 칸을 바로 비운다(예전에는 결과 미확정으로 유지 시간만큼 칸을 쥐었다).
+ *   이 쉼은 그와 별개로 다음 호출을 막는다.
  */
 export const PROVIDER_RATE_LIMIT_BASE_MS = 30_000;
 export const PROVIDER_RATE_LIMIT_MAX_BACKOFF_MS = 30 * 60_000;

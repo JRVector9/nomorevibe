@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
+import { withoutRejected } from "./gateway-http-rejected-fixture";
 import { productTranslationGatewayWire, translateProductFields, type ProductTranslationGatewayItem } from "@/lib/crawl/translate";
 import { parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
@@ -221,8 +222,8 @@ it.each([{ usage: { prompt_tokens: 8192, completion_tokens: 1, total_tokens: 819
 it.each([429, 307])("makes only one native POST for HTTP %i with no redirect or retry", async status => {
   await server(async ({ bodies, reply }) => {
     reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
-    const batch = items(), call = prepared(batch);
-    expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
+    const batch = items(), call = prepared(batch), owned = dispatch(batch, call);
+    expect(withoutRejected(await send(batch, owned, call), status, owned)).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
     expect(bodies).toHaveLength(1);
   });
 });

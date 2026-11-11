@@ -21,6 +21,7 @@ import { jobsForRole } from "@/lib/jobs/catalog";
 import { batchCanaryAnchorKey, batchPolicyHash } from "@/lib/jobs/batches";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 import { canRequeueUnknownRoute, previewModelCapacityUnknowns, requeueModelCapacityUnknowns } from "@/lib/operations/model-capacity-requeue";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
@@ -180,7 +181,8 @@ beforeEach(async () => { pinTextRanks({ [jobName]: TAGLINE_MODEL }); setServingC
   await admin`INSERT INTO crawl_settings(id,values) VALUES(1,'{"enabled":true}') ON CONFLICT(id) DO UPDATE SET values=crawl_settings.values||'{"enabled":true}'::jsonb`;
   await elect();
 });
-afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); }]), hooks));
+afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs();
+  resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end({ timeout: 5 }),
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
@@ -479,6 +481,31 @@ it("records a live not_started failure in the same tick and asks the next genera
   });
   const rows = await phases(task.candidate.repo);
   expect(rows.map(row => [row.state, row.kind])).toEqual([["settled", "gateway_not_started"], ["settled", "crawl_tagline_gateway_terminal"]]);
+  expect(rows[0].generation).not.toBe(rows[1].generation);
+  expect((await admin`SELECT attempts,error_code,tagline FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0]).toEqual({ attempts: 2, error_code: null, tagline: "Document manager" });
+}), 20_000);
+
+// 0174(2026-11-11): 공급자의 429 는 결과 미확정이 아니라 확정 실패(gateway_http_rejected)로 정산된다. writer 는 그 결과 없는 settled 행을 not_started 처럼
+// 받아 같은 틱에 실패를 적고(예전 not_started 사고처럼 매 틱 불일치로 멈추지 않는다), 같은 세대는 다시 보내지 않으며 때가 되면 새 세대로 한 번 묻는다.
+it("records a live provider 429 (settled gateway_http_rejected) in the same tick and asks the next generation once when it is due", exercise(async () => {
+  const task = await seed();
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => { response.statusCode = 429; response.setHeader("retry-after", "30"); response.end('{"error":"rate limit"}'); });
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(1);
+    expect((await admin`SELECT attempts,error_code FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0]).toEqual({ attempts: 1, error_code: "rate_limit" });
+    const [rejected] = await admin`SELECT r.state, r.terminal_evidence FROM model_capacity_requests r JOIN crawl_candidates c
+      ON r.logical_member_keys && ARRAY['crawl-tagline:' || c.id]::text[] WHERE c.repo=${task.candidate.repo}`;
+    expect(rejected).toMatchObject({ state: "settled", terminal_evidence: { kind: "gateway_http_rejected", status: 429, retryAfterMs: 30_000 } });
+    // 쉼이 끝나고(시험이 Retry-After 경과를 대신한다) 다시 볼 때가 되면 새 세대로 한 번 묻는다
+    resetProviderRateLimitsForTest();
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    await admin`UPDATE crawl_taglines SET retry_at=clock_timestamp()-interval '1 second' WHERE repo=${task.candidate.repo}`;
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(2);
+  });
+  const rows = await phases(task.candidate.repo);
+  expect(rows.map(row => [row.state, row.kind])).toEqual([["settled", "gateway_http_rejected"], ["settled", "crawl_tagline_gateway_terminal"]]);
   expect(rows[0].generation).not.toBe(rows[1].generation);
   expect((await admin`SELECT attempts,error_code,tagline FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0]).toEqual({ attempts: 2, error_code: null, tagline: "Document manager" });
 }), 20_000);

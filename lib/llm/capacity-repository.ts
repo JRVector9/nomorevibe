@@ -25,9 +25,9 @@ import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityDevices, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
-import { gatewayNotStartedEvidenceSchema, GATEWAY_DISPATCH_PROVIDERS, isGatewayDispatchProvider, type GatewayDispatchProvider,
-  type GatewayNotStartedDispatch } from "./capacity";
+import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayHttpRejected, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
+import { gatewayNotStartedEvidenceSchema, gatewayHttpRejectedEvidenceSchema, gatewayNoOutcomeEvidenceSchema, GATEWAY_DISPATCH_PROVIDERS,
+  isGatewayDispatchProvider, type GatewayDispatchProvider, type GatewayNotStartedDispatch } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
@@ -1320,6 +1320,40 @@ export async function reconcileGatewayNotStarted(terminal: GatewayNotStarted): P
   });
 }
 
+/**
+ * 공급자가 처리하지 않고 거절한 text 경로 게이트웨이 dispatch 의 정산(0174, 2026-11-11 — 429 빈도 한도·401/403 인증 거절).
+ * reconcileGatewayNotStarted 와 같은 규칙이다: 게이트웨이 모듈이 응답 상태 줄을 본 자리에서 낸 원본 증인만 받고, 같은 owner handle·binding 의
+ * dispatched 행만 settled 로 바꾼다(행 동일성은 그 binding kind 의 terminal reconcile 규칙 그대로). 점유만 끝나고 binding 의 C 는 그대로다
+ * (사용량 증거 없음 — 운영 화면은 이 정산을 실패로 센다). 예전에는 결과 미확정(transport_unknown)으로 남아 장비 칸을 유지 시간만큼 쥐었다.
+ * 역사적 dispatch 로 정산하므로 지금의 정책·mode·job 은 막지 않는다. 0174 가 적용되기 전 DB 에서는 guard 가 23514 로 거절한다.
+ */
+export async function reconcileGatewayHttpRejected(terminal: GatewayHttpRejected): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readGatewayHttpRejected } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readGatewayHttpRejected(terminal);
+  if (!native) fail("invalid_gateway_http_rejected");
+  const evidence = gatewayHttpRejectedEvidenceSchema.parse(native), dispatch = evidence.dispatch;
+  const evidenceHash = reviewHash(evidence);
+  return settlementTransaction("reconcileGatewayHttpRejected", async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
+      .where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!gatewayNotStartedRowMatches(row, dispatch)) fail("gateway_http_rejected_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) fail("gateway_http_rejected_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched") fail("gateway_http_rejected_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", "dispatched", "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
 function fixedTextProfileIdentity(value: ModelCapacityRequestIdentity, productId: number): string {
   const logical = `text:profile:${productId}`;
   if (!Number.isSafeInteger(productId) || productId < 1 || value.class !== "background" || value.pool !== "text"
@@ -1787,8 +1821,9 @@ export type CrawlTaglineCapacityDispatchLock = Readonly<{ control: ReturnType<ty
 export type CrawlTaglineContinuation = Readonly<{ generationHash: string;
   first: CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>;
   second: (CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>) | null }>;
-/** 세대의 마지막 단계가 gateway_not_started(0149, 요청 바이트 0)로 정산됐다 — 결과가 없고, 같은 단계는 고유 색인 때문에 이 세대에서 다시
- * 보낼 수 없다. 호출자는 이 세대를 실패 한 번으로 닫아(시도·재시도 시각) 다음 세대로 넘긴다. ask 2 면 first 는 그 부모(빈 줄)다. */
+/** 세대의 마지막 단계가 gateway_not_started(0149, 요청 바이트 0) 또는 gateway_http_rejected(0174, 공급자의 처리 전 거절)로 정산됐다 — 결과가 없고,
+ * 같은 단계는 고유 색인 때문에 이 세대에서 다시 보낼 수 없다. 호출자는 이 세대를 실패 한 번으로 닫아(시도·재시도 시각) 다음 세대로 넘긴다.
+ * ask 2 면 first 는 그 부모(빈 줄)다. */
 export type CrawlTaglineNotStartedContinuation = Readonly<{ generationHash: string;
   notStarted: Readonly<{ requestId: string; bindingHash: string; askOrdinal: 1 | 2 }>;
   first: (CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>) | null }>;
@@ -1829,10 +1864,11 @@ function storedCrawlTaglineEvidence(row: RequestRow | undefined) {
   return parsed.success && crawlTaglineRowMatches(row, parsed.data.dispatch)
     && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data) ? parsed.data : null;
 }
-/** 이 경로의 settled gateway_not_started 행(0149) — 증거가 이 행 자신의 dispatch handle·binding 과 같을 때만. 전송 0 이라 결과도 부모 자격도 없다. */
+/** 이 경로의 결과 없는 settled 행 — gateway_not_started(0149, 전송 0) 또는 gateway_http_rejected(0174, 공급자의 처리 전 거절) — 증거가 이 행 자신의
+ * dispatch handle·binding 과 같을 때만. 결과도 부모 자격도 없다(이 세대는 실패 한 번으로 닫힌다). */
 function storedCrawlTaglineNotStarted(row: RequestRow | undefined): CrawlTaglineModelDispatch | null {
   if (!row || row.state !== "settled" || !row.settledAt) return null;
-  const parsed = gatewayNotStartedEvidenceSchema.safeParse(row.terminalEvidence);
+  const parsed = gatewayNoOutcomeEvidenceSchema.safeParse(row.terminalEvidence);
   if (!parsed.success || parsed.data.dispatch.binding.kind !== "crawl_tagline_gateway") return null;
   const dispatch = parsed.data.dispatch as CrawlTaglineModelDispatch;
   return crawlTaglineRowMatches(row, dispatch) && row.terminalEvidenceHash === reviewHash(parsed.data)
@@ -2111,14 +2147,15 @@ export async function reconcileSearchVerifyGatewayTerminal(terminal: SearchVerif
 }
 type SearchVerifyEntry = { row: RequestRow; binding: SearchVerifyDispatchBinding };
 /** `broken`: this execution's rows do not form one exact chain — it is closed (never resumed, never written) and the next
- * execution starts after it. `notStarted`: its next step settled as gateway_not_started (0149, zero request bytes) — no outcome,
- * and that exact step can never be sent again in this execution (unique step index), so the execution is closed too. */
+ * execution starts after it. `notStarted`: its next step settled without an outcome — gateway_not_started (0149, zero request bytes) or
+ * gateway_http_rejected (0174, the provider rejected it unprocessed) — and that exact step can never be sent again in this execution
+ * (unique step index), so the execution is closed too. */
 type SearchVerifyChain = { chain: StoredSearchVerify[]; next: SearchVerifyStep | "done" | "stop"; parent: SearchVerifyParent | null;
   unresolved: SearchVerifyEntry[]; notStarted: SearchVerifyEntry[]; broken: boolean };
-/** A settled gateway_not_started row of this route whose evidence is the row's own dispatch handle and binding. */
+/** A settled no-outcome row (gateway_not_started or gateway_http_rejected) of this route whose evidence is the row's own dispatch handle and binding. */
 function storedSearchVerifyNotStarted(row: RequestRow, binding: SearchVerifyDispatchBinding): boolean {
   if (row.state !== "settled" || !row.settledAt) return false;
-  const parsed = gatewayNotStartedEvidenceSchema.safeParse(row.terminalEvidence);
+  const parsed = gatewayNoOutcomeEvidenceSchema.safeParse(row.terminalEvidence);
   return parsed.success && parsed.data.dispatch.binding.kind === "search_verify_gateway"
     && isDeepStrictEqual(parsed.data.dispatch.binding, binding) && searchVerifyRowMatches(row, parsed.data.dispatch as SearchVerifyModelDispatch)
     && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data);
@@ -2236,7 +2273,10 @@ export type WebsearchQueryContinuation = { kind: "none" } | { kind: "blocked" } 
   | Readonly<{ kind: "settled"; requestId: string; bindingHash: string; responseHash: string; model: string; outcome: WebsearchQueryOutcome }>
   /** 이 스냅숏의 호출이 결과 미확정(indeterminate)으로 남았고 그 실패가 캐시에 닿지 못했다 — 같은 스냅숏으로는 다시 보낼 수 없다(snapshot 고유 색인).
    * 호출자는 결과를 지어내지 않고 실패 한 번(unknown)만 적어 스냅숏을 넘긴다(2026-11-09). 장부 행은 그대로 사람 검토로 남는다. */
-  | Readonly<{ kind: "unresolved"; requestId: string; model: string }>;
+  | Readonly<{ kind: "unresolved"; requestId: string; model: string }>
+  /** 이 스냅숏의 호출이 결과 없이 정산됐고(gateway_not_started 전송 0, 또는 0174 gateway_http_rejected 공급자의 처리 전 거절) 그 실패가 캐시에 닿지
+   * 못했다 — 같은 스냅숏으로는 다시 보낼 수 없다. 호출자는 그 실패(error) 한 번만 적어 스냅숏을 넘긴다(unresolved 와 같은 길, 장부 행은 이미 끝났다). */
+  | Readonly<{ kind: "failed"; requestId: string; model: string; error: string }>;
 const websearchQueryLocks = new WeakMap<WebsearchQueryCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
   identity: ModelCapacityRequestIdentity; input: WebsearchQueryInput; finished: boolean }>();
 function fixedWebsearchQueryIdentity(value: ModelCapacityRequestIdentity, input: WebsearchQueryInput): string {
@@ -2271,6 +2311,18 @@ function storedWebsearchQueryEvidence(row: RequestRow | undefined) {
   const parsed = websearchQueryGatewayTerminalEvidenceSchema.safeParse(row.terminalEvidence);
   return parsed.success && websearchQueryRowMatches(row, parsed.data.dispatch)
     && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data) ? parsed.data : null;
+}
+/** 이 경로의 결과 없는 settled 행(gateway_not_started 0149·gateway_http_rejected 0174) — 증거가 이 행 자신의 dispatch handle·binding 과 같을 때만.
+ * 결과(캐시에 적을 실패 코드)는 게이트웨이 전송 함수와 같은 이름이다: 429 는 rate_limit, 그 밖의 거절은 http_<상태>, 전송 0 은 not_started. */
+function storedWebsearchQueryNoOutcome(row: RequestRow | undefined): Readonly<{ dispatch: WebsearchQueryModelDispatch; error: string }> | null {
+  if (!row || row.state !== "settled" || !row.settledAt) return null;
+  const parsed = gatewayNoOutcomeEvidenceSchema.safeParse(row.terminalEvidence);
+  if (!parsed.success || parsed.data.dispatch.binding.kind !== "websearch_query_gateway") return null;
+  const dispatch = parsed.data.dispatch as WebsearchQueryModelDispatch;
+  if (!websearchQueryRowMatches(row, dispatch) || row.terminalEvidenceHash !== reviewHash(parsed.data)
+    || !isDeepStrictEqual(row.terminalEvidence, parsed.data)) return null;
+  const evidence = parsed.data;
+  return { dispatch, error: evidence.kind === "gateway_not_started" ? "not_started" : evidence.status === 429 ? "rate_limit" : `http_${evidence.status}` };
 }
 /** The fixed cache target is in the very first waiting INSERT. */
 export async function requestWebsearchQueryModelSlot(value: ModelCapacityRequest, input: WebsearchQueryInput): Promise<ModelSlotResult> {
@@ -2372,6 +2424,13 @@ export async function readWebsearchQueryContinuation(tx: ProductTransaction, val
         AND ${modelCapacityRequests.dispatchBinding}->'member'->'cache'=${JSON.stringify(input.member.cache)}::text::jsonb`)
       .orderBy(asc(modelCapacityRequests.queueOrdinal)).limit(1);
     return unknown ? Object.freeze({ kind: "unresolved" as const, requestId: unknown.requestId, model: unknown.model }) : { kind: "none" };
+  }
+  const unsent = rows.length === 1 ? storedWebsearchQueryNoOutcome(rows[0]) : null;
+  if (unsent) {
+    // 결과 없이 정산된 호출(전송 0·공급자의 처리 전 거절) — 같은 스냅숏은 다시 보낼 수 없으니 그 실패만 적어 넘긴다(2026-10-31 continuation_mismatch 교훈)
+    if (unsent.dispatch.binding.member.cacheKey !== input.member.cacheKey || !isDeepStrictEqual(unsent.dispatch.binding.member.cache, input.member.cache))
+      return { kind: "broken" };
+    return Object.freeze({ kind: "failed" as const, requestId: unsent.dispatch.requestId, model: unsent.dispatch.binding.model, error: unsent.error });
   }
   const stored = rows.map(row => storedWebsearchQueryEvidence(row));
   if (rows.length !== 1 || !stored[0] || stored[0].dispatch.binding.member.cacheKey !== input.member.cacheKey
@@ -3044,7 +3103,7 @@ export async function readTextTargetPoolAffinities(target: TextTargetPoolInput, 
         const parsed = websearchQueryDispatchBindingSchema.safeParse(row.dispatchBinding);
         const dispatch = websearchQueryModelDispatchSchema.safeParse(envelope);
         if (!parsed.success || !isDeepStrictEqual(parsed.data.member, target.member)
-          || row.state === 'settled' && !storedWebsearchQueryEvidence(row)
+          || row.state === 'settled' && !storedWebsearchQueryEvidence(row) && !storedWebsearchQueryNoOutcome(row)
           || row.state !== 'settled' && (!dispatch.success || !websearchQueryRowMatches(row, dispatch.data)))
           throw new ModelCapacityDeferredError('ledger_mismatch');
         matches.push({ model: parsed.data.model, provider: parsed.data.provider });

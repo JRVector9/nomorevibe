@@ -8,6 +8,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
+import { gatewayHttpRejectedEventTerminalSql, gatewayHttpRejectedTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
 import { LEDGER_RULE_CHECKS, ledgerCheckDefs, ledgerCheckExpressions } from "./ledger-check-defs";
 import { TEST_DATABASE_URL } from "./setup";
 
@@ -192,6 +193,39 @@ it("0161 은 text local-direct 가지 셋만 다음 ordinal 로 더하고 판정
   const count = async () => (await client<{ n: number }[]>`SELECT count(*)::int n FROM model_capacity_check_rules`)[0].n;
   const beforeCount = await count();
   for (const statement of readFileSync(path.join(root, "drizzle/0161_text_local_direct_binding.sql"), "utf8").split("--> statement-breakpoint")) {
+    const sql = statement.split("\n").filter(line => !line.trimStart().startsWith("--")).join("\n").trim();
+    if (sql.startsWith("INSERT")) await client.unsafe(sql);
+  }
+  expect(await count()).toBe(beforeCount);
+});
+
+it("0174 는 HTTP 거절 정산 가지 둘만(requests·events terminal) 다음 ordinal 로 더하고 판정은 그대로이며 다시 실행해도 행이 늘지 않는다", async () => {
+  const rejected: Record<string, string> = { model_capacity_requests_terminal_check: gatewayHttpRejectedTerminalSql,
+    model_capacity_events_terminal_check: gatewayHttpRejectedEventTerminalSql };
+  await migrateThrough(173);
+  const before0174 = await ledgerCheckDefs(client, MOVED);
+  const maxOrdinal = Object.fromEntries((await client<{ name: string; n: number }[]>`SELECT constraint_name AS name, max(ordinal)::int AS n
+    FROM model_capacity_check_rules GROUP BY constraint_name`).map(row => [row.name, Number(row.n)]));
+  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  const rules = await client<{ table_name: string; constraint_name: string; ordinal: number; predicate: string }[]>`SELECT table_name, constraint_name, ordinal, predicate
+    FROM model_capacity_check_rules WHERE source = '0174_gateway_http_rejected' ORDER BY constraint_name`;
+  expect(rules.map(rule => [rule.table_name, rule.constraint_name, Number(rule.ordinal), rule.predicate])).toEqual([
+    ["model_capacity_events", "model_capacity_events_terminal_check", maxOrdinal.model_capacity_events_terminal_check + 1, gatewayHttpRejectedEventTerminalSql],
+    ["model_capacity_requests", "model_capacity_requests_terminal_check", maxOrdinal.model_capacity_requests_terminal_check + 1, gatewayHttpRejectedTerminalSql]]);
+  const after = await ledgerCheckDefs(client, MOVED);
+  for (const name of MOVED) {
+    const branch = rejected[name];
+    if (!branch) { expect(after[name], `${name}: 0174 unchanged`).toBe(before0174[name]); continue; }
+    expect(after[name], `${name}: prior ordinals plus the 0174 branch`).toBe(`CHECK (${before0174[name].slice("CHECK (".length, -1)} OR (${branch}))`);
+  }
+  // 두 guard 함수가 새 가지를 평가한다(트리거·함수 이름은 그대로) — 다른 표·작은 CHECK 는 건드리지 않는다
+  for (const table of ["model_capacity_requests", "model_capacity_events"]) expect(await guardSource(table)).toContain("gateway_http_rejected");
+  expect(await constraintNames()).toEqual(SMALL.toSorted());
+  expect(await verdicts()).toEqual(before);
+  const count = async () => (await client<{ n: number }[]>`SELECT count(*)::int n FROM model_capacity_check_rules`)[0].n;
+  const beforeCount = await count();
+  for (const statement of readFileSync(path.join(root, "drizzle/0174_gateway_http_rejected.sql"), "utf8").split("--> statement-breakpoint")) {
     const sql = statement.split("\n").filter(line => !line.trimStart().startsWith("--")).join("\n").trim();
     if (sql.startsWith("INSERT")) await client.unsafe(sql);
   }

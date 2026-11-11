@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prepareSearchVerifyGatewayCall, verifyKeywordsWithReservedGateway, readSearchVerifyGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
-import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, reconcileGatewayHttpRejected, readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileSearchVerifyGatewayTerminal, readSearchVerifyContinuation } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, firstSearchVerifyStep, nextSearchVerifyStep, searchVerifyStepKeywords,
@@ -123,10 +123,12 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     try {
       if (native.terminal) await reconcileSearchVerifyGatewayTerminal(native.terminal);
       else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
+      // 0174: 공급자가 처리하지 않고 거절한 완결 응답(429·401·403) — 결과 미확정 대신 확정 실패로 정산해 칸을 바로 비운다
+      else if (native.rejected) await reconcileGatewayHttpRejected(native.rejected);
       else if (!await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !native.result.ok && native.result.error === "timeout" })))
         throw new Error("search_verify_dispatch_not_marked");
     } catch (cleanup) {
-      if (native.terminal || native.notStarted) await markUnsettledDispatch(dispatch);
+      if (native.terminal || native.notStarted || native.rejected) await markUnsettledDispatch(dispatch);
       if (!native.result.ok) throw new AggregateError([native.result, cleanup], "search_verify_result_cleanup_failed");
       throw cleanup;
     }

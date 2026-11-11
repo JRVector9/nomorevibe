@@ -25,6 +25,7 @@ import { modelCapacityPolicyHash, productTranslationInputHash, productTranslatio
 import type { ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
@@ -212,7 +213,8 @@ beforeAll(() => tracked((async () => {
 beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, PRODUCT_TRANSLATE_MODEL)]);
   pinTextRanks({ [jobName]: PRODUCT_TRANSLATE_MODEL }); await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals();
+    resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
@@ -406,6 +408,20 @@ it("preserves the genuine dispatch event INSERT failure with no committed dispat
       expect(triggers[0]).toEqual({ tgfoid: functions[0].oid, tgtype: 7, tgenabled: "O" });
       await tx.unsafe(`DROP TRIGGER ${fault} ON model_capacity_events`); await tx.unsafe(`DROP FUNCTION public.${fault}()`);
     }); }], errors); }
+}), 20_000);
+
+// 0174(2026-11-11): 공급자의 처리 전 거절(429)은 결과 미확정이 아니라 확정 실패(gateway_http_rejected)로 정산된다 — 칸·member fence 를 바로 놓고 C 는 그대로다.
+it("settles a provider 429 as gateway_http_rejected (not indeterminate) and records the failed attempt once", exercise(async () => {
+  const { product } = await seed(); await server(async ({ bodies, setReply }) => {
+    setReply(response => { response.statusCode = 429; response.setHeader("retry-after", "5"); response.end('{"error":"rate limit"}'); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
+    const [rejected] = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${prefix}`;
+    expect(rejected.row).toMatchObject({ state: "settled", terminal_evidence: { kind: "gateway_http_rejected", status: 429, retryAfterMs: 5_000 },
+      dispatch_binding: { totalTokenBound: 8000, chargedTokens: 8000 } });
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${rejected.row.request_id}::uuid ORDER BY id`).map(row => row.kind))
+      .toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
+    expect((await admin`SELECT attempts,status FROM product_translations WHERE product_id=${product.id}`)[0]).toEqual({ attempts: 1, status: "failed" });
+  });
 }), 20_000);
 
 it("keeps the EOF unknown row for review but lets a re-elected owner boot retry the changed source (2026-10-30)", exercise(async () => {

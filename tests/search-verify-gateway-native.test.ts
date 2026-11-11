@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
+import { withoutRejected } from "./gateway-http-rejected-fixture";
 import { parseVerification, searchVerifyGatewayWire, verifyKeywords, type VerifyItem } from "@/lib/domain/products/search-verify";
 import { profileHash } from "@/lib/domain/products/search-profile";
 import { searchVerifyGenerationHash, searchVerifyLogicalWorkKey, searchVerifyInputHash, searchVerifyDispatchBindingHash,
@@ -175,12 +176,12 @@ it("keeps the outer JSON decoding failure as network and an untrusted envelope a
     expect(bodies).toHaveLength(4);
   });
 });
-it.each([[404, "model_unavailable"], [429, "rate_limit"], [503, "http_503"], [307, "http_307"]])
+it.each([[404, "model_unavailable"], [401, "http_401"], [429, "rate_limit"], [503, "http_503"], [307, "http_307"]])
   ("performs one physical POST for HTTP %i with the original %s error and no redirect/retry", async (status, error) => {
     await server(async ({ bodies, reply }) => {
       reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
-      const input = item(), call = prepared(input);
-      expect(await send(input, dispatch(input, call), call)).toEqual({ result: { ok: false, error }, terminal: null });
+      const input = item(), call = prepared(input), owned = dispatch(input, call);
+      expect(withoutRejected(await send(input, owned, call), Number(status), owned)).toEqual({ result: { ok: false, error }, terminal: null });
       expect(bodies).toHaveLength(1);
     });
   });

@@ -17,6 +17,7 @@ import { modelCapacityPolicyHash, textProfileInputHash, type ModelCapacityPolicy
   type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import type { TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
@@ -220,7 +221,7 @@ beforeAll(() => tracked((async () => {
 beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, PROFILE_MODEL)]); pinTextRanks({ [jobName]: PROFILE_MODEL });
   await install(); await elect(); })(), hooks));
 afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null);
-  pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end()]); });
 
 it("commits real text role/job dispatch, one native POST, historical terminal, original keyword writer and ACK", exercise(async () => {
@@ -394,6 +395,18 @@ it("settles historical terminal after actual job expiry while mandatory writer a
     expect((await admin`SELECT state FROM model_capacity_requests`)[0].state).toBe("settled");
     expect(await admin`SELECT product_id FROM product_search_profiles WHERE product_id=${task.product.id}`).toEqual([]);
     const [job] = await admin`SELECT * FROM jobs WHERE name=${jobName}`; expect(Number(job.processed_version)).toBeLessThan(Number(job.requested_version));
+  });
+}));
+// 0174(2026-11-11): 공급자의 인증 거절(401)·빈도 한도(429)는 처리 전 거절이라 확정 실패(gateway_http_rejected)로 정산된다 — 결과 미확정으로 칸을 쥐지 않는다.
+it("settles a provider 401 as gateway_http_rejected (not indeterminate) and spends one attempt", exercise(async () => {
+  const task = await seed(); await server(async ({ bodies, setReply }) => {
+    setReply(response => { response.statusCode = 401; response.end('{"error":"invalid api key"}'); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
+    const [rejected] = await admin`SELECT * FROM model_capacity_requests`;
+    expect(rejected).toMatchObject({ state: "settled", terminal_evidence: { kind: "gateway_http_rejected", status: 401, retryAfterMs: null } });
+    expect(rejected.dispatch_binding.chargedTokens).toBe(8000);
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${rejected.request_id}::uuid AND kind='dispatch_indeterminate'`)).toEqual([]);
+    expect((await admin`SELECT attempts,error_code FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual({ attempts: 1, error_code: "http_401" });
   });
 }));
 it("keeps the EOF unknown row for review while a new boot retries the changed source and neighbours keep moving (2026-10-30)", exercise(async () => {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
+import { withoutRejected } from "./gateway-http-rejected-fixture";
 import { textHash, translateToKorean, parseTranslations, reasonTranslationGatewayWire } from "@/lib/crawl/translate";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { logger } from "@/lib/observability/logger";
@@ -230,11 +231,11 @@ it.each([{ usage: { prompt_tokens: 8192, completion_tokens: 1, total_tokens: 819
     expect(result).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
-it.each([400, 422, 429, 307])("makes one POST for HTTP %i without retry or redirect", async status => {
+it.each([400, 401, 403, 422, 429, 307])("makes one POST for HTTP %i without retry or redirect", async status => {
   await server(async ({ bodies, reply }) => {
     reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
-    const texts = sources(), call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
-    expect(result).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null }); expect(bodies).toHaveLength(1);
+    const texts = sources(), call = prepared(texts), owned = dispatch(texts, call), result = await send(texts, owned, call);
+    expect(withoutRejected(result, status, owned)).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it("leaves EOF without terminal proof and drains the real native read", async () => {

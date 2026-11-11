@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
+import { withoutRejected } from "./gateway-http-rejected-fixture";
 import { parseQueryTranslation, textHash, translateChineseQueryToEnglish, translateQueryToEnglish,
   websearchQueryGatewayWire, type WebsearchQueryGatewayInput } from "@/lib/crawl/translate";
 import { websearchQueryLogicalWorkKey, websearchQueryInputHash, websearchQueryDispatchBindingHash, websearchQueryModelDispatchSchema,
@@ -140,8 +141,8 @@ it.each([[404, "http_404"], [429, "rate_limit"], [500, "http_500"], [307, "http_
   ("performs one physical POST for HTTP %i with the original query error name and no redirect/retry", async (status, error) => {
     await server(async ({ bodies, reply }) => {
       reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
-      const call = prepared(korean);
-      expect(await send(korean, dispatch(korean, call), call)).toEqual({ result: { ok: false, error }, terminal: null });
+      const call = prepared(korean), owned = dispatch(korean, call);
+      expect(withoutRejected(await send(korean, owned, call), status, owned)).toEqual({ result: { ok: false, error }, terminal: null });
       expect(bodies).toHaveLength(1);
     });
   });

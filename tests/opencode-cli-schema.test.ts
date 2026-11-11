@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { aiConnections, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/operations-schema";
 import { opencodeCliLogicalSql, opencodeCliDispatchSql, opencodeCliEventTerminalSql } from "@/lib/llm/opencode-cli-binding-sql";
 import { opencodeTaskLogicalSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
+import { gatewayHttpRejectedEventTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
 import { cliExecutorEvidenceShape } from "@/lib/llm/cli-executor-boundary-contract";
 import { cliExecutorIndeterminateEvidenceShape } from "@/lib/llm/cli-executor-indeterminate-boundary-contract";
 import { cliExecutorRemovedEvidenceShape } from "@/lib/llm/cli-executor-removed-boundary-contract";
@@ -38,6 +39,12 @@ it("appends the next monotonic migration and only three new guarded ledger branc
 it.each(targets)("%s / %s keeps the complete predecessor and appends the exact OpenCode branch", (table, name, branch) => {
   const checks = getTableConfig(table === "model_capacity_requests" ? modelCapacityRequests : modelCapacityEvents).checks;
   let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+  if (name === "model_capacity_events_terminal_check") {
+    // 0174 appends the HTTP-rejected settlement branch after 0168 on the events terminal check only.
+    const rejectedTail = `) OR (${gatewayHttpRejectedEventTerminalSql})`;
+    expect(expression.startsWith("(") && expression.endsWith(rejectedTail), `${name}: 0174 additive tail present`).toBe(true);
+    expression = expression.slice(1, -rejectedTail.length);
+  }
   const task = name === "model_capacity_requests_logical_check" ? opencodeTaskLogicalSql
     : name === "model_capacity_requests_dispatch_check" ? opencodeTaskDispatchSql : opencodeTaskEventTerminalSql;
   const taskTail = `) OR (${task})`;
