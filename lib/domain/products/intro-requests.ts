@@ -9,6 +9,8 @@ import * as repo from "./repository";
 import { introRequestMessage, type IntroRequestEntry } from "./takedown-view";
 import { isUnclaimed } from "./view";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
+import { queueDetailPurge } from "@/lib/cdn/detail-purge";
+import { DETAIL_EDIT_PURGE } from "@/lib/cdn/purge";
 
 /**
  * 소개 수정 요청(2026-10-08 UX 감사 UX-18).
@@ -137,6 +139,8 @@ export async function fixIntroFromRequest(
     await tx.update(products).set({ tagline, taglineSource: "editor", searchKeywords: null, ...(sameText ? { description: tagline } : {}),
       updatedAt: sql`now()` }).where(eq(products.id, request.productId));
     await tx.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, request.productId));
+    // 사람이 고친 소개는 엣지의 상세 사본(최대 5분)에 남지 않게 바로 지운다(lib/cdn/detail-purge.ts)
+    await queueDetailPurge(tx, request.slug, DETAIL_EDIT_PURGE);
     const closed = open.map((row) => row.id);
     await tx.update(introCorrectionRequests).set({ handledAt: new Date(), handledBy: admin, outcome: "fixed" })
       .where(inArray(introCorrectionRequests.id, closed));

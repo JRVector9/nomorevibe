@@ -2,13 +2,21 @@ import type { NextConfig } from "next";
 import { LOCALES } from "./lib/i18n/locales";
 import { localePath } from "./lib/i18n/routing";
 import { RENDER_RECOVERY_COOKIE, RENDER_RECOVERY_COOKIE_VALUE } from "./lib/web/recovery-cache";
+import { takeReleaseBuildId } from "./lib/web/release-build-id";
+
+/** 릴리스 값(NEXT_DEPLOYMENT_ID)을 읽고 그 환경변수를 지운다 — Next 가 deploymentId 로 쓰지 않게(lib/web/release-build-id.ts) */
+const releaseBuildId = takeReleaseBuildId();
 
 const nextConfig: NextConfig = {
   // Docker/Dokploy 배포용 — .next/standalone만 복사해도 동작하게
   output: "standalone",
 
-  // 두 웹 인스턴스와 롤링 배포 사이의 asset/action 버전 불일치를 감지한다.
-  deploymentId: process.env.NEXT_DEPLOYMENT_ID || undefined,
+  /**
+   * 두 웹 인스턴스와 롤링 배포 사이의 버전 불일치는 빌드 ID 로 감지한다 — RSC 응답의 `b` 가 첫 화면과 다르면 전체 새로고침.
+   * deploymentId 는 쓰지 않는다: 정적 파일마다 `?dpl=` 이 붙어 배포마다 엣지·브라우저 캐시가 비었다(lib/web/release-build-id.ts).
+   * 릴리스 값이 없으면(로컬 빌드) Next 가 빌드마다 임의 ID 를 짓는다.
+   */
+  generateBuildId: async () => releaseBuildId ?? null,
 
   /**
    * next build 안의 타입 검사는 프로젝트 전체 `tsc` 를 한 번 더 돈다(CI 약 1분, arm 이미지 약 34초).
@@ -53,6 +61,9 @@ const nextConfig: NextConfig = {
     /**
      * Cloudflare 만 읽는 캐시 시간 — 방문자에게 가는 Cache-Control(private, no-store)은 그대로다.
      * 목록 60초·상세 240초 뒤 60초 동안은 지난 사본을 주며 뒤에서 새로 받는다(최대 2분·5분 늦음).
+     * 상세는 운영자 결정으로 어떤 경우에도 5분(max-age + stale-while-revalidate ≤ 300초)을 넘지 않는다(2026-11-11 — 하루짜리 SWR 은 되돌렸다).
+     * 내린 제품(트리거 0057)·사람이 고친 제품(lib/cdn/detail-purge.ts)·웹 릴리스가 바뀐 뒤의 옛 HTML(lib/jobs/products/cdn-purge.ts)은
+     * 그 5분을 기다리지 않고 지우기로 없앤다 — 지운 사본은 지난 사본으로도 주지 않는다.
      * 원 서버가 5xx 면 1시간까지 지난 사본을 준다. s-maxage 는 Cloudflare 의 SWR 을 꺼서 쓰지 않는다.
      * 관리자(쿠키)·검색(q, 응답 뒤 검색 기록을 남긴다)은 저장하지 않는다.
      */

@@ -4,6 +4,8 @@ import { operationsAudit, products } from "@/lib/db/schema";
 import { createMemo } from "@/lib/cache/memo";
 import { AUTOMATIC_NAME_SOURCES, reviewProductName, type NameReview } from "./display-name";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
+import { queueDetailPurge } from "@/lib/cdn/detail-purge";
+import { DETAIL_EDIT_PURGE } from "@/lib/cdn/purge";
 
 /**
  * 이미 올라간 제품의 이름 확인(UX-33) — 관리자 '이름 확인 필요'와 백필 스크립트(scripts/normalize-product-names.ts)가 쓴다.
@@ -89,9 +91,12 @@ export async function applyNameChanges(changes: NameChange[]): Promise<NameChang
   for (const change of changes) {
     const updated = await db.transaction(async tx => {
       await lockPipelineInputStages(tx);
-      return tx.update(products).set({ name: change.after, updatedAt: new Date() })
+      const changed = await tx.update(products).set({ name: change.after, updatedAt: new Date() })
         .where(and(eq(products.slug, change.slug), unclaimedPublic, eq(products.name, change.before)))
         .returning({ id: products.id });
+      // 사람이 고른 이름 바꾸기 — 엣지의 상세 사본(최대 5분)에 옛 이름이 남지 않게 바로 지운다(lib/cdn/detail-purge.ts)
+      if (changed.length) await queueDetailPurge(tx, change.slug, DETAIL_EDIT_PURGE);
+      return changed;
     });
     if (updated.length) applied.push(change);
   }

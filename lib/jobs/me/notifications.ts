@@ -5,6 +5,7 @@ import { notifications, userFollows } from "@/lib/db/me-schema";
 import { publicUsers } from "@/lib/db/public-user-schema";
 import { listedByDefault, notAuditHeld, notDown } from "@/lib/domain/products/repository";
 import { AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE } from "@/lib/crawl/product-audit-hold";
+import { DETAIL_REFRESH_PURGES } from "@/lib/cdn/purge";
 import { periodContaining } from "@/lib/domain/ranking/period";
 import { formatDay } from "@/lib/format/time";
 import { withJobLeaseWrite } from "@/lib/jobs/control";
@@ -33,10 +34,11 @@ export type DelistedCursor = { purgeId: number; floor?: number; down?: Record<st
  */
 const PURGE_OVERLAP = 500;
 /**
- * 내려감이 아닌 지우기 줄 — 내려달라는 요청·삭제, 그리고 감사 보류를 걸고 푼 줄(product-audit-hold.ts). 보류는 내린 것이 아니라 알리지 않는다.
+ * 내려감이 아닌 지우기 줄 — 내려달라는 요청·삭제, 감사 보류를 걸고 푼 줄(product-audit-hold.ts), 고친 상세만 새로 받게 하는 줄(lib/cdn/purge.ts
+ * edited·status). 보류·고침은 내린 것이 아니라 알리지 않는다.
  * 보류 줄을 다시 보는 사이(하루) 그 제품이 차단되면 상태만 보고는 내려간 줄로 읽힌다 — 차단은 트리거가 따로 적은 줄로 한 번만 알린다
  */
-const NOT_DELISTED = new Set(["takedown", "deleted", AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE]);
+const NOT_DELISTED = new Set(["takedown", "deleted", AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE, ...DETAIL_REFRESH_PURGES]);
 /** 한 틱에 보는 «닿지 않음» 후보 수 — 팔로된 공개 제품 가운데 7일 안에 내려간 것 */
 const DOWN_LIMIT = 500;
 

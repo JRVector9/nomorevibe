@@ -4,6 +4,8 @@ import { productIntroChecks, products, productSearchProfiles, type IntroVerdict 
 import { lockProductGeneration } from "./generation";
 import { LIMITS } from "./schema";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
+import { queueDetailPurge } from "@/lib/cdn/detail-purge";
+import { DETAIL_EDIT_PURGE } from "@/lib/cdn/purge";
 
 /**
  * 관리자 '소개 확인 필요'(검수 outcome = needs_editor)의 읽기와 '그대로 두기'(2026-10-08 UX 감사 ADM-23).
@@ -61,6 +63,8 @@ export async function editIntro(slug: string, line: string): Promise<{ before: s
     await tx.update(products).set({ tagline, taglineSource: "editor", searchKeywords: null, ...(sameText ? { description: tagline } : {}),
       updatedAt: sql`now()` }).where(eq(products.id, product.id));
     await tx.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id));
+    // 사람이 고친 소개는 엣지의 상세 사본(최대 5분)에 남지 않게 바로 지운다(lib/cdn/detail-purge.ts)
+    await queueDetailPurge(tx, slug, DETAIL_EDIT_PURGE);
     return { before: locked.tagline };
   });
 }

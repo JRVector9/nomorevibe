@@ -451,8 +451,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GHCR_PUSH_TOKEN }}
         run: test "$(gh api user/packages/container/nomorevibe-runtime-web --jq .visibility)" = private
-      # deploymentId 는 트리로 굽는다(같은 트리 = 같은 산출물). 두 웹은 같은 이미지라 같은 값을 쓰고, 실행 중 env 의
-      # NEXT_DEPLOYMENT_ID(배포 도구가 main SHA 로 넣는다)는 standalone 서버가 빌드 값으로 덮어쓴다.
+      # 릴리스 값(NEXT_DEPLOYMENT_ID)은 트리로 굽는다(같은 트리 = 같은 산출물). next.config.ts 가 이 값을 Next 의 빌드 ID 로 쓰고
+      # deploymentId 로는 쓰지 않는다(정적 파일 주소에 `?dpl=` 이 붙지 않게, lib/web/release-build-id.ts). 두 웹은 같은 이미지라 같은 값이고,
+      # 실행 중 env 의 NEXT_DEPLOYMENT_ID(배포 도구가 main SHA 로 넣는다)는 standalone 서버가 읽지 않는다.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .

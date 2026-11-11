@@ -2,17 +2,34 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => {
   delete process.env.NEXT_DEPLOYMENT_ID;
+  delete process.env.NMV_RELEASE_BUILD_ID;
   delete process.env.SKIP_NEXT_TYPECHECK;
   vi.resetModules();
 });
 
 describe("Next.js multi-instance configuration", () => {
-  it("uses the shared deployment ID supplied for a release", async () => {
-    process.env.NEXT_DEPLOYMENT_ID = "release-7c78110";
+  /**
+   * 릴리스 값은 빌드 ID 로 쓴다 — deploymentId 면 정적 파일마다 `?dpl=` 이 붙어 배포마다 엣지·브라우저 캐시가 빈다(2026-11-11).
+   * Next 는 환경변수 NEXT_DEPLOYMENT_ID 를 설정보다 앞세워 deploymentId 로 쓰므로 설정을 읽으면 그 이름이 사라져야 한다.
+   */
+  it("uses the shared release as the build ID, never as deploymentId", async () => {
+    process.env.NEXT_DEPLOYMENT_ID = "tree-7c78110";
 
     const { default: config } = await import("../next.config");
 
-    expect(config.deploymentId).toBe("release-7c78110");
+    expect(config.deploymentId).toBeUndefined();
+    expect(process.env.NEXT_DEPLOYMENT_ID).toBeUndefined();
+    expect(await config.generateBuildId!()).toBe("tree-7c78110");
+    // 같은 프로세스에서 설정을 다시 읽어도(빌드가 여러 번 읽는다) 같은 빌드 ID 다
+    vi.resetModules();
+    const { default: again } = await import("../next.config");
+    expect(again.deploymentId).toBeUndefined();
+    expect(await again.generateBuildId!()).toBe("tree-7c78110");
+  });
+
+  it("refuses a release value that cannot be a build directory name", async () => {
+    process.env.NEXT_DEPLOYMENT_ID = "tree/../../x";
+    await expect(import("../next.config")).rejects.toThrow(/release build id/);
   });
 
   it("tags cacheable public pages so Cloudflare can purge them by name", async () => {
@@ -36,8 +53,10 @@ describe("Next.js multi-instance configuration", () => {
     expect(edge("/")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
     expect(edge("/popular")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
     expect(edge("/rankings/:key")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
-    // 상세는 4분 + 지난 사본 1분 — 늦어도 5분
+    // 상세는 4분 + 지난 사본 1분 — 운영자 결정: 어떤 경우에도 5분을 넘지 않는다(2026-11-11). 고친 것·내린 것은 지우기가 더 빨리 없앤다
     expect(edge("/p/:slug")?.headers[0].value).toBe("max-age=240, stale-while-revalidate=60, stale-if-error=3600");
+    expect(edge("/en/p/:slug")?.headers[0].value).toBe("max-age=240, stale-while-revalidate=60, stale-if-error=3600");
+    expect(edge("/c/:category")?.headers[0].value).toBe("max-age=60, stale-while-revalidate=60, stale-if-error=3600");
     for (const source of ["/", "/popular", "/rankings/:key", "/p/:slug"]) {
       expect(edge(source)?.missing).toEqual([{ type: "cookie", key: "nmv_admin" }, { type: "cookie", key: "nmv_user" },
         { type: "cookie", key: "nmv_login_nonce" }, { type: "query", key: "q" },
@@ -50,10 +69,43 @@ describe("Next.js multi-instance configuration", () => {
         headers: [{ key: "Cloudflare-CDN-Cache-Control", value: "no-store" }] });
   });
 
-  it("does not invent a deployment ID for local builds", async () => {
+  /** 운영자 결정(2026-11-11): 상세는 어떤 경우에도 5분을 넘지 않는다 — 모든 언어의 /p/:slug 에서 max-age + stale-while-revalidate ≤ 300초 */
+  it("never lets any detail page be served more than 5 minutes stale", async () => {
+    const { default: config } = await import("../next.config");
+    const rules = await config.headers!();
+    const detail = rules.filter((rule) => /(^|\/)p\/:slug$/.test(rule.source)
+      && rule.headers.some((header) => header.key === "Cloudflare-CDN-Cache-Control" && header.value !== "no-store"));
+    expect(detail.map((rule) => rule.source).sort()).toEqual(["/en/p/:slug", "/p/:slug", "/zh-Hans/p/:slug", "/zh-Hant/p/:slug"]);
+    for (const rule of detail) {
+      const value = rule.headers.find((header) => header.key === "Cloudflare-CDN-Cache-Control")!.value;
+      const seconds = (name: string) => Number(new RegExp(`(?:^|,\\s*)${name}=(\\d+)`).exec(value)?.[1] ?? NaN);
+      expect(seconds("max-age") + seconds("stale-while-revalidate"), `${rule.source}: ${value}`).toBeLessThanOrEqual(300);
+      expect(value, rule.source).not.toMatch(/s-maxage/);
+    }
+  });
+
+  it("does not invent a deployment ID or build ID for local builds", async () => {
     const { default: config } = await import("../next.config");
 
     expect(config.deploymentId).toBeUndefined();
+    // null 이면 Next 가 빌드마다 임의 ID 를 짓는다
+    expect(await config.generateBuildId!()).toBeNull();
+  });
+
+  /**
+   * 정적 파일은 원 서버의 Cache-Control 만 따른다 — 있으면 `public, max-age=31536000, immutable`, 없는 파일(롤링 중 다른 판의 이름)의
+   * 404 는 `private, no-cache, no-store` 라 Cloudflare 가 저장하지 않는다. `?dpl=` 이 없어진 뒤로 404 가 저장되면 그 이름이 1년 막히므로
+   * Cloudflare 용 저장 시간을 /_next/static 에 붙이는 규칙이 생기지 않게 지킨다(쿠키 우회 규칙의 no-store 는 괜찮다).
+   */
+  it("never gives Next static files an edge cache time that a 404 would inherit", async () => {
+    const { default: config } = await import("../next.config");
+    const rules = await config.headers!();
+    const storing = rules.filter((rule) => rule.headers.some((header) => header.key === "Cloudflare-CDN-Cache-Control"
+      && header.value !== "no-store"));
+    for (const rule of storing) {
+      expect(rule.source.startsWith("/_next"), rule.source).toBe(false);
+      expect(rule.source.startsWith("/:"), rule.source).toBe(false);
+    }
   });
 
   it("keeps the build's own type check unless CI says the same tree was already checked", async () => {
