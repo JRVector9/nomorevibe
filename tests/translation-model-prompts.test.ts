@@ -151,7 +151,8 @@ it("leaves reason and live search query wires unchanged across GPT-OSS and Qwen"
   }
   expect(recordings[1]).toEqual(recordings[0]);
   expect(recordings[0].map(body => sha(JSON.stringify(body)))).toEqual([
-    "e982a3a2621ddd2168684c151c1ca572217b7e8c7048013281696245611b4ff7",
+    // 사유 번역: 2026-11-11 따옴표 규칙 한 줄을 더해 바뀌었다(예전 e982a3a2…) — 두 모델에서 같은 바이트인 것은 그대로다
+    "ff76dd9eb9fbf1e96760d8e999a8fe776b54eac1128c9d109908828bd81b2750",
     "225e6adff3905ad842d4db99af4e6d158d47562fc956da528cb51e1d3a6bbf6f",
   ]);
 });

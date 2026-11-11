@@ -25,6 +25,15 @@ export const REQUEUE_REASON_TEXT = Object.freeze({
   tagline_done: "소개가 이미 있음",
   tagline_not_needed: "소개 짓기 대상이 아님",
   category_done: "분류가 이미 끝남",
+  // 로컬 직접 경로(2026-11-11)
+  delegate_done: "위임 검수를 그 뒤 다시 해 끝남",
+  attempts_exhausted: "시도 상한에 닿아 더 묻지 않음 — 사람 몫으로 남음",
+  tiebreak_gone: "갈림 판가름 행이 없어졌거나 바뀜",
+  tiebreak_done: "갈림 판가름이 이미 끝남(답·물을 수 없음)",
+  confirm_done: "갈림 확인이 이미 끝났거나 기다리지 않음",
+  audit_item_gone: "감사 항목이 없어짐",
+  audit_done: "감사 답이 이미 있음",
+  audit_closed: "감사가 끝났거나 취소됨",
   // skipped — 남는다
   unsupported_route: "다시 대기열을 지원하지 않는 단계 — 근거를 보고 한 건씩 닫기",
   key_unreadable: "작업 키를 읽지 못함 — 한 건씩 닫기",

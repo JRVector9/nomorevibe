@@ -14,12 +14,13 @@ vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidate }));
 vi.mock("@/lib/operations/model-capacity-requeue", async original => ({ ...await original<object>(), requeueModelCapacityUnknowns: mocks.requeue }));
 
 import { requeueUnknownReviews } from "@/app/(operator)/admin/models/unknown-review-actions";
+import { canRequeueUnknownRoute } from "@/lib/operations/model-capacity-requeue";
 
 const form = (values: Record<string, string>) => { const data = new FormData(); for (const [key, value] of Object.entries(values)) data.set(key, value); return data; };
-const result = { closed: 3, leftRows: [{ requestId: "7e2c1a90-0000-4000-8000-000000000009", routeId: "local-human-deepseek", reason: "unsupported_route" }], groups: [
+const result = { closed: 3, leftRows: [{ requestId: "7e2c1a90-0000-4000-8000-000000000009", routeId: "local-screen", reason: "unsupported_route" }], groups: [
   { routeId: "reason-translate", requests: 2, requeued: 2, done: 0, skipped: 0, closed: 2, left: [], error: null },
   { routeId: "crawl-agent-review", requests: 1, requeued: 0, done: 1, skipped: 0, closed: 1, left: [], error: null },
-  { routeId: "local-human-deepseek", requests: 1, requeued: 0, done: 0, skipped: 1, closed: 0, left: [{ reason: "unsupported_route", count: 1 }], error: null }] };
+  { routeId: "local-screen", requests: 1, requeued: 0, done: 0, skipped: 1, closed: 0, left: [{ reason: "unsupported_route", count: 1 }], error: null }] };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,7 +50,7 @@ describe("requeueUnknownReviews — 범위 하나 · 같은 작업 로그 · 결
     mocks.requeue.mockClear(); mocks.values.mockClear();
     expect(await requeueUnknownReviews(null, form({ groupId: "m1", provider: "codex-cli" }))).toEqual({ ok: false, error: "단계·장비·도구 이름이 올바르지 않습니다." });
     expect(await requeueUnknownReviews(null, form({ groupId: "bad id;" }))).toMatchObject({ ok: false });
-    expect(await requeueUnknownReviews(null, form({ routeId: "local-human-deepseek" }))).toEqual({ ok: false, error: "이 단계는 아직 다시 대기열에 넣기를 지원하지 않습니다." });
+    expect(await requeueUnknownReviews(null, form({ routeId: "local-screen" }))).toEqual({ ok: false, error: "이 단계는 아직 다시 대기열에 넣기를 지원하지 않습니다." });
     expect(mocks.requeue).not.toHaveBeenCalled(); expect(mocks.values).not.toHaveBeenCalled();
   });
   it("관리자가 아니면 거절하고, 단계 처리 오류가 있으면 작업 로그를 실패로 남긴다", async () => {
@@ -59,5 +60,14 @@ describe("requeueUnknownReviews — 범위 하나 · 같은 작업 로그 · 결
     mocks.requeue.mockResolvedValueOnce({ ...result, groups: [{ ...result.groups[0], error: "deadlock detected" }] });
     await requeueUnknownReviews(null, form({}));
     expect(mocks.audit).toHaveBeenLastCalledWith("jr", expect.objectContaining({ ok: false, error: "some_routes_failed" }));
+  });
+});
+
+describe("canRequeueUnknownRoute — 화면의 단추가 따르는 지원 목록", () => {
+  it("2026-11-11: 후보·갈림·감사 항목을 가리키는 로컬 직접 경로를 더하고, 관측 덩어리에 실패를 두는 경로와 LLM 보조는 남긴다", () => {
+    for (const route of ["local-human-deepseek", "local-qwen-tiebreak", "local-deepseek-confirm", "local-audit", "local-held-qwen", "reason-translate"])
+      expect(canRequeueUnknownRoute(route), route).toBe(true);
+    for (const route of ["local-screen", "local-second-opinion", "local-published-filter", "local-assist-uptime-gpu3090-qwen", "toString", "__proto__"])
+      expect(canRequeueUnknownRoute(route), route).toBe(false);
   });
 });
