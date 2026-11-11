@@ -72,7 +72,7 @@ export default async function PolicyPage() {
         <ul>
           <li>
             {t("listing.makerBefore")}<code>/nomorevibe</code>{t("listing.makerAfter")}
-            <Link href={localePath(locale, "/launch")} className="text-accent-ink underline underline-offset-4">{t("listing.launchLink")}</Link>
+            <Link prefetch={false} href={localePath(locale, "/launch")} className="text-accent-ink underline underline-offset-4">{t("listing.launchLink")}</Link>
           </li>
           <li>{t("listing.discovered")}</li>
         </ul>
@@ -118,7 +118,7 @@ export default async function PolicyPage() {
         </p>
         <p>
           {t("unclaimed.confirmBefore")}<code>/nomorevibe verify</code>{t("unclaimed.confirmAfter")}
-          <Link href={localePath(locale, "/launch#verify")} className="text-accent-ink underline underline-offset-4">{t("unclaimed.verifyLink")}</Link>
+          <Link prefetch={false} href={localePath(locale, "/launch#verify")} className="text-accent-ink underline underline-offset-4">{t("unclaimed.verifyLink")}</Link>
         </p>
       </Section>
 
