@@ -549,7 +549,7 @@
   font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-table-note .text-button {
-  font-size: inherit;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-mobile-note {
   display: none;
