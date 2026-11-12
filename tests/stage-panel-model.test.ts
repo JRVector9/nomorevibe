@@ -4,9 +4,11 @@ import { buildChangeWatch, collectChanges } from "@/lib/operations/change-watch"
 import { buildConsoleTasks, type ConsoleTaskInputs } from "@/lib/operations/console-tasks";
 import { stagePanelHref, stagePanelKeyOf, STAGE_PANELS } from "@/lib/operations/stage-panel-catalog";
 import {
-  assignmentPreview, buildStagePanel, poolMemberIssues, previewContext, stageChanges, stagePoolSupported, trendBreak,
+  assignmentPreview, buildStagePanel, previewContext, stageChanges, stagePoolSupported, trendBreak,
   type AssignmentState, type StagePanelInput,
 } from "@/lib/operations/stage-panel-model";
+import { aiTaskPoolFeatures } from "@/lib/llm/ai-task-execution-config";
+import { poolMemberIssues } from "@/lib/operations/task-pool-form";
 import { consoleFixtureExecutions, consoleFixtureInputs, consoleFixtureJobStates, consoleFixtureRuntime } from "./fixtures/console-home";
 import { CONN, WATCH_AUDIT, WATCH_CONTEXT, WATCH_LEDGER, WATCH_NOW } from "./fixtures/change-watch";
 
@@ -161,8 +163,9 @@ describe("save preview (저장 전 확인)", () => {
     const preview = assignmentPreview({ task: "first-review", slot: 1, before, after: { mode: "workload_pool", ranks: [supa, gpu], members: [supa, gpu] }, context });
     expect(preview.rows).toEqual([
       { label: "방식", before: "순위대로", after: "동시에" },
-      { label: "동시 처리", before: "1순위 모델 하나씩(막히면 다음 순위)", after: "모델 2개가 나눠 처리 · 장비 칸 합 8칸(다른 단계와 함께 씀)" },
-      { label: "함께 쓰는 모델", before: "없음", after: "supa-direct(Inferact/Qwen3.8-27B-NVFP4) + gpu3090-qwen" },
+      { label: "동시 처리", before: "한 모델씩(1순위가 막히면 다음 순위)", after: "모델 2개가 나눠 처리 · 장비 칸 합 8칸(다른 단계와 함께 씀)" },
+      // 이름은 사용자가 정한 이름 하나 — supa 의 두 서버 이름(같은 root)은 따로 적지 않는다
+      { label: "함께 쓰는 모델", before: "없음", after: "supa-direct + gpu3090-qwen" },
     ]);
     expect(preview.saves).toEqual(["execution"]);
     expect(preview.impact).toEqual([
@@ -173,7 +176,8 @@ describe("save preview (저장 전 확인)", () => {
 
   it("changing the ranking: the chain before → after, a model leaving, a model joining, and an emptied first rank", () => {
     const swap = assignmentPreview({ task: "first-review", slot: 1, before, after: { ...before, ranks: [m1max, gpu] }, context });
-    expect(swap.rows).toEqual([{ label: "순위", before: "supa-direct(Inferact/Qwen3.8-27B-NVFP4) → gpu3090-qwen", after: "M1max(Qwen3.8) → gpu3090-qwen" }]);
+    // M1max 는 서버 목록 이름과 직접 적은 이름이 서로 다른 모델 — 가를 수 있게 그 이름을 덧붙인다
+    expect(swap.rows).toEqual([{ label: "순위", before: "supa-direct → gpu3090-qwen", after: "M1max · Qwen3.8 → gpu3090-qwen" }]);
     expect(swap.saves).toEqual(["ranks"]);
     expect(swap.impact.map(item => item.text)).toEqual(["M1max: 지금 2칸 중 0칸 사용 · 다른 단계는 이 모델을 쓰지 않습니다",
       expect.stringMatching(/^gpu3090-qwen: /), "supa-direct을(를) 이 단계에서 뺍니다 — 다른 단계 2개는 계속 씁니다."]);
@@ -185,17 +189,42 @@ describe("save preview (저장 전 확인)", () => {
     const pooled: AssignmentState = { mode: "workload_pool", ranks: [supa, gpu], members: [gpu] };
     const back = assignmentPreview({ task: "first-review", slot: 1, before: pooled, after: { ...pooled, mode: "fallback" }, context });
     expect(back.rows.map(row => [row.label, row.before, row.after])).toEqual([["방식", "동시에", "순위대로"],
-      ["동시 처리", "모델 1개가 나눠 처리 · 장비 칸 합 5칸(다른 단계와 함께 씀)", "1순위 모델 하나씩(막히면 다음 순위)"],
-      ["순위", "쓰지 않음(보관)", "supa-direct(Inferact/Qwen3.8-27B-NVFP4) → gpu3090-qwen"]]);
+      ["동시 처리", "모델 1개가 나눠 처리 · 장비 칸 합 5칸(다른 단계와 함께 씀)", "한 모델씩(1순위가 막히면 다음 순위)"],
+      ["순위", "쓰지 않음(보관)", "supa-direct → gpu3090-qwen"]]);
     expect(back.saves).toEqual(["execution"]);
   });
 
-  it("checks pool members like the task assignment form, and asks one function whether a task takes 「동시에」", () => {
+  it("「동시에」 with per-model slots (text stages): concurrency is the slot sum, members carry their slots, reserve is its own row", () => {
+    const pooled: AssignmentState = { mode: "workload_pool", ranks: [supa], members: [supa, gpu], slots: ["", ""], reserve: false };
+    const capped = assignmentPreview({ task: "product-translate", slot: 1, before: pooled, after: { ...pooled, slots: ["1", "5"], reserve: true }, context });
+    expect(capped.rows).toEqual([
+      { label: "동시 처리", before: "모델 2개가 나눠 처리 · 장비 칸 합 8칸(다른 단계와 함께 씀)", after: "모델 2개가 함께 · 최대 6건(칸 수 합)" },
+      { label: "함께 쓰는 모델", before: "supa-direct + gpu3090-qwen", after: "supa-direct 1칸 + gpu3090-qwen 5칸" },
+      { label: "예비", before: "없음", after: "순위(1·2·3)로 이어 처리" },
+    ]);
+    expect(capped.saves).toEqual(["execution"]);
+    expect(capped.impact[0].text).toMatch(/^supa-direct: 이 단계에 1칸 · 지금 3칸 중 3칸 사용\(가득 참\)/);
+    // 칸 수를 받지 않는 작업(1차)은 칸 수를 무시한다 — 예전 작업 분산 그대로
+    const ignored = assignmentPreview({ task: "first-review", slot: 1, before: pooled, after: { ...pooled, slots: ["1", "5"], reserve: true }, context });
+    expect(ignored.rows).toEqual([]);
+    // 장비 한도보다 많이 적으면 알린다
+    const over = assignmentPreview({ task: "product-translate", slot: 1, before: pooled, after: { ...pooled, slots: ["8", "1"] }, context });
+    expect(over.impact[0]).toMatchObject({ tone: "warn" });
+    expect(over.impact[0].text).toContain("장비 한도 3칸보다 많이 적어 장비 한도가 먼저 걸립니다");
+  });
+
+  it("checks pool members with the task assignment form's own function, and asks one function whether a task takes 「동시에」", () => {
     const connections = (inputs.connections ?? []).map(row => ({ id: row.id, enabled: row.enabled, kind: row.kind, cliTool: row.cliTool }));
-    expect(poolMemberIssues([], connections, false)).toEqual(["분산할 모델을 하나 이상 선택하세요."]);
-    expect(poolMemberIssues([{ provider: "conn-claude-cli", model: "sonnet" }], connections, true)).toEqual(["발행 분류에는 API 또는 OpenCode 연결을 선택하세요."]);
-    expect(poolMemberIssues([{ provider: "gone", model: "x" }], connections, false)).toEqual(["꺼졌거나 없는 연결을 바꿔주세요."]);
-    expect(poolMemberIssues([gpu, gpu], connections, false)).toEqual([]);
+    const plain = { apiOnly: false, features: aiTaskPoolFeatures("first-review") }, publish = { apiOnly: true, features: aiTaskPoolFeatures("publish-classify") };
+    expect(poolMemberIssues([], [], connections, plain)).toEqual(["분산할 모델을 하나 이상 선택하세요."]);
+    expect(poolMemberIssues([{ provider: "conn-claude-cli", model: "sonnet" }], [], connections, publish)).toEqual(["발행 분류에는 API 또는 OpenCode 연결을 선택하세요."]);
+    expect(poolMemberIssues([{ provider: "gone", model: "x" }], [], connections, plain)).toEqual(["꺼졌거나 없는 연결을 바꿔주세요."]);
+    expect(poolMemberIssues([gpu, gpu], [], connections, plain)).toEqual([]);
+    // 칸 수는 받는 작업(공개 번역)에서만 검사한다 — 모두 적거나 모두 비움, 1~8
+    const text = { apiOnly: false, features: aiTaskPoolFeatures("product-translate") };
+    expect(poolMemberIssues([supa, gpu], ["2", ""], connections, text)).toEqual(["칸 수는 모든 모델에 적거나 모두 비워 주세요."]);
+    expect(poolMemberIssues([supa, gpu], ["2", "9"], connections, text)).toEqual(["칸 수는 1~8 사이로 적어 주세요."]);
+    expect(poolMemberIssues([supa, gpu], ["2", "9"], connections, plain)).toEqual([]);
     for (const [task, slot] of [["first-review", 1], ["second-review", 2], ["product-intro-check", 1], ["product-translate", 1]] as const)
       expect(stagePoolSupported(task, slot)).toBe(aiTaskSupportsPool(task, slot));
     expect(CONN.supa).toBeTruthy();

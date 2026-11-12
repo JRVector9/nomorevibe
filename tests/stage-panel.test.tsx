@@ -22,24 +22,26 @@ const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, 
 const csrf = { token: "fixture-token", expiresAt: 9_999_999_999 };
 
 /** 순위 편집기 — 흐름 서랍과 같은 builder 에 fixture 의 연결·순위·실행 설정을 넣는다(연결은 화면 DTO 모양만 채운다) */
-function editor() {
+function editor(executions = consoleFixtureExecutions()) {
   const inputs = consoleFixtureInputs();
   const connections = (inputs.connections ?? []).map(row => ({ id: row.id, label: row.label, kind: row.kind, baseUrl: null, host: null, hasKey: true,
     cliTool: row.cliTool, cliModels: row.kind === "cli" ? row.models : [], models: row.kind === "api" ? row.models.map(id => ({ id, maxModelLen: null })) : null,
     modelsReadAt: null, modelsError: null, deviceId: row.deviceId, capacitySlots: row.capacitySlots, contextTokens: null, enabled: row.enabled, version: 1, note: null,
     updatedBy: "jr", updatedAt: row.updatedAt, cliVersion: null, allowedTasks: row.allowedTasks })) as unknown as AiConnectionView[];
   const rows: AiTaskRankRow[] = (inputs.ranks ?? []).map(row => ({ ...row, options: {} }));
-  return buildFlowRankEditor(connections, rows, () => "0".repeat(64), consoleFixtureExecutions());
+  return buildFlowRankEditor(connections, rows, () => "0".repeat(64), executions);
 }
 
-function render(key: StagePanelInput["key"], options: { csrf?: typeof csrf | null; lockReason?: string | null; withEditor?: boolean } = {}) {
+function render(key: StagePanelInput["key"], options: { csrf?: typeof csrf | null; lockReason?: string | null; withEditor?: boolean;
+  executions?: ReturnType<typeof consoleFixtureExecutions> } = {}) {
   const inputs = consoleFixtureInputs();
+  const executions = options.executions ?? consoleFixtureExecutions();
   const panel = buildStagePanel({ key, now: inputs.now, conveyor: inputs.conveyor as StagePanelInput["conveyor"], inputs, board: buildConsoleTasks(inputs),
-    jobStates: consoleFixtureJobStates(), pauses: [], degraded: [], runtime: consoleFixtureRuntime(), executions: consoleFixtureExecutions() })!;
+    jobStates: consoleFixtureJobStates(), pauses: [], degraded: [], runtime: consoleFixtureRuntime(), executions })!;
   const limits = consoleFixtureLimits();
   const scope = stageLimitScope(stagePanel(key)!, limits);
   const watch = buildChangeWatch(collectChanges(WATCH_AUDIT, WATCH_CONTEXT), WATCH_LEDGER, WATCH_NOW);
-  return renderToStaticMarkup(<StagePanel panel={panel} editor={options.withEditor === false ? null : editor()} context={previewContext(inputs)} limits={limits}
+  return renderToStaticMarkup(<StagePanel panel={panel} editor={options.withEditor === false ? null : editor(executions)} context={previewContext(inputs)} limits={limits}
     limitRows={scope.rows} limitImpact={scope.impact} changes={stageChanges(watch.rows, panel)} changesRead csrf={options.csrf === undefined ? csrf : options.csrf}
     jobVersions={{ "crawl-agent-review": 27001, "crawl-fetch": 3 }} readOnly={false} lockReason={options.lockReason ?? null} now={new Date(inputs.now)} />);
 }
@@ -80,8 +82,10 @@ describe("stage panel — AI 1차 (fixture 2026-11-12 08:59 KST)", () => {
 
   it("shows the way (순위대로 · 동시에), the ranking with live slots and the idle models beside 「모델 붙이기」", () => {
     expect(html).toMatch(/<div class="sp-seg" role="group" aria-label="1차 AI 검수 방식"><button type="button" aria-pressed="true">순위대로<\/button><button type="button" aria-pressed="false">동시에<\/button>/);
-    expect(plain).toContain("1순위 supa-direct Inferact/Qwen3.8-27B-NVFP4 지금 3/3칸 · 24시간 88건 · 3.8초");
-    expect(plain).toContain("2순위 gpu3090-qwen qwen3.8-flash-next 지금 0/5칸 · 24시간 639건 · 3.2초");
+    // 이름은 사용자가 정한 이름 하나 — 서버가 알려 준 모델 이름은 따로 적지 않는다(운영 콘솔 통합)
+    expect(plain).toContain("1순위 supa-direct 지금 3/3칸 · 24시간 88건 · 3.8초");
+    expect(html.slice(html.indexOf('<ol class="sp-rank"'), html.indexOf("</ol>", html.indexOf('<ol class="sp-rank"')))).not.toContain("Inferact/");
+    expect(plain).toContain("2순위 gpu3090-qwen 지금 0/5칸 · 24시간 639건 · 3.2초");
     expect(plain).toContain("＋ 모델 붙이기·고치기 남는 모델 1개 · M1max(0% · 2칸)");
   });
 
@@ -125,6 +129,22 @@ describe("stage panel — other cases", () => {
     expect(intro).toContain("사람이 멈춤 소개 검수 작업이 멈춰 있습니다 — 멈춘 기록(작업 로그)을 찾지 못했습니다.");
     const publish = render("publish");
     expect(publish).toMatch(/aria-pressed="false"[^>]*>기존 CLI 분류<\/button><button type="button" aria-pressed="true">동시에<\/button>/);
-    expect(text(publish)).toContain("함께 m3-deepseek deepseek-v4.1-flash-1017 지금 2/3칸 · 24시간 85건 · 24.5초");
+    expect(text(publish)).toContain("함께 m3-deepseek 지금 2/3칸 · 24시간 85건 · 24.5초");
+    // 발행 분류는 예전 작업 분산만 따른다(칸 수·예비 없음 — 2b 지원 표)
+    expect(text(publish)).toContain("모델별 칸 수 없음 — 장비 칸을 다른 단계와 나눠 씀");
+    expect(text(publish)).not.toContain("예비 켬");
+  });
+
+  it("shows a text stage's per-model slots and reserve in 「동시에」 — the 2b support table through aiTaskPoolFeatures", () => {
+    const member = (position: number, connectionId: string, model: string, deviceId: string, maxSlots: number) => ({
+      memberId: `${position}0000000-0000-4000-8000-000000000000`, position, connectionId, model, options: {}, canonicalModel: model, deviceId, engineKey: `engine-${position}`, maxSlots });
+    // fixture 의 실행 설정은 발행 분류 한 줄뿐이다 — 공개 번역을 「동시에」(칸 수 1·5, 예비 켬)로 저장한 줄을 더한다
+    const executions = [...consoleFixtureExecutions(), { task: "product-translate", slot: 1, mode: "workload_pool" as const, revision: 3, updatedAt: "2026-11-11T23:00:00.000Z",
+      reserveRanks: true, members: [member(1, "conn-supa-direct", "supa", "supa-direct", 1), member(2, "conn-gpu3090-qwen", "qwen3.8-flash-next", "gpu3090-qwen", 5)] }];
+    const plain = text(render("product-translate", { executions }));
+    expect(plain).toMatch(/함께 supa-direct 이 단계 1칸 · 지금 \d+\/3칸/);
+    expect(plain).toMatch(/함께 gpu3090-qwen 이 단계 5칸 · 지금 \d+\/5칸/);
+    expect(plain).toContain("함께 최대 6건(모델별 칸 수 합) · 예비 켬");
+    expect(plain).toContain("예비로 쓰는 순위(묶음이 모두 서면): 1순위 m3-gpt-oss");
   });
 });

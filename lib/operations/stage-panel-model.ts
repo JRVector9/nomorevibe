@@ -1,16 +1,17 @@
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
-import { aiTaskSupportsPool, aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskPoolCappedLanes, aiTaskPoolFeatures, aiTaskSupportsPool, aiTaskWorkloadPoolApiOnly, type AiTaskPoolFeatures } from "@/lib/llm/ai-task-execution-config";
 import { AI_TASKS, aiTask, aiTaskSlotLabel, AUDIT_DIRECT_ROUTE } from "@/lib/llm/ai-tasks";
 import type { AiRankChoice } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import type { ChangeWatchRow } from "./change-watch";
 import { buildConsoleFlow, type ConsoleTone } from "./console-home-model";
 import {
-  formatCount, formatDuration, formatKst, formatShare, idleModels, josa, modelStats, skipSentence,
+  consoleModelName, formatCount, formatDuration, formatKst, formatShare, idleModels, josa, modelStats, skipSentence,
   type ConsoleConnection, type ConsoleDevice, type ConsoleTaskBoard, type ConsoleTaskInputs,
 } from "./console-tasks";
 import type { Conveyor } from "./conveyor-model";
 import { STAGE_PANELS, stagePanel, type StagePanelDef, type StagePanelKey } from "./stage-panel-catalog";
+import { poolSlotOf } from "./task-pool-form";
 
 /**
  * 단계 패널(운영 콘솔 개편 조각 2a, 2026-11-12 최종 시안 「화면 2 단계 패널」) — 순수 함수만. DB·서버 동작 없음.
@@ -61,7 +62,8 @@ export type StageWhy = { label: string; text: string };
 export type StageJobView = { job: string; label: string; paused: boolean | null; text: string; pause: StagePauseRecord | null;
   /** 잡 행의 not_before — 멈춤·재개 폼이 판으로 보낸다(JobControl expectedNotBefore) */
   notBefore: string | null };
-export type StageMemberView = { tag: string; connectionId: string; name: string; model: string; facts: string };
+/** name = 사용자가 정한 모델 이름(서로 다른 모델을 여럿 내놓는 연결만 서버 이름을 덧붙인다 — consoleModelName). slots = 「동시에」에서 이 단계에 내준 칸 수 */
+export type StageMemberView = { tag: string; connectionId: string; name: string; model: string; facts: string; slots: number | null };
 export type StageModelLine = {
   key: string; task: string; slot: number; label: string;
   mode: "fallback" | "workload_pool";
@@ -69,8 +71,12 @@ export type StageModelLine = {
   poolSupported: boolean;
   /** 작업 분산에 API·OpenCode 연결만 받는 작업(발행 분류) */
   apiOnly: boolean;
+  /** 「동시에」 안에서 실행 쪽이 따르는 설정(모델별 칸 수·예비) — aiTaskPoolFeatures 한 곳에서 묻는다(조각 2b 의 지원 표) */
+  features: AiTaskPoolFeatures;
+  /** 「동시에」인데 묶음이 모두 서면 순위(1·2·3)를 예비로 쓴다(reserve_ranks) */
+  reserve: boolean;
   members: StageMemberView[];
-  /** 작업 분산 중일 때 보관된 대체 순위(지금은 쓰지 않음) */
+  /** 작업 분산 중일 때의 순위 — 예비가 켜졌으면 예비로 쓰고, 아니면 보관만(지금은 쓰지 않음) */
   archived: string | null;
   /** 남는 모델 — 24시간 사용률 5% 미만(홈 「쌓임」과 같은 계산) */
   idle: { connectionId: string; name: string; text: string }[];
@@ -288,17 +294,22 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
       const execution = input.executions?.find(entry => entry.task === taskId && entry.slot === slot) ?? null;
       const mode = execution?.mode ?? "fallback";
       const ranks = (inputs.ranks ?? []).filter(entry => entry.task === taskId && entry.slot === slot && entry.enabled).sort((a, b) => a.rank - b.rank);
-      const name = (id: string) => connectionOf(id)?.label ?? "지워진 연결";
+      const name = (id: string, model?: string) => { const found = connectionOf(id); return found ? consoleModelName(found, model) : "지워진 연결"; };
+      const features = aiTaskPoolFeatures(taskId, slot);
       const members = mode === "workload_pool" && execution
-        ? execution.members.map(member => ({ tag: "함께", connectionId: member.connectionId, name: name(member.connectionId), model: member.model,
-          facts: memberFacts(taskId, connectionOf(member.connectionId), member.model) }))
-        : ranks.map(entry => ({ tag: `${entry.rank}순위`, connectionId: entry.connectionId, name: name(entry.connectionId), model: entry.model,
+        ? execution.members.map(member => {
+          const slots = features.slotCaps && typeof member.maxSlots === "number" ? member.maxSlots : null;
+          const facts = memberFacts(taskId, connectionOf(member.connectionId), member.model);
+          return { tag: "함께", connectionId: member.connectionId, name: name(member.connectionId, member.model), model: member.model, slots,
+            facts: slots === null ? facts : `이 단계 ${formatCount(slots)}칸 · ${facts}` };
+        })
+        : ranks.map(entry => ({ tag: `${entry.rank}순위`, connectionId: entry.connectionId, name: name(entry.connectionId, entry.model), model: entry.model, slots: null,
           facts: memberFacts(taskId, connectionOf(entry.connectionId), entry.model) }));
       const idle = idleModels(inputs, taskId, stats).map(stat => ({ connectionId: stat.connection.id, name: stat.connection.label,
         text: `${formatShare(stat.utilization!, stat.calls ?? 0)} · ${formatCount(stat.connection.capacitySlots)}칸` }));
       return { key: `${taskId}#${slot}`, task: taskId, slot, label: aiTaskSlotLabel(task, slot), mode, poolSupported: stagePoolSupported(taskId, slot),
-        apiOnly: aiTaskWorkloadPoolApiOnly(taskId), members, idle,
-        archived: mode === "workload_pool" && ranks.length ? ranks.map(entry => `${entry.rank}순위 ${name(entry.connectionId)}`).join(" → ") : null };
+        apiOnly: aiTaskWorkloadPoolApiOnly(taskId), features, reserve: mode === "workload_pool" && features.reserve && !!execution?.reserveRanks, members, idle,
+        archived: mode === "workload_pool" && ranks.length ? ranks.map(entry => `${entry.rank}순위 ${name(entry.connectionId, entry.model)}`).join(" → ") : null };
     });
   }) : null;
   // 배정된 모델마다 지금 칸과 그 칸을 쓰는 단계 — 장비마다 한 줄(같은 장비의 두 연결은 함께), 이름표는 그 장비를 쓰는 순위(작업이 여럿이면 작업 이름을 붙인다)
@@ -339,11 +350,16 @@ export function stageChanges(rows: readonly ChangeWatchRow[], panel: Pick<StageP
 
 // ── 저장 전 확인 ───────────────────────────────────────────────────────────────────────────────────────
 
-/** 배정 하나의 상태 — 방식과 순위(대체 실행) 또는 함께 쓰는 모델(작업 분산) */
-export type AssignmentState = { mode: "fallback" | "workload_pool"; ranks: readonly (AiRankChoice | null)[]; members: readonly (AiRankChoice | null)[] };
+/**
+ * 배정 하나의 상태 — 방식과 순위(대체 실행) 또는 함께 쓰는 모델(작업 분산).
+ * slots = 「동시에」 구성원(members 와 같은 자리)마다 이 단계에 내줄 칸 수 글자(빈 글자 = 정하지 않음), reserve = 묶음이 모두 서면 순위를 예비로 씀.
+ * 둘 다 그 작업이 받을 때만 뜻이 있다(aiTaskPoolFeatures) — 받지 않는 작업에서는 무시한다.
+ */
+export type AssignmentState = { mode: "fallback" | "workload_pool"; ranks: readonly (AiRankChoice | null)[]; members: readonly (AiRankChoice | null)[];
+  slots?: readonly string[]; reserve?: boolean };
 /** 확인에 필요한 둘레 — 연결·장비 칸·「어느 단계가 어느 연결을 쓰나」(켜진 순위 + 작업 분산 구성원) */
 export type PreviewContext = {
-  connections: readonly { id: string; label: string; deviceId: string; capacitySlots: number; models: readonly string[] }[];
+  connections: readonly { id: string; label: string; deviceId: string; capacitySlots: number; models: readonly string[]; modelGroups?: number }[];
   devices: readonly { deviceId: string; active: number; limit?: number }[] | null;
   uses: readonly { task: string; slot: number; connectionId: string }[];
 };
@@ -359,7 +375,8 @@ export const MODE_LABELS = Object.freeze({ fallback: "순위대로", workload_po
 /** 둘레를 만든다 — 홈 읽기(연결·순위·작업 분산·장비)에서 */
 export function previewContext(inputs: Pick<ConsoleTaskInputs, "connections" | "ranks" | "pools" | "devices">): PreviewContext {
   return {
-    connections: (inputs.connections ?? []).map(row => ({ id: row.id, label: row.label, deviceId: row.deviceId, capacitySlots: row.capacitySlots, models: row.models })),
+    connections: (inputs.connections ?? []).map(row => ({ id: row.id, label: row.label, deviceId: row.deviceId, capacitySlots: row.capacitySlots, models: row.models,
+      ...(row.modelGroups !== undefined ? { modelGroups: row.modelGroups } : {}) })),
     devices: inputs.devices?.map(row => ({ deviceId: row.deviceId, active: row.active, ...(row.limit !== undefined ? { limit: row.limit } : {}) })) ?? null,
     uses: [...(inputs.ranks ?? []).filter(row => row.enabled).map(row => ({ task: row.task, slot: row.slot, connectionId: row.connectionId })),
       ...(inputs.pools ?? []).map(row => ({ task: row.task, slot: row.slot, connectionId: row.connectionId }))],
@@ -374,41 +391,56 @@ const sameRows = (a: readonly (AiRankChoice | null)[], b: readonly (AiRankChoice
 };
 
 /**
- * 저장 전 확인 — 바뀌는 값(방식 · 동시 처리 · 순위 또는 함께 쓰는 모델의 전 → 후)과 영향(바뀐 뒤 쓰는 모델마다 지금 칸과 같은 모델을 쓰는 다른 단계 수,
+ * 저장 전 확인 — 바뀌는 값(방식 · 동시 처리 · 순위 또는 함께 쓰는 모델의 전 → 후 · 예비)과 영향(바뀐 뒤 쓰는 모델마다 지금 칸과 같은 모델을 쓰는 다른 단계 수,
  * 이 단계에서 빠지는 모델, 1순위가 비는 것). 바뀐 것이 없으면 rows·saves 가 비어 있다.
+ * 「동시 처리」는 모델별 칸 수를 받는 작업에서 칸 수를 모두 적었으면 그 합(실행 쪽 aiTaskPoolCappedLanes 와 같은 계산, 16에서 자름)이고,
+ * 아니면 예전 작업 분산(장비 칸을 다른 단계와 함께 씀)이다.
  * 작업 분산 → 순위대로로 돌아갈 때는 순위를 함께 바꾸지 않는다(보관된 순위로 돌아간다 — 실행 방식 저장이 그렇게 한다).
  */
 export function assignmentPreview(input: { task: string; slot: number; before: AssignmentState; after: AssignmentState; context: PreviewContext }): AssignmentPreview {
   const { before, after, context, task, slot } = input;
+  const features = aiTaskPoolFeatures(task, slot);
   const connection = (id: string) => context.connections.find(row => row.id === id) ?? null;
-  const name = (choice: AiRankChoice) => {
-    const found = connection(choice.provider);
-    if (!found) return "지워진 연결";
-    return found.models.length > 1 ? `${found.label}(${choice.model})` : found.label;
-  };
+  const name = (choice: AiRankChoice) => { const found = connection(choice.provider); return found ? consoleModelName(found, choice.model) : "지워진 연결"; };
+  /** 자리마다 칸 수 — 받지 않는 작업이거나 비었으면 null */
+  const slotsOf = (state: AssignmentState) => state.members.map((_, index) => poolSlotOf(state.slots?.[index], features) ?? null);
+  const reserveOf = (state: AssignmentState) => state.mode === "workload_pool" && features.reserve && !!state.reserve;
   const chain = (rows: readonly (AiRankChoice | null)[]) => chosen(rows).length ? chosen(rows).map(name).join(" → ") : "비어 있음";
-  const together = (rows: readonly (AiRankChoice | null)[]) => chosen(rows).length ? chosen(rows).map(name).join(" + ") : "비어 있음";
+  const together = (state: AssignmentState) => {
+    const slots = slotsOf(state);
+    const parts = state.members.flatMap((row, index) => row ? [`${name(row)}${slots[index] !== null ? ` ${formatCount(slots[index]!)}칸` : ""}`] : []);
+    return parts.length ? parts.join(" + ") : "비어 있음";
+  };
   const limitOf = (id: string) => { const found = connection(id); if (!found) return 0; return context.devices?.find(row => row.deviceId === found.deviceId)?.limit ?? found.capacitySlots; };
+  const lanesOf = (state: AssignmentState) => aiTaskPoolCappedLanes({ task, slot, mode: state.mode, members: state.members.flatMap((row, index) =>
+    row ? [{ maxSlots: slotsOf(state)[index] }] : []) });
   const concurrency = (state: AssignmentState) => {
-    if (state.mode === "fallback") return "1순위 모델 하나씩(막히면 다음 순위)";
+    if (state.mode === "fallback") return "한 모델씩(1순위가 막히면 다음 순위)";
+    const lanes = lanesOf(state);
+    if (lanes !== null) return `모델 ${formatCount(chosen(state.members).length)}개가 함께 · 최대 ${formatCount(lanes)}건(칸 수 합)`;
     const devices = new Map<string, number>();
     for (const row of chosen(state.members)) { const found = connection(row.provider); if (found) devices.set(found.deviceId, limitOf(row.provider)); }
     const slots = [...devices.values()].reduce((sum, value) => sum + value, 0);
     return `모델 ${formatCount(chosen(state.members).length)}개가 나눠 처리 · 장비 칸 합 ${formatCount(slots)}칸(다른 단계와 함께 씀)`;
   };
+  const sameSlots = (a: AssignmentState, b: AssignmentState) => JSON.stringify(slotsOf(a).filter((_, index) => a.members[index]))
+    === JSON.stringify(slotsOf(b).filter((_, index) => b.members[index]));
 
   const modeChanged = before.mode !== after.mode;
-  const membersChanged = after.mode === "workload_pool" && !sameRows(before.members, after.members);
+  const reserveChanged = after.mode === "workload_pool" && features.reserve && reserveOf(before) !== reserveOf(after);
+  const membersChanged = after.mode === "workload_pool" && (!sameRows(before.members, after.members) || !sameSlots(before, after));
   const ranksChanged = after.mode === "fallback" && before.mode === "fallback" && !sameRows(before.ranks, after.ranks);
   const rows: AssignmentPreview["rows"] = [];
   const saves: AssignmentPreview["saves"] = [];
   if (modeChanged) rows.push({ label: "방식", before: MODE_LABELS[before.mode], after: MODE_LABELS[after.mode] });
   if (modeChanged || membersChanged) rows.push({ label: "동시 처리", before: concurrency(before), after: concurrency(after) });
   if (after.mode === "workload_pool" && (modeChanged || membersChanged))
-    rows.push({ label: "함께 쓰는 모델", before: before.mode === "workload_pool" ? together(before.members) : "없음", after: together(after.members) });
+    rows.push({ label: "함께 쓰는 모델", before: before.mode === "workload_pool" ? together(before) : "없음", after: together(after) });
+  if (reserveChanged || (modeChanged && after.mode === "workload_pool" && features.reserve))
+    rows.push({ label: "예비", before: reserveOf(before) ? "순위(1·2·3)로 이어 처리" : "없음", after: reserveOf(after) ? "순위(1·2·3)로 이어 처리" : "없음" });
   if (modeChanged && after.mode === "fallback") rows.push({ label: "순위", before: "쓰지 않음(보관)", after: chain(after.ranks) });
   if (ranksChanged) rows.push({ label: "순위", before: chain(before.ranks), after: chain(after.ranks) });
-  if (modeChanged || membersChanged) saves.push("execution");
+  if (modeChanged || membersChanged || reserveChanged) saves.push("execution");
   if (ranksChanged) saves.push("ranks");
 
   const impact: AssignmentPreview["impact"] = [];
@@ -416,15 +448,20 @@ export function assignmentPreview(input: { task: string; slot: number; before: A
   const used = (state: AssignmentState) => chosen(state.mode === "workload_pool" ? state.members : state.ranks);
   const afterIds = [...new Set(used(after).map(row => row.provider))], beforeIds = [...new Set(used(before).map(row => row.provider))];
   const others = (id: string) => [...new Set(context.uses.filter(row => row.connectionId === id && !(row.task === task && row.slot === slot)).map(row => taskStageLabel(row.task)))];
+  const afterSlots = slotsOf(after);
   for (const id of afterIds) {
     const found = connection(id);
     if (!found) { impact.push({ tone: "bad", text: "지워진 연결을 고르고 있습니다." }); continue; }
     const device = context.devices?.find(row => row.deviceId === found.deviceId) ?? null;
     const limit = limitOf(id);
+    // 「동시에」에서 이 모델에 적은 칸 수(같은 모델을 두 자리에 두면 합)
+    const own = after.mode === "workload_pool" ? after.members.reduce<number | null>((sum, row, index) =>
+      row?.provider === id && afterSlots[index] !== null ? (sum ?? 0) + afterSlots[index]! : sum, null) : null;
     const slots = !context.devices ? "지금 칸 셀 수 없음" : `지금 ${formatCount(limit)}칸 중 ${formatCount(device?.active ?? 0)}칸 사용${(device?.active ?? 0) >= limit ? "(가득 참)" : ""}`;
     const share = others(id);
-    impact.push({ tone: (device?.active ?? 0) >= limit ? "warn" : "info",
-      text: `${found.label}: ${slots} · ${share.length ? `같은 모델을 쓰는 다른 단계 ${formatCount(share.length)}개(${share.slice(0, 4).join(" · ")}${share.length > 4 ? ` 외 ${share.length - 4}` : ""})와 칸을 나눕니다` : "다른 단계는 이 모델을 쓰지 않습니다"}` });
+    impact.push({ tone: (device?.active ?? 0) >= limit || (own !== null && own > limit) ? "warn" : "info",
+      text: `${found.label}: ${own !== null ? `이 단계에 ${formatCount(own)}칸 · ` : ""}${slots} · ${share.length ? `같은 모델을 쓰는 다른 단계 ${formatCount(share.length)}개(${share.slice(0, 4).join(" · ")}${share.length > 4 ? ` 외 ${share.length - 4}` : ""})와 칸을 나눕니다` : "다른 단계는 이 모델을 쓰지 않습니다"}`
+        + `${own !== null && own > limit ? ` — 장비 한도 ${formatCount(limit)}칸보다 많이 적어 장비 한도가 먼저 걸립니다` : ""}` });
   }
   for (const id of beforeIds.filter(entry => !afterIds.includes(entry))) {
     const found = connection(id);
@@ -433,26 +470,8 @@ export function assignmentPreview(input: { task: string; slot: number; before: A
   }
   if (after.mode === "fallback" && !after.ranks[0]) impact.push({ tone: "bad", text: "1순위가 비면 이 단계가 멈춥니다(no_task_models)." });
   if (after.mode === "workload_pool" && !chosen(after.members).length) impact.push({ tone: "bad", text: "함께 쓸 모델이 없습니다 — 하나 이상 고르세요." });
+  if (reserveOf(after) && !chosen(after.ranks).length) impact.push({ tone: "warn", text: "예비를 켰지만 이 단계의 순위가 비어 있어 이어 처리할 모델이 없습니다." });
   return { rows, impact, saves };
-}
-
-/**
- * 작업 분산 구성원 검사 — 작업 배정 화면 실행 방식 폼(TaskExecutionForm)과 같은 검사(서버 saveAiTaskExecutionConfig 가 다시 검사한다).
- * connections 는 화면이 아는 연결(켜짐·종류·CLI 도구).
- */
-export function poolMemberIssues(values: readonly (AiRankChoice | null)[], connections: readonly { id: string; enabled: boolean; kind: "api" | "cli"; cliTool: string | null }[],
-  apiOnly: boolean): string[] {
-  const selected = chosen(values);
-  const issues: string[] = [];
-  if (!selected.length) issues.push("분산할 모델을 하나 이상 선택하세요.");
-  if (selected.some(choice => !connections.some(row => row.id === choice.provider && row.enabled))) issues.push("꺼졌거나 없는 연결을 바꿔주세요.");
-  if (apiOnly && selected.some(choice => !connections.some(row => row.id === choice.provider && (row.kind === "api" || row.cliTool === "opencode"))))
-    issues.push("발행 분류에는 API 또는 OpenCode 연결을 선택하세요.");
-  if (selected.some((choice, index) => connections.some(row => row.id === choice.provider && row.kind === "cli")
-    && selected.slice(0, index).some(previous => previous.provider === choice.provider && previous.model === choice.model
-      && (previous.reasoningEffort ?? "") !== (choice.reasoningEffort ?? ""))))
-    issues.push("같은 CLI 연결·모델은 추론 강도를 같게 설정하세요.");
-  return issues;
 }
 
 /** 모든 패널 열쇠 — 시험·주소 검사 */
