@@ -69,7 +69,10 @@ export async function classifyPublicationPool(expected: readonly PublicationClas
     await abandonResume();
     throw new ModelCapacityDeferredError('reservation_lost');
   }
-  const choice = await chooseTaskWorkloadMember(config, candidates, { preferIdentity: own[0]?.candidate.identity, preferMemberId: own[0]?.candidate.memberId });
+  // 빈 칸이 없으면 줄에 설 구성원을 고른다 — requestSlot 이 대기 행을 쓰고 다음 틱이 그 묶음을 이어받는다(findOwnPendingPublicationApiBatches).
+  // 한 틱에 줄에 서는 묶음은 첫 미룸까지다(발행 잡이 그 뒤로는 묻지 않는다 — publish.ts classificationSaturated). 2026-11-12 검토
+  const choice = await chooseTaskWorkloadMember(config, candidates, { preferIdentity: own[0]?.candidate.identity, preferMemberId: own[0]?.candidate.memberId,
+    queueWhenFull: true });
   if (!choice) throw new ModelCapacityDeferredError(candidates.length ? 'capacity' : 'provider_contract_unavailable');
   return runInTextTaskRank({ ...choice, poolSelection: choice.poolSelection }, async () => {
     if (!ctx.hasBudget() || ctx.signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');

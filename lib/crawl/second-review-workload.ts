@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { secondReviews, secondReviewWorkloadAssignments, type SecondReview, type SecondReviewWorkloadAssignment } from '@/lib/db/schema';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { logger } from '@/lib/observability/logger';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import type { AiTaskExecutionConfig, AiTaskPoolSelection } from '@/lib/llm/ai-task-execution-config';
 import { readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
@@ -100,7 +101,10 @@ export async function chooseSecondReviewWorkloadSlot(slot: SecondReviewWorkloadS
     return [{ memberId: member.memberId, routeId: binding.routeId, connectionId: binding.connectionId,
       engineModel: binding.engineModel, provider: binding.provider, identity: binding.identity, deviceId: binding.deviceId }];
   });
-  const chosen = await chooseTaskWorkloadMember(slot.config, candidates, { executor: tx });
+  // 표를 배정할 뿐 지금 부르지 않는다(호출은 나중에 소비자가 장부 줄에 서서 한다) — 빈 칸이 없어도 줄에 설 수 있는 구성원을 고르고(queueWhenFull),
+  // 장부에 행을 쓰지 않고 잇달아 고르므로 같은 장비 상태를 본 한 묶음이 한 구성원에 몰리지 않게 돌림 차례를 먼저 본다(rotate). 2026-11-12 검토:
+  // 예전에는 모든 구성원의 장비가 그 순간 가득이면 표를 만들지 않고 말없이 넘겨, 소비자가 장비를 채우는 동안 새 후보가 표를 얻지 못했다.
+  const chosen = await chooseTaskWorkloadMember(slot.config, candidates, { executor: tx, queueWhenFull: true, rotate: true });
   if (!chosen) return null;
   const member = slot.config.members.find(member => member.memberId === chosen.memberId)!;
   return { provider: chosen.provider as ReviewRankReviewer['provider'], model: chosen.identity,
@@ -180,8 +184,22 @@ export async function insertSecondReviewWorkloadRows(tx: ProductTransaction,
         if (canonical !== null) excluded.add(canonical);
       }
     }
-    const selected = await chooseSecondReviewWorkloadSlot(slot, tx, excluded);
-    if (!selected) continue;
+    let selected: Awaited<ReturnType<typeof chooseSecondReviewWorkloadSlot>>;
+    try { selected = await chooseSecondReviewWorkloadSlot(slot, tx, excluded); }
+    catch (error) {
+      // 용량 장부가 열려 있지 않다(배포 창 DRAIN·꺼짐)·정책 세대가 바뀌었다 — 이 틱에는 표를 배정하지 않는다(OPEN 뒤 다음 틱이 배정한다).
+      // 예전에는 이 미룸이 유지보수 틱 전체(정산·고아 정리·실패 표 재시도·발행분 표본)를 던졌다. 이 셋은 SQL 실패 없이 던지는 미룸이라 TX 는 그대로다.
+      if (error instanceof ModelCapacityDeferredError && ['draining', 'disabled', 'policy_changed'].includes(error.reason)) {
+        logger.info('second_review.workload_assignment_deferred', { reason: error.reason, candidateId: base.candidateId });
+        break;
+      }
+      throw error;
+    }
+    if (!selected) {
+      // 줄에 설 수 있는 구성원도 없다(장비 없음·꺼짐, 모델 상한·경로 몫이 참) — 다음 틱에 다시 고른다
+      logger.info('second_review.workload_unassigned', { candidateId: base.candidateId });
+      continue;
+    }
     const [row] = await tx.insert(secondReviews).values({ ...base, provider: selected.provider, model: selected.model })
       .onConflictDoNothing().returning();
     if (!row) continue;

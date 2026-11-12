@@ -11,6 +11,7 @@ import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS } from "@/lib/crawl/korean-translat
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
+import type { TextTaskRankBinding } from "@/lib/llm/ai-task-rank-scope";
 import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 import { runKoreanTaglineSampleStep } from "./korean-tagline-sample";
 
@@ -151,18 +152,20 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
           return true;
         } };
         let model = entry.model;
+        /** 이 묶음을 실제로 부른 순위·구성원 — 엔진이 막히면 이것을 쉬게 한다(같은 장부 이름의 다른 구성원·예비 순위가 아니라) */
+        let used: TextTaskRankBinding | null = null;
         let outcome: KoreanTaglineCapacityResult | { kind: "unusable" };
         const prefer = await pendingTextPoolModel(ranks, pendingRequestIds);
         // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
         const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal, pendingClaims, requireAdmission: concurrency > 1 })
-          .then(value => ({ value, model: binding.identity })), { prefer });
+          .then(value => ({ value, model: binding.identity, binding })), { prefer });
         // 「동시에」에서 이 줄에 빈 칸이 없다 — 이 묶음을 놓고(호출·시도 기록 없음, 다음 바퀴가 다시 집는다) 이 줄만 끝낸다
         if (attempt.kind === "idle") {
           entry.batch.forEach(task => { if (scheduled.get(task.productId) === lane) scheduled.delete(task.productId); visited.delete(task.productId); });
           return;
         }
         if (attempt.kind === "unusable") outcome = { kind: "unusable" };
-        else { outcome = attempt.value.value; model = attempt.value.model; }
+        else { outcome = attempt.value.value; model = attempt.value.model; used = attempt.value.binding; }
         const completedBatch = outcome.kind === "result" ? outcome.batch ?? entry.batch : entry.batch;
         completedBatch.forEach(task => visited.add(task.productId));
         const completedItems = completedBatch.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
@@ -201,7 +204,7 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         // 엔진이 막혔거나 밀렸으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않고 심사에 자리를 준다. 그 순위만 쉬고 다음 묶음은 다음 순위가 맡는다
         if (!result.ok || elapsedMs >= slowCallMs) {
           ctx.log("tagline_ko.gateway_blocked", { ...counts(), backend, model, error: result.ok ? "slow" : result.error });
-          const binding = ranks.bindings().find(row => row.identity === model);
+          const binding = used ?? ranks.bindings().find(row => row.identity === model);
           if (binding) ranks.pause(binding, result.ok ? "engine_slow" : "engine_failed");
           if (!binding || !gptCallable()) stopped.add(backend);
         }

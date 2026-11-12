@@ -67,7 +67,9 @@ type Executor = typeof db | ProductTransaction;
  * 지금 쓸 수 없는 순위(계약 닫힘·CLI 계약 없음 등, firstReviewRankState().unusable)도 비켜 간다. 잠금 아래 재확인은 부르는 쪽이 준 blocked 만 본다.
  */
 export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db,
-  blocked: ReadonlySet<string> = new Set()): Promise<FirstReviewer | null> {
+  blocked: ReadonlySet<string> = new Set(),
+  /** 「동시에」 고르기가 줄에 설 구성원도 찾지 못해 null 을 돌려줬다(모델·장비 사정 — 후보 탓이 아니다) */
+  note?: { poolBusy?: boolean }): Promise<FirstReviewer | null> {
   if (executor === db) await ensureReviewTaskRanks();
   const state = firstReviewRankState(context.settings);
   const pool = state.pool;
@@ -98,7 +100,7 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
   // The locked recheck below still receives exactly one selected reviewer.
   if (executor === db && state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
     const chosen = await chooseReviewWorkloadMember(state.resolution, blocked);
-    if (!chosen) return null;
+    if (!chosen) { if (note) note.poolBusy = true; return null; }
     logger.info("ai_task.workload_hint_selected", { candidateId: context.candidate.id,
       model: chosen.model, provider: chosen.provider, ...chosen.poolSelection });
     return { provider: chosen.provider, model: chosen.model };

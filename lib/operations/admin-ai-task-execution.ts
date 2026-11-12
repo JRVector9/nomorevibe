@@ -4,7 +4,7 @@ import { db, onPrimary } from "@/lib/db";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { aiConnections, aiTaskExecutionConfigs, aiTaskPoolMembers, aiTaskModels, operationsAudit } from "@/lib/db/schema";
 import { aiConnectionTaskAllowed, aiTask, aiTaskAccepts, aiTaskSlots } from "@/lib/llm/ai-tasks";
-import { aiTaskExecutionInputSchema, aiTaskWorkloadPoolApiOnly, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskExecutionInputSchema, aiTaskPoolFeatures, aiTaskWorkloadPoolApiOnly, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
 import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
 import { aiTaskUsesCliEngine } from "@/lib/llm/cli-engine-config";
 import { aiConnectionKeyAad, aiConnectionManualOnly, aiTaskConnectionModelIds, aiRankReasoningEfforts, aiRanksReadiness } from "./admin-ai-tasks";
@@ -68,6 +68,25 @@ function safeIssue(error: unknown): string {
 }
 export type SaveAiTaskExecutionResult = { ok: true; revision: number; warnings: string[];
   created: { devices: string[]; contracts: string[]; routes: string[] } } | { ok: false; issues: string[] };
+
+/**
+ * 같은 엔진(같은 주소·같은 canonical 모델 — engine_key)을 두 자리에 넣은 구성원 알림(2026-11-12 검토). 저장은 막지 않는다(0167 반복 선택은 소유자가 연 기능).
+ * 한 엔진은 장비 한도·모델 상한·장부 줄을 함께 쓰므로 자리를 늘려도 동시에 도는 수는 늘지 않고 고르기 몫만 커진다 — 실행 쪽은 한 자리가 서면 같은 엔진의 자리를 함께 쉬게 한다.
+ */
+export function repeatedPoolMemberWarnings(members: readonly { position: number; engineKey: string; model: string; options: Readonly<Record<string, unknown>> }[],
+  taskId: string, slot: number): string[] {
+  const warnings: string[] = [], seen = new Set<string>();
+  for (const member of members) {
+    if (seen.has(member.engineKey)) continue;
+    const same = members.filter(other => other.engineKey === member.engineKey);
+    if (same.length < 2) continue;
+    seen.add(member.engineKey);
+    warnings.push(`${same.map(row => row.position).join("·")}번째 모델(${member.model})이 같은 연결·같은 엔진입니다 — 장비 한도는 하나라 동시에 도는 수는 늘지 않고 `
+      + `고르는 몫만 커집니다(한 자리가 포화·실패로 쉬면 같은 엔진의 다른 자리도 함께 쉽니다). ${aiTaskPoolFeatures(taskId, slot).slotCaps
+        ? "더 많이 돌리려면 한 자리만 두고 칸 수를 늘리세요." : "한 자리만 두는 것을 권합니다."}`);
+  }
+  return warnings;
+}
 
 /** Separate pool CAS; existing fallback rank rows and all in-flight request/dispatch bindings are untouched. */
 export async function saveAiTaskExecutionConfig(input: unknown, actor: string): Promise<SaveAiTaskExecutionResult> {
@@ -184,7 +203,7 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
     if (blocking.length) return { ok: false, issues: blocking };
     const resources = await prepareAiTaskServingResources(task, chosen, readiness);
     if (!resources.ok) return resources;
-    const warnings = readiness.flatMap(row => row.warnings);
+    const warnings = [...readiness.flatMap(row => row.warnings), ...(value.mode === "workload_pool" ? repeatedPoolMemberWarnings(members, task.id, value.slot) : [])];
     const saved = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_execution_task'),hashtext(${task.id}))`);

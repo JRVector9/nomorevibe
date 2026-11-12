@@ -3029,7 +3029,8 @@ export async function readTextTargetPoolAffinities(target: TextTargetPoolInput, 
   owner: ModelCapacityRequestIdentity['owner']): Promise<Readonly<{ model: string; provider: GatewayDispatchProvider }>[]> {
   const checkedModels = [...new Set(models)];
   if (!checkedModels.length) return [];
-  if (checkedModels.length > 8) throw new Error('invalid_text_pool_affinity_models');
+  // 구성원 4 + 예비 순위 3(0179), 묶지 못한 후보는 이름 둘(모델·연결 별칭)까지 — 14. 예전 상한 8은 예비가 생긴 뒤 넘쳐 틱마다 오류로 멈췄다
+  if (checkedModels.length > 16) throw new Error('invalid_text_pool_affinity_models');
   const first = checkedModels.map(model => {
     if (target.routeId === 'crawl-tagline') {
       const input = crawlTaglineInputSchema.parse({ member: target.member, model, askOrdinal: 1, parent: null });
