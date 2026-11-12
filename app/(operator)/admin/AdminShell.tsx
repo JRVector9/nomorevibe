@@ -112,7 +112,7 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
             <div className="top-tools"><LiveBar fallbackAt={renderedAt} appearance="prototype" navigationPending={navigationPending} /><span className="top-avatar">{initials}</span></div>
           </header>
           <div id="page" tabIndex={-1}>
-            <WorkspaceTabs location={location} pathname={pathname} search={search} onNavigate={onNavigate} />
+            <WorkspaceTabs location={location} onNavigate={onNavigate} />
             <div className="admin-workspace-view">{children}</div>
           </div>
           <footer className="app-footer"><span>NO MORE VIBE / ADMIN WORKSPACE</span><span>실제 운영 원본 · 관측 시각 KST</span></footer>
