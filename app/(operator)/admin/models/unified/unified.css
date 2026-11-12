@@ -1,8 +1,6 @@
 /* 관리자 site-density의 간격 0.8배에 맞춰 시안 간격을 보존한다. */
 .models-unified{display:grid;gap:calc(30px / .8);min-width:0;scroll-padding-top:120px;font-size:calc(13px + var(--admin-font-delta, 0px));line-height:1.6}
 .models-unified section,.models-unified details{min-width:0;scroll-margin-top:calc(120px / .8)}
-.mu-jumps{display:flex;gap:calc(20px / .8);justify-content:flex-end;color:var(--muted);font-size:calc(11px + var(--admin-font-delta, 0px));margin-bottom:calc(-20px / .8)}
-.mu-jumps a:hover{text-decoration:underline}
 .mu-lower{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:calc(20px / .8)}
 .mu-section-head{display:flex;align-items:center;justify-content:space-between;gap:calc(16px / .8);margin-bottom:calc(12px / .8)}
 .mu-section-head h2{font-size:calc(15px + var(--admin-font-delta, 0px));letter-spacing:-.25px;font-weight:600}
@@ -33,6 +31,6 @@
 .mu-mini-foot{display:flex;justify-content:space-between;padding-top:8px;color:var(--muted);font-size:calc(11px + var(--admin-font-delta, 0px))}
 .mu-empty{padding:calc(14px / .8) 0;color:var(--muted);font-size:calc(12px + var(--admin-font-delta, 0px))}
 .mu-preview-note{border:1px solid var(--line);border-radius:6px;padding:calc(8px / .8) calc(12px / .8);font-size:calc(12px + var(--admin-font-delta, 0px));color:var(--muted)}
-@media(max-width:1050px){.mu-jumps{display:none}.mu-lower{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
-@media(max-width:760px){.mu-lower{grid-template-columns:minmax(0,1fr)}.models-unified{gap:calc(24px / .8)}.mu-folds summary{flex-wrap:wrap}.mu-folds summary span{text-align:left}}
+@media(max-width:1050px){.mu-lower{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media(max-width:760px){.mu-lower{grid-template-columns:minmax(0,1fr);gap:calc(25px / .8)}.models-unified{gap:calc(24px / .8)}.mu-folds summary{flex-wrap:wrap}.mu-folds summary span{text-align:left}}
 @media(prefers-reduced-motion:reduce){.mu-folds summary:before{transition:none}}

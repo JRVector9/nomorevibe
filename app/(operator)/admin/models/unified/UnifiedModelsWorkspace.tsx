@@ -62,7 +62,6 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
     document.getElementById("tasks")?.scrollIntoView({ behavior: "smooth" });
   };
   return <div className="models-unified" data-models-unified="true">
-    <nav className="mu-jumps" aria-label="모델 화면 바로가기"><a href="#models">모델 목록</a><a href="#tasks">작업별 적용 현황</a><a href="#operations">운영 설정</a></nav>
     <ModelConsole data={data.models} selected={detail?.kind === "model" ? detail.id : null} readOnly={readOnly}
       attach={{ editor: data.editor, poolHelp: data.poolHelp }} taskUses={data.taskUses}
       duplicateCount={data.ranksReadable ? data.assignments.rows.filter(unifiedTaskDuplicate).length : null}

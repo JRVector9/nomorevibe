@@ -299,6 +299,15 @@ describe('주소 → 메뉴 해석', () => {
 });
 
 describe('탭과 2차 메뉴', () => {
+  it('모델의 본문 바로가기는 기존 하위 메뉴에만 두고 다른 화면에서는 보이지 않는다', () => {
+    const model = renderToStaticMarkup(<WorkspaceTabs location={resolveWorkspace('/admin/models')} />);
+    expect(model).toContain('aria-label="모델 화면 바로가기"');
+    for (const id of ['models', 'tasks', 'operations']) expect(model).toContain(`href="/admin/models#${id}"`);
+    for (const path of ['/admin/flow', '/admin/models/advanced', '/admin/models/llm']) {
+      expect(renderToStaticMarkup(<WorkspaceTabs location={resolveWorkspace(path)} />)).not.toContain('admin-model-section-jumps');
+    }
+  });
+
   it('고급 설정 탭을 켜고 편집기 일곱 개를 모두 잇는다', () => {
     const html = renderToStaticMarkup(<WorkspaceTabs location={resolveWorkspace('/admin/models/helpers')} />);
     for (const href of ['/admin/models/advanced', '/admin/models/devices', '/admin/models/allocation', '/admin/models/limits', '/admin/models/helpers', '/admin/models/assignments',
