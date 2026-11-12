@@ -87,14 +87,21 @@ const ADDRESSES: readonly (readonly [url: string, menu: WorkspaceId, tab: string
   ['/admin/products/recheck', 'people', 'quality', 'recheck'],
   ['/admin/models/human', 'people', 'delegate', null],
   // 모델
-  ['/admin/models', 'models', 'dashboard', null],
-  ['/admin/models?tab=live', 'models', 'dashboard', null],
-  ['/admin/models?tab=unknown', 'models', 'dashboard', null],
-  ['/admin/models?tab=constructor', 'models', 'dashboard', null],
+  // 운영 콘솔 조각 3a: /admin/models 는 모델 목록(?model= 상세), 옛 대시보드·LLM 운영은 고급 설정의 2차 메뉴
+  ['/admin/models', 'models', 'list', null],
+  ['/admin/models?model=conn-supa-direct', 'models', 'list', null],
+  ['/admin/models/new', 'models', 'list', null],
+  ['/admin/models/new?id=00000000-0000-4000-8000-000000000000&step=2', 'models', 'list', null],
+  ['/admin/models/compare', 'models', 'list', null],
+  ['/admin/models/compare?task=product-tagline-ko', 'models', 'list', null],
+  ['/admin/models?tab=live', 'models', 'advanced', 'dashboard'],
+  ['/admin/models?tab=unknown', 'models', 'list', null],
+  ['/admin/models?tab=constructor', 'models', 'list', null],
   ['/admin/models?tab=tasks', 'models', 'tasks', null],
-  ['/admin/models?tab=connections', 'models', 'llm', null],
-  ['/admin/models?tab=capacity', 'models', 'llm', null],
-  ['/admin/models/llm', 'models', 'llm', null],
+  ['/admin/models?tab=connections', 'models', 'advanced', 'llm'],
+  ['/admin/models?tab=capacity', 'models', 'advanced', 'llm'],
+  ['/admin/models/dashboard', 'models', 'advanced', 'dashboard'],
+  ['/admin/models/llm', 'models', 'advanced', 'llm'],
   ['/admin/models/tasks', 'models', 'tasks', null],
   ['/admin/models/advanced', 'models', 'advanced', 'overview'],
   ['/admin/models?advanced=1', 'models', 'advanced', null],
@@ -202,9 +209,11 @@ describe('메뉴 여섯', () => {
     expect(WORKSPACE_SECONDARY.quality.map(link => link.label)).toEqual(['AI 감사·정책', '공개분 2차 확인', '규칙 재검수']);
   });
 
-  it('모델의 고급 설정 2차 메뉴는 사람 위임 모델을 뺀 편집기 일곱 개다', () => {
-    expect(WORKSPACES.find(page => page.id === 'models')!.tabs.map(tab => tab.label)).toEqual(['대시보드', 'LLM 운영', '작업 배정', '고급 설정']);
-    expect(WORKSPACE_SECONDARY.modelsAdvanced.map(link => link.label)).toEqual(['고급 설정', '실시간 한도', '장비 한도', '칸 배분', '도우미·감시자', '모델 배정 표', '서빙 계약·등록부', '검색 모델']);
+  it('모델은 목록이 기본이고, 고급 설정 2차 메뉴는 옛 대시보드·LLM 운영과 사람 위임 모델을 뺀 편집기 일곱 개다', () => {
+    expect(WORKSPACES.find(page => page.id === 'models')!.tabs.map(tab => tab.label)).toEqual(['모델 목록', '작업 배정', '고급 설정']);
+    expect(WORKSPACES.find(page => page.id === 'models')!.href).toBe('/admin/models');
+    expect(WORKSPACE_SECONDARY.modelsAdvanced.map(link => link.label)).toEqual(['고급 설정', '대시보드', 'LLM 운영', '실시간 한도', '장비 한도', '칸 배분', '도우미·감시자',
+      '모델 배정 표', '서빙 계약·등록부', '검색 모델']);
   });
 });
 
@@ -278,7 +287,7 @@ describe('탭과 2차 메뉴', () => {
     expect(html).not.toContain('href="/admin/models/human"');
     expectActiveLink(html, '/admin/models/advanced');
     expectActiveLink(html, '/admin/models/helpers');
-    for (const label of ['대시보드', 'LLM 운영', '작업 배정', '고급 설정']) expect(html).toContain(`>${label}</a>`);
+    for (const label of ['모델 목록', '작업 배정', '고급 설정', '대시보드', 'LLM 운영']) expect(html).toContain(`>${label}</a>`);
   });
 
   it('공개분 2차 확인, 감사 정책, 규칙 재검수를 품질관리 아래 나란히 둔다', () => {

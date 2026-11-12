@@ -695,7 +695,9 @@ export const runtimeSettings = pgTable('runtime_settings', {
 ]);
 
 /** 마지막 GET {base_url}/models 결과 한 줄(0162). maxModelLen 은 엔진이 알려 줄 때만(mlx_lm.server 등은 없다). */
-export type AiConnectionModel = { id: string; maxModelLen: number | null };
+export type AiConnectionModel = { id: string; maxModelLen: number | null;
+  /** 서버가 알려 준 원래 모델(vLLM /models 의 root — served-model-name 별칭이면 같은 값). 2026-11-12 부터 알려 줄 때만 담는다 */
+  root?: string };
 /** 연결별 덧붙임(0162). contextTokens = /models 가 최대 길이를 주지 않는 모델의 운영자 입력 상한(토큰). */
 export type AiConnectionOptions = { contextTokens?: number };
 
@@ -805,4 +807,37 @@ export const aiTaskPoolMembers = pgTable('ai_task_pool_members', {
   check('ai_task_pool_members_options_check', sql`jsonb_typeof(${table.options}) = 'object' AND pg_column_size(${table.options}) <= 4096`),
   check('ai_task_pool_members_max_slots_check', sql`${table.maxSlots} IS NULL OR ${table.maxSlots} BETWEEN 1 AND 8`),
   index('ai_task_pool_members_connection_idx').on(table.connectionId),
+]);
+
+/**
+ * 표본 비교 기록(0180, 2026-11-12 운영 콘솔 조각 3a). 관리자가 「모델을 단계에 붙이기 전에 결과를 나란히 보기」를 요청하면 한 줄이 생기고,
+ * 그 작업의 배경 잡이 자기 lease 로 기존 호출 경로·용량 장부를 거쳐 한 묶음씩 부른 결과를 items 에 채운다. 운영 데이터(소개·번역 표)에는 쓰지 않는다.
+ * items = [{productId, name, text, current, candidate}] — 각 쪽은 {state, output, pass, reason}(lib/operations/model-sample-compare.ts).
+ * 연결 id 는 FK 가 아니다 — 비교 기록이 남아 있어도 연결을 지울 수 있게 이름을 함께 적어 둔다.
+ */
+export type ModelSampleRef = { connectionId: string; model: string; name: string };
+export const modelSampleComparisons = pgTable('model_sample_comparisons', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  task: varchar('task', { length: 64 }).notNull(),
+  status: varchar('status', { length: 16 }).$type<'queued' | 'running' | 'done' | 'failed' | 'cancelled'>().notNull().default('queued'),
+  statusCode: varchar('status_code', { length: 120 }),
+  candidate: jsonb('candidate').$type<ModelSampleRef>().notNull(),
+  current: jsonb('current').$type<ModelSampleRef | null>(),
+  sampleSize: integer('sample_size').notNull(),
+  items: jsonb('items').$type<Record<string, unknown>[]>().notNull().default(sql`'[]'::jsonb`),
+  deferrals: integer('deferrals').notNull().default(0),
+  requestedBy: varchar('requested_by', { length: 120 }).notNull(),
+  requestedAt: timestamp('requested_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  startedAt: timestamp('started_at', { withTimezone: true, precision: 3 }),
+  finishedAt: timestamp('finished_at', { withTimezone: true, precision: 3 }),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_sample_comparisons_task_check', sql`${table.task} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
+  check('model_sample_comparisons_status_check', sql`${table.status} IN ('queued','running','done','failed','cancelled')`),
+  check('model_sample_comparisons_size_check', sql`${table.sampleSize} BETWEEN 1 AND 40`),
+  check('model_sample_comparisons_deferrals_check', sql`${table.deferrals} BETWEEN 0 AND 1000`),
+  check('model_sample_comparisons_refs_check', sql`jsonb_typeof(${table.candidate}) = 'object' AND (${table.current} IS NULL OR jsonb_typeof(${table.current}) = 'object')`),
+  check('model_sample_comparisons_items_check', sql`jsonb_typeof(${table.items}) = 'array' AND jsonb_array_length(${table.items}) <= 40 AND pg_column_size(${table.items}) <= 262144`),
+  index('model_sample_comparisons_task_idx').on(table.task, table.id),
+  index('model_sample_comparisons_open_idx').on(table.task, table.id).where(sql`${table.status} IN ('queued','running')`),
 ]);

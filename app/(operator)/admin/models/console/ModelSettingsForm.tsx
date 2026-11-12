@@ -1,0 +1,144 @@
+"use client";
+import { useRouter } from "next/navigation";
+import { useMemo, useRef, useState, useTransition } from "react";
+import { AI_TASK_GROUP_LABELS, AI_TASKS } from "@/lib/llm/ai-tasks";
+import { connectionFormEntries, deviceRowFormEntries, MODEL_CONSOLE_LIMITS, modelSavePlan, modelSettingsOf, type ModelConsoleRow, type ModelDeviceState,
+  type ModelSavePlan, type ModelSettings } from "@/lib/operations/model-console";
+import { saveAiConnectionAction } from "../tasks/actions";
+import { saveDeviceRowAction } from "../devices/actions";
+
+type Draft = { name: string; machine: string; limit: string; maxTokens: string; reasoningReserve: string; keyValidDays: string; allowedTasks: string[];
+  enabled: boolean; newKey: string };
+const draftOf = (settings: ModelSettings): Draft => ({ name: settings.name, machine: settings.machine, limit: String(settings.limit),
+  maxTokens: settings.maxTokens === null ? "" : String(settings.maxTokens), reasoningReserve: settings.reasoningReserve === null ? "" : String(settings.reasoningReserve),
+  keyValidDays: settings.keyValidDays === null ? "" : String(settings.keyValidDays), allowedTasks: [...settings.allowedTasks], enabled: settings.enabled, newKey: "" });
+const optional = (text: string) => text.trim() === "" ? null : Number(text.replace(/,/g, ""));
+
+/** 화면 칸 → 저장할 설정. 숫자 모양이 틀리면 그 칸의 문장(저장 검증은 기존 저장이 다시 한다) */
+export function settingsFromDraft(draft: Draft, kind: "api" | "cli"): { settings: ModelSettings | null; issues: string[] } {
+  const issues: string[] = [];
+  const limit = Number(draft.limit);
+  if (!/^\d{1,3}$/.test(draft.limit.trim()) || limit < 1 || limit > MODEL_CONSOLE_LIMITS.limitMax) issues.push(`동시 한도는 1~${MODEL_CONSOLE_LIMITS.limitMax}의 정수입니다.`);
+  const numbers = kind === "api" ? { maxTokens: optional(draft.maxTokens), reasoningReserve: optional(draft.reasoningReserve), keyValidDays: optional(draft.keyValidDays) }
+    : { maxTokens: null, reasoningReserve: null, keyValidDays: null };
+  for (const [key, label] of [["maxTokens", "최대 토큰"], ["reasoningReserve", "추론 토큰 여유"], ["keyValidDays", "키 유효 기간"]] as const) {
+    const value = numbers[key];
+    if (value !== null && (!Number.isSafeInteger(value) || value < 1)) issues.push(`${label}은(는) 1 이상의 정수이거나 비워 둡니다.`);
+  }
+  if (!draft.name.trim()) issues.push("이름을 적으세요.");
+  if (draft.name.trim().length > 80 || draft.machine.trim().length > 80) issues.push("이름·장비는 80자까지입니다.");
+  if (issues.length) return { settings: null, issues };
+  return { settings: { name: draft.name.trim(), machine: draft.machine.trim(), limit, ...numbers, allowedTasks: draft.allowedTasks, enabled: draft.enabled,
+    newKey: draft.newKey.trim() !== "" }, issues };
+}
+
+/**
+ * 모델 상세의 설정·조치(2026-11-12 시안 화면 4 「설정」·「조치」, 다섯 걸음의 「저장 전 확인」).
+ * - 고치기: 이름 · 장비 · 동시 한도 · 최대 토큰 · 추론 여유 · 키 유효 기간 · 쓸 수 있는 단계 · 새 키 → 「저장 전 확인」(바뀌는 값 전 → 후,
+ *   한도를 함께 쓸 곳, 영향을 받는 단계) → 「바꾸기」.
+ * - 쉬게 하기 = 지우지 않고 모든 단계에서 잠시 빼기 — 연결 끄기(enabled=0). 순위는 그대로 남고 다시 켜면 돌아온다.
+ * - 저장은 기존 서버 동작 둘을 차례로 부른다: 연결 저장(saveAiConnectionAction — 감사 ai-connection-save) → (한도가 장비에도 걸리면) 장비 한 줄 저장
+ *   (saveDeviceRowAction — 같은 장비의 모델 한도 합 검증·감사). 새 쓰기 경로는 없다.
+ */
+export function ModelSettingsForm({ row, device, secretBox, readOnly }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean }) {
+  const router = useRouter();
+  const base = useMemo(() => draftOf(modelSettingsOf(row)), [row]);
+  const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
+  const [draft, setDraft] = useState<Draft>(base);
+  const [plan, setPlan] = useState<ModelSavePlan | null>(null);
+  const [issues, setIssues] = useState<string[]>([]);
+  const [messages, setMessages] = useState<{ text: string; tone: "ok" | "warn" | "bad" }[]>([]);
+  const [pending, start] = useTransition();
+  const keyField = useRef<HTMLInputElement>(null);
+  const { connection } = row;
+  const api = connection.kind === "api";
+  const tasks = AI_TASKS.filter(task => api ? task.api : (task.cliTools as readonly string[]).includes(connection.cliTool ?? ""));
+  const set = (patch: Partial<Draft>) => setDraft(current => ({ ...current, ...patch }));
+
+  const review = (next: Draft) => {
+    const parsed = settingsFromDraft(next, connection.kind);
+    setIssues(parsed.issues);
+    if (!parsed.settings) return;
+    const made = modelSavePlan(row, device, parsed.settings);
+    if (!made.changed) { setIssues(["바뀐 값이 없습니다."]); return; }
+    setDraft(next); setPlan(made); setMode("confirm");
+  };
+  const cancel = () => { setDraft(base); setPlan(null); setIssues([]); setMode("view"); };
+  const apply = () => start(async () => {
+    const parsed = settingsFromDraft(draft, connection.kind);
+    if (!parsed.settings || !plan) return;
+    const out: { text: string; tone: "ok" | "warn" | "bad" }[] = [];
+    const form = new FormData();
+    for (const [name, value] of connectionFormEntries(connection, { ...parsed.settings, newKey: draft.newKey.trim() || null })) form.append(name, value);
+    const saved = await saveAiConnectionAction(null, form);
+    if (!saved?.ok) {
+      setMessages((saved?.issues ?? ["저장 결과를 확인하지 못했습니다. 새로고침해 상태를 확인하세요."]).map(text => ({ text, tone: "bad" })));
+      return;
+    }
+    out.push({ text: saved.message ?? "저장했습니다.", tone: "ok" }, ...(saved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
+    if (plan.device) {
+      const deviceForm = new FormData();
+      for (const [name, value] of deviceRowFormEntries(plan.device)) deviceForm.append(name, value);
+      const deviceSaved = await saveDeviceRowAction(null, deviceForm);
+      if (deviceSaved?.ok) out.push({ text: `장비 ${plan.device.deviceId}: ${deviceSaved.message ?? "저장했습니다."}`, tone: "ok" },
+        ...(deviceSaved.changes ?? []).map(text => ({ text, tone: "ok" as const })), ...(deviceSaved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
+      else out.push(...(deviceSaved?.issues ?? ["저장 결과를 확인하지 못했습니다."]).map(text => ({ text: `연결은 저장했지만 장비 한도는 저장하지 못했습니다: ${text}`, tone: "bad" as const })));
+    }
+    setMessages(out); setPlan(null); setMode("view");
+    router.refresh();
+  });
+
+  return <div className="mc-form" data-dirty={mode !== "view" ? "true" : undefined}>
+    {mode === "edit" && <form className="mc-form" onSubmit={event => { event.preventDefault(); review(draft); }}>
+      <label><span>이름</span><input type="text" value={draft.name} maxLength={80} onChange={event => set({ name: event.target.value })} autoComplete="off" /></label>
+      <label><span>장비</span><input type="text" value={draft.machine} maxLength={80} onChange={event => set({ machine: event.target.value })} autoComplete="off"
+        placeholder={row.deviceId} /></label>
+      <label><span>동시 한도</span><input className="num" type="number" min={1} max={MODEL_CONSOLE_LIMITS.limitMax} step={1} value={draft.limit}
+        onChange={event => set({ limit: event.target.value })} /></label>
+      {api && <>
+        <label><span>최대 토큰</span><input className="num" type="number" min={1} step={1} value={draft.maxTokens} placeholder="서버가 알려 주면 비움"
+          onChange={event => set({ maxTokens: event.target.value })} /></label>
+        <label><span>추론 토큰 여유</span><input className="num" type="number" min={1} step={1} value={draft.reasoningReserve} placeholder="일반 모델은 비움"
+          onChange={event => set({ reasoningReserve: event.target.value })} /></label>
+        <label><span>키 유효 기간(일)</span><input className="num" type="number" min={1} step={1} value={draft.keyValidDays} placeholder="만료 없으면 비움"
+          onChange={event => set({ keyValidDays: event.target.value })} /></label>
+        <label><span>새 키</span><input ref={keyField} type="password" value={draft.newKey} disabled={!secretBox} autoComplete="off"
+          placeholder={secretBox ? (connection.hasKey ? "비워 두면 저장된 키 그대로" : "없으면 비워 둡니다") : "이 서버에는 키 암호화 설정이 없습니다"}
+          onChange={event => set({ newKey: event.target.value })} /></label>
+      </>}
+      <fieldset><legend>쓸 수 있는 단계 — 아무것도 고르지 않으면 모든 단계</legend>
+        <div className="mc-tasks">{tasks.map(task => <label key={task.id}><input type="checkbox" checked={draft.allowedTasks.includes(task.id)}
+          onChange={event => set({ allowedTasks: event.target.checked ? [...draft.allowedTasks, task.id] : draft.allowedTasks.filter(id => id !== task.id) })} />
+          {AI_TASK_GROUP_LABELS[task.group]} · {task.label}</label>)}</div></fieldset>
+      <p className="mc-hint">동시 한도는 이 칸 하나로 받아 연결 칸 수와, 장비에 모델별 한도가 있으면 그 줄 · 없으면 장비 한도에 함께 씁니다. 어긋나는 곳은 저장 전 확인에서 보입니다.</p>
+      <div className="mc-acts"><button type="submit" className="button small primary">저장 전 확인</button>
+        <button type="button" className="button small" onClick={cancel}>그만두기</button></div>
+    </form>}
+    {mode === "confirm" && plan && <SavePlanDialog title={`${row.name}${draft.enabled !== connection.enabled ? (draft.enabled ? "을(를) 다시 켭니다" : "을(를) 쉬게 합니다") : " 설정을 바꿉니다"}`}
+      plan={plan} pending={pending} disabled={readOnly} onApply={apply} onCancel={cancel} />}
+    {mode === "view" && !readOnly && <div className="mc-acts" aria-label="조치">
+      <button type="button" className="button small" onClick={() => { setMessages([]); setMode("edit"); }}>고치기</button>
+      {connection.enabled
+        ? <button type="button" className="button small primary" onClick={() => { setMessages([]); review({ ...base, enabled: false }); }}>쉬게 하기</button>
+        : <button type="button" className="button small primary" onClick={() => { setMessages([]); review({ ...base, enabled: true }); }}>다시 켜기</button>}
+      {api && <button type="button" className="button small" onClick={() => { setMessages([]); setMode("edit"); setTimeout(() => keyField.current?.focus(), 0); }}>키 바꾸기</button>}
+    </div>}
+    {mode === "view" && !readOnly && <p className="mc-hint">쉬게 하기는 모델을 지우지 않고 모든 단계에서 잠시 뺍니다. 순위는 그대로 남고, 다시 켜면 돌아옵니다.</p>}
+    {issues.map(text => <p key={text} role="alert" className="mc-msg">{text}</p>)}
+    {messages.map(message => <p key={message.text} role={message.tone === "bad" ? "alert" : "status"} className="mc-msg" data-warn={message.tone === "warn" ? "true" : undefined}>{message.text}</p>)}
+  </div>;
+}
+
+/** 저장 전 확인 — 바뀌는 값(전 → 후) · 함께 쓸 곳 · 영향 · 주의. 「바꾸기」를 눌러야 기존 저장을 부른다 */
+export function SavePlanDialog({ title, plan, pending, disabled, onApply, onCancel }: { title: string; plan: ModelSavePlan; pending: boolean; disabled: boolean;
+  onApply?: () => void; onCancel?: () => void }) {
+  return <div className="mc-dlg" role="group" aria-label="저장 전 확인">
+    <h4>{title}</h4>
+    <ul className="mc-diff">{plan.lines.map(line => <li key={line.key}><span>{line.label}</span><span><s>{line.before}</s>{line.after}</span></li>)}</ul>
+    {plan.writes.length > 0 && <ul className="mc-diff">{plan.writes.map(text => <li key={text}><span>함께 씀</span><span>{text}</span></li>)}</ul>}
+    {plan.impacts.length > 0 && <ul className="mc-diff">{plan.impacts.map(text => <li key={text}><span>영향</span><span>{text}</span></li>)}</ul>}
+    {plan.warnings.map(text => <p key={text} className="mc-msg" data-warn="true">{text}</p>)}
+    <div className="mc-acts"><button type="button" className="button small primary" disabled={pending || disabled} onClick={onApply}>{pending ? "저장 중…" : "바꾸기"}</button>
+      <button type="button" className="button small" disabled={pending} onClick={onCancel}>취소</button></div>
+  </div>;
+}

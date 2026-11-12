@@ -12,6 +12,7 @@ import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
 import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
+import { runKoreanTaglineSampleStep } from "./korean-tagline-sample";
 
 /**
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
@@ -59,6 +60,9 @@ export function packTaglineBatch(tasks: KoreanTaglineTask[], maxChars?: number):
 }
 
 export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+  // 관리자가 요청한 표본 비교(운영 콘솔 3a)가 있으면 이 lease 로 한 묶음만 — 장부를 거치고 결과는 비교 기록에만 쓴다. 실패해도 아래 일은 그대로
+  await runKoreanTaglineSampleStep(ctx).then(step => { if (step.kind === "ran") ctx.log("tagline_ko.sample_step", step); })
+    .catch(error => ctx.log("tagline_ko.sample_step_failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" }));
   // 「작업 ↔ 모델」 순위(PR B)만 부른다 — 순위마다 그 연결을 가리키는 엔진 직접 계약이 있어야 한다
   const ranks = await TextTaskRanks.open(JOB);
   try { return await writeKoreanTaglinesWithRanks(ctx, ranks); }
