@@ -286,7 +286,8 @@ describe("work-pool selector hint", () => {
   const config: AiTaskExecutionConfig = Object.freeze({ task: "product-search-profile", slot: 1, mode: "workload_pool", revision: 7, updatedAt: null, members });
   const candidates = members.map(row => ({ memberId: row.memberId, routeId: "product-search-profile", connectionId: row.connectionId, engineModel: row.model,
     provider: "abcllm", identity: row.model, deviceId: row.deviceId }));
-  const choose = () => db.transaction(tx => chooseTaskWorkloadMember(config, candidates, { executor: tx as unknown as ProductTransaction }));
+  const choose = (options: { queueWhenFull?: boolean; rotate?: boolean } = {}) =>
+    db.transaction(tx => chooseTaskWorkloadMember(config, candidates, { executor: tx as unknown as ProductTransaction, ...options }));
 
   it("skips a member whose model is at its cap on that device; null when none fits", async () => {
     await granted(request("beta-route"));                                    // beta busier: mlx wins on pressure without limits
@@ -295,6 +296,53 @@ describe("work-pool selector hint", () => {
     expect((await choose())?.deviceId).toBe("beta");
     await setLimits("beta", [limit("m-beta", 0)]);
     expect(await choose()).toBeNull();
+  });
+
+  // 2026-11-12 「동시에」 검토: 빈 칸만 고르면 풀은 장부 줄에 서지 못한다 — 순위대로처럼 줄에 설 구성원을 고른다(판정·대기 행은 requestSlot)
+  it("queueWhenFull: with no free slot anywhere, picks the least-loaded member that can still queue; never a quota-capped one", async () => {
+    await granted(request("ds-route")); await granted(request("gpt-route"));      // mlx 2/2
+    await granted(request("beta-route")); await granted(request("beta-route"));   // beta 2/2
+    await deferred(request("beta-route"), "capacity");                             // beta also has a waiting row → more pressure
+    expect(await choose()).toBeNull();                                             // the plain hint still answers "no free slot"
+    expect((await choose({ queueWhenFull: true }))?.deviceId).toBe("mlx");
+    // A model at its cap is refused as model_quota without a waiting row — it is not a queue target
+    await setLimits("mlx", [limit("m-mlx", 0)]);
+    expect((await choose({ queueWhenFull: true }))?.deviceId).toBe("beta");
+    await setLimits("beta", [limit("m-beta", 0)]);
+    expect(await choose({ queueWhenFull: true })).toBeNull();
+  });
+
+  it("queueWhenFull keeps choosing a free member first", async () => {
+    await granted(request("ds-route")); await granted(request("gpt-route"));      // mlx full, beta idle
+    expect((await choose({ queueWhenFull: true }))?.deviceId).toBe("beta");
+  });
+
+  it("a text pool with every device full enters the ledger queue like fallback ranks (waiting row + member-only deferral), instead of folding the tick", async () => {
+    setServingContractSnapshotForTest(members.map(row => textContract("product-search-profile", row.model, { baseUrl: row.connection.baseUrl! })));
+    const ranks = new TextTaskRanks(resolveTextTaskRanks("product-search-profile", config), config);
+    ranks.lanes(1);
+    await granted(request("ds-route")); await granted(request("gpt-route"));      // mlx 2/2
+    await granted(request("beta-route")); await granted(request("beta-route"));   // beta 2/2
+    await deferred(request("beta-route"), "capacity");                             // beta busier
+    const work = async (binding: { identity: string }) => {
+      const slot = await requestModelSlot({ requestId: randomUUID(), workKey: randomUUID(), owner, class: "background", pool: "text",
+        routeId: "product-search-profile", provider: "abcllm", model: binding.identity });
+      if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
+      return binding.identity;
+    };
+    const error = await ranks.run(work).catch(caught => caught);
+    expect(error).toBeInstanceOf(ModelCapacityDeferredError);
+    expect(ranks.skipsWork(error)).toBe(true);                                     // only this work is passed; the tick goes on
+    expect((await live()).filter(row => row.route_id === "product-search-profile").map(row => row.state)).toEqual(["waiting"]);
+    expect(ranks.usable().map(row => row.identity)).toEqual(["m-beta"]);          // the queued member rests for this tick
+  });
+
+  it("rotate: back-to-back choices without ledger writes alternate members instead of piling onto the least-loaded one", async () => {
+    await granted(request("beta-route"));                                          // beta busier, both still have a free slot
+    const plain = [await choose(), await choose(), await choose()].map(row => row?.deviceId);
+    expect(plain).toEqual(["mlx", "mlx", "mlx"]);
+    const rotated = [await choose({ rotate: true }), await choose({ rotate: true })].map(row => row?.deviceId);
+    expect(new Set(rotated)).toEqual(new Set(["mlx", "beta"]));
   });
 });
 

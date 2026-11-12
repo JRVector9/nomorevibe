@@ -99,7 +99,7 @@ describe("기본 동작(설정 없음·칸 수 없는 묶음)은 그대로다", 
     expect(ranks.skipsWork(new ModelCapacityDeferredError("capacity"))).toBe(false);
   });
 
-  it("칸 수 없는 옛 묶음: 줄 수는 단계 동시 수, 고르기가 비면 예전처럼 capacity 로 틱을 미룬다(구성원 미룸이 아니다)", async () => {
+  it("칸 수 없는 옛 묶음: 줄 수는 단계 동시 수, 빈 칸이 없으면 줄에 설 구성원을 고르게 하고 그것도 없으면 capacity 로 틱을 미룬다(구성원 미룸이 아니다)", async () => {
     const ranks = new TextTaskRanks(resolution([qwen, m1]), config([member("member-qwen", "gpu3090-qwen", 1, null), member("member-m1", "m1max", 2, null)]));
     expect(ranks.lanes(1)).toBe(1);
     selector.choose.mockResolvedValue(null);
@@ -107,6 +107,8 @@ describe("기본 동작(설정 없음·칸 수 없는 묶음)은 그대로다", 
     expect(error).toBeInstanceOf(ModelCapacityDeferredError);
     expect(error.reason).toBe("capacity");
     expect(ranks.skipsWork(error)).toBe(false);
+    // 2026-11-12: 순위대로처럼 장부 줄에 선다 — 고르기에 「줄에 설 구성원」을 묻는다(빈 칸만 고르면 같은 장비의 대기 행에 계속 밀린다)
+    expect(selector.choose.mock.calls[0][2]).toMatchObject({ queueWhenFull: true });
     expect(ranks.summary()).toEqual({ ranks: 0, pool_members: 2, pool_revision: 4 });
   });
 });
@@ -212,5 +214,103 @@ describe("동시에 — 예비 순위", () => {
     for (const row of ranks.usable()) ranks.pause(row, "engine_failed");
     expect(await ranks.run(async () => "never")).toEqual({ kind: "unusable" });
     expect(ranks.exhausted).toBe(true);
+  });
+});
+
+/**
+ * 2026-11-12 「동시에」 전 단계 검토(공개 번역을 동시에로 바꾸니 멈춘다는 소유자 보고) — 고르기가 비거나 이어받을 구성원이 쉴 때의 길.
+ * 예전: 칸 수 없는 묶음은 고르기가 비면 capacity 로 틱 전체를 접고(예비 순위를 부르지 않음), 줄에 세워 둔 구성원이 쉬면 그 일 하나 때문에 틱 전체를 접었다.
+ */
+describe("동시에 — 빈 칸이 없을 때·쉬는 구성원의 지난 일", () => {
+  const reserve = () => resolution([binding(null, "supa", 1), binding(null, "exaone", 2)]);
+
+  it("예비가 있으면 묶음의 장비에 빈 칸이 없을 때 예비 순위가 받는다(칸 수 없는 묶음) — 고르기는 줄에 설 구성원을 찾지 않는다", async () => {
+    const ranks = new TextTaskRanks(resolution([qwen, m1]), config([member("member-qwen", "gpu3090-qwen", 1, null), member("member-m1", "m1max", 2, null)], true), reserve());
+    ranks.lanes(1);
+    selector.choose.mockResolvedValue(null);
+    expect(await ranks.run(async chosen => chosen.identity)).toMatchObject({ kind: "served", value: "supa" });
+    expect(selector.choose.mock.calls[0][2]).toMatchObject({ queueWhenFull: false });
+    expect(ranks.summary()).toMatchObject({ "served.1": 1 });
+  });
+
+  it("칸 수를 적은 묶음도 빈 칸이 없으면 예비가 받고, 예비까지 모두 서면 다 쓴 것이 아니라 이 줄만 끝낸다(idle) — 구성원은 살아 있다", async () => {
+    const ranks = new TextTaskRanks(resolution([qwen, m1]), config([member("member-qwen", "gpu3090-qwen", 1, 2), member("member-m1", "m1max", 2, 1)], true), reserve());
+    ranks.lanes(1);
+    selector.choose.mockResolvedValue(null);
+    const seen: string[] = [];
+    const result = await ranks.run(async chosen => { seen.push(chosen.identity); throw new ModelCapacityDeferredError("capacity"); });
+    expect(seen).toEqual(["supa", "exaone"]);
+    expect(result).toEqual({ kind: "idle" });
+    expect(ranks.exhausted).toBe(false);
+    expect(ranks.poolIdle()).toBe(true);
+    // 구성원은 쉬지 않는다 — 다음 일은 다시 구성원을 고른다
+    firstCandidate();
+    expect(await ranks.run(async chosen => chosen.identity)).toMatchObject({ kind: "served", value: "gpu3090-qwen" });
+  });
+
+  it("줄에 세워 둔 구성원이 이 틱에 쉬면: 같은 이름의 예비 순위가 이어받는다", async () => {
+    const shared = binding(null, "gpu3090-qwen", 1);   // 예비 1순위가 구성원과 같은 장부 이름(운영 사례: gpt-oss 가 구성원이자 예비 1·2순위)
+    const ranks = new TextTaskRanks(resolution([qwen, m1]), config([member("member-qwen", "gpu3090-qwen", 1, null), member("member-m1", "m1max", 2, null)], true),
+      resolution([shared]));
+    ranks.lanes(1);
+    ranks.pause(qwen, "capacity");
+    const seen: string[] = [];
+    expect(await ranks.run(async chosen => { seen.push(`${chosen.rank}:${chosen.identity}`); return "ok"; }, { prefer: "gpu3090-qwen" }))
+      .toMatchObject({ kind: "served", value: "ok" });
+    expect(seen).toEqual(["1:gpu3090-qwen"]);
+    expect(selector.choose).not.toHaveBeenCalled();
+  });
+
+  it("줄에 세워 둔 구성원이 쉬고 예비가 없으면: 그 일만 넘긴다(skipsWork) — 다른 구성원에 넘기지도, 틱 전체를 접지도 않는다", async () => {
+    const ranks = new TextTaskRanks(resolution([qwen, m1]), config([member("member-qwen", "gpu3090-qwen", 1, null), member("member-m1", "m1max", 2, null)]));
+    ranks.lanes(2);
+    ranks.pause(qwen, "capacity");
+    const work = vi.fn(async () => "never");
+    const error = await ranks.run(work, { prefer: "gpu3090-qwen" }).catch(caught => caught);
+    expect(error).toBeInstanceOf(ModelCapacityDeferredError);
+    expect(ranks.skipsWork(error)).toBe(true);
+    expect(work).not.toHaveBeenCalled();
+    expect(selector.choose).not.toHaveBeenCalled();
+    // 다음 일(이어받을 것 없음)은 남은 구성원이 받는다
+    firstCandidate();
+    expect(await ranks.run(async chosen => chosen.identity)).toMatchObject({ kind: "served", value: "m1max" });
+  });
+
+  it("고르기가 이어받을 구성원을 받지 않으면(연결이 그 사이 닫힘 등) 그 일만 넘긴다", async () => {
+    const ranks = new TextTaskRanks(resolution([qwen, m1]), config([member("member-qwen", "gpu3090-qwen", 1, null), member("member-m1", "m1max", 2, null)]));
+    selector.choose.mockResolvedValue(null);
+    const error = await ranks.run(async () => "never", { prefer: "gpu3090-qwen" }).catch(caught => caught);
+    expect(ranks.skipsWork(error)).toBe(true);
+    expect(selector.choose.mock.calls[0][2]).toMatchObject({ preferIdentity: "gpu3090-qwen" });
+  });
+});
+
+describe("동시에 — 같은 엔진을 두 자리에 넣은 구성원(운영 사례: m1-gemma 두 번)", () => {
+  const gemmaA = binding("member-gemma-a", "m1-gemma"), gemmaB = binding("member-gemma-b", "m1-gemma"), gpt = binding("member-gpt", "gpt-oss-120b");
+  const pool = () => new TextTaskRanks(resolution([gpt, gemmaA, gemmaB]),
+    config([member("member-gpt", "gpt-oss-120b", 1, null), member("member-gemma-a", "m1-gemma", 2, null), member("member-gemma-b", "m1-gemma", 3, null)]));
+
+  it("한 자리가 그 모델만의 까닭(포화)으로 서면 같은 엔진의 다른 자리도 함께 쉰다 — 쉬지 않은 쪽이 같은 미룸을 되풀이하지 않는다", async () => {
+    const ranks = pool();
+    selector.choose.mockImplementation(async (_config, candidates: readonly TextTaskRankBinding[]) =>
+      candidates.find(row => row.identity === "m1-gemma") ?? candidates[0] ?? null);
+    const error = await ranks.run(async () => { throw new ModelCapacityDeferredError("capacity"); }).catch(caught => caught);
+    expect(ranks.skipsWork(error)).toBe(true);
+    expect(ranks.usable().map(row => row.memberId)).toEqual(["member-gpt"]);
+    expect(await ranks.run(async chosen => chosen.identity)).toMatchObject({ kind: "served", value: "gpt-oss-120b" });
+    expect(selector.choose.mock.calls[1][1].map((row: TextTaskRankBinding) => row.memberId)).toEqual(["member-gpt"]);
+    expect(ranks.summary()).toMatchObject({ "member_unusable.member-gemma-a.capacity": 1, "member_unusable.member-gemma-b.capacity": 1 });
+  });
+
+  it("엔진이 내려갔다는 증명(engine-down)도 같은 엔진의 자리를 함께 쉬게 한다", () => {
+    const ranks = pool();
+    for (let index = 0; index < 5 && !ranks.failed(gemmaA, "network"); index++) { /* 연결 거절이 잇따른다 */ }
+    expect(ranks.usable().map(row => row.memberId)).toEqual(["member-gpt"]);
+  });
+
+  it("순위대로의 같은 모델 반복 순위는 그대로다(한 순위가 서도 다른 순위는 쉬지 않는다)", () => {
+    const ranks = new TextTaskRanks(resolution([binding(null, "gpt-oss-120b", 1), binding(null, "gpt-oss-120b", 2)]));
+    ranks.pause({ rank: 1 }, "capacity");
+    expect(ranks.usable().map(row => row.rank)).toEqual([2]);
   });
 });
