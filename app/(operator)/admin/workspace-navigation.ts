@@ -50,6 +50,8 @@ export const modelsAdvancedEditor = (id: ModelsAdvancedEditorId) => MODELS_ADVAN
  * 모델 메뉴의 고급 설정 2차 메뉴는 이것을 뺀 편집기 일곱 개다.
  */
 const PEOPLE_DELEGATE_EDITOR = modelsAdvancedEditor("human");
+/** 사람 확인 · 묶음(운영 콘솔 개편 조각 3b) — 메뉴 「사람 확인」의 기본 화면. lib/crawl/human-batch-model.ts HUMAN_BATCHES_HREF 와 같다 */
+export const PEOPLE_BATCHES_HREF = "/admin/review/batches";
 const MODELS_MENU_EDITORS = MODELS_ADVANCED_EDITORS.filter(editor => editor.id !== PEOPLE_DELEGATE_EDITOR.id);
 /** 모델 메뉴 › 고급 설정 아래 화면(목록 자체 + 편집기 일곱) */
 const MODELS_ADVANCED_PATHS: readonly string[] = [MODELS_ADVANCED_HREF, ...MODELS_MENU_EDITORS.map(editor => editor.href)];
@@ -79,7 +81,7 @@ export function modelsLegacyTabHref(search: Search): string | null {
 /**
  * 메뉴 여섯과 그 탭. 탭 이름은 옛 메뉴의 것을 그대로 쓴다(새로 생긴 탭은 그 화면이 이미 쓰는 이름 — 운영센터의 「작업 흐름」·「크롤러 활동」).
  * - 홈: 탭은 지금 그대로(실시간 전체 흐름·시스템 진단·할 일·변경 기록). 오늘 할 일은 「할 일·변경 기록」의 2차 메뉴.
- * - 사람 확인: 옛 「검수 및 발행」·「요청함」과 품질관리·사람 위임 모델. 앞의 셋은 옛 탭을 2차 메뉴로 둔다.
+ * - 사람 확인: 묶음(기본 화면, 조각 3b)과 옛 「검수 및 발행」(하나씩 보기)·「요청함」, 품질관리·사람 위임 모델. 검수·요청함·품질관리는 옛 탭을 2차 메뉴로 둔다.
  * - 모델: 옛 「LLM 운영」에서 기록을 뺀 것. 고급 편집기는 「고급 설정」의 2차 메뉴.
  * - 수집·작업: 옛 설정의 수집·판정·분류·근거·외부 연동과 운영센터(/admin/status)의 작업 흐름·크롤러 활동.
  * - 콘텐츠: 옛 「프로젝트」(품질관리 제외)와 「콘텐츠 운영」.
@@ -91,7 +93,9 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "diagnostics", label: "시스템 진단", href: "/admin/flow?tab=diagnostics" },
     { id: "changes", label: "할 일·변경 기록", href: "/admin/flow?tab=changes" },
   ] },
-  { id: "people", label: "사람 확인", href: "/admin/review", icon: "check", tabs: [
+  // 조각 3b: 기본 화면은 묶음(/admin/review/batches). 옛 목록·상세(검수 및 발행)는 「하나씩 보기」로 그대로 둔다
+  { id: "people", label: "사람 확인", href: PEOPLE_BATCHES_HREF, icon: "check", tabs: [
+    { id: "batches", label: "묶음", href: PEOPLE_BATCHES_HREF },
     { id: "review", label: "검수 및 발행", href: "/admin/review" },
     { id: "requests", label: "요청함", href: "/admin/requests" },
     { id: "quality", label: "품질관리", href: "/admin/products?tab=quality" },
@@ -212,6 +216,7 @@ function place(pathname: string, search: Search): Place {
       if (tab === "manual") return { id: "people", tab: "review", secondary: WORKSPACE_SECONDARY.review, secondaryTab: "publish" };
       if (tab === "jobs" || tab === "crawlers") return { id: "sources", tab };
       return { id: "home", tab: "diagnostics" };
+    case PEOPLE_BATCHES_HREF: return { id: "people", tab: "batches" };
     case "/admin/review": {
       if (search.get("second") === "published") return { id: "people", tab: "quality", secondary: WORKSPACE_SECONDARY.quality };
       const stage = search.get("stage"), state = search.get("state");

@@ -2,6 +2,7 @@ import { pgTable, serial, text, varchar, timestamp, jsonb, integer, index, doubl
 import { sql } from "drizzle-orm";
 import type { ReviewOutcome, ReviewSnapshot, ReviewSource } from "@/lib/crawl/agent-review-contract";
 import type { DelegatedModelOutcome } from "@/lib/crawl/delegated-hold";
+import type { HumanBatchKey, HumanBatchMember, HumanBatchResult, HumanBatchUndoResult, HumanBatchVerdict } from "@/lib/crawl/human-batch-model";
 
 /**
  * 크롤 파이프라인.
@@ -302,3 +303,31 @@ export const crawlTaglines = pgTable("crawl_taglines", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 export type CrawlTagline = typeof crawlTaglines.$inferSelect;
+
+// ─────────────────────────── 사람 확인 묶음 ───────────────────────────
+
+/**
+ * 사람 확인 묶음의 표본 관문과 일괄 결정 기록(0181, 운영 콘솔 개편 조각 3b) — lib/crawl/human-batch-*.ts.
+ * 운영자별·묶음별 한 줄: 표본을 뽑을 때 고정한 대상(members)·표본(sample_ids)·「맞음/아님」(verdicts),
+ * 실행하면 결정과 결과(result — 되돌릴 결정 기록 id), 묶음째 되돌리면 그 결과(undo_result).
+ * 결정 자체는 기존 경로(crawl_review_attempts admin_override·operations_audit)가 남긴다.
+ */
+export const humanBatchGates = pgTable("human_batch_gates", {
+  id: serial("id").primaryKey(),
+  batchKey: varchar("batch_key", { length: 32 }).$type<HumanBatchKey>().notNull(),
+  actor: varchar("actor", { length: 120 }).notNull(),
+  members: jsonb("members").$type<HumanBatchMember[]>().notNull(),
+  snapshotHash: varchar("snapshot_hash", { length: 64 }).notNull(),
+  sampleIds: integer("sample_ids").array().notNull(),
+  verdicts: jsonb("verdicts").$type<Record<string, HumanBatchVerdict>>().notNull().default({}),
+  excluded: integer("excluded").array().notNull().default(sql`'{}'::integer[]`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  executedAt: timestamp("executed_at"),
+  decision: varchar("decision", { length: 16 }).$type<"approve" | "reject">(),
+  result: jsonb("result").$type<HumanBatchResult>(),
+  undoneAt: timestamp("undone_at"),
+  undoneBy: varchar("undone_by", { length: 120 }),
+  undoResult: jsonb("undo_result").$type<HumanBatchUndoResult>(),
+}, (table) => [index("human_batch_gates_actor_key_idx").on(table.actor, table.batchKey, table.id)]);
+export type HumanBatchGate = typeof humanBatchGates.$inferSelect;
