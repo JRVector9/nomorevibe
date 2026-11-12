@@ -24,16 +24,22 @@ const props = (query: Record<string, string | string[] | undefined> = {}) => ({ 
 describe("통합 모델 화면 경로와 읽기 전용 고정 자료", () => {
   it("인증을 먼저 확인하고 운영 환경에서는 preview=fixture만으로 고정 자료를 켤 수 없다", async () => {
     const page = await ModelsPage(props({ preview: "fixture", model: "one" }));
-    const slot = page.props.children[2].props.children;
+    const slot = page.props.children[1].props.children;
     expect(slot.type).toBe(mocks.slot);
     expect(slot.props).toMatchObject({ fixture: false, readOnly: false, selected: "one" });
     mocks.readOnly.mockReturnValue(true);
-    expect((await ModelsPage(props({ preview: "fixture", import: "plan" }))).props.children[2].props.children.props)
+    expect((await ModelsPage(props({ preview: "fixture", import: "plan" }))).props.children[1].props.children.props)
       .toMatchObject({ fixture: true, readOnly: true, importPlan: true });
     mocks.admin.mockResolvedValue(null);
     await expect(ModelsPage(props({ preview: "fixture" }))).rejects.toThrow("redirect:/admin/login");
     await expect(TasksPage(props())).rejects.toThrow("redirect:/admin/login");
     expect(mocks.slot).not.toHaveBeenCalled();
+  });
+
+  it("모델 제목은 목록의 실제 h1 하나만 사용하고 운영 페이지에만 여백 표시를 붙인다", async () => {
+    const page = await ModelsPage(props());
+    expect(page.props.className).toContain("models-unified-page");
+    expect(page.props.children.filter((child: { type: string }) => child.type === "h1")).toHaveLength(0);
   });
 
   it("옛 작업 화면은 조회나 편집기를 그리지 않고 인증한 브라우저가 조각을 보존해 이동한다", async () => {
@@ -61,6 +67,11 @@ describe("통합 모델 화면 경로와 읽기 전용 고정 자료", () => {
       .toEqual(preview.model.toSorted((a, b) => b.usage - a.usage).map(row => [row.name, row.calls, row.active, row.usage / 100]));
     expect(fixture.assignments.rows.map(row => row.key)).toEqual(preview.task.map(row => row.key));
     expect(fixture.editor.lines).toHaveLength(28);
+    for (const row of fixture.models.view.rows) {
+      const response = preview.model.find(source => source.name === row.name)!.response;
+      expect(row.avgSeconds).toBe(response === "—" ? null : Number.parseFloat(response));
+      expect(row.avgSeconds === null || Number.isFinite(row.avgSeconds)).toBe(true);
+    }
     expect(fixture.lockReason).toContain("읽기 전용");
     for (const connection of fixture.editor.connections) expect(connection.baseUrl === null || new URL(connection.baseUrl).hostname.endsWith(".example")).toBe(true);
     expect(JSON.stringify(fixture)).not.toMatch(/apiKeyCiphertext|apiKeySecret|Bearer |tail02799e|nomorevibe\.com/);

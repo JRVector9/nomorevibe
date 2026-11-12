@@ -22,7 +22,7 @@ export default async function ModelsPage({ searchParams }: { searchParams?: Prom
   const legacy = modelsLegacyTabHref({ get: name => one(params[name]) || null });
   if (legacy) redirect(legacy);
   const readOnly = adminWorkspaceReadOnly();
-  return <main className="stack"><PageStamp /><h1 className="admin-vh">모델</h1>
+  return <main className="stack models-unified-page"><PageStamp />
     <Suspense fallback={<p aria-busy="true" className="notice">모델 목록을 읽는 중…</p>}>
       <UnifiedModelsSlot selected={one(params.model) || one(params.edit) || null} readOnly={readOnly}
         fixture={readOnly && one(params.preview) === "fixture"} importPlan={one(params.import) === "plan"} />

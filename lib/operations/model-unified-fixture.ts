@@ -82,8 +82,9 @@ export function buildModelUnifiedFixture(): ModelUnifiedRead {
   const taskUses = unifiedModelTaskUses(assignments);
   const modelRows = base.rows.map(row => {
     const source = preview.model.find(model => cid(model.name) === row.id)!;
+    const responseSeconds = Number.parseFloat(source.response);
     return { ...row, active: source.active, utilization: source.usage / 100, utilizationText: source.usage < 1 ? "1% 미만" : `${source.usage}%`,
-      bar: Math.max(1, source.usage), calls: source.calls, settled: source.calls, avgSeconds: Number.parseFloat(source.response),
+      bar: Math.max(1, source.usage), calls: source.calls, settled: source.calls, avgSeconds: Number.isFinite(responseSeconds) ? responseSeconds : null,
       indeterminate: source.name === "supa-direct" ? 19 : 0, rejected: source.name === "LG EXAONE" ? 57 : 0,
       stageCount: taskUses[row.id]?.length ?? 0, status: { tone: source.tone === "warn" ? "warn" as const : source.tone === "idle" ? "off" as const : "ok" as const, text: source.status } };
   }).sort((a, b) => (b.utilization ?? 0) - (a.utilization ?? 0));
