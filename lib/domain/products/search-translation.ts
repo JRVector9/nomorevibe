@@ -186,6 +186,8 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
       noteQueryRanksUnusable("all_ranks_unusable");
       return ranks.saturated() ? { kind: "deferred" } : { kind: "unavailable" };
     }
+    // 검색어 번역은 칸 수를 따르지 않아(aiTaskPoolFeatures) idle 이 나오지 않는다 — 나오면 포화처럼 다음에 다시
+    if (attempt.kind === "idle") return { kind: "deferred" };
     if (attempt.value.kind !== "result") return attempt.value;
     const result = attempt.value.result;
     if (!result.ok) {

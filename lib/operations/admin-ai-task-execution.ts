@@ -32,6 +32,8 @@ export type AiTaskExecutionAdminView = Readonly<{
   task: string; slot: number; mode: "fallback" | "workload_pool"; revision: number | null; updatedAt: string | null;
   /** Inactive saved members are retained when mode is fallback. No connection credentials are included. */
   members: readonly AiTaskPoolMemberView[];
+  /** 묶음이 모두 설 때 순위를 예비로 쓴다(0179) */
+  reserveRanks: boolean;
 }>;
 /** UI-safe batch: two table reads in one primary snapshot for all task/slots. Reuse the existing admin connections DTO. */
 export async function readAiTaskExecutionAdminViews(): Promise<readonly AiTaskExecutionAdminView[]> {
@@ -43,9 +45,10 @@ export async function readAiTaskExecutionAdminViews(): Promise<readonly AiTaskEx
   return aiTaskSlots().map<AiTaskExecutionAdminView>(({ task, slot }) => {
     const config = stored.configs.find(row => row.task === task.id && row.slot === slot);
     return { task: task.id, slot, mode: config?.mode ?? "fallback", revision: config?.revision ?? null,
-      updatedAt: config?.updatedAt.toISOString() ?? null, members: stored.members.filter(row => row.task === task.id && row.slot === slot)
+      updatedAt: config?.updatedAt.toISOString() ?? null, reserveRanks: config?.reserveRanks ?? false,
+      members: stored.members.filter(row => row.task === task.id && row.slot === slot)
         .map(row => ({ memberId: row.memberId, position: row.position, connectionId: row.connectionId, model: row.model,
-          options: row.options, canonicalModel: row.canonicalModel, deviceId: row.deviceId, engineKey: row.engineKey })) };
+          options: row.options, canonicalModel: row.canonicalModel, deviceId: row.deviceId, engineKey: row.engineKey, maxSlots: row.maxSlots ?? null })) };
   });
 }
 /** Save/read one line; pages should call the batch once instead of this per slot. */
@@ -147,7 +150,9 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
         fail("ai_task_pool_member_identity_mismatch");
       return { memberId: member.memberId ?? randomUUID(), task: task.id, slot: value.slot, position: index + 1,
         connectionId: member.connectionId, model: member.model, options: member.reasoningEffort ? { reasoningEffort: member.reasoningEffort } : {},
-        canonicalModel, deviceId: connection.deviceId, engineKey: taskPoolEngineKey(connection, canonicalModel) };
+        canonicalModel, deviceId: connection.deviceId, engineKey: taskPoolEngineKey(connection, canonicalModel),
+        // 0179: 이 단계에 내줄 칸 수 — 비우면 정하지 않음(예전 작업 분산)
+        maxSlots: member.maxSlots ?? null };
     });
     if (new Set(members.map(member => member.memberId)).size !== members.length) fail("ai_task_pool_member_identity_mismatch");
     // Review resumes identify provider/model, not a pool member. Identical CLI entries must therefore have identical options.
@@ -196,15 +201,18 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       if (live.length !== records.length || live.some(row => !row.enabled || row.version !== records.find(old => old.id === row.id)?.version))
         fail("ai_connection_version_mismatch");
       const created = await saveAiTaskServingResources(tx, task, readiness, resources, actor);
-      await tx.insert(aiTaskExecutionConfigs).values({ task: task.id, slot: value.slot, mode: value.mode, revision, updatedBy: actor })
+      // 예비(0179)는 「동시에」로 저장할 때만 바꾼다 — 순위대로로 돌릴 때는 보관된 구성원처럼 그대로 둔다(실행 쪽은 순위대로에서 읽지 않는다)
+      const reserve = value.mode === "workload_pool" ? { reserveRanks: value.reserveRanks === true } : {};
+      await tx.insert(aiTaskExecutionConfigs).values({ task: task.id, slot: value.slot, mode: value.mode, revision, updatedBy: actor, ...reserve })
         .onConflictDoUpdate({ target: [aiTaskExecutionConfigs.task, aiTaskExecutionConfigs.slot],
-          set: { mode: value.mode, revision, updatedBy: actor, updatedAt: sql`clock_timestamp()` } });
+          set: { mode: value.mode, revision, updatedBy: actor, updatedAt: sql`clock_timestamp()`, ...reserve } });
       if (value.mode === "workload_pool") {
         await tx.delete(aiTaskPoolMembers).where(ownMembers(task.id, value.slot));
         if (members.length) await tx.insert(aiTaskPoolMembers).values(members);
       } // Switching to fallback keeps the saved inactive pool; execution reads only the existing ranks.
       await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, target: `${task.id}#${value.slot}`,
         detail: { task: task.id, slot: value.slot, revisionBefore: value.expectedRevision, revision, modeBefore: before.mode, mode: value.mode,
+          reserveRanksBefore: before.reserveRanks, reserveRanks: value.mode === "workload_pool" ? value.reserveRanks === true : before.reserveRanks,
           before: before.members, after: value.mode === "fallback" ? before.members : members, created, warnings, activeBindingsChanged: false } }));
       return { revision, created: { devices: created.devices, contracts: created.contracts, routes: created.routes } };
     }));

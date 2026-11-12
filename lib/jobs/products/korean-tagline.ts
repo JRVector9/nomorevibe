@@ -6,7 +6,7 @@ import { displayProjectName } from "@/lib/domain/products/display-name";
 import { checkKoreanTaglineOutput } from "@/lib/domain/products/korean-tagline";
 import { homeListSlugs, pendingKoreanTaglines, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
-import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS } from "@/lib/crawl/korean-translation-config";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
@@ -111,7 +111,9 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
       const candidates = (await pendingKoreanTaglines(batchSize * 4, homeSlugs)).filter(task => !visited.has(task.productId));
       const gptBatches: KoreanTaglineTask[][] = [];
       const gptIds = new Set<number>();
-      const concurrency = legacy ? 1 : modelRequestBudget(JOB).concurrency;
+      // 「동시에」(칸 수를 적은 묶음)면 칸 수의 합만큼 묶음을 함께 돌린다 — 그 밖은 예전처럼 단계 동시 수(TextTaskRanks.lanes)
+      const concurrency = legacy ? 1 : ranks.lanes(modelRequestBudget(JOB).concurrency);
+      const roundStart = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
       if (gptCallable() && !stopped.has("gpt")) {
         for (let lane = 0; lane < concurrency; lane++) {
           const batch = packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId)),
@@ -150,6 +152,11 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
         const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal, pendingClaims, requireAdmission: concurrency > 1 })
           .then(value => ({ value, model: binding.identity })), { prefer });
+        // 「동시에」에서 이 줄에 빈 칸이 없다 — 이 묶음을 놓고(호출·시도 기록 없음, 다음 바퀴가 다시 집는다) 이 줄만 끝낸다
+        if (attempt.kind === "idle") {
+          entry.batch.forEach(task => { if (scheduled.get(task.productId) === lane) scheduled.delete(task.productId); visited.delete(task.productId); });
+          return;
+        }
         if (attempt.kind === "unusable") outcome = { kind: "unusable" };
         else { outcome = attempt.value.value; model = attempt.value.model; }
         const completedBatch = outcome.kind === "result" ? outcome.batch ?? entry.batch : entry.batch;
@@ -199,7 +206,8 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
       const errors: unknown[] = [];
       for (const settled of outcomes) {
         if (settled.status !== "rejected") continue;
-        if (settled.reason instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(settled.reason.reason)) {
+        // 이 묶음만의 미룸, 또는 「동시에」에서 고른 구성원만의 미룸(그 구성원은 이 틱 동안 쉬고 다음 묶음은 남은 구성원이 받는다)
+        if (ranks.skipsWork(settled.reason)) {
           ctx.log("tagline_ko.passed", { reason: settled.reason.reason });
           continue;
         }
@@ -218,6 +226,11 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
       }
       if (signal.aborted || !ctx.hasBudget()) return { done: false };
       if (skipped) return { done: false };
+      {
+        // 「동시에」: 장비에 빈 칸이 없다는 힌트로 이 바퀴에 한 건도 못 했다 — 다음 바퀴로 훑지 않고 포화로 미룬다
+        const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
+        if (ranks.poolIdle() && processed === roundStart) return deferredJob("model_capacity", processed);
+      }
       if (ranks.exhausted) {
         // 모든 순위가 이 틱에 쉰다. 포화면 예전처럼 미루고, 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
         const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
