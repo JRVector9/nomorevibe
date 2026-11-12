@@ -12,6 +12,7 @@ import type { JobLease } from '@/lib/jobs/control';
 import { itemBindingHash } from '@/lib/jobs/items/types';
 import { agentReviewBinding } from './agent-review-ownership';
 import { claimAgentReviewWithModelReservation, AgentReviewItemModelReservationRequired, claimConsumerItemAgentReviewWithModelReservation, type ItemModelCapacityReviewClaim, type ReviewDomainContext, type ModelCapacityReviewClaim } from './agent-review-repository';
+import { firstReviewMemberSlotCap } from './first-review-member-cap';
 import { prepareAi1DirectCall, prepareAi1GatewayCall, reviewWithReservedAi1Gateway, reviewWithReservedAi1ItemGateway, settleAi1GatewayNotStarted,
   settleAi1ItemGatewayNotStarted, type GatewayNotStarted, type PreparedAi1GatewayCall } from './agent-review-gateway';
 import type { AgentReviewResult } from './agent-review';
@@ -37,7 +38,8 @@ export async function claimAgentReviewItemModelCapacity(intent: AgentReviewItemM
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
-  const slot = await requestAi1ModelSlot(request, context.candidate.id);
+  // 「동시에」 구성원의 칸 수는 예약을 만드는 장부 TX 가 원자적으로 지킨다(2026-11-12 검수 F2)
+  const slot = await requestAi1ModelSlot(request, context.candidate.id, { memberCap: firstReviewMemberSlotCap(context.settings, { provider, model }) });
   // 행 없는 capacity(같은 후보 fence)는 이 후보 하나의 일이다 — work_busy 로 돌려 모델을 멈추지 않게 한다(2026-10-30 결정)
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
   let claim: ItemModelCapacityReviewClaim;
@@ -191,7 +193,9 @@ export async function claimAgentReviewModelCapacity(input: Context, wait?: Ai1Re
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
-  let slot = await requestAi1ModelSlot(request, input.candidate.id);
+  // 「동시에」 구성원의 칸 수는 예약을 만드는 장부 TX 가 원자적으로 지킨다(2026-11-12 검수 F2) — 줄에 선 뒤의 다시 묻기는 자기 행이라 세지 않는다
+  let slot = await requestAi1ModelSlot(request, input.candidate.id,
+    { memberCap: firstReviewMemberSlotCap(input.settings, { provider: input.provider, model: input.model }) });
   if (wait && slot.kind === 'deferred' && slot.reason === 'capacity') slot = await awaitQueuedAi1Reservation(request, input.candidate.id, slot, wait, input.signal);
   // 줄에 서지 못한 capacity(같은 후보 fence·중복 작업)는 work_busy — 호출자는 이 후보만 건너뛴다(2026-10-30 결정)
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));

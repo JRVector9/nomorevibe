@@ -102,7 +102,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   pendingClaims?.requestIds.add(request.requestId);
   const slot = await requestProductTranslationModelSlot(request, members);
   // 줄에 서지 못한 capacity(멤버 fence)는 이 묶음만의 work_busy — 잡은 이 멤버를 넘기고 다음 수요로 간다(2026-10-30 결정)
-  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
+  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot));
   let prepared: Awaited<ReturnType<typeof prepareProductTranslationDispatch>>;
   try {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");

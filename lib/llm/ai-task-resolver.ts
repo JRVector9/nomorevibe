@@ -373,6 +373,8 @@ export class TextTaskRanks {
   /**
    * 일 하나를 순위 차례로 부른다. work 는 그 순위의 범위(runInTextTaskRank) 안에서 돈다 — 깊은 코드는 textTaskModel(route)로 그 순위를 읽는다.
    * work 가 그 모델만의 미룸(ModelCapacityDeferredError, 범위 model)을 던지면 그 순위를 쉬게 하고 같은 일을 다음 순위로 넘긴다.
+   * 앞 순위가 장부에 남긴 「보내지 않은」 대기 행은 다음 순위가 그 자리에서 예약을 받을 때만 장부가 같은 TX 에서 거둔다(순위 넘김, 2026-11-12 검수 F1 —
+   * capacity-repository handOverRankWaiting). 다음 순위도 빈 칸이 없으면 앞 순위의 줄 자리는 그대로다.
    * 그 밖의 오류(전역 미룸·이 일만의 미룸·진짜 오류)는 그대로 던진다 — 부르는 잡이 예전처럼 다룬다. 모두 쉬면 { kind: "unusable" }.
    * prefer(장부 이름)가 주어지면 그 순위를 먼저 본다(이 프로세스가 그 순위로 줄에 세워 둔 요청을 이어받을 때).
    */

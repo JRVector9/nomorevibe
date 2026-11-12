@@ -12,7 +12,7 @@ import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoS
   runningAuditCampaign } from "@/lib/crawl/product-audit";
 import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
 import { auditReviewer, QWEN_AUDIT_PROVIDER, type AuditReviewer } from "@/lib/crawl/product-audit-reviewer";
-import { recheckLimits, recheckReviewerPlan, recheckYields, rollingStream } from "@/lib/crawl/published-recheck";
+import { recheckLimits, recheckReviewerPlan, recheckReviewerRefusal, recheckYields, rollingStream } from "@/lib/crawl/published-recheck";
 import { claimRecheckItem, clearRecheckRankPause, noteRecheckItemRankRefused, noteRecheckRankFailed, noteRecheckRankPaused, recheckLaneOf, recheckSkips,
   recheckTurn, releaseRecheckItem } from "@/lib/crawl/published-recheck-lanes";
 import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
@@ -246,6 +246,14 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
         // 앞의 CLI 순위가 이 틱에 열리지 않아 API 순위 차례다 — 그 줄에 맡긴다
         if (recheckLaneOf(reviewer) === "api") { handedOff += 1; continue items; }
         if (!startable()) break items;
+        // 보내기 직전 재확인(2026-11-12 검수 F4): 틱 처음의 계획 뒤에 순위가 꺼지거나 연결이 이 작업을 더 받지 않으면 이 틱에는 다음 순위로
+        const refusal = recheckReviewerRefusal(reviewer);
+        if (refusal) {
+          paused.add(reviewer.rank);
+          noteRecheckRankPaused(reviewer, refusal);
+          deferred.push(`${reviewer.rank}:${refusal}`);
+          continue;
+        }
         const cliReviewer = { provider: reviewer.provider as "opencode-cli" | "claude-cli", model: reviewer.model };
         const ask: AuditAsk = { campaign: { id: stream.id, ...cliReviewer, promptVersion: REVIEW_PROMPT_VERSION,
           rulesVersion: REVIEW_RULES_VERSION }, reviewer: cliReviewer,

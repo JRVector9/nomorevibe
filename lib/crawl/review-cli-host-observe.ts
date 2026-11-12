@@ -1,6 +1,6 @@
 import { refreshCliHostObservation } from "@/lib/operations/cli-host-observation";
 import { cliHostTargetFromConnection, type CliHostTarget } from "@/lib/operations/cli-host-target";
-import { resolveReviewTaskRanks, secondReviewRanks, type ReviewRankCandidate, type ReviewTaskRoute } from "./review-task-ranks";
+import { firstReviewRankCandidates, secondReviewRanks, type ReviewRankCandidate, type ReviewTaskRoute } from "./review-task-ranks";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 
 /**
@@ -15,9 +15,11 @@ import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 export async function observeReviewCliHost(routeId: ReviewTaskRoute, reviewer?: { provider: string; model: string }): Promise<void> {
   if (reviewer && reviewer.provider !== "opencode-cli") return;
   try { assertLiveReviewAdapterAllowed(); } catch { return; }
-  const resolutions = routeId === "crawl-agent-review" ? [resolveReviewTaskRanks("first-review", 1)] : secondReviewRanks().slots.map(slot => slot.resolution);
+  // 1차는 구성원과 켜진 예비 순위(2026-11-12 검수 F3 — 고르기가 예비 OpenCode 를 고르면 그 연결의 버전 관측도 채운다)
+  const candidates = routeId === "crawl-agent-review" ? firstReviewRankCandidates()
+    : secondReviewRanks().slots.flatMap(slot => slot.resolution.candidates);
   const connections = new Map<string, ReviewRankCandidate["rank"]["connection"]>();
-  for (const candidate of resolutions.flatMap(resolution => resolution.candidates)) {
+  for (const candidate of candidates) {
     if (candidate.binding?.provider !== "opencode-cli" || candidate.unusable || reviewer && candidate.binding.identity !== reviewer.model) continue;
     connections.set(candidate.rank.connection.id, candidate.rank.connection);
   }

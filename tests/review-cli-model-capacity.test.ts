@@ -154,7 +154,7 @@ it.skipIf(process.platform === 'win32')('AI1 legacy: slot → 같은 TX claim(di
   const { claim, call } = await claimAgentReviewCliModelCapacity(context());
   expect(mocks.request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ owner, class: 'first', pool: 'reviewer', routeId: 'crawl-agent-review',
     provider: 'claude-cli', model, workKey: `ai1:3:${itemBindingHash(agentReviewBinding(3, value.input, { provider: 'claude-cli', model }))}`,
-    requestId: expect.any(String) }), { kind: 'ai1', candidateId: 3 });
+    requestId: expect.any(String) }), { kind: 'ai1', candidateId: 3 }, { memberCap: null });
   expect(mocks.ai1Claim).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lease, provider: 'claude-cli', model,
     call: expect.objectContaining({ kind: 'prepared_cli', routeId: 'crawl-agent-review', inputHash: value.input.inputHash }) }));
   expect(call.transport.timeoutMs).toBe(20_000); expect(mocks.cancel).not.toHaveBeenCalled();
@@ -208,7 +208,7 @@ it('슬롯 대기·대기 순번 유지: deferred 면 claim(attempt) 0, 같은 r
   const requestId = randomUUID();
   mocks.pending.mockResolvedValue({ requestId, state: 'waiting' }); mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
   await expect(claimAgentReviewCliModelCapacity(context())).rejects.toMatchObject({ reason: 'capacity' });
-  expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId }), { kind: 'ai1', candidateId: 3 });
+  expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId }), { kind: 'ai1', candidateId: 3 }, { memberCap: null });
   expect(mocks.ai1Claim).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
   expect(await readdir(tmp)).toEqual([]);
 });
@@ -259,7 +259,7 @@ it.skipIf(process.platform === 'win32')('AI2 consumer: CLI 의도 → CLI slot �
   mocks.record2.mockImplementation(async () => { order.push('recorded'); return { state: 'recorded' }; });
   expect(await executeSecondReviewConsumerItem({ secondReviewId: 8, owner })).toEqual({ state: 'recorded' });
   expect(mocks.request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ class: 'second', routeId: 'second-review', provider: 'claude-cli',
-    workKey: `ai2:3:8:${itemBindingHash(ai2.binding)}` }), { kind: 'ai2', candidateId: 3, vote: 8 });
+    workKey: `ai2:3:8:${itemBindingHash(ai2.binding)}` }), { kind: 'ai2', candidateId: 3, vote: 8 }, { memberCap: null });
   expect(mocks.ai2Claim.mock.calls[0][0].call.transport.timeoutMs).toBe(20_000);
   expect(order).toEqual(['settled', 'recorded']);
   expect(mocks.record2).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ result: expect.objectContaining({ ok: true, decision: 'approve',
@@ -317,7 +317,7 @@ it.skipIf(process.platform === 'win32')('AI1 consumer: CLI 의도 → item dispa
   mocks.record1.mockResolvedValue({ applied: true, state: 'succeeded' });
   expect(await executeFirstReviewConsumerItem({ candidateId: 3, owner })).toEqual({ applied: true, state: 'succeeded' });
   expect(mocks.request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ class: 'first', provider: 'claude-cli',
-    workKey: `ai1:3:${itemBindingHash(review)}` }), { kind: 'ai1', candidateId: 3 });
+    workKey: `ai1:3:${itemBindingHash(review)}` }), { kind: 'ai1', candidateId: 3 }, { memberCap: null });
   expect(readCliProcessTerminal(mocks.reconcile.mock.calls[0][0])).toMatchObject({ ending: 'exited' });
   expect(mocks.record1).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ receipt, outcome: expect.objectContaining({ decision: 'approve' }) }));
   expect(await recorded()).toHaveLength(1); expect(mocks.gatewayRequest).not.toHaveBeenCalled(); expect(await readdir(tmp)).toEqual([]);

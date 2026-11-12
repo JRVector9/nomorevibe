@@ -40,7 +40,7 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   const pending = await findOwnPendingModelRequest(identity);
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
   const slot = await requestTextProfileModelSlot(request, input.productId);
-  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
+  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot));
   let current;
   try {
     current = await prepareProfileModelDispatch(snapshot, ownedLease, { ...captured,

@@ -146,7 +146,8 @@ it('re-polls the same persisted pending ID and binds only its committed fresh cl
   mocks.request.mockResolvedValue({ kind: 'granted', reservation: { ...dispatch, binding: undefined } });
   mocks.atomic.mockResolvedValue({ ...positive().claim, dispatch });
   const result = await api.claimAgentReviewModelCapacity(input);
-  expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId, owner, workKey: expect.stringMatching(/^ai1:1:[a-f0-9]{64}$/) }), 1);
+  // 세 번째 인자: 1차 「동시에」 구성원 칸 수(2026-11-12 검수 F2) — 순위대로라 없다
+  expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId, owner, workKey: expect.stringMatching(/^ai1:1:[a-f0-9]{64}$/) }), 1, { memberCap: null });
   expect(result.claim).toHaveProperty('dispatch', dispatch); expect(result.call).toBe(call); expect(mocks.cancel).not.toHaveBeenCalled();
 });
 it.each(['waiting', 'reserved'] as const)('preserves a %s request ID when the next tick is still waiting', async state => {
@@ -154,7 +155,7 @@ it.each(['waiting', 'reserved'] as const)('preserves a %s request ID when the ne
   mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue({ requestId, state });
   mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
   await expect(api.claimAgentReviewModelCapacity(await coordinatorInput())).rejects.toMatchObject({ reason: 'capacity' });
-  expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId }), 1);
+  expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId }), 1, { memberCap: null });
   expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
 });
 it.each(['dispatched'] as const)('never re-polls or replaces a same-work %s request (an indeterminate one is not returned by the readback since 2026-10-30)', async state => {

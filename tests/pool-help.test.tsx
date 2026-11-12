@@ -104,6 +104,8 @@ describe("「동시에」 도움말 — 세 경우(같은 모델 두 줄 · 칸 
     expect(plain).toContain("순서 모델 칸 수 근거 1 m3-gpt-oss 2 m3-gpt-oss는 동시에 2개까지 2 m1-gemma 2 m1-gemma는 동시에 2개까지");
     expect(plain).toContain("같은 모델을 다른 단계도 쓰면 바쁠 때 이보다 적게 받을 수 있습니다.");
     expect(plain).toContain("예비: 켜면 구성원이 모두 차거나 쉴 때 순위대로(1·2·3순위)가 넘겨받습니다.");
+    // 2026-11-12 검수 §4: 예비를 끈 칸 수 묶음은 장부 줄에 서지 않는다(실행 TextTaskRanks.runPool 의 idle — 다음 틱에 다시 고른다)
+    expect(plain).toContain("칸 수를 적었으면 장부 줄에 서지 않고 다음 틱에 다시 고르고");
   });
 
   it("섞인 칸 수 — 저장 거절을 알리고, 권장을 넘는 칸 수는 줄 옆에 경고", () => {

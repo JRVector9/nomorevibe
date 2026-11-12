@@ -11,10 +11,15 @@ import { findOwnPendingModelRequest } from "./capacity-repository";
  * 잇고, fence·중복 작업은 행을 만들지 않는다(awaitQueuedAi1Reservation 의 not_queued 와 같은 판정). 행 없는 거절은 이 작업 하나의 일이라
  * `work_busy` 로 바꾼다 — 호출자는 이 대상만 건너뛰고 모델·틱을 멈추지 않는다(2026-10-30 소유자 결정). 다른 사유는 그대로 돌려준다.
  * 남는 경계: 이미 줄에 선 요청을 다시 묻는 사이 fence 가 생기면 행이 남아 있어 `capacity`(포화)로 본다 — 예전과 같은 동작이다.
+ * 장부의 미룸 결과(slot)를 그대로 주면 순위 넘김의 답(queuedAtOtherRank)도 읽는다 — 글 작업 adapter 는 slot 을 준다.
  */
 export async function capacityRefusalReason(request: ModelCapacityRequest,
-  reason: Extract<ModelSlotResult, { kind: "deferred" }>["reason"]): Promise<ModelCapacityDeferredReason> {
+  refusal: Extract<ModelSlotResult, { kind: "deferred" }>["reason"] | Extract<ModelSlotResult, { kind: "deferred" }>): Promise<ModelCapacityDeferredReason> {
+  const reason = typeof refusal === "string" ? refusal : refusal.reason;
   if (reason !== "capacity") return reason;
+  // 순위 넘김(2026-11-12 검수 F1)을 시험했지만 이 모델은 지금 빈 칸이 없다 — 같은 일은 이 프로세스의 다른 순위 대기 행으로 줄에 서 있다(포화, 행 없음).
+  // work_busy(이 일만 넘김)가 아니라 포화라서 부르는 쪽(TextTaskRanks.run)이 같은 일을 다음 순위로 넘긴다
+  if (typeof refusal !== "string" && refusal.queuedAtOtherRank) return "capacity";
   const { requestId, ...identity } = request;
   const own = await findOwnPendingModelRequest(identity);
   return own?.requestId === requestId && (own.state === "waiting" || own.state === "reserved") ? "capacity" : "work_busy";
