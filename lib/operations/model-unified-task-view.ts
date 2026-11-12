@@ -104,9 +104,14 @@ export function unifiedTaskPoolOptions(editor: FlowRankEditor, line: FlowRankLin
 /** Empty pool rows start with the current live fallback choices; changing mode never changes saved ranks. */
 export function unifiedTaskSwitchMode(draft: AssignmentState, mode: AssignmentState["mode"], line: FlowRankLine): AssignmentState {
   if (mode === "workload_pool" && !aiTaskSupportsPool(line.task, line.slot)) return draft;
-  if (mode === "workload_pool" && !draft.members.some(Boolean)) return { ...draft, mode,
-    members: draft.ranks.filter((choice): choice is AiRankChoice => !!choice).slice(0, 4),
-    reserve: aiTaskPoolFeatures(line.task, line.slot).reserve && !!draft.reserve };
+  if (mode === "workload_pool" && !draft.members.some(Boolean)) {
+    const members = draft.ranks.filter((choice): choice is AiRankChoice => !!choice).slice(0, 4);
+    const features = aiTaskPoolFeatures(line.task, line.slot);
+    return { ...draft, mode, members,
+      // A new, reviewed draft starts at one slot per selected model, as in the approved editor. Existing saved pools are left intact.
+      ...(features.slotCaps ? { slots: Array.from({ length: 4 }, (_, index) => members[index] ? draft.slots?.[index] || "1" : "") } : {}),
+      reserve: features.reserve && !!draft.reserve };
+  }
   return { ...draft, mode };
 }
 

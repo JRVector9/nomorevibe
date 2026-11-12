@@ -179,4 +179,14 @@ describe("shared unified task editor", () => {
     expect(unifiedTaskHomeHref("product-tagline-ko")).toBe("/admin/flow?stage=tagline-ko#sp-models");
     expect(lineOf(editorOf(), "crawl-tagline#1").options.some(option => option.provider === MLX)).toBe(true);
   });
+
+  it("starts only a new reviewed pool draft at one slot per model, preserving saved automatic pools", () => {
+    const editor = editorOf();
+    const line = lineOf(editor);
+    const before = savedAssignment(line);
+    expect(unifiedTaskSwitchMode(before, "workload_pool", line).slots).toEqual(["1", "1", "", ""]);
+    expect(before.slots).toEqual(["", "", "", ""]);
+    const automatic = { ...before, mode: "workload_pool" as const, members: before.ranks, slots: ["", "", "", ""] };
+    expect(unifiedTaskSwitchMode(automatic, "workload_pool", line).slots).toEqual(["", "", "", ""]);
+  });
 });

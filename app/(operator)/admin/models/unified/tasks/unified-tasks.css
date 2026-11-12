@@ -135,7 +135,7 @@
 .admin-prototype .ut-pool-rows[data-caps="true"] .fr-rank-row-label, .admin-prototype .ut-pool-rows[data-caps="true"] .fr-rank-row-label:has(.fr-rank-row-effort select) { grid-template-columns: 45px minmax(0, 1fr); }
 .admin-prototype .ut-pool-rows[data-caps="true"] .ut-slot { position: relative; inset: auto; grid-column: 2; grid-row: 1; align-self: start; }
 .admin-prototype .ut-check-label { display: flex; align-items: flex-start; gap: calc(7px / .8); font-size: calc(12px + var(--admin-font-delta, 0px)); margin-top: calc(14px / .8); }
-.admin-prototype .ut-check-label input { margin-top: calc(3px / .8); accent-color: var(--primary); flex: none; }
+.admin-prototype .ut-check-label input { width: 13px; height: 13px; margin-top: calc(3px / .8); accent-color: var(--primary); flex: none; }
 .admin-prototype .ut-notes { margin-top: calc(16px / .8); padding-left: calc(18px / .8); color: var(--amber); font-size: calc(11px + var(--admin-font-delta, 0px)); }
 .admin-prototype .ut-notes [data-tone="bad"] { color: var(--red); }
 .admin-prototype .ut-resave { margin-top: calc(16px / .8); }
