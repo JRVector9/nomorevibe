@@ -14,15 +14,15 @@ import { readAiTaskExecutionAdminViews, type AiTaskExecutionAdminView } from "./
 import { adminJobControlVersions } from "./admin-job-control";
 import { readAdminModelsObservation } from "./admin-models-repository";
 import { changeWatchTasks } from "./change-watch";
+import { readConsoleProgress } from "./console-progress-read";
 import { readConsoleKept } from "./console-task-keep";
 import { readConveyor } from "./conveyor";
 import type { Conveyor } from "./conveyor-model";
 import type { StageJobState } from "./stage-panel-model";
-import type { ConsoleConnection, ConsoleDevice, ConsoleJob, ConsoleLedgerRow, ConsolePoolMember, ConsoleProgress, ConsoleRank, ConsoleTaskInputs } from "./console-tasks";
+import type { ConsoleConnection, ConsoleDevice, ConsoleJob, ConsoleLedgerRow, ConsolePoolMember, ConsoleRank, ConsoleTaskInputs } from "./console-tasks";
 import { sharedInbox } from "./inbox";
 import { sharedLoader } from "./shared-cache";
 import { sharedHumanQueueOverview } from "./shared-reads";
-import { readWorkerProgress } from "./worker-progress-query";
 
 /**
  * 운영 콘솔 홈(할 일 + 흐름)의 읽기 — 관리자 화면이 이미 쓰는 읽기를 모은다. 쓰기는 하지 않는다
@@ -35,7 +35,7 @@ import { readWorkerProgress } from "./worker-progress-query";
  * 단계 패널(조각 2a)도 이 읽기를 그대로 쓴다 — 잡 상태·실행 설정은 패널이 다시 읽지 않게 여기 함께 싣는다.
  */
 
-const progressCache = sharedLoader<ConsoleProgress>({ namespace: "admin:console:progress", ttlMs: 30_000, staleMs: 300_000, store: sharedStore });
+// v2: 결과 없이 끝난 호출을 모델의 거절(rejected)과 보내기 전에 끝남(notStarted)으로 나눠 싣는다
 const ledgerCache = sharedLoader<ConsoleLedgerRow[]>({ namespace: "admin:console:ledger24h", ttlMs: 60_000, staleMs: 600_000, store: sharedStore });
 type Capacity = { admission: ConsoleTaskInputs["admission"]; devices: ConsoleDevice[] | null };
 const capacityCache = sharedLoader<Capacity>({ namespace: "admin:console:capacity", ttlMs: 15_000, staleMs: 120_000, store: sharedStore });
@@ -50,17 +50,20 @@ const quiet = (event: string) => (error: unknown) => {
 /**
  * 24시간 장부 — route·장비(group)·모델로 묶은 호출·정산·평균 응답·결과 없이 끝난 수(시안 build.py ledger24h 와 같은 묶음).
  * 창은 색인이 있는 시각으로 잡는다: 정산(settled_at)·철회(updated_at)·미확정(보낸 시각) 24시간. 호출 = 셋의 합(아직 도는 행은 빼고 센다).
- * 결과 없이 끝남 = 공급자가 처리 전에 거절(gateway_http_rejected)했거나 보내지 못한(gateway_not_started) 정산.
+ * 결과 없이 끝난 정산은 둘로 나눠 센다 — 모델(공급자)이 처리 전에 거절한 것(gateway_http_rejected: 429·401·403 등)과
+ * 보내기 전에 끝난 것(gateway_not_started: 틱 기한·사전 예산 — 모델의 잘못이 아니다).
  */
 async function loadLedger24h(): Promise<ConsoleLedgerRow[]> {
   return withDbDeadline(Date.now() + 4000, () => onPrimary(() => db.transaction(async tx => {
     await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
-    const rows = await tx.execute<{ routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null; noResult: number }>(sql`
+    const rows = await tx.execute<{ routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null; rejected: number;
+      notStarted: number }>(sql`
       SELECT route_id AS "routeId", group_id AS "groupId", model,
         count(*)::int AS calls,
         count(*) FILTER (WHERE state = 'settled')::int AS settled,
         (avg(extract(epoch FROM settled_at - dispatched_at)) FILTER (WHERE state = 'settled'))::float8 AS "avgSeconds",
-        count(*) FILTER (WHERE state = 'settled' AND terminal_evidence->>'kind' IN ('gateway_http_rejected', 'gateway_not_started'))::int AS "noResult"
+        count(*) FILTER (WHERE state = 'settled' AND terminal_evidence->>'kind' = 'gateway_http_rejected')::int AS rejected,
+        count(*) FILTER (WHERE state = 'settled' AND terminal_evidence->>'kind' = 'gateway_not_started')::int AS "notStarted"
       FROM model_capacity_requests
       WHERE (state = 'settled' AND settled_at >= transaction_timestamp() - interval '24 hours')
         OR (state = 'withdrawn' AND updated_at >= transaction_timestamp() - interval '24 hours')
@@ -69,18 +72,8 @@ async function loadLedger24h(): Promise<ConsoleLedgerRow[]> {
     const list = Array.from(rows);
     if (list.length > 2000) throw new Error("console_ledger_truncated");
     return list.map(row => ({ routeId: row.routeId, groupId: row.groupId, model: row.model, calls: Number(row.calls), settled: Number(row.settled),
-      avgSeconds: row.avgSeconds === null ? null : Number(row.avgSeconds), noResult: Number(row.noResult) }));
+      avgSeconds: row.avgSeconds === null ? null : Number(row.avgSeconds), rejected: Number(row.rejected), notStarted: Number(row.notStarted) }));
   }, { accessMode: "read only" })));
-}
-
-async function loadProgress(): Promise<ConsoleProgress> {
-  const report = await readWorkerProgress(new Date(), { includeText: true });
-  return {
-    stages: report.stages.map(stage => ({ stage: stage.stage, job: stage.job ?? null, reason: stage.reason, alarm: stage.alarm,
-      waiting: stage.waiting ?? null, oldestMinutes: stage.oldestMinutes ?? null, completed5m: stage.completed5m ?? null,
-      skipBlock: stage.skipBlock ? { reason: stage.skipBlock.reason, code: stage.skipBlock.code, detail: stage.skipBlock.detail } : null })),
-    liveness: report.liveness.map(row => ({ role: row.role, reason: row.reason })),
-  };
 }
 
 async function loadCapacity(): Promise<Capacity> {
@@ -118,8 +111,8 @@ export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
   const checkedAt = new Date();
   const [conveyor, progress, ledger, capacity, audit, jobRows, versions, connections, ranks, executions, inbox, agreed, watch, kept] = await Promise.all([
     readConveyor(fresh).catch(quiet("console.conveyor_unavailable")),
-    progressCache("v1", loadProgress, fresh).catch(quiet("console.progress_unavailable")),
-    ledgerCache("v1", loadLedger24h, fresh).catch(quiet("console.ledger_unavailable")),
+    readConsoleProgress(fresh).catch(quiet("console.progress_unavailable")),
+    ledgerCache("v2", loadLedger24h, fresh).catch(quiet("console.ledger_unavailable")),
     capacityCache("v2", loadCapacity, fresh).catch(quiet("console.capacity_unavailable")),
     auditCache("v1", async () => {
       const stats = await openBacklogStats();

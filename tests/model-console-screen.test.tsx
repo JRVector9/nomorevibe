@@ -42,7 +42,7 @@ describe("모델 목록(시안 화면 4)", () => {
     for (const served of ["Inferact/Qwen3.8-27B-NVFP4", "gpt-oss-120b", "qwen3.8-flash-next", "k-exaone_v2.5"]) expect(list).not.toContain(served);
     const supa = list.match(/<tr data-model="conn-supa-direct"[^]*?<\/tr>/)![0];
     expect(text(supa)).toContain("supa-direct supa-direct 3 3 / 3 49% 8,404 15.5초 3 미확정 19");
-    expect(text(list)).toContain("LG EXAONE Exaone 1 0 / 1 1% 미만 135 2.2초 1 결과 없이 끝남 57");
+    expect(text(list)).toContain("LG EXAONE Exaone 1 0 / 1 1% 미만 135 2.2초 1 거절 57");
     expect(list).toContain('href="/admin/models?model=conn-supa-direct#model-detail"');
     expect(html).toContain('href="/admin/models/new"');
     expect(html).not.toContain('id="model-detail"');
@@ -61,7 +61,7 @@ describe("모델 목록(시안 화면 4)", () => {
     const html = renderToStaticMarkup(await ModelConsoleSlot({ selected: "conn-supa-direct", readOnly: false }));
     const detail = html.match(/<article id="model-detail"[^]*?<\/article>/)![0];
     expect(table(html)).toContain('data-selected="true" data-model="conn-supa-direct"');
-    expect(text(detail)).toContain("24시간 호출 8,404 결과 없이 끝남 3 미확정 19");
+    expect(text(detail)).toContain("24시간 호출 8,404 거절 0 보내기 전에 끝남 3 미확정 19");
     expect(text(detail)).toContain("동시 한도 3 · 장비 한도");
     expect(text(detail)).toContain("1순위 1차 AI 검수");
     expect(text(detail)).toContain("미확정 24시간 안에 결과를 모르는 호출이 19건 있습니다.");

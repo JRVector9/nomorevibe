@@ -78,7 +78,8 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
         <span className="mc-st" data-tone={row.status.tone}><i aria-hidden="true" />{row.status.text}</span>
         <span className="mc-right"><Link prefetch={false} className="text-button" href="/admin/models" scroll={false}>닫기</Link></span></div>
       <p className="mc-kv"><span>24시간 호출<b>{row.calls === null ? "—" : formatCount(row.calls)}</b></span>
-        <span>결과 없이 끝남<b>{row.noResult === null ? "—" : formatCount(row.noResult)}</b></span>
+        <span>거절<b>{row.rejected === null ? "—" : formatCount(row.rejected)}</b></span>
+        <span>보내기 전에 끝남<b>{row.notStarted === null ? "—" : formatCount(row.notStarted)}</b></span>
         <span>미확정<b>{row.indeterminate === null ? "—" : formatCount(row.indeterminate)}</b></span>
         <span>평균 응답<b>{formatSeconds(row.avgSeconds)}</b></span>
         <span>사용률<b>{row.utilizationText}</b></span></p>

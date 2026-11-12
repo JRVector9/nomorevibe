@@ -2,7 +2,7 @@ import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-ex
 import type { LimitsView } from "@/lib/operations/admin-limits-view";
 import type { Conveyor } from "@/lib/operations/conveyor-model";
 import type { ConsoleHomeRead } from "@/lib/operations/console-home-read";
-import type { ConsoleTaskInputs } from "@/lib/operations/console-tasks";
+import type { ConsoleLedgerRow, ConsoleTaskInputs } from "@/lib/operations/console-tasks";
 import type { StageJobState, StageRuntime } from "@/lib/operations/stage-panel-model";
 import probe from "./console-home-probe.json";
 
@@ -14,6 +14,15 @@ import probe from "./console-home-probe.json";
  * 연결 id 는 읽기 쉬운 가짜 id 로 바꿨고, 주소·키·저장소 이름은 넣지 않았다.
  */
 export const CONSOLE_PROBE_AT = probe.at;
+
+/**
+ * 실측 장부의 「결과 없이 끝남」(noResult)을 두 갈래로 — 그때 읽기는 종류를 나누지 않았다. LG EXAONE(장비 Exaone)의 것은 모델의 거절(gateway_http_rejected),
+ * 나머지는 보내기 전에 끝난 것(gateway_not_started)으로 둔다 — 11-12 배포 직후 실측에서 EXAONE 은 거절, gpu3090-qwen 은 전부 보내기 전에 끝남이었다.
+ * 나머지 작은 수(supa 3 · m1-gemma 1)의 종류는 실측이 없다 — 어느 쪽이든 기준(10건) 아래다.
+ */
+export function splitLedgerRow<T extends { groupId: string; noResult: number }>({ noResult, ...row }: T): Omit<T, "noResult"> & Pick<ConsoleLedgerRow, "rejected" | "notStarted"> {
+  return { ...row, rejected: row.groupId === "Exaone" ? noResult : 0, notStarted: row.groupId === "Exaone" ? 0 : noResult };
+}
 
 export function consoleFixtureInputs(): ConsoleTaskInputs {
   const copy = structuredClone(probe);
@@ -31,7 +40,7 @@ export function consoleFixtureInputs(): ConsoleTaskInputs {
     ranks: copy.ranks,
     pools: copy.pools,
     devices: copy.observation.devices,
-    ledger: copy.ledger,
+    ledger: copy.ledger.map(splitLedgerRow),
   };
 }
 

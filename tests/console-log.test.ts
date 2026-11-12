@@ -23,6 +23,15 @@ describe("log lines", () => {
     expect(lines.map(line => [line.title, line.actor, line.count, line.until !== null, line.undo])).toEqual([["접수 중단 → 다시 열림 (18분)", "JR", 1, true, null]]);
   });
 
+  it("joins a job pause and its resume into one line with the minutes — one change, nothing to undo, and two pairs do not merge", () => {
+    const pause = (minute: number) => row(minute, "job-pause", { target: "reason-translate", detail: { reason: "배포 창" } });
+    const resume = (minute: number) => row(minute, "job-resume", { target: "reason-translate", detail: { reason: "배포 창" } });
+    const { lines } = buildLogLines([pause(0), resume(14), pause(20), resume(34)], labels);
+    expect(lines.map(line => [line.title, line.count, line.until !== null, line.undo])).toEqual([
+      ["사유 번역 멈춤 → 재개 (14분)", 1, true, null], ["사유 번역 멈춤 → 재개 (14분)", 1, true, null]]);
+    expect(lines.map(line => line.ids.length)).toEqual([2, 2]);
+  });
+
   it("joins one person's back-to-back saves of the same thing into one line, newest lines first", () => {
     const rank = (minute: number, before: string, after: string) => row(minute, "ai-task-models-save", { target: "first-review#1",
       detail: { before: [{ rank: 1, connectionId: before, model: "m" }, { rank: 2, connectionId: "c-qwen", model: "q" }],

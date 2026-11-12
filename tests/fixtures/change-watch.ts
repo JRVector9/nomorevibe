@@ -1,4 +1,5 @@
 import type { LedgerBucket, WatchAuditRow, WatchContext } from "@/lib/operations/change-watch";
+import probe from "./console-home-probe.json";
 
 /**
  * 바꾼 것 지켜보기의 대표 사례 — 2026-11-12 실측(최종 시안 「바꾼 것 지켜보기」 첫 줄).
@@ -29,8 +30,8 @@ export const WATCH_AUDIT: WatchAuditRow[] = [
     before: [{ rank: 1, slot: 1, task: "first-review", connectionId: CONN.opencode, model: "deepseek-v4" }, { rank: 2, slot: 1, task: "first-review", connectionId: CONN.gpu, model: "qwen3.8" }],
     after: [{ rank: 1, slot: 1, task: "first-review", connectionId: CONN.supa, model: "Inferact/Qwen3.8-27B-NVFP4" }, { rank: 2, slot: 1, task: "first-review", connectionId: CONN.gpu, model: "qwen3.8" }],
   }),
-  row(28863, "2026-11-11T23:08:04Z", "pipeline-control-capacity-mode", "model_capacity_control", { mode: "draining" }, "JR", null),
-  row(28864, "2026-11-11T23:26:26Z", "pipeline-control-capacity-mode", "model_capacity_control", { mode: "open" }, "JR", null),
+  row(28863, "2026-11-11T23:08:04Z", "pipeline-control-capacity-mode", "model_capacity_control", { mode: "draining", beforeMode: "open" }, "JR", null),
+  row(28864, "2026-11-11T23:26:26Z", "pipeline-control-capacity-mode", "model_capacity_control", { mode: "open", beforeMode: "draining" }, "JR", null),
 ];
 
 export const WATCH_CONTEXT: WatchContext = {
@@ -53,3 +54,6 @@ export const WATCH_LEDGER: LedgerBucket[] = [
   ...Array.from({ length: 30 }, (_, hour) => ({ route: "reason-translate", bucket: bucket(new Date(Date.parse("2026-11-11T16:00:00Z") + hour * 3_600_000).toISOString()),
     settled: hour === 7 ? 105 : 100 })).filter(entry => entry.bucket * B < WATCH_NOW),
 ];
+
+/** 같은 날 08:59 KST 워커 진행(console-home-probe) — AI 1차 대기 857건 등. 바꾼 것 지켜보기의 「일감 없음」 판정이 읽는다 */
+export const WATCH_BACKLOG: readonly { job?: string | null; waiting?: number | null }[] = probe.progress.stages;
