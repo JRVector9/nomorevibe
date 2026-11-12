@@ -40,7 +40,7 @@ describe("console home", () => {
     expect(html).toContain('href="/admin/flow?stage=keywords#sp-models">모델 붙이기</a>');
     // 재개 — 운영센터와 같은 작업 제어 폼(사유 필수)
     expect(html).toMatch(/<details class="ch-job"><summary class="button small primary">재개<\/summary><form[^>]*>.*재개 사유.*이 작업 재개<\/button>/);
-    expect(html).toContain('href="/admin/review?tab=human&amp;stage=agreed">묶음 보기</a>');
+    expect(html).toContain('href="/admin/review/batches">묶음 보기</a>');
     expect(html).toContain('href="/admin/audit">묶음 보기</a>');
   });
 
