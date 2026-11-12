@@ -8,8 +8,8 @@ import { buildTaskRankEditor, type FlowRankEditor } from "@/lib/operations/flow-
 import { buildTaskAssignView, type TaskAssignInput, type TaskAssignRow } from "@/lib/operations/llm-task-assign-view";
 import { attachSaveForms, savedAssignment } from "@/lib/operations/model-attach";
 import { UNIFIED_MAIN_TASKS, unifiedTaskActualNote, unifiedTaskDuplicate, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
-  unifiedTaskNeedsAttention, unifiedTaskPoolOptions, unifiedTaskRows, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
-import { poolMemberIssues } from "@/lib/operations/task-pool-form";
+  unifiedTaskNeedsAttention, unifiedTaskPoolMembers, unifiedTaskPoolOptions, unifiedTaskRows, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
+import { poolMemberIssues, poolMembersInput } from "@/lib/operations/task-pool-form";
 import { GPU, LLM_NOW, llmConnections, llmJobs, llmObservation, llmRankRows, MLX, OPENCODE } from "./fixtures/llm-ops";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -18,6 +18,8 @@ vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTa
 
 import { UnifiedTaskSection } from "@/app/(operator)/admin/models/unified/tasks/UnifiedTaskSection";
 import { UnifiedTaskEditor } from "@/app/(operator)/admin/models/unified/tasks/UnifiedTaskEditor";
+import { UnifiedTaskEmptyPoolSlot } from "@/app/(operator)/admin/models/unified/tasks/UnifiedTaskEmptyPoolSlot";
+import { RankSelects } from "@/app/(operator)/admin/models/RankSelects";
 
 const revision = () => "a".repeat(64);
 const editorOf = (rows: readonly AiTaskRankRow[] = llmRankRows, executions: readonly AiTaskExecutionAdminView[] = []) => buildTaskRankEditor(llmConnections, rows, revision, executions);
@@ -131,6 +133,64 @@ describe("unified model task overview", () => {
 });
 
 describe("shared unified task editor", () => {
+  it("opts into visual empty cap cells without changing selected-row callbacks or default pickers", () => {
+    const choice = { provider: GPU, model: "qwen3.8-flash-next" };
+    const selected: (typeof choice)[] = [];
+    const render = (empty: boolean) => renderToStaticMarkup(<RankSelects stage={{ id: "empty-cap-contract", label: "작업", slots: 3 }} layout="rows"
+      selectionKind="pool" options={[{ ...choice, label: "선택 모델" }]} value={[choice, null, null]} connections={llmConnections}
+      onChange={() => undefined} slotNames={[1, 2, 3].map(index => ({ provider: `provider${index}`, model: `model${index}` }))}
+      validate={() => []} note={null} renderAfterSlot={row => { selected.push(row); return null; }}
+      renderAfterEmptySlot={empty ? index => <UnifiedTaskEmptyPoolSlot index={index} /> : undefined} />);
+    expect(render(false)).not.toContain("data-empty-pool-slot");
+    expect(selected).toEqual([choice]);
+    selected.length = 0;
+    const html = render(true);
+    expect(selected).toEqual([choice]);
+    const placeholders = html.match(/<input[^>]*data-empty-pool-slot="true"[^>]*>/g)!;
+    expect(placeholders).toHaveLength(2);
+    for (const input of placeholders) {
+      expect(input).toContain('disabled=""');
+      expect(input).toContain('value="1"');
+      expect(input).not.toMatch(/\bname=/);
+    }
+  });
+
+  it("shows empty caps only for supported pools, keeps the draft/save members unchanged and removes the default help control", () => {
+    const pool = pooled();
+    const editor = editorOf(llmRankRows, [pool]);
+    const line = lineOf(editor);
+    const html = renderToStaticMarkup(<UnifiedTaskEditor taskKey={line.key} editor={editor} devices={null} poolHelp={null} lockReason={null} onClose={() => undefined} />);
+    expect(html.match(/data-empty-pool-slot="true"/g)).toHaveLength(3);
+    expect(html).not.toContain("cs-help-trigger");
+    expect(html.match(/<div class="ut-mode-title">[^]*?<\/div>/)![0]).not.toContain("<button");
+    const before = savedAssignment(line);
+    expect(poolMembersInput(before.members, before.slots ?? [], pool.members, aiTaskPoolFeatures(line.task, line.slot))).toHaveLength(1);
+    expect(before.members).toHaveLength(1);
+    const classify = pooled("publish-classify");
+    const classifyEditor = editorOf(llmRankRows, [classify]);
+    const unsupported = renderToStaticMarkup(<UnifiedTaskEditor taskKey="publish-classify#1" editor={classifyEditor} devices={null} poolHelp={null} lockReason={null} onClose={() => undefined} />);
+    expect(unsupported).not.toContain("data-empty-pool-slot");
+    expect(unsupported).not.toContain("동시 칸 수");
+  });
+
+  it("starts a newly selected empty pool position at one real slot without replacing saved automatic or explicit caps", () => {
+    const before = { ...savedAssignment(lineOf(editorOf(llmRankRows, [pooled()]))), slots: ["", "3", "", ""] };
+    const second = { provider: GPU, model: "qwen3.8-flash-next" };
+    const members = [before.members[0], second, { provider: MLX, model: "gemma-4" }, null];
+    const existing = { ...before, members: [before.members[0], second, null, null] };
+    const next = unifiedTaskPoolMembers(existing, members, aiTaskPoolFeatures("first-review"));
+    expect(next.slots).toEqual(["", "3", "1", ""]);
+    const input = poolMembersInput(next.members, next.slots ?? [], [], aiTaskPoolFeatures("first-review"));
+    expect(input).toHaveLength(3);
+    expect(input[0]).not.toHaveProperty("maxSlots");
+    expect(input[1].maxSlots).toBe(3);
+    expect(input[2].maxSlots).toBe(1);
+    const replaced = unifiedTaskPoolMembers(existing, [second, before.members[0]], aiTaskPoolFeatures("first-review"));
+    expect(replaced.slots).toEqual(["", "3", "", ""]);
+    expect(unifiedTaskPoolMembers(existing, members, aiTaskPoolFeatures("publish-classify")).slots).toEqual(existing.slots);
+    expect(existing.slots).toEqual(["", "3", "", ""]);
+  });
+
   it("does not offer rank mutation for non-live or environment-locked tasks", () => {
     const editor = editorOf();
     for (const key of ["human-review#1", "product-embedding#1", "product-intro-check#1"]) {

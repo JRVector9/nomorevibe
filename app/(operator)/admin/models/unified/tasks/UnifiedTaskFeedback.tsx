@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { unifiedTaskImpactSummary, unifiedTaskSavesConfirmed } from "@/lib/operations/model-unified-task-view";
 import type { AssignmentPreview } from "@/lib/operations/stage-panel-model";
 
@@ -9,16 +10,17 @@ export type UnifiedTaskSaveResult = {
 };
 
 /** Critical facts stay in the confirmation. The complete sharing/device inventory is available without repeating it above the action. */
-export function UnifiedTaskImpact({ taskLabel, impact, deviceNotes }: {
-  taskLabel: string; impact: AssignmentPreview["impact"]; deviceNotes: readonly string[];
+export function UnifiedTaskImpact({ taskLabel, impact, deviceNotes, help }: {
+  taskLabel: string; impact: AssignmentPreview["impact"]; deviceNotes: readonly string[]; help?: ReactNode;
 }) {
   return <>
     {impact.filter(entry => entry.tone !== "info").map(entry => <p className="ut-scope-note ut-actual-warning" role="alert" key={entry.text}>{unifiedTaskImpactSummary(entry.text)}</p>)}
     <div className="ut-scope-note ut-confirm-impact"><span className="ut-impact-label">영향을 받는 작업: <b>{taskLabel}</b></span>
       진행 중인 호출은 유지됩니다. 새 업무부터 반영되며, 모델 목록과 홈의 작업 배정도 같은 값으로 바뀝니다.
-      {(impact.length > 0 || deviceNotes.length > 0) && <details className="ut-impact-details"><summary>영향 자세히</summary><div>
+      {(impact.length > 0 || deviceNotes.length > 0 || help) && <details className="ut-impact-details"><summary>영향 자세히</summary><div>
         {impact.map(entry => <p className={entry.tone === "info" ? undefined : "ut-actual-warning"} key={entry.text}>{entry.text}</p>)}
         {deviceNotes.map(note => <p key={note}>{note}</p>)}
+        {help}
       </div></details>}
     </div>
   </>;

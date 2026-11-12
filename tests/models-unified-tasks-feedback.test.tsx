@@ -51,7 +51,7 @@ describe("unified task confirmation and confirmed result", () => {
     expect(compact).toContain("지금 2칸 중 2칸 사용(가득 참)");
     expect(compact).toContain("장비 한도 2칸보다 많이 적어 장비 한도가 먼저 걸립니다");
     expect(compact).not.toContain("소개 · 번역 · 검색");
-    const html = renderToStaticMarkup(<UnifiedTaskImpact taskLabel="1차 AI 검수" deviceNotes={["장비 전체 상세 공유 내역"]} impact={[
+    const html = renderToStaticMarkup(<UnifiedTaskImpact taskLabel="1차 AI 검수" deviceNotes={["장비 전체 상세 공유 내역"]} help={<div>기존 모델별 칸 수 도움말</div>} impact={[
       { tone: "warn", text: full }, { tone: "bad", text: "1순위가 비면 이 단계가 멈춥니다(no_task_models)." }, { tone: "info", text: "모델 B: 다른 단계와 함께 쓰는 내역" },
     ]} />);
     const outside = html.slice(0, html.indexOf("<details"));
@@ -61,6 +61,7 @@ describe("unified task confirmation and confirmed result", () => {
     expect(html).toContain("영향 자세히");
     expect(html).toContain(full);
     expect(html).toContain("장비 전체 상세 공유 내역");
+    expect(html.indexOf("기존 모델별 칸 수 도움말")).toBeGreaterThan(html.indexOf("<details"));
     expect(html).not.toContain("<details open");
   });
 });

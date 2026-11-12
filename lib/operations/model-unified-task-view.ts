@@ -1,5 +1,5 @@
 import type { AiTaskGroup } from "@/lib/llm/ai-tasks";
-import { aiTaskPoolFeatures, aiTaskSupportsPool, aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskPoolFeatures, aiTaskSupportsPool, aiTaskWorkloadPoolApiOnly, type AiTaskPoolFeatures } from "@/lib/llm/ai-task-execution-config";
 import { aiRankReasoningEfforts, aiSameUnderlyingModel, type AiRankChoice } from "./admin-ai-tasks";
 import { aiTaskEditTarget } from "./ai-task-edit-target";
 import { FLOW_RANK_LOCKS, type FlowRankEditor, type FlowRankLine, type FlowRankOption } from "./flow-rank-editor";
@@ -113,6 +113,13 @@ export function unifiedTaskPoolOptions(editor: FlowRankEditor, line: FlowRankLin
       reasoningEfforts: connection ? aiRankReasoningEfforts(line.task, connection, member.model) : [] });
   }
   return choices;
+}
+
+/** A newly filled position starts at the displayed one slot; existing explicit or automatic caps survive model replacement. */
+export function unifiedTaskPoolMembers(draft: AssignmentState, members: readonly (AiRankChoice | null)[], features: AiTaskPoolFeatures): AssignmentState {
+  return { ...draft, members,
+    ...(features.slotCaps ? { slots: Array.from({ length: 4 }, (_, index) => members[index] && !draft.members[index] ? "1" : draft.slots?.[index] ?? "") } : {}),
+  };
 }
 
 /** Empty pool rows start with the current live fallback choices; changing mode never changes saved ranks. */

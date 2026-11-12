@@ -20,7 +20,7 @@ type RankValue = { provider: string; model: string; reasoningEffort?: string };
  * blocked 는 그 칸에서 고를 수 없는 선택지를 흐리게 둔다(저장 검증은 validate 가 그대로 한다).
  * rows 는 좁은 서랍에서 1·2·3순위를 가로 줄로 보인다. 기본 current 는 기존 배치 그대로다.
  */
-export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [], selectionKind = "rank", layout = "current", renderAfterSlot }: {
+export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [], selectionKind = "rank", layout = "current", renderAfterSlot, renderAfterEmptySlot }: {
   stage: Pick<RankStage, "id" | "label" | "slots"> & Partial<Pick<RankStage, "routeId" | "providers">>;
   options: readonly (T & { label: string; group?: string; text?: string; reasoningEfforts?: readonly string[] })[]; value: readonly (T | null)[]; onChange: (value: (T | null)[]) => void;
   slotNames: readonly { provider: string; model: string; reasoningEffort?: string }[]; disabled?: boolean;
@@ -38,6 +38,8 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   layout?: "current" | "rows";
   /** 고른 순위의 label 바깥에 붙일 도구(실제 모델 응답 시험 단추는 root 가 연결한다). */
   renderAfterSlot?: (row: T, index: number) => ReactNode;
+  /** Opt-in visual tool for an empty position; the selected-row callback never receives null. */
+  renderAfterEmptySlot?: (index: number) => ReactNode;
 }) {
   const availability = useModelAvailability();
   const slots = Array.from({ length: stage.slots }, (_, index) => value[index] ?? null);
@@ -142,11 +144,11 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           {effortBlock}
           {row && <><input type="hidden" name={slotNames[index].provider} value={row.provider} /><input type="hidden" name={slotNames[index].model} value={row.model} /></>}
         </>;
-        if (isRows || renderAfterSlot) {
+        if (isRows || renderAfterSlot || renderAfterEmptySlot) {
           return <div key={index} className={isRows ? "fr-rank-row" : "min-w-0"}>
             <label className={isRows ? "fr-rank-row-label text-[13px]" : "flex min-w-0 flex-col gap-1 text-[13px]"}
               data-rank-effort={isRows ? (row && effortName ? "yes" : "no") : undefined}>{labelContents}</label>
-            {row && renderAfterSlot?.(row, index)}
+            {row ? renderAfterSlot?.(row, index) : renderAfterEmptySlot?.(index)}
           </div>;
         }
         return <label key={index} className="flex min-w-0 flex-col gap-1 text-[13px]">{labelContents}</label>;
