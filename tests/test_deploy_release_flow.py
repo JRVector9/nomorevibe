@@ -892,6 +892,32 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': [race]})
         record = self.assert_stopped_without_redeploy('model_drain_not_proven', 'web-mini_swarm_rollback_completed:task_error=' + race)
         self.assertEqual((record['checks']['savedConfigIsTarget'], record['checks']['modelDrain']), (True, False))
+        self.assertEqual(self.model_drain.call_count, 3)  # a readable refusal is never read again
+
+    def test_an_unreadable_drain_probe_is_read_again_briefly_before_the_redeploy(self):
+        # crawler-m3 (the probe's container) may be mid-update in the same batch as reviewer-m3.
+        race = self.race('web-mini')
+        self.model_drain.side_effect = [{'required': True}, {'required': True}, RuntimeError('command_failed:ssh:1'),
+                                        json.JSONDecodeError('Expecting value', '', 0), {'required': True, 'active': 0}, {'required': True}]
+        self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': [race]})
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual((result['status'], result['swarmRedeploys']), ('deployed-and-verified', {'count': 1, 'apps': ['web-mini']}))
+        self.assertEqual(self.model_drain.call_count, 6)
+        self.assertEqual(json.loads((self.execution / 'web-mini.redeploy-model-drain.safe.json').read_text()), {'required': True, 'active': 0})
+
+    def test_the_redeploy_drain_read_is_bounded_and_a_refusal_is_final(self):
+        with patch.object(release, 'model_replacement_gate', side_effect=RuntimeError('command_failed:ssh:255')) as gate, \
+                patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'command_failed:ssh:255'):
+                release._redeploy_drain(self.client, 'reviewer-m3')
+        self.assertEqual((gate.call_count, sleep.call_count), (release.REDEPLOY_DRAIN_ATTEMPTS, release.REDEPLOY_DRAIN_ATTEMPTS - 1))
+        self.assertEqual(release.REDEPLOY_DRAIN_ATTEMPTS * release.REDEPLOY_DRAIN_PAUSE_SECONDS, 30)
+        gate.assert_called_with(self.client, ['reviewer-m3'])
+        with patch.object(release, 'model_replacement_gate', side_effect=ValueError(release.MODEL_DRAIN_REFUSED)) as gate, \
+                patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError, release.MODEL_DRAIN_REFUSED):
+                release._redeploy_drain(self.client, 'reviewer-m3')
+        self.assertEqual((gate.call_count, sleep.call_count), (1, 0))
 
     def test_a_monitor_start_race_rollback_is_redeployed_once_and_verified_again(self):
         calls = []

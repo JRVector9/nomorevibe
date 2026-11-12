@@ -39,6 +39,9 @@ OPERATOR_CHECKS = ('monitor_push_event_state_and_receipts', 'capacity_unknowns_a
 CAPACITY_STATUSES = ('ok', 'review', 'alarm', 'unknown')
 MONITOR_OVERALLS = ('ok', 'unknown', 'alarm')
 SAFE_REASON = re.compile(r'[a-z][a-z0-9_]{0,39}')
+# A runtime read that proves nothing either way: empty or invalid JSON (ValueError covers JSONDecodeError and
+# '<app>_runtime_unknown'), a failed remote command or SSH (RuntimeError 'command_failed:*') or a slow host.
+UNREADABLE_RUNTIME = (ValueError, RuntimeError, subprocess.TimeoutExpired)
 
 
 def _timestamp(value):
@@ -227,6 +230,9 @@ def check_monitor_deployed(client, short, target, original, old_id, manifest, ex
     the deployment itself is proven on the last poll and only that push proof is missing, the run is
     not stopped: the receipt carries verification=human_review_required, the reason code and the last
     observed receipt booleans. A deployment not proven on the last poll still raises TimeoutError.
+    An unreadable runtime read (empty `docker inspect` reply, failed SSH) is not proven yet and is read again
+    until the deadline. A Swarm rollback or pause raises SwarmRollback carrying only the UpdateStatus state;
+    the release coordinator reads the task errors and decides alone whether its single redeploy applies.
     retired_settings are the names this release deleted from the saved env; the contract check expects
     exactly their absence (deploy_git_apps.runtime_contract_matches).
     """
@@ -250,7 +256,13 @@ def check_monitor_deployed(client, short, target, original, old_id, manifest, ex
                 latest.get('status') == 'done' and app.get('applicationStatus') == 'done'):
             if git.stable_config(app) != git.stable_config(expected):
                 raise git.shared.ReleaseStopped(short + '_saved_configuration_mismatch')
-            runtime = git.inspect_runtime(short, app, manifest=manifest)
+            try:
+                runtime = git.inspect_runtime(short, app, manifest=manifest)
+            except UNREADABLE_RUNTIME:
+                # 2026-11-12: while Swarm replaced (or rolled back) the task, `docker inspect` answered nothing.
+                # An empty, invalid or failed read is not a result: read again within the same deadline.
+                time.sleep(pause)
+                continue
             if _runtime_ready(short, app, runtime, target, manifest, expected_runtime, retired_settings):
                 receipts = read_push_receipts(short, runtime)
                 if receipts.get('verified') is True and all(receipts.get(key) is True for key in PUSH_FIELDS):
