@@ -30,6 +30,8 @@ const SCHEDULER = ORACLE_DB_PRINCIPALS.scheduler, ATTEST = ORACLE_DB_PRINCIPALS.
 const policy = { version: 1 as const, release, instances: [{ instanceId, host: "oracle-osaka-smoke" as const }] };
 const SCHEDULED = scheduledJobs({ mode: "versioned", writerContractVersion: 1 }).map(job => job.name);
 const rolesCreated: string[] = [];
+/** 0100 직전 DB 에 아직 없는 표(예: 0152 runtime_settings)의 권한 — 전체 migrate 뒤에 준다 */
+const deferredGrants: string[] = [];
 let pool: postgres.Sql | undefined, created = false, folder = "";
 
 const urlOf = (user?: string) => {
@@ -90,7 +92,11 @@ beforeAll(async () => {
   for (const service of ["scheduler", "attest"] as const) {
     const [create, ...grants] = oracleDbGrantStatements(service, { connectionLimit: 4 });
     await pool.unsafe(create); rolesCreated.push(ORACLE_DB_PRINCIPALS[service]);
-    for (const statement of grants) await pool.unsafe(statement);
+    for (const statement of grants) {
+      const table = /ON TABLE public\.(\w+)/.exec(statement)?.[1];
+      const [exists] = table ? await pool<{ present: boolean }[]>`SELECT to_regclass(${`public.${table}`}) IS NOT NULL AS present` : [{ present: true }];
+      if (exists.present) await pool.unsafe(statement); else deferredGrants.push(statement);
+    }
     await pool.unsafe(`ALTER ROLE ${ORACLE_DB_PRINCIPALS[service]} PASSWORD '${password}'`);
   }
   await pool`UPDATE job_batch_control SET mode='versioned',draining_from=NULL,writer_contract_version=1,policy=${pool.json(policy)},
@@ -120,6 +126,7 @@ it("0100 keeps the existing role predicate whole and only adds the scheduler bra
   const client = postgres(urlOf(), { max: 1, onnotice: () => {} });
   try { await client.unsafe("set statement_timeout = 0"); await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") }); }
   finally { await client.end({ timeout: 5 }); }
+  for (const statement of deferredGrants) await pool!.unsafe(statement);
   const [applied] = await pool!<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
   const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8")) as { entries: unknown[] };
   expect(applied.count).toBe(journal.entries.length);
