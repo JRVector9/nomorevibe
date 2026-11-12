@@ -223,5 +223,6 @@ export function poolCapsText(view: Pick<PoolHelpView, "base" | "lanes" | "taskLa
 /** 예비 문장 */
 export function poolReserveText(view: Pick<PoolHelpView, "base">): string {
   if (view.base?.kind === "consumer") return "예비: 켜면 구성원이 모두 칸 수에 닿거나 쓸 수 없을 때 저장된 순위의 첫 쓸 수 있는 순위가 표를 받습니다. 끄면 그 후보는 기다립니다.";
-  return "예비: 켜면 구성원이 모두 차거나 쉴 때 순위대로(1·2·3순위)가 넘겨받습니다. 끄면 예비 없이 기다립니다.";
+  return "예비: 켜면 구성원이 모두 차거나 쉴 때 순위대로(1·2·3순위)가 넘겨받습니다. 끄면 예비 없이 기다립니다 — 칸 수를 적었으면 장부 줄에 서지 않고 "
+    + "다음 틱에 다시 고르고(빈 칸이 생긴 구성원이 받습니다), 칸 수를 비웠으면 구성원의 장부 줄에 섭니다.";
 }
