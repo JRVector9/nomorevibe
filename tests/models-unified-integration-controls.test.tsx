@@ -47,6 +47,8 @@ describe("통합 운영 설정의 기존 저장 계약", () => {
     expect(html.match(/<details\b/g)).toHaveLength(3); expect(html.match(/class="mu-assist-row"/g)).toHaveLength(4);
     expect(html).not.toContain("<input"); expect(html).not.toContain("<select"); expect(html).not.toContain("<dialog");
     expect(html).toContain("계획 보기 →"); expect(html).toContain("기록 정리 →");
+    expect(html).toContain("그림자 · 기록만"); expect(html).not.toContain("그림자 · 묻고 기록만");
+    expect(html).toContain("한꺼번에 맡는 후보 2건"); expect(html).toContain("한꺼번에 처리하는 묶음 1개");
     for (const action of Object.values(save)) expect(action).not.toHaveBeenCalled();
   });
   it("가져오기 deep link는 실제 계획을 서랍에서 보이고 계획 없음·읽기 실패·쓰기없음을 구분한다", () => {

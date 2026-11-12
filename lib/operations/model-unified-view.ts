@@ -9,7 +9,7 @@ export function unifiedModelTaskUses(view: TaskAssignView): Readonly<Record<stri
     for (const connectionId of new Set(row.choices.filter(choice => choice.connectionId && !choice.off).map(choice => choice.connectionId!))) {
       const choices = row.choices.filter(choice => choice.connectionId === connectionId && !choice.off);
       (uses[connectionId] ??= []).push({ key: row.key, label: row.label,
-        place: row.mode === "fallback" ? choices.map(choice => `${choice.position}순위`).join("·") : row.mode === "workload_pool" ? "동시에" : "실제 적용",
+        place: row.mode === "fallback" ? choices.map(choice => `${choice.position}순위`).join("·") : row.mode === "workload_pool" ? "동시에 사용" : "별도 적용 설정",
         href: `/admin/models#${row.anchor}`, paused: row.paused });
     }
   }

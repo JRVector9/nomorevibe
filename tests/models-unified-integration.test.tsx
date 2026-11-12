@@ -67,6 +67,9 @@ describe("통합 모델 화면 경로와 읽기 전용 고정 자료", () => {
       .toEqual(preview.model.toSorted((a, b) => b.usage - a.usage).map(row => [row.name, row.calls, row.active, row.usage / 100]));
     expect(fixture.assignments.rows.map(row => row.key)).toEqual(preview.task.map(row => row.key));
     expect(fixture.editor.lines).toHaveLength(28);
+    for (const name of ["Claude CLI", "M1max"]) expect(fixture.models.view.rows.find(row => row.name === name))
+      .toMatchObject({ utilization: 0, utilizationText: "0%", bar: 0 });
+    expect(fixture.models.view.rows.find(row => row.name === "LG EXAONE")?.utilizationText).toBe("<1%");
     for (const row of fixture.models.view.rows) {
       const response = preview.model.find(source => source.name === row.name)!.response;
       expect(row.avgSeconds).toBe(response === "—" ? null : Number.parseFloat(response));
@@ -81,7 +84,9 @@ describe("통합 모델 화면 경로와 읽기 전용 고정 자료", () => {
     const fixture = buildModelUnifiedFixture();
     const uses = unifiedModelTaskUses(fixture.assignments);
     const human = fixture.assignments.rows.find(row => row.task === "human-review")!;
-    expect(uses[human.choices[0].connectionId!]).toContainEqual(expect.objectContaining({ key: human.key, place: "실제 적용" }));
+    expect(uses[human.choices[0].connectionId!]).toContainEqual(expect.objectContaining({ key: human.key, place: "별도 적용 설정" }));
+    const pool = fixture.assignments.rows.find(row => row.task === "publish-classify")!;
+    expect(uses[pool.choices[0].connectionId!]).toContainEqual(expect.objectContaining({ key: pool.key, place: "동시에 사용", paused: true }));
     const duplicate = fixture.assignments.rows.find(row => row.task === "crawl-tagline")!;
     expect(uses[duplicate.choices[0].connectionId!].filter(row => row.key === duplicate.key)).toHaveLength(1);
     expect(uses[duplicate.choices[0].connectionId!].find(row => row.key === duplicate.key)?.place).toBe("1순위·3순위");

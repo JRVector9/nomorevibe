@@ -185,7 +185,7 @@ export function UnifiedOperationsControls({ data, readOnly, openImport = false }
       <details id="assist-controls"><summary>LLM 보강 제어 <span>{assist.error ? "읽지 못함" : `보내기 ${sending} / ${assist.controls.length}개`}</span></summary>
         <div className="mu-fold-content"><p>보강 작업의 모델은 위 작업 목록에서 고릅니다. 여기서는 호출과 제품 반영을 제어합니다.</p>
           {assist.error ? <p role="alert">LLM 보강 제어를 읽지 못했습니다({assist.error}).</p> : !assist.controls.length ? <p>보강 제어 행이 없습니다.</p> : assist.controls.map(control => <div className="mu-assist-row" key={control.task}>
-            <span className="mu-assist-label">{control.label}<small>{unifiedAssistModeLabel(control.mode)}{control.confirmationRequired ? " · 확인 필수" : ""}</small></span>
+            <span className="mu-assist-label">{control.label}<small>{control.mode === "shadow" ? "그림자 · 기록만" : unifiedAssistModeLabel(control.mode)}{control.confirmationRequired ? " · 확인 필수" : ""}</small></span>
             <span className="mu-dot" data-idle={!control.dispatchEnabled}>{`보내기 ${control.dispatchEnabled ? "켬" : "끔"}`}</span>
             <button type="button" className="mu-text-btn" aria-label={`${control.label} 보강 제어 설정`} onClick={() => setPanel({ kind: "assist", task: control.task })}>설정 →</button>
           </div>)}
@@ -193,7 +193,7 @@ export function UnifiedOperationsControls({ data, readOnly, openImport = false }
       </details>
       <details id="concurrency"><summary>동시 업무·호출 한도 <span>{concurrency.rowError ? "읽지 못함" : `2차 ${concurrency.fields[0]?.input ?? "?"}건 · 발행 분류 ${concurrency.fields[1]?.input ?? "?"}개`}</span></summary>
         <div className="mu-fold-content"><p>모델별 칸 수는 작업 상세에서, 작업 전체의 동시 업무와 호출 상한은 아래에서 관리합니다.</p>
-          {concurrency.fields.map(field => <div className="mu-manage-row" key={field.path}><span>{field.label}<small>한꺼번에 맡는 업무 {field.input}{field.path.includes("second-review") ? "건" : "개"}</small></span>
+          {concurrency.fields.map(field => <div className="mu-manage-row" key={field.path}><span>{field.label}<small>{field.path.includes("second-review") ? `한꺼번에 맡는 후보 ${field.input}건` : `한꺼번에 처리하는 묶음 ${field.input}개`}</small></span>
             <button type="button" className="mu-text-btn" onClick={() => setPanel({ kind: "limits" })}>한도 보기 →</button></div>)}
           {concurrency.rowError && <p role="alert">동시 업무 설정을 읽지 못했습니다. 현재 기본값을 보이며 저장할 수 없습니다.</p>}
         </div>
