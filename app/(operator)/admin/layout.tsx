@@ -17,7 +17,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return <div className={CONSOLE_FONT_CLASS} style={{ display: "contents" }}><AdminShell account={admin?.login} renderedAt={renderedAt}
     analyticsUrl={admin ? analyticsPropertyUrl() : null}>
     {admin && adminWorkspaceReadOnly() && <aside role="note" className="border-b border-line bg-accent-soft px-6 py-2 text-[13px] text-accent-ink">
-      실데이터 · 읽기 전용 미리보기 — 운영 복제본을 조회합니다. 저장·승인·반려·작업 실행은 차단됩니다.
+      읽기 전용 미리보기 — 저장·승인·반려·작업 실행은 차단됩니다. 데이터 출처는 화면 표시를 확인하세요.
     </aside>}
     {children}
   </AdminShell></div>;
