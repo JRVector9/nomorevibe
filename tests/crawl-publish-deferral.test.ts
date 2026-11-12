@@ -9,7 +9,7 @@ const boundary = vi.hoisted(() => ({
   candidates: vi.fn(), prepare: vi.fn(), authority: vi.fn(), path: vi.fn(),
   agent: vi.fn(), classify: vi.fn(), publish: vi.fn(), hold: vi.fn(),
   recordDrain: vi.fn(),
-  recordFailure: vi.fn(), profile: vi.fn(), request: vi.fn(),
+  recordFailure: vi.fn(), profile: vi.fn(), request: vi.fn(), pool: vi.fn(),
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true, classify: { definitions: {} } }) }));
 vi.mock("@/lib/crawl/repository", () => ({ listCandidates: boundary.candidates }));
@@ -24,6 +24,7 @@ vi.mock("@/lib/jobs/control", () => ({ requestJob: boundary.request }));
 vi.mock("@/lib/operations/categories", () => ({
   classificationReadyPredicate: () => undefined, decisionFor: async () => null, holdClassification: boundary.hold,
 }));
+vi.mock("@/lib/crawl/publication-classify-pool", () => ({ classifyPublicationPool: boundary.pool }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({
   requeueInvalidStarApprovals: async () => 0, reviewApprovalPredicate: () => undefined, starAutoApprovalPredicate: () => undefined,
 }));
@@ -186,5 +187,32 @@ describe("publication classification deferral", () => {
     expect(await publishCandidates(context())).toEqual({ done: true });
     expect(boundary.authority).not.toHaveBeenCalled();
     expectNoFallbackOrPublication();
+  });
+});
+
+/**
+ * 2026-11-12 「동시에」 검토: 분류 묶음이 모델 쪽 사정(포화)으로 미뤄진 틱은 남은 승인 대기열의 새 묶음마다 고르기·장부에 다시 묻지 않는다 —
+ * 예전에는 같은 빈 답을 받으려고 대기열 끝까지 묶음마다 고르기·장부를 읽었다. 이미 분류된 후보의 발행은 계속하고 틱은 포화로 미룬다.
+ */
+describe("「동시에」 분류가 포화로 미뤄진 틱", () => {
+  afterEach(async () => { (await import("@/lib/llm/ai-task-execution-snapshot")).setAiTaskExecutionConfigsForTest([]); });
+  it("첫 미룸 뒤로는 분류를 묻지 않고 기다림으로 둔 채 대기열을 지나 포화로 미룬다", async () => {
+    const { setAiTaskExecutionConfigsForTest } = await import("@/lib/llm/ai-task-execution-snapshot");
+    setAiTaskExecutionConfigsForTest([{ task: "publish-classify", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null, reserveRanks: false,
+      members: [{ memberId: "0b0c0d0e-0000-4000-8000-00000000e0e0" }] } as never]);
+    const dialect = new PgDialect();
+    const pending = Array.from({ length: 35 }, (_, index) => ({ id: index + 1, repo: `owner/tool-${index + 1}`, updatedAt: new Date(2026, 10, 12, 0, 0, 35 - index) }));
+    boundary.candidates.mockImplementation(async (_states: unknown, limit: number, predicate?: SQL) => {
+      const excluded = predicate ? dialect.sqlToQuery(predicate).params : [];
+      return pending.filter(row => !excluded.includes(row.id)).slice(0, limit);
+    });
+    boundary.prepare.mockImplementation(async (candidate: { repo: string }) => ({ input: { repo: candidate.repo }, snapshot: { document: {}, starAutoApproved: false } }));
+    boundary.pool.mockRejectedValue(new ModelCapacityDeferredError("capacity"));
+    let checks = 0;
+    const ctx: JobContext<null> = { cursor: null, save: vi.fn(), log: vi.fn(), hasBudget: () => ++checks < 200 };
+    expect(await publishCandidates(ctx)).toEqual({ done: false, deferred: "model_capacity" });
+    expect(boundary.pool).toHaveBeenCalledTimes(1);   // 첫 묶음 하나만 물었다(classifierConcurrency 1)
+    expect(boundary.publish).not.toHaveBeenCalled();
+    expect(boundary.hold).not.toHaveBeenCalled();     // 분류 못 한 후보를 「분류 없음」으로 보류하지 않는다 — 다음 틱이 다시 묻는다
   });
 });
