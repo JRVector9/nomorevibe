@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { Fragment } from "react";
 import { takedownSignal } from "@/lib/domain/products/takedown-view";
-import { AdminIcon, type AdminIconName } from "./components/AdminIcon";
+import type { AdminIconName } from "./components/AdminIcon";
 import { WORKSPACE_GROUPS, resolveWorkspace, type WorkspaceId } from "./workspace-navigation";
 
 type NavPage = { href: string; label: string; hint: string; icon: AdminIconName };
@@ -122,21 +121,22 @@ export function workspaceBadge(id: WorkspaceId, badges: NavBadges): NavBadge | u
   };
 }
 
+/**
+ * 머리 막대의 메뉴 여섯(2026-11-12 「1인 운영 콘솔 시안」 .bar nav) — 글자만, 지금 메뉴는 굵게 + 밑줄. 차례는 WORKSPACE_GROUPS(매일 운영 → 필요할 때) 그대로다.
+ * 배지는 메뉴 이름 뒤에 작게 붙는다(낭독 글자는 title 그대로).
+ */
 export function AdminNav({ current, search = "", badges = {}, onNavigate }: { current: string; search?: string; badges?: NavBadges; onNavigate?: (href: string) => void }) {
   const active = resolveWorkspace(current, new URLSearchParams(search)).workspace.id;
-  return <nav aria-label="관리자 메뉴" className="prototype-navigation">
-    {WORKSPACE_GROUPS.map((group, index) => <Fragment key={group.title}>
-      <p className="nav-label" id={`admin-nav-group-${index}`}>{group.title}</p>
-      {group.pages.map(page => {
-        const badge = workspaceBadge(page.id, badges);
-        return <Link key={page.id} href={page.href} aria-current={page.id === active ? "page" : undefined} prefetch={false} title={page.label}
-          onNavigate={onNavigate ? () => onNavigate(page.href) : undefined}>
-          <span className="nav-icon" aria-hidden="true"><AdminIcon name={page.icon} /></span><span>{page.label}</span>
-          {badge && <b className="nav-badge" data-tone={badge.tone} title={badge.title}>
-            {badge.title ? <><span aria-hidden="true">{badge.label}</span><span className="admin-vh">{badge.title}</span></> : badge.label}
-          </b>}
-        </Link>;
-      })}
-    </Fragment>)}
+  return <nav aria-label="관리자 메뉴" className="prototype-navigation cs-nav">
+    {WORKSPACE_GROUPS.flatMap(group => group.pages).map(page => {
+      const badge = workspaceBadge(page.id, badges);
+      return <Link key={page.id} href={page.href} aria-current={page.id === active ? "page" : undefined} prefetch={false} title={page.label}
+        onNavigate={onNavigate ? () => onNavigate(page.href) : undefined}>
+        <span>{page.label}</span>
+        {badge && <b className="nav-badge" data-tone={badge.tone} title={badge.title}>
+          {badge.title ? <><span aria-hidden="true">{badge.label}</span><span className="admin-vh">{badge.title}</span></> : badge.label}
+        </b>}
+      </Link>;
+    })}
   </nav>;
 }

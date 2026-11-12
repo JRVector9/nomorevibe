@@ -149,6 +149,9 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
         <span className="sp-facts">{line.idle[0] ? `${line.idle[0].name}과(와) 지금 모델의 결과를 같은 입력으로 견줍니다` : "후보 모델을 골라 지금 모델과 견줍니다"}</span>
       </li>}
     </ol>}
+    {/* 시안 화면 2 의 안내 — 「동시에」를 받는 단계만, 지금 순위대로일 때 */}
+    {step === "view" && savedMode === "fallback" && line.poolSupported && canEdit && !lockReason && <p className="sp-note" data-pool-hint="true">
+      「동시에」로 바꾸면 묶은 모델이 함께 일합니다. 저장하기 전에 달라지는 동시 처리 수를 먼저 보여 줍니다.</p>}
     {line.mode === "workload_pool" && step === "view" && <p className="sp-note" data-pool-summary="true">
       {savedLanes !== null ? `함께 최대 ${savedLanes}건(모델별 칸 수 합)` : "모델별 칸 수 없음 — 장비 칸을 다른 단계와 나눠 씀"}
       {line.features.reserve ? ` · 예비 ${line.reserve ? "켬" : "끔"}` : ""}</p>}

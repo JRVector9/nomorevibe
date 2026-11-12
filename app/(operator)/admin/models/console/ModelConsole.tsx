@@ -7,6 +7,8 @@ import type { ModelConsoleRead } from "@/lib/operations/model-console-read";
 import { SAMPLE_COMPARE_SUPPORTED } from "@/lib/operations/model-sample-compare";
 import { MODELS_DASHBOARD_HREF } from "../../workspace-navigation";
 import { ModelSettingsForm } from "./ModelSettingsForm";
+import { ModelAddFlow } from "../new/ModelAddFlow";
+import { aiModelDisplayName } from "@/lib/operations/admin-ai-tasks";
 import "./model-console.css";
 
 /**
@@ -61,6 +63,9 @@ export function ModelConsole({ data, selected, readOnly }: { data: ModelConsoleR
     {selected && !row && <p role="alert" className="mc-notice">고른 모델을 찾지 못했습니다(지워졌거나 목록을 읽지 못함).</p>}
     {row && <ModelDetail row={row} device={data.devices?.find(device => device.deviceId === row.deviceId) ?? null} secretBox={data.secretBox} readOnly={readOnly}
       now={view.checkedAt} siblings={view.rows.filter(entry => entry.id !== row.id && entry.deviceId === row.deviceId).map(entry => ({ name: entry.name, models: entry.models }))} />}
+    {/* 시안 화면 3 — 목록 아래 「모델 추가」 세 단계. 첫 단계는 여기서 넣고, 넣으면 모델 추가 화면(둘째 단계)으로 간다. 모델 상세를 연 동안은 접어 둔다 */}
+    {!selected && !readOnly && <ModelAddFlow step={1} row={null} missing={false} recommendations={[]} secretBox={data.secretBox} readOnly={readOnly} embedded
+      taken={view.rows.flatMap(entry => [entry.connection.label, aiModelDisplayName(entry.connection)])} />}
   </div>;
 }
 

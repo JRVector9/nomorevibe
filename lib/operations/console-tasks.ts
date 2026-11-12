@@ -1,4 +1,5 @@
 import { HUMAN_BACKLOG_LIMIT } from "@/lib/crawl/human-queue";
+import { HUMAN_BATCH_THRESHOLD_ANCHOR } from "@/lib/crawl/human-batch-model";
 import { AI_TASKS, aiTaskAccepts, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import type { ChangeWatchTask } from "./change-watch";
 import type { Conveyor } from "./conveyor-model";
@@ -557,7 +558,8 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
       fact: [`대기 ${formatCount(human.waiting)}건`, human.oldestDays !== null ? `가장 오래된 것 ${formatCount(human.oldestDays)}일` : null,
         human.decided24h !== null ? `24시간 동안 사람이 끝낸 것 ${formatCount(human.decided24h)}건` : null].filter(Boolean).join(" · "),
       why: agreedText ? `${agreedText}은 표본만 보고 한 번에 끝낼 수 있습니다.` : null,
-      actions: [link("묶음 보기", "/admin/review/batches")],
+      // 「1인 운영 콘솔 시안」의 두 단추 — 묶음 화면에서 표본을 보고 한 번에 결정하고, 위임 문턱은 같은 화면의 문턱 칸에서 본다
+      actions: [link("묶어서 결정", "/admin/review/batches"), link("문턱 보기", `/admin/review/batches#${HUMAN_BATCH_THRESHOLD_ANCHOR}`)],
     });
   }
   if (!inputs.audit) unknown("pile", "감사 거절");

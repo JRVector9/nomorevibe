@@ -104,9 +104,14 @@ export function CommandSearch({ appearance }: { appearance?: "prototype" } = {})
   const activeItem = short ? null : items[active];
 
   return <>
-    <button type="button" className={appearance === "prototype" ? "search-launch" : "admin-search-trigger"} onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="모델·단계·작업·프로젝트 찾기 · 바꾸기 (⌘K)">
-      <AdminIcon name="search" size={15} /><span className="admin-sidebar-label">{appearance === "prototype" ? "찾기 · 바꾸기" : "찾기"}</span><kbd className="admin-sidebar-label">⌘K</kbd>
-    </button>
+    {/* 머리 막대(시안 .bar .find)는 「⌘K 찾기 · 바꾸기」 — 단축키가 앞에 온다. 좁은 화면은 돋보기만(CSS) */}
+    {appearance === "prototype"
+      ? <button type="button" className="search-launch" onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="모델·단계·작업·프로젝트 찾기 · 바꾸기 (⌘K)">
+        <AdminIcon name="search" size={15} /><kbd>⌘K</kbd><span>찾기 · 바꾸기</span>
+      </button>
+      : <button type="button" className="admin-search-trigger" onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="모델·단계·작업·프로젝트 찾기 · 바꾸기 (⌘K)">
+        <AdminIcon name="search" size={15} /><span className="admin-sidebar-label">찾기</span><kbd className="admin-sidebar-label">⌘K</kbd>
+      </button>}
     <dialog ref={dialog} className="admin-confirm admin-search" aria-label="관리자 전역 검색"
       onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <div className="admin-search-body">

@@ -2,9 +2,9 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { formatAgo, formatDetailTime, formatListTime } from "@/lib/format/time";
 import { logger } from "@/lib/observability/logger";
+import { formatKst } from "@/lib/operations/console-tasks";
 import { CHANGE_VERDICT_LABELS, CHANGE_VERDICT_TONES, CHANGE_WATCH_RULES, readChangeWatch, type ChangeWatchRow, type ChangeWatchSnapshot } from "@/lib/operations/change-watch";
-import { ScrollTable } from "../components/ScrollTable";
-import { StatusDot } from "../components/StatusDot";
+import "./console-home.css";
 
 /** 홈에 보이는 줄 수 — 넘으면 판정이 나쁜 줄을 먼저 남기고 나머지는 기록으로 보낸다 */
 export const CHANGE_WATCH_HOME_ROWS = 8;
@@ -17,7 +17,7 @@ const HEADING_ID = "change-watch-h";
  */
 export function ChangeWatch({ fresh = false }: { fresh?: boolean }) {
   return (
-    <Suspense fallback={<ChangeWatchFrame stamp={null}><p className="px-1 text-[13px] text-fg-3" aria-busy="true">바꾼 것을 세는 중…</p></ChangeWatchFrame>}>
+    <Suspense fallback={<ChangeWatchFrame stamp={null}><p className="ch-note" aria-busy="true">바꾼 것을 세는 중…</p></ChangeWatchFrame>}>
       <ChangeWatchLoaded fresh={fresh} />
     </Suspense>
   );
@@ -33,12 +33,12 @@ async function ChangeWatchLoaded({ fresh }: { fresh: boolean }) {
 
 function ChangeWatchFrame({ stamp, children }: { stamp: string | null; children: React.ReactNode }) {
   return (
-    // 블록으로 둔다 — flex 세로 칸은 넓은 표(min-w 560px)의 폭을 따라 넓어져 좁은 화면에서 페이지가 옆으로 밀린다(표 안에서 가로 스크롤해야 한다)
-    <section className="min-w-0 space-y-2" aria-labelledby={HEADING_ID} data-change-watch="">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <h2 id={HEADING_ID} className="text-[15px] font-bold">바꾼 것 지켜보기</h2>
-        <span className="text-[13px] text-fg-3">최근 {CHANGE_WATCH_RULES.windowHours}시간{stamp ? ` · ${stamp}` : ""}</span>
-        <Link prefetch={false} href="/admin/activity" className="ml-auto text-[13px] text-accent hover:underline">기록 →</Link>
+    // 블록으로 둔다 — flex 세로 칸은 넓은 표의 폭을 따라 넓어져 좁은 화면에서 페이지가 옆으로 밀린다(표 안에서 가로 스크롤해야 한다)
+    <section className="ch-watch" aria-labelledby={HEADING_ID} data-change-watch="">
+      <div className="ch-head">
+        <h2 id={HEADING_ID}>바꾼 것 지켜보기</h2>
+        <span className="ch-count">최근 {CHANGE_WATCH_RULES.windowHours}시간{stamp ? ` · ${stamp}` : ""}</span>
+        <Link prefetch={false} href="/admin/activity" className="text-button ch-more">기록 →</Link>
       </div>
       {children}
     </section>
@@ -54,67 +54,62 @@ export function homeRows(rows: readonly ChangeWatchRow[], max = CHANGE_WATCH_HOM
   return { shown: rows.filter(row => keep.has(row)), hidden: rows.length - keep.size };
 }
 
-/** 표 — 때 · 바꾼 것 · 전 → 후 · 판정. watch 가 null 이면 「읽지 못함」(0건이 아니다) */
+/** 판정의 점 색 — 흐름 표와 같은 점 하나 + 짧은 말(시안 .st) */
+const VERDICT_TONE = { ok: "ok", delayed: "warn", failed: "bad", idle: "off" } as const;
+
+/**
+ * 표 — 때 · 바꾼 것 · 바꾸기 전 · 바꾼 뒤 · 판정(2026-11-12 「1인 운영 콘솔 시안」 화면 1, 열 폭 112 · 나머지 · 220 · 220 · 132).
+ * 할 일·흐름 아래 전체 폭에 놓인다. watch 가 null 이면 「읽지 못함」(0건이 아니다)
+ */
 export function ChangeWatchTable({ watch, now }: { watch: ChangeWatchSnapshot | null; now: Date }) {
   if (!watch) return (
     <ChangeWatchFrame stamp={null}>
-      <p role="status" className="rounded-[12px] border border-line bg-bg-card px-4 py-5 text-[13px] text-fg-3">바꾼 것을 읽지 못했습니다 — 다음 새로 고침에서 다시 셉니다.</p>
+      <p role="status" className="ch-empty">바꾼 것을 읽지 못했습니다 — 다음 새로 고침에서 다시 셉니다.</p>
     </ChangeWatchFrame>
   );
   const stamp = `${formatAgo(watch.measuredAt, now)} 셈`;
   if (!watch.rows.length) return (
     <ChangeWatchFrame stamp={stamp}>
-      <p className="rounded-[12px] border border-line bg-bg-card px-4 py-5 text-center text-[13px] text-fg-3">최근 {watch.windowHours}시간에 바꾼 것이 없습니다</p>
+      <p className="ch-empty">최근 {watch.windowHours}시간에 바꾼 것이 없습니다</p>
     </ChangeWatchFrame>
   );
   const { shown, hidden } = homeRows(watch.rows);
   return (
     <ChangeWatchFrame stamp={stamp}>
-      {/* relative — 상태 점의 숨은 글자(.admin-vh, absolute)가 가로 스크롤 칸 밖으로 페이지 폭을 늘리지 않게 */}
-      <div className="relative overflow-hidden rounded-[12px] border border-line bg-bg-card">
-        <ScrollTable label="바꾼 것 지켜보기">
-          <table className="w-full min-w-[560px] table-fixed text-left text-[13px]">
-            {/* 시안 「바꾼 것 지켜보기」의 열 폭(때 100 · 바꾼 것 나머지 · 전 → 후 34% · 판정 112) — 홈 오른쪽 칸이 좁아도 바꾼 것이 잘리지 않게 줄을 바꾼다 */}
-            <colgroup><col className="w-[100px]" /><col /><col className="w-[34%]" /><col className="w-[112px]" /></colgroup>
-            <thead className="border-b border-line bg-bg-soft text-fg-3">
-              <tr><th className="px-3 py-2 font-semibold">때</th><th className="px-3 py-2 font-semibold">바꾼 것</th>
-                <th className="px-3 py-2 font-semibold">전 → 후</th><th className="px-3 py-2 font-semibold">판정</th></tr>
-            </thead>
-            <tbody>
-              {shown.map(row => {
-                const flow = row.beforeText ? `${row.beforeText} → ${row.afterText}` : row.afterText;
-                const why = [row.reason, ...row.notes].filter(Boolean).join(" · ");
-                return (
-                  <tr key={row.key} className="border-b border-line align-top last:border-0" data-verdict={row.verdict}>
-                    <td className="px-3 py-2 tabular-nums text-fg-2" title={formatDetailTime(row.at)}><WhenCell text={formatListTime(row.at, now)} /></td>
-                    {/* 관리자 표의 몸 칸은 td 다(.admin-prototype th 는 머리 줄 모양이라 몸에 쓰면 회색 머리처럼 보인다) */}
-                    <td className="px-3 py-2">
-                      <span className="block font-semibold [overflow-wrap:anywhere]">{row.title}</span>
-                      <span className="block text-fg-3 [overflow-wrap:anywhere]">{row.stage ? `${row.stage} · ` : ""}{row.actor}</span>
-                    </td>
-                    <td className="px-3 py-2 tabular-nums text-fg-2">
-                      <span className="block" title={flow}>{flow}</span>
-                      {row.notes.map(note => <span key={note} className="block text-fg-3">{note}</span>)}
-                    </td>
-                    <td className="px-3 py-2"><StatusDot state={CHANGE_VERDICT_TONES[row.verdict]} label={CHANGE_VERDICT_LABELS[row.verdict]} title={why || undefined} /></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </ScrollTable>
+      <div className="ch-scroll" role="region" aria-label="바꾼 것 지켜보기" tabIndex={0}>
+        <table className="ch-table ch-watch-table">
+          <colgroup><col style={{ width: 112 }} /><col /><col style={{ width: 220 }} /><col style={{ width: 220 }} /><col style={{ width: 132 }} /></colgroup>
+          <thead>
+            <tr><th scope="col">때</th><th scope="col">바꾼 것</th><th scope="col">바꾸기 전</th><th scope="col">바꾼 뒤</th><th scope="col">판정</th></tr>
+          </thead>
+          <tbody>
+            {shown.map(row => {
+              const why = [row.reason, ...row.notes].filter(Boolean).join(" · ");
+              return (
+                <tr key={row.key} data-verdict={row.verdict}>
+                  {/* 시안처럼 「11-12 07:10」 한 줄(KST) — 지난 시간은 마우스를 올린 말에 */}
+                  <td className="n ch-when" title={`${formatDetailTime(row.at)} · ${formatListTime(row.at, now)}`}>{formatKst(row.at)}</td>
+                  <th scope="row">
+                    <span className="ch-what">{row.title}</span>
+                    <span className="ch-sub">{row.stage ? `${row.stage} · ` : ""}{row.actor}</span>
+                  </th>
+                  <td className="q">{row.beforeText ?? "—"}</td>
+                  <td>
+                    <span className="ch-after">{row.afterText}</span>
+                    {row.notes.map(note => <span key={note} className="ch-sub">{note}</span>)}
+                  </td>
+                  <td><span className="ch-st" data-tone={VERDICT_TONE[CHANGE_VERDICT_TONES[row.verdict]]} data-state={CHANGE_VERDICT_TONES[row.verdict]}
+                    title={why || undefined}><i aria-hidden="true" />{CHANGE_VERDICT_LABELS[row.verdict]}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-      <p className="px-1 text-[13px] text-fg-3">
+      <p className="ch-note">
         바꾸기 전 {CHANGE_WATCH_RULES.beforeHours}시간의 시간당 평균과 바꾼 뒤 첫 1시간·지금 최근 1시간의 처리 건수(모델 호출 장부의 끝난 호출)를 견줍니다.
-        {hidden > 0 && <> 그 밖에 {hidden.toLocaleString("ko-KR")}건은 <Link prefetch={false} href="/admin/activity" className="text-accent hover:underline">기록</Link>에 있습니다.</>}
+        {hidden > 0 && <> 그 밖에 {hidden.toLocaleString("ko-KR")}건은 <Link prefetch={false} href="/admin/activity">기록</Link>에 있습니다.</>}
       </p>
     </ChangeWatchFrame>
   );
-}
-
-/** 「08:08 (1시간 전)」 → 시각 한 줄 + 지난 시간 한 줄(좁은 때 칸에서 잘리지 않게) */
-function WhenCell({ text }: { text: string }) {
-  const match = /^(.*?) \((.+)\)$/.exec(text);
-  if (!match) return <span className="whitespace-nowrap">{text}</span>;
-  return <><span className="block whitespace-nowrap">{match[1]}</span><span className="block whitespace-nowrap text-fg-3">{match[2]}</span></>;
 }

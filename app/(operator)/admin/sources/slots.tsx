@@ -1,7 +1,7 @@
 import { isPausedJob } from "@/lib/jobs/status";
 import { buildSourcesView } from "@/lib/operations/sources-model";
 import { readSources } from "@/lib/operations/sources-read";
-import { SourcesConsole } from "./SourcesConsole";
+import { feedAddTaken, SourcesConsole } from "./SourcesConsole";
 import { FeedSourceAdd, type FeedAddKind } from "./new/FeedSourceAdd";
 
 type Csrf = { token: string; expiresAt: number } | null;
@@ -24,7 +24,6 @@ export async function SourcesSlot({ selected, openJob, readOnly, csrf, fresh = f
 export async function FeedSourceAddSlot({ kind, readOnly }: { kind: FeedAddKind | null; readOnly: boolean }) {
   const read = await readSources();
   const view = buildSourcesView(read);
-  const taken = read.settings ? [...read.settings.discover.queries.map(query => query.label), ...view.sources.map(source => source.label)] : [];
   const feedJob = view.sources.find(source => source.feed?.legacy)?.intervalMs ?? null;
-  return <FeedSourceAdd kind={kind} taken={[...new Set(taken)]} jobIntervalMs={feedJob} readOnly={readOnly} />;
+  return <FeedSourceAdd kind={kind} taken={feedAddTaken(view, read.settings)} jobIntervalMs={feedJob} readOnly={readOnly} />;
 }
