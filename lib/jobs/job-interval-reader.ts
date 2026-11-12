@@ -7,7 +7,7 @@ import { jobIntervalOverrides } from "./job-intervals";
 /**
  * scheduler 가 쓰는 잡 주기 덮어쓰기 — runtime_settings 행(id 1)의 jobs.<잡>.intervalMs 만 읽는다(30초 동안 프로세스 안에서 나눠 쓴다).
  *
- * 정기 요청 TX(requestDueJobs) 밖에서 읽는다: 읽기가 실패해도(행 없음·권한 없음 — Oracle scheduler 의 DB 역할에는 runtime_settings 읽기가 없다)
+ * 정기 요청 TX(requestDueJobs) 밖에서 읽는다: 읽기가 실패해도(행 없음·권한 없음 — 2026-11-12 전 Oracle scheduler 역할 정의에는 runtime_settings 읽기가 없었다)
  * 그 TX 가 깨지지 않고, 마지막으로 읽은 값(처음이면 빈 값 = 코드 기본값)으로 돈다. 실패는 5분에 한 번만 다시 묻는다.
  */
 const REFRESH_MS = 30_000;
