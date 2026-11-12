@@ -19,7 +19,8 @@ export function refreshPolicy(pathname: string, search: Pick<URLSearchParams, "g
     || (pathname === "/admin/requests" && tab === "history")) return { intervalMs: 60_000, idleMs: 15_000 };
   if (pathname === "/admin/settings" || pathname === "/admin" || (pathname === "/admin/content" && tab === "ranking")
     || ["/admin/categories", "/admin/evidence", "/admin/github-accounts", "/admin/ranking"].includes(pathname)) return { intervalMs: 60_000, idleMs: 15_000 };
-  if (under("/admin/models")) return pathname === "/admin/models" && !["tasks", "connections", "history"].includes(tab ?? "")
+  // 모델 목록(/admin/models)과 옛 대시보드(/admin/models/dashboard, 2026-11-12 조각 3a 에서 옮김)는 15초, 나머지 모델 화면은 1분
+  if (under("/admin/models")) return (pathname === "/admin/models" || pathname === "/admin/models/dashboard") && !["tasks", "connections", "history"].includes(tab ?? "")
     ? { intervalMs: 15_000, idleMs: 15_000 } : { intervalMs: 60_000, idleMs: 15_000 };
   // 운영센터 — 워커 관측 15초에 맞춘 지금 그대로(10초). 조작 중에도 읽는다(전과 같다)
   if (under("/admin/status")) return { intervalMs: 10_000, idleMs: 0 };

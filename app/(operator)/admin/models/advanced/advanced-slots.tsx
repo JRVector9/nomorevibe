@@ -29,7 +29,7 @@ import { autoProbeDirectEngines, readProbeObservations, recordAutoProbes } from 
 import { readbackServingEndpoint } from "@/lib/operations/admin-serving-contracts";
 import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { roleOverview } from "@/lib/operations/roles";
-import { MODELS_ADVANCED_EDITORS } from "../../workspace-navigation";
+import { MODELS_ADVANCED_EDITORS, MODELS_DASHBOARD_HREF, MODELS_LLM_HREF } from "../../workspace-navigation";
 import { ReviewModelsForm } from "../ReviewModelsForm";
 import { LiveModels } from "../LiveModels";
 import { DevicesPanel } from "../DevicesPanel";
@@ -55,8 +55,11 @@ async function timed<T>(run: () => Promise<T>): Promise<{ value: T; ms: number }
 export function AdvancedEditorsIndex() {
   return <section className="llm-panel" aria-labelledby="advanced-editors-title">
     <div className="llm-panel-head"><h2 id="advanced-editors-title">편집기</h2>
-      <span className="llm-muted text-[13px]">처음 설정하거나 장애를 분석할 때만 엽니다. 매일 보는 것은 대시보드·LLM 운영·작업 배정·기록에 있습니다.</span></div>
+      <span className="llm-muted text-[13px]">처음 설정하거나 장애를 분석할 때만 엽니다. 매일 보는 것은 모델 목록·작업 배정·기록에 있습니다.</span></div>
     <div className="llm-panel-body">
+      {/* 운영 콘솔 조각 3a: 모델 목록이 기본이 된 뒤 옛 기본 화면 둘은 여기서 연다(화면·주소 그대로, 대시보드만 /admin/models/dashboard 로 옮김) */}
+      <p className="llm-empty">옛 기본 화면: <Link prefetch={false} className="llm-link" href={MODELS_DASHBOARD_HREF}>대시보드 →</Link>(접수·장비 점유·단계 띠·먼저 할 일) ·{" "}
+        <Link prefetch={false} className="llm-link" href={MODELS_LLM_HREF}>LLM 운영 →</Link>(연결·CLI 도구 한 줄씩과 연결 편집)</p>
       <ul className="advanced-editors">{MODELS_ADVANCED_EDITORS.map(editor => <li key={editor.id} data-editor={editor.id}>
         <Link prefetch={false} href={editor.href} className="advanced-editor">
           <span className="advanced-editor-name">{editor.label} →</span>

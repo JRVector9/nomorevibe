@@ -96,7 +96,8 @@ export function aiConnectionView(row: ConnectionRecord): AiConnectionView {
   // 목록에서 뺀 모델은 화면·순위 선택지·검증이 보는 이 보기에서 빠진다(저장된 원래 목록과 실행 쪽 스냅숏은 그대로)
   const hidden = hiddenModelsOf(row.options), shown = (id: string) => !hidden.includes(id);
   const models = Array.isArray(row.models) ? row.models.filter((entry): entry is AiConnectionModel => !!entry && typeof entry.id === "string" && shown(entry.id))
-    .map(entry => Object.freeze({ id: entry.id, maxModelLen: typeof entry.maxModelLen === "number" ? entry.maxModelLen : null })) : null;
+    .map(entry => Object.freeze({ id: entry.id, maxModelLen: typeof entry.maxModelLen === "number" ? entry.maxModelLen : null,
+      ...(typeof entry.root === "string" && entry.root ? { root: entry.root } : {}) })) : null;
   const storedOptions = row.options as Record<string, unknown>;
   const cliVersion = row.kind === "cli" && typeof storedOptions.cliVersion === "string" ? storedOptions.cliVersion : null;
   const catalog = row.kind === "cli" && row.cliTool === "opencode"
@@ -113,11 +114,14 @@ export function aiConnectionView(row: ConnectionRecord): AiConnectionView {
 function connectionExtras(options: Record<string, unknown>, kind: string, shown: (id: string) => boolean) {
   const strings = (value: unknown) => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 200) : [];
   const positive = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+  const name = (value: unknown) => typeof value === "string" && value.trim() && value.length <= 80 && !/[\p{Cc}]/u.test(value) ? value.trim() : null;
   return { manualModels: Object.freeze(kind === "api" ? strings(options.manualModels).filter(shown) : []),
     allowedTasks: Object.freeze(strings(options.allowedTasks).filter(id => aiTask(id))),
     reasoningTokenReserve: kind === "api" ? positive(options.reasoningTokenReserve) : null,
     keySetAt: typeof options.keySetAt === "string" && !Number.isNaN(Date.parse(options.keySetAt)) ? options.keySetAt : null,
-    keyValidDays: kind === "api" ? positive(options.keyValidDays) : null };
+    keyValidDays: kind === "api" ? positive(options.keyValidDays) : null,
+    // 운영 콘솔(2026-11-12 3a): 사용자가 정한 모델 이름·장비 묶음 이름(화면 이름만 — 실행 쪽은 읽지 않는다)
+    displayName: name(options.displayName), machine: name(options.machine) };
 }
 export async function listAiConnections(reader?: Reader): Promise<AiConnectionView[]> {
   const load = async (from: Reader) => (await from.select().from(aiConnections).orderBy(asc(aiConnections.kind), asc(aiConnections.label))).map(aiConnectionView);
@@ -461,6 +465,9 @@ export async function saveAiConnection(input: AiConnectionInput, actor: string):
         if (input.allowedTasks?.length) options.allowedTasks = [...input.allowedTasks];
         if (input.kind === "api" && input.reasoningTokenReserve) options.reasoningTokenReserve = input.reasoningTokenReserve;
         if (input.kind === "api" && input.keyValidDays) options.keyValidDays = input.keyValidDays;
+        // 운영 콘솔(3a) 모델 이름·장비 묶음 이름 — 폼이 보낸 때만 바꾼다(undefined = 그대로, null = 지움)
+        if (input.displayName !== undefined) { if (input.displayName) options.displayName = input.displayName; else delete options.displayName; }
+        if (input.machine !== undefined) { if (input.machine) options.machine = input.machine; else delete options.machine; }
         if (input.kind !== "api" || input.key.mode === "clear") delete options.keySetAt;
         else if (input.key.mode === "set") options.keySetAt = new Date(now()).toISOString();
         const cliVersion = cliCatalog?.cliVersion ?? input.cliVersion;

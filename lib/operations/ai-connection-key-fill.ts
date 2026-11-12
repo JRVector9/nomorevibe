@@ -61,7 +61,9 @@ export type ConnectionModelsRead = { ok: true; models: AiConnectionModel[] } | {
 /** GET {주소}/models — 5초, 리다이렉트 없음, 키는 Bearer 로만(readbackServingEndpoint 그대로). 관리 화면의 연결 저장·다시 읽기와 같다. */
 export async function readConnectionModels(baseUrl: string, key: string | null, request: typeof fetch = fetch): Promise<ConnectionModelsRead> {
   const result = await readbackServingEndpoint(`${baseUrl}/chat/completions`, key, request).catch(() => ({ ok: false as const, reason: "unreachable" }));
-  return result.ok ? { ok: true, models: result.models.slice(0, 512).map(model => ({ id: model.id.slice(0, 200), maxModelLen: model.maxModelLen })) }
+  // root(별칭의 원래 모델)는 알려 줄 때만 담는다 — 운영 콘솔 모델 목록이 같은 모델의 두 이름을 한 줄로 합친다(2026-11-12 3a)
+  return result.ok ? { ok: true, models: result.models.slice(0, 512).map(model => ({ id: model.id.slice(0, 200), maxModelLen: model.maxModelLen,
+    ...(model.canonicalModel ? { root: model.canonicalModel.slice(0, 200) } : {}) })) }
     : { ok: false, reason: /^[a-z0-9_]{1,40}$/.test(result.reason) ? result.reason : "unreachable" };
 }
 

@@ -151,11 +151,15 @@ describe("이름 통일 — 메뉴·화면 제목·뒤로 가기가 같은 표 �
   // 2026-11-12 메뉴 여섯: 사람 위임 모델은 메뉴로는 「사람 확인」의 탭이다 — 고급 설정 목록 화면에는 그대로 남는다
   it("두 번째 메뉴는 고급 설정 + 사람 위임 모델을 뺀 편집기 일곱 개이고, 목록 화면과 같은 순서·이름이다", () => {
     expect(MODELS_ADVANCED_HREF).toBe("/admin/models/advanced");
-    expect(WORKSPACE_SECONDARY.modelsAdvanced.map(link => link.label)).toEqual(["고급 설정", "실시간 한도", "장비 한도", "칸 배분", "도우미·감시자", "모델 배정 표", "서빙 계약·등록부", "검색 모델"]);
+    // 운영 콘솔 조각 3a: 옛 기본 화면 둘(대시보드·LLM 운영)이 고급 설정 바로 다음에 온다 — 목록 화면에는 편집기 위의 「옛 기본 화면」 줄로 있다
+    expect(WORKSPACE_SECONDARY.modelsAdvanced.map(link => link.label)).toEqual(["고급 설정", "대시보드", "LLM 운영", "실시간 한도", "장비 한도", "칸 배분", "도우미·감시자",
+      "모델 배정 표", "서빙 계약·등록부", "검색 모델"]);
     const index = renderToStaticMarkup(<AdvancedEditorsIndex />);
     const listed = [...index.matchAll(/class="advanced-editor-name">([^<]+) →</g)].map(match => match[1]);
     expect(listed).toEqual(MODELS_ADVANCED_EDITORS.map(editor => editor.label));
-    expect(listed.filter(label => label !== "사람 위임 모델")).toEqual(WORKSPACE_SECONDARY.modelsAdvanced.slice(1).map(link => link.label));
+    expect(listed.filter(label => label !== "사람 위임 모델")).toEqual(WORKSPACE_SECONDARY.modelsAdvanced.slice(3).map(link => link.label));
+    expect(index).toContain('href="/admin/models/dashboard"');
+    expect(index).toContain('href="/admin/models/llm"');
   });
   it.each(MODELS_ADVANCED_EDITORS.map(editor => [editor.id, editor.href] as const))("%s 화면은 그 이름으로 제목·문서 제목을 짓고 「← 고급 설정」으로 돌아간다", (id, href) => {
     const page = readFileSync(path.join(root, "app/(operator)", href, "page.tsx"), "utf8");

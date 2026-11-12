@@ -51,17 +51,25 @@ export const modelsAdvancedEditor = (id: ModelsAdvancedEditorId) => MODELS_ADVAN
  */
 const PEOPLE_DELEGATE_EDITOR = modelsAdvancedEditor("human");
 const MODELS_MENU_EDITORS = MODELS_ADVANCED_EDITORS.filter(editor => editor.id !== PEOPLE_DELEGATE_EDITOR.id);
-/** 모델 메뉴 › 고급 설정 아래 화면(목록 자체 + 편집기 일곱) */
-const MODELS_ADVANCED_PATHS: readonly string[] = [MODELS_ADVANCED_HREF, ...MODELS_MENU_EDITORS.map(editor => editor.href)];
 /**
- * 옛 「LLM 운영」 탭(?tab=) → 새 화면. live·모르는 값은 대시보드, 용량·장비와 연결은 LLM 운영(연결 행에 한도·편집을 합침).
+ * 운영 콘솔(2026-11-12 조각 3a): /admin/models 는 모델 목록이 되고, 그 자리에 있던 LLM 운영 대시보드는 이 주소로 옮겼다(화면은 그대로).
+ * 대시보드·LLM 운영(연결)은 「고급 설정」의 2차 메뉴에서 연다.
+ */
+export const MODELS_DASHBOARD_HREF = "/admin/models/dashboard";
+export const MODELS_LLM_HREF = "/admin/models/llm";
+/** 모델 메뉴 › 목록 아래 화면 — 모델 추가 세 걸음과 표본 비교(조각 3a) */
+const MODELS_LIST_PATHS: readonly string[] = ["/admin/models/new", "/admin/models/compare"];
+/** 모델 메뉴 › 고급 설정 아래 화면(목록 자체 + 대시보드·LLM 운영 + 편집기 일곱) */
+const MODELS_ADVANCED_PATHS: readonly string[] = [MODELS_ADVANCED_HREF, MODELS_DASHBOARD_HREF, MODELS_LLM_HREF, ...MODELS_MENU_EDITORS.map(editor => editor.href)];
+/**
+ * 옛 「LLM 운영」 탭(?tab=) → 새 화면. live 는 대시보드(이제 고급 설정 아래), 용량·장비와 연결은 LLM 운영(연결 행에 한도·편집을 합침), 모르는 값은 모델 목록.
  * 옛 기록 탭은 기록 메뉴의 「LLM 기록」이다.
  */
-const MODELS_LEGACY_TABS: Readonly<Record<string, { menu: WorkspaceId; tab: string; href: string }>> = {
-  live: { menu: "models", tab: "dashboard", href: "/admin/models" },
+const MODELS_LEGACY_TABS: Readonly<Record<string, { menu: WorkspaceId; tab: string; href: string; secondary?: "dashboard" | "llm" }>> = {
+  live: { menu: "models", tab: "advanced", href: MODELS_DASHBOARD_HREF, secondary: "dashboard" },
   tasks: { menu: "models", tab: "tasks", href: "/admin/models/tasks" },
-  connections: { menu: "models", tab: "llm", href: "/admin/models/llm" },
-  capacity: { menu: "models", tab: "llm", href: "/admin/models/llm" },
+  connections: { menu: "models", tab: "advanced", href: MODELS_LLM_HREF, secondary: "llm" },
+  capacity: { menu: "models", tab: "advanced", href: MODELS_LLM_HREF, secondary: "llm" },
   history: { menu: "log", tab: "llm", href: "/admin/models/history" },
 };
 const modelsLegacyTab = (tab: string | null) => tab !== null && Object.hasOwn(MODELS_LEGACY_TABS, tab) ? MODELS_LEGACY_TABS[tab] : null;
@@ -97,10 +105,9 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "quality", label: "품질관리", href: "/admin/products?tab=quality" },
     { id: "delegate", label: PEOPLE_DELEGATE_EDITOR.label, href: PEOPLE_DELEGATE_EDITOR.href },
   ] },
-  // 2026-11-07 LLM 운영 개편(PR 1·2)의 화면 넷. 옛 ?tab= 주소는 modelsLegacyTabHref 로 새 화면에 넘긴다.
+  // 운영 콘솔(2026-11-12 조각 3a): 기본은 모델 목록(/admin/models). 옛 대시보드·LLM 운영은 「고급 설정」의 2차 메뉴. 옛 ?tab= 주소는 modelsLegacyTabHref 로 넘긴다.
   { id: "models", label: "모델", href: "/admin/models", icon: "sliders", tabs: [
-    { id: "dashboard", label: "대시보드", href: "/admin/models" },
-    { id: "llm", label: "LLM 운영", href: "/admin/models/llm" },
+    { id: "list", label: "모델 목록", href: "/admin/models" },
     { id: "tasks", label: "작업 배정", href: "/admin/models/tasks" },
     { id: "advanced", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
   ] },
@@ -154,6 +161,9 @@ export const WORKSPACE_SECONDARY = {
   /** 고급 설정 — 처음 설정하거나 장애를 분석할 때 여는 편집기. 이름은 MODELS_ADVANCED_EDITORS 하나에서 온다(사람 위임 모델은 사람 확인 메뉴). */
   modelsAdvanced: [
     { id: "overview", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
+    // 옛 기본 화면 둘(2026-11-07 LLM 운영 개편 PR 1·2) — 모델 목록이 기본이 된 뒤 여기서 연다(조각 3a)
+    { id: "dashboard", label: "대시보드", href: MODELS_DASHBOARD_HREF },
+    { id: "llm", label: "LLM 운영", href: MODELS_LLM_HREF },
     ...MODELS_MENU_EDITORS.map(({ id, label, href }) => ({ id, label, href })),
   ],
   /** 사람 확인 › 품질관리 — 옛 주소(감사·공개분 2차·규칙 재검수)에서 보인다. 품질관리 화면 자체는 검사 종류 탭을 직접 그린다 */
@@ -184,6 +194,7 @@ export const WORKSPACE_LEGACY_SCREENS = [
   "/admin/products", "/admin/products/recheck", "/admin/products/[slug]", "/admin/talk", "/admin", "/admin/models",
   "/admin/models/tasks", "/admin/models/limits", "/admin/models/devices", "/admin/models/helpers",
   "/admin/models/assignments", "/admin/models/contracts", "/admin/models/human", "/admin/models/search", "/admin/models/advanced",
+  "/admin/models/dashboard", "/admin/models/llm",
   "/admin/categories", "/admin/evidence", "/admin/ranking",
   "/admin/news", "/admin/github-accounts", "/admin/activity", "/admin/login",
 ] as const;
@@ -242,9 +253,9 @@ function place(pathname: string, search: Search): Place {
     case "/admin/models": {
       if (search.get("advanced") === "1") return { id: "models", tab: "advanced", secondary: WORKSPACE_SECONDARY.modelsAdvanced };
       const legacy = modelsLegacyTab(tab);
-      return legacy ? { id: legacy.menu, tab: legacy.tab } : { id: "models", tab: "dashboard" };
+      return !legacy ? { id: "models", tab: "list" } : legacy.secondary
+        ? { id: legacy.menu, tab: legacy.tab, secondary: WORKSPACE_SECONDARY.modelsAdvanced, secondaryTab: legacy.secondary } : { id: legacy.menu, tab: legacy.tab };
     }
-    case "/admin/models/llm": return { id: "models", tab: "llm" };
     case "/admin/models/tasks": return { id: "models", tab: "tasks" };
     case "/admin/models/history": return { id: "log", tab: "llm" };
     case "/admin/settings": return tab === "history" ? { id: "log", tab: "history" } : { id: "sources", tab: pick(SETTINGS_SOURCE_TABS, tab, "collection") };
@@ -253,7 +264,7 @@ function place(pathname: string, search: Search): Place {
     case "/admin/github-accounts": case "/admin/github-integrations": return { id: "sources", tab: "integrations", secondary: WORKSPACE_SECONDARY.integrations };
   }
   if (MODELS_ADVANCED_PATHS.includes(pathname)) return { id: "models", tab: "advanced", secondary: WORKSPACE_SECONDARY.modelsAdvanced };
-  if (pathname.startsWith("/admin/models/")) return { id: "models", tab: "dashboard" };
+  if (MODELS_LIST_PATHS.includes(pathname) || pathname.startsWith("/admin/models/")) return { id: "models", tab: "list" };
   if (pathname.startsWith("/admin/products/")) return { id: "content", tab: "products" };
   return { id: "home", tab: "flow" };
 }

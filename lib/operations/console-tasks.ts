@@ -80,6 +80,8 @@ export type ConsoleTask = {
   notify: boolean;
   /** 쌓임 정렬 — 지금 속도로 며칠(못 줄면 Infinity) */
   days?: number;
+  /** 쌓임(backlog-eta)의 AI 작업 id — 모델 추가의 「쓸 단계」 권하기가 같은 계산을 쓴다(조각 3a) */
+  stageTask?: string;
 };
 
 export type ConsoleTaskGroup = { key: ConsoleGroupKey; label: string; notify: boolean; tasks: ConsoleTask[];
@@ -426,7 +428,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
       const why = [models.length === 1 ? `쓰는 모델이 ${name(models[0])} 하나입니다.` : null, idleText(def.id)].filter(Boolean).join(" ");
       piling.push(stage.stage);
       eta.push({
-        id: `pile:stage:${stage.stage}`, group: "pile", rule: "backlog-eta", tone: "warn", notify: groups.pile.notify, days,
+        id: `pile:stage:${stage.stage}`, group: "pile", rule: "backlog-eta", tone: "warn", notify: groups.pile.notify, days, stageTask: def.id,
         title: `${josa(label, "이/가")} 쌓입니다`,
         fact: settled > 0 ? `대기 ${formatCount(waiting)}건 · 하루 ${formatCount(settled)}건 처리 · 지금 속도로 ${formatDays(days)}`
           : `대기 ${formatCount(waiting)}건 · 24시간 처리 0건 · 지금 속도로는 줄지 않음`,
