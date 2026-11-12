@@ -584,6 +584,7 @@
 }
 .admin-prototype .mc-drawer::backdrop {
   background: #1c24204d;
+  backdrop-filter: none;
 }
 .admin-prototype .mc-drawer-head {
   position: sticky;
