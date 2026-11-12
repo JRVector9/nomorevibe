@@ -42,7 +42,7 @@ it("lists recent setting changes with where to undo them, and 'away' since my la
   expect(ids).toContain(other);
   expect(desk.changes!.some((change) => change.action === "export")).toBe(false);
   const rank = desk.changes!.find((change) => change.actor === other)!;
-  expect(rank).toMatchObject({ label: "작업 ↔ 모델 순위 저장", undo: { href: "/admin/models/tasks" } });
+  expect(rank).toMatchObject({ label: "작업 ↔ 모델 순위 저장", undo: { href: "/admin/models#tasks" } });
   const pause = desk.changes!.find((change) => change.actor === me)!;
   expect(pause.undo.href).toBe(`/admin/status?tab=jobs&job=it-job-${run}`);
 
