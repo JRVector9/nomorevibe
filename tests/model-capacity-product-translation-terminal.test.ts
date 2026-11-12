@@ -182,7 +182,11 @@ it("checks overlapping durable targets independently of model, owner, source and
     .toEqual({ kind: "deferred", reason: "capacity" });
   expect(fixture.writes).toEqual([]);
   const { PgDialect } = await import("drizzle-orm/pg-core");
-  const query = new PgDialect().sqlToQuery(fixture.queries.at(-1) as import("drizzle-orm").SQL);
+  // 막힌 뒤의 마지막 읽기는 순위 넘김(2026-11-12 검수 F1)의 자기 대기 행 찾기다 — 이 프로세스·같은 경로·다른 모델의 보내지 않은 대기 행만 본다(여기서는 없다)
+  const handover = new PgDialect().sqlToQuery(fixture.queries.at(-1) as import("drizzle-orm").SQL);
+  expect(handover.sql).toContain("owner_instance_id"); expect(handover.sql).toContain("dispatch_binding\" IS NULL");
+  expect(handover.sql).toMatch(/NOT \("model_capacity_requests"\."provider" = \$\d+ AND "model_capacity_requests"\."model" = \$\d+\)/);
+  const query = new PgDialect().sqlToQuery(fixture.queries.at(-2) as import("drizzle-orm").SQL);
   expect(query.sql).toContain("logical_member_keys"); expect(query.sql).toContain("&& ARRAY[");
   // 2026-10-30 결정: fence 는 살아 있는 행(waiting·reserved·dispatched)만 본다 — 미확인 행은 같은 대상의 재접수를 막지 않는다.
   expect(query.sql).toContain("IN ('waiting','reserved','dispatched')"); expect(query.sql).not.toContain("indeterminate");

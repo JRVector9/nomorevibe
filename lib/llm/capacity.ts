@@ -320,7 +320,12 @@ export type Ai1ItemGatewayTerminalEvidence = Readonly<z.infer<typeof ai1ItemGate
  * model_quota (0170): the model is at its per-device cap (`model_capacity_devices.model_limits`) — same handling as route_quota. */
 export type ModelSlotResult = { kind: "granted"; reservation: ModelCapacityReservation }
   | { kind: "deferred"; reason: "disabled" | "draining" | "unmapped" | "capacity" | "queue_full"
-    | "policy_changed" | "withdrawn" | "dispatched" | "device_unconfigured" | "helper_ineligible" | "route_quota" | "model_quota" };
+    | "policy_changed" | "withdrawn" | "dispatched" | "device_unconfigured" | "helper_ineligible" | "route_quota" | "model_quota";
+    /**
+     * 순위 넘김(2026-11-12 검수 F1)을 시험했지만 이 모델이 지금 예약을 줄 수 없었다 — 같은 일은 이 프로세스가 다른 순위(모델)로 세운 대기 행으로 여전히 줄에 서 있다.
+     * reason 은 capacity(포화)이고 이 요청의 행은 없다. capacityRefusalReason 은 이것을 work_busy 가 아닌 포화로 돌려 다음 순위가 이 일을 받게 한다.
+     */
+    queuedAtOtherRank?: true };
 
 export function parseModelCapacityPolicy(value: unknown): ModelCapacityPolicy {
   return modelCapacityPolicySchema.parse(value);

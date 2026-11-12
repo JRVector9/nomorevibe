@@ -159,7 +159,11 @@ it("fences settled same-phase history and old unbound crawl unknown independentl
   expect(await requestCrawlTaglineModelSlot({ ...value.identity, requestId: value.handle.requestId }, input()))
     .toEqual({ kind: "deferred", reason: "capacity" });
   const { PgDialect } = await import("drizzle-orm/pg-core");
-  const query = new PgDialect().sqlToQuery(fixture.queries.at(-1) as import("drizzle-orm").SQL);
+  // 막힌 뒤의 마지막 읽기는 순위 넘김(2026-11-12 검수 F1)의 자기 대기 행 찾기다 — 이 프로세스·같은 경로·다른 모델의 보내지 않은 대기 행만 본다(여기서는 없다)
+  const handover = new PgDialect().sqlToQuery(fixture.queries.at(-1) as import("drizzle-orm").SQL);
+  expect(handover.sql).toContain("owner_instance_id"); expect(handover.sql).toContain("dispatch_binding\" IS NULL");
+  expect(handover.sql).toMatch(/NOT \("model_capacity_requests"\."provider" = \$\d+ AND "model_capacity_requests"\."model" = \$\d+\)/);
+  const query = new PgDialect().sqlToQuery(fixture.queries.at(-2) as import("drizzle-orm").SQL);
   expect(query.sql).toContain("logical_member_keys"); expect(query.sql).toContain("'dispatched','indeterminate','settled'");
   expect(query.sql).toContain("'crawl-tagline'"); expect(query.params).toContain("crawl-tagline:21");
   expect(query.sql).not.toContain("owner_instance_id"); expect(query.sql).not.toContain('"model"');
