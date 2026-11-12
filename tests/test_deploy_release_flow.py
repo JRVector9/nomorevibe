@@ -54,7 +54,9 @@ class StatefulApi:
             self.apps[short].update(sourceType='docker', **{key: payload[key] for key in
                 ('dockerImage', 'username', 'password', 'registryUrl')})
         elif endpoint == 'application.deploy':
-            self.deployments[short] = {'status': 'done', 'deploymentId': 'new-' + short}
+            # A repeated deploy of the same app (the single Swarm start-race redeploy) gets its own new id.
+            count = sum(1 for name, path, _ in self.posts if name == short and path == endpoint)
+            self.deployments[short] = {'status': 'done', 'deploymentId': 'new-' + short + ('' if count == 1 else '-' + str(count))}
         else:
             raise AssertionError('unexpected API write')
 
@@ -391,7 +393,8 @@ class CoordinatorFlowTests(unittest.TestCase):
         real_monitor = load('release_monitor_flow', ROOT / 'scripts/ops/release_monitor.py')
         monitor_module = SimpleNamespace(HUMAN_REVIEW=real_monitor.HUMAN_REVIEW, PUSH_FIELDS=real_monitor.PUSH_FIELDS,
                                          MONITOR_VERIFY_TIMEOUT_SECONDS=real_monitor.MONITOR_VERIFY_TIMEOUT_SECONDS,
-                                         check_monitor_deployed=check_monitor, human_review_record=real_monitor.human_review_record)
+                                         check_monitor_deployed=check_monitor, human_review_record=real_monitor.human_review_record,
+                                         git=real_monitor.git)
         modules = {'release_observer.py': SimpleNamespace(launch_observer=launch_observer), 'release_monitor.py': monitor_module}
         self.launch.side_effect = lambda name, filename: modules[filename]
         report = {'check-failover-readiness.ts': {'overall': 'alarm', 'readiness': {'roles': []}, 'capacityUnknowns': {
@@ -706,6 +709,256 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.snapshot['target'] = copy.deepcopy(self.target)
         self.carry_retired_setting(('web-mini', 'web-m3'))
         self.run_retiring_release_on_carrying_webs(['ABCLLM_API_KEY'])
+
+
+    # ---- 2026-11-12: one redeploy after a proven Swarm start race ------------------------------------------------------
+    # Dokploy reported the deployment done, the new task failed with "No such container: <service>.<slot>.<task>" and
+    # Swarm rolled the service back to the previous spec (reviewer-m3 09-14·11-08·11-10·11-12, monitor-m3 11-12).
+    def race(self, short):
+        return '?No such container: service-' + short + '.1.ie3yzoot3f934t0g73kqqavak?'
+
+    def arm_rollback_reads(self, short, *, settle=None, proven=True, during_settle=None):
+        """Swarm status reads (detection without task errors and the settle wait) and the rolled-back runtime proof."""
+        answers = list(settle if settle is not None else
+                       [{'updateStatusInspected': True, 'updateState': 'rollback_completed', 'taskErrors': [self.race(short)]}])
+        def swarm_status(name, app):
+            self.assertEqual((name, app['appName']), (short, 'service-' + short))
+            self.events.append((name, 'swarm-status-read'))
+            if during_settle: during_settle()
+            return copy.deepcopy(answers.pop(0) if len(answers) > 1 else answers[0])
+        self.swarm = self.stack.enter_context(patch.object(release.shared, 'swarm_status', side_effect=swarm_status))
+        def original(snapshot, name, repo):
+            self.assertIs(snapshot, self.plan['snapshot']); self.assertEqual((name, repo), (short, self.repo))
+            self.events.append((name, 'rolled-back-runtime-proven' if proven else 'rolled-back-runtime-differs'))
+            return proven
+        self.original = self.stack.enter_context(patch.object(release.fleet, 'rolled_back_to_original', side_effect=original))
+        self.stack.enter_context(patch.object(release.shared.time, 'sleep'))
+
+    def arm_start_race(self, first, *, second=None, before_raise=None, **reads):
+        """web-mini's first verification sees a Swarm rollback; the verification after a redeploy passes or sees `second`."""
+        self.checks = []
+        def check(client, short, target, previous_id, **kwargs):
+            self.assertIs(client, self.client); self.assertEqual(target, self.target); self.assertEqual(kwargs, {})
+            self.checks.append((short, previous_id, client.latest(short)['deploymentId']))
+            attempt = sum(1 for row in self.checks if row[0] == short)
+            if short == 'web-mini' and attempt == 1:
+                if before_raise: before_raise()
+                raise release.shared.SwarmRollback(short, first)
+            if short == 'web-mini' and second is not None:
+                raise release.shared.SwarmRollback(short, second)
+            return self.record((short, 'runtime-verified'), {'ready': True})
+        self.health.side_effect = check
+        self.arm_rollback_reads('web-mini', **reads)
+
+    def posts_of(self, short):
+        return [endpoint for name, endpoint, _ in self.client.posts if name == short]
+
+    def assert_stopped_without_redeploy(self, reason, message, rollback=None):
+        with self.assertRaisesRegex(RuntimeError, 'batch_failed_review_all_started_app_receipts') as raised:
+            release.run_release(self.plan, self.execution)
+        # Exactly today's stop: the original Swarm rollback ends the batch, nothing is requested again.
+        self.assertIsInstance(raised.exception.__cause__, rollback or release.shared.SwarmRollback)
+        self.assertEqual(str(raised.exception.__cause__), message)
+        short = message.split('_swarm_')[0]
+        self.assertEqual(self.posts_of(short), ['application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy'])
+        self.assertEqual({name for name, _, _ in self.client.posts}, {short})
+        record = json.loads((self.execution / (short + '.swarm-rollback.safe.json')).read_text())
+        self.assertEqual((record['app'], record['decision'], record['reason']), (short, 'stop', reason))
+        for absent in (short + '.redeploy.attempted.json', short + '.verified.json', 'result.safe.json', 'final.private.json'):
+            self.assertFalse((self.execution / absent).exists(), absent)
+        self.assertTrue((self.execution / (short + '.failed.json')).is_file())
+        self.assertEqual(json.loads((self.execution / 'stopped.safe.json').read_text())['swarmRedeploys'], {'count': 0, 'apps': []})
+        self.assertEqual(self.observations, []); self.public.assert_not_called()
+        return record
+
+    def test_a_proven_swarm_start_race_is_redeployed_once_with_the_same_saved_config_and_verified_again(self):
+        race = self.race('web-mini')
+        self.arm_start_race({'ready': False, 'updateState': 'rollback_started', 'taskErrors': [race], 'serviceImageMatch': False},
+                            settle=[{'updateStatusInspected': True, 'updateState': 'rollback_started', 'taskErrors': [race]},
+                                    {'updateStatusInspected': True, 'updateState': 'rollback_completed', 'taskErrors': [race]}])
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual(result['status'], 'deployed-and-verified')
+        self.assertEqual(result['swarmRedeploys'], {'count': 1, 'apps': ['web-mini']})
+        self.assertEqual(self.posts_of('web-mini'), ['application.saveEnvironment', 'application.saveDockerProvider',
+                                                     'application.deploy', 'application.deploy'])
+        self.assertEqual(self.posts_of('web-m3'), ['application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy'])
+        # The same saved config is deployed again: no setting is written between the two deploy requests.
+        deploys = [payload for name, endpoint, payload in self.client.posts if name == 'web-mini' and endpoint == 'application.deploy']
+        self.assertEqual(deploys[0], deploys[1])
+        # The second verification waits for a deployment newer than the rolled-back one.
+        self.assertEqual(self.checks, [('web-mini', 'old-web-mini', 'new-web-mini'), ('web-mini', 'new-web-mini', 'new-web-mini-2'),
+                                       ('web-m3', 'old-web-m3', 'new-web-m3')])
+        redeploy = [index for index, event in enumerate(self.events) if event == ('web-mini', 'application.deploy')][1]
+        self.assertEqual(self.events[:redeploy].count(('web-mini', 'swarm-status-read')), 2)  # waited for rollback_completed
+        self.assertLess(self.events.index(('web-mini', 'rolled-back-runtime-proven')), redeploy)
+        # Model admission is re-read before the redeploy, like before every replacement batch.
+        self.assertEqual([list(call.args[1]) for call in self.model_drain.call_args_list],
+                         [['web-mini', 'web-m3'], ['web-mini'], ['web-mini'], ['web-m3']])
+        record = json.loads((self.execution / 'web-mini.swarm-rollback.safe.json').read_text())
+        self.assertEqual((record['decision'], record['reason'], record['rolledBackDeploymentId'], record['maxRedeploys']),
+                         ('redeploy_once', 'swarm_start_race', 'new-web-mini', 1))
+        self.assertEqual(record['detected'], {'updateState': 'rollback_started', 'taskErrors': [race]})
+        self.assertEqual(record['settled'], {'updateState': 'rollback_completed', 'taskErrors': [race]})
+        self.assertEqual(record['checks'], {'swarmRolledBack': True, 'startRace': True, 'deploymentDone': True, 'rollbackSettled': True,
+                                            'runtimeIsOriginal': True, 'savedConfigIsTarget': True, 'modelDrain': True})
+        for name in ('web-mini.redeploy-model-drain.safe.json', 'web-mini.redeploy.attempted.json', 'web-mini.redeploy.completed.json'):
+            self.assertTrue((self.execution / name).is_file(), name)
+        self.assertEqual(json.loads((self.execution / 'web-mini.redeploy.attempted.json').read_text())['action'], 'application.deploy')
+        verified = json.loads((self.execution / 'web-mini.verified.json').read_text())
+        self.assertEqual((verified['deploymentId'], verified['swarmRedeploys']), ('new-web-mini-2', 1))
+        self.assertEqual(json.loads((self.execution / 'web-m3.verified.json').read_text())['swarmRedeploys'], 0)
+        self.assertEqual(json.loads((self.execution / 'result.safe.json').read_text())['swarmRedeploys'],
+                         {'count': 1, 'apps': ['web-mini']})
+        self.assertFalse((self.execution / 'web-mini.swarm-rollback-repeated.safe.json').exists())
+        self.assertEqual(self.events[-1], 'observer-launched')
+
+    def test_a_second_rollback_after_the_single_redeploy_stops_the_release(self):
+        race = self.race('web-mini')
+        self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': [race]},
+                            second={'updateState': 'rollback_completed', 'taskErrors': [race]})
+        with self.assertRaisesRegex(RuntimeError, 'batch_failed_review_all_started_app_receipts') as raised:
+            release.run_release(self.plan, self.execution)
+        self.assertIsInstance(raised.exception.__cause__, release.shared.ReleaseStopped)
+        self.assertEqual(str(raised.exception.__cause__), 'web-mini_swarm_rollback_repeated:task_error=' + race)
+        self.assertEqual(self.posts_of('web-mini').count('application.deploy'), 2)
+        self.assertEqual({name for name, _, _ in self.client.posts}, {'web-mini'})
+        self.assertEqual(len(self.checks), 2)
+        repeated = json.loads((self.execution / 'web-mini.swarm-rollback-repeated.safe.json').read_text())
+        self.assertEqual((repeated['decision'], repeated['reason'], repeated['detected']),
+                         ('stop', 'swarm_rollback_repeated', {'updateState': 'rollback_completed', 'taskErrors': [race]}))
+        self.assertEqual(json.loads((self.execution / 'stopped.safe.json').read_text())['swarmRedeploys'],
+                         {'count': 1, 'apps': ['web-mini']})
+        self.assertTrue((self.execution / 'web-mini.redeploy.completed.json').is_file())
+        self.assertTrue((self.execution / 'web-mini.failed.json').is_file())
+        for absent in ('web-mini.verified.json', 'result.safe.json'):
+            self.assertFalse((self.execution / absent).exists(), absent)
+        self.assertEqual(self.observations, []); self.public.assert_not_called()
+
+    def test_a_paused_update_stops_without_waiting_or_a_redeploy(self):
+        self.arm_start_race({'updateState': 'paused', 'updateMessage': 'update paused due to failure'})
+        self.assert_stopped_without_redeploy('swarm_update_paused', 'web-mini_swarm_paused:message=update paused due to failure')
+        self.swarm.assert_not_called(); self.original.assert_not_called()
+
+    def test_a_rollback_that_pauses_while_settling_stops_without_a_redeploy(self):
+        race = self.race('web-mini')
+        self.arm_start_race({'updateState': 'rollback_started', 'taskErrors': [race]},
+                            settle=[{'updateState': 'rollback_started', 'taskErrors': [race]},
+                                    {'updateState': 'rollback_paused', 'taskErrors': [race]}])
+        record = self.assert_stopped_without_redeploy('rollback_not_settled', 'web-mini_swarm_rollback_started:task_error=' + race)
+        self.assertEqual(self.swarm.call_count, 2); self.original.assert_not_called()
+        self.assertFalse(record['checks']['rollbackSettled'])
+
+    def test_any_other_task_error_stops_without_a_redeploy(self):
+        self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': ['task: non-zero exit (1)', self.race('web-mini')]})
+        record = self.assert_stopped_without_redeploy('task_error_not_start_race',
+                                                      'web-mini_swarm_rollback_completed:task_error=task: non-zero exit (1)')
+        self.swarm.assert_not_called(); self.original.assert_not_called()
+        self.assertFalse(record['checks']['startRace'])
+
+    def test_a_start_race_naming_another_service_or_a_changed_error_after_settling_stops(self):
+        race = self.race('web-mini')
+        self.arm_start_race({'updateState': 'rollback_started', 'taskErrors': [race]},
+                            settle=[{'updateState': 'rollback_completed', 'taskErrors': ['task: non-zero exit (137)', race]}])
+        self.assert_stopped_without_redeploy('task_error_not_start_race', 'web-mini_swarm_rollback_started:task_error=' + race)
+        self.original.assert_not_called()
+
+    def test_saved_config_drift_during_the_rollback_stops_without_a_redeploy(self):
+        race = self.race('web-mini')
+        def operator_saved_other_settings():
+            self.client.apps['web-mini']['env'] += 'OPERATOR_CHANGE=1\n'
+        self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': [race]}, before_raise=operator_saved_other_settings)
+        record = self.assert_stopped_without_redeploy('saved_configuration_not_target',
+                                                      'web-mini_swarm_rollback_completed:task_error=' + race)
+        self.assertEqual((record['checks']['runtimeIsOriginal'], record['checks']['savedConfigIsTarget']), (True, False))
+
+    def test_a_runtime_not_proven_to_be_the_original_release_stops_without_a_redeploy(self):
+        race = self.race('web-mini')
+        self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': [race]}, proven=False)
+        record = self.assert_stopped_without_redeploy('runtime_not_original_release',
+                                                      'web-mini_swarm_rollback_completed:task_error=' + race)
+        self.assertFalse(record['checks']['runtimeIsOriginal'])
+
+    def test_another_deployment_during_the_rollback_stops_without_a_redeploy(self):
+        race = self.race('web-mini')
+        def operator_deployed():
+            self.client.deployments['web-mini'] = {'status': 'done', 'deploymentId': 'operator-web-mini'}
+        self.arm_start_race({'updateState': 'rollback_started', 'taskErrors': [race]}, during_settle=operator_deployed)
+        self.assert_stopped_without_redeploy('deployment_changed_during_rollback', 'web-mini_swarm_rollback_started:task_error=' + race)
+
+    def test_reopened_model_admission_before_the_redeploy_stops_without_a_redeploy(self):
+        race = self.race('web-mini')
+        self.model_drain.side_effect = [{'required': True}, {'required': True},
+                                        ValueError('model_replacement_requires_explicit_drain_and_zero_active_calls')]
+        self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': [race]})
+        record = self.assert_stopped_without_redeploy('model_drain_not_proven', 'web-mini_swarm_rollback_completed:task_error=' + race)
+        self.assertEqual((record['checks']['savedConfigIsTarget'], record['checks']['modelDrain']), (True, False))
+        self.assertEqual(self.model_drain.call_count, 3)  # a readable refusal is never read again
+
+    def test_an_unreadable_drain_probe_is_read_again_briefly_before_the_redeploy(self):
+        # crawler-m3 (the probe's container) may be mid-update in the same batch as reviewer-m3.
+        race = self.race('web-mini')
+        self.model_drain.side_effect = [{'required': True}, {'required': True}, RuntimeError('command_failed:ssh:1'),
+                                        json.JSONDecodeError('Expecting value', '', 0), {'required': True, 'active': 0}, {'required': True}]
+        self.arm_start_race({'updateState': 'rollback_completed', 'taskErrors': [race]})
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual((result['status'], result['swarmRedeploys']), ('deployed-and-verified', {'count': 1, 'apps': ['web-mini']}))
+        self.assertEqual(self.model_drain.call_count, 6)
+        self.assertEqual(json.loads((self.execution / 'web-mini.redeploy-model-drain.safe.json').read_text()), {'required': True, 'active': 0})
+
+    def test_the_redeploy_drain_read_is_bounded_and_a_refusal_is_final(self):
+        with patch.object(release, 'model_replacement_gate', side_effect=RuntimeError('command_failed:ssh:255')) as gate, \
+                patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'command_failed:ssh:255'):
+                release._redeploy_drain(self.client, 'reviewer-m3')
+        self.assertEqual((gate.call_count, sleep.call_count), (release.REDEPLOY_DRAIN_ATTEMPTS, release.REDEPLOY_DRAIN_ATTEMPTS - 1))
+        self.assertEqual(release.REDEPLOY_DRAIN_ATTEMPTS * release.REDEPLOY_DRAIN_PAUSE_SECONDS, 30)
+        gate.assert_called_with(self.client, ['reviewer-m3'])
+        with patch.object(release, 'model_replacement_gate', side_effect=ValueError(release.MODEL_DRAIN_REFUSED)) as gate, \
+                patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError, release.MODEL_DRAIN_REFUSED):
+                release._redeploy_drain(self.client, 'reviewer-m3')
+        self.assertEqual((gate.call_count, sleep.call_count), (1, 0))
+
+    def test_a_monitor_start_race_rollback_is_redeployed_once_and_verified_again(self):
+        calls = []
+        def check(client, short, target, original, old_id, manifest, *, expected_runtime, **kwargs):
+            self.assertEqual(kwargs, {}); self.assertEqual(expected_runtime, self.snapshot['runtime'][short])
+            calls.append((old_id, client.latest(short)['deploymentId']))
+            if len(calls) == 1:
+                # The monitor verifier only sees the service UpdateStatus; it reads no task errors itself.
+                raise monitor_module.git.shared.SwarmRollback(short, {'updateState': 'rollback_completed'})
+            self.events.append(('monitor-m3', 'push-verified'))
+            return {'app': short, 'deploymentId': client.latest(short)['deploymentId'], 'deployment': 'done', 'service': 'healthy',
+                    'pushReceipts': {'primary': True, 'external': True}}
+        monitor_module = self.arm_monitor_release(check)
+        self.arm_rollback_reads('monitor-m3')
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual((result['status'], result['deployedApps']), ('deployed-and-verified', ['monitor-m3']))
+        self.assertEqual(result['swarmRedeploys'], {'count': 1, 'apps': ['monitor-m3']})
+        self.assertEqual(self.posts_of('monitor-m3'), ['application.saveEnvironment', 'application.saveDockerProvider',
+                                                       'application.deploy', 'application.deploy'])
+        self.assertEqual(calls, [('old-monitor-m3', 'new-monitor-m3'), ('new-monitor-m3', 'new-monitor-m3-2')])
+        # One read for the task error the verifier lacks, one for the settled rollback; never shared.probe.
+        self.assertEqual(self.swarm.call_count, 2)
+        record = json.loads((self.execution / 'monitor-m3.swarm-rollback.safe.json').read_text())
+        self.assertEqual((record['decision'], record['reason'], record['rolledBackDeploymentId']),
+                         ('redeploy_once', 'swarm_start_race', 'new-monitor-m3'))
+        self.assertEqual(record['detected'], {'updateState': 'rollback_completed', 'taskErrors': [self.race('monitor-m3')]})
+        verified = json.loads((self.execution / 'monitor-m3.verified.json').read_text())
+        self.assertEqual((verified['deploymentId'], verified['swarmRedeploys']), ('new-monitor-m3-2', 1))
+        self.assertEqual(self.final_receipts[0]['deploymentId'], 'new-monitor-m3-2')
+        self.assertTrue((self.execution / 'monitor-m3.redeploy.completed.json').is_file())
+        self.assertEqual(self.events[-1], 'observer-launched')
+
+    def test_a_paused_monitor_update_stops_without_a_redeploy(self):
+        def check(client, short, target, original, old_id, manifest, *, expected_runtime, **kwargs):
+            raise monitor_module.git.shared.SwarmRollback(short, {'updateState': 'paused'})
+        monitor_module = self.arm_monitor_release(check)
+        self.arm_rollback_reads('monitor-m3')
+        self.checks = []
+        self.assert_stopped_without_redeploy('swarm_update_paused', 'monitor-m3_swarm_paused',
+                                             rollback=monitor_module.git.shared.SwarmRollback)
+        self.swarm.assert_not_called(); self.original.assert_not_called()
 
 
 if __name__ == '__main__': unittest.main()

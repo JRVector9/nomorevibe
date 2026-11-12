@@ -193,6 +193,8 @@ Dokploy 설정만 이전 값으로 되돌리고 **다시 배포하지 않는다*
    (`{"app": …, "swarmRollback": …, "taskErrors": […], "action": "redeploy_once"}`), 또 되돌리면
    `<app>_swarm_rollback_repeated:task_error=…`로 멈춘다. `paused`·`rollback_paused`는 다시 배포하지 않고 바로 멈춘다.
    시간 초과도 마지막 태스크 오류를 붙인다(`<app>_verification_timeout:task_error=…`).
+   단축 경로 `npm run deploy -- run`은 2026-11-12부터 더 좁은 경계(시작 경합 오류·원래 릴리스 실행·저장 설정 목표·DRAIN 재확인이
+   모두 증명될 때만, 앱당 1회)로 같은 재배포를 한다 — [단축 배포 절차](deployment-fast-path.md#swarm-시작-경합-되돌림은-한-번만-스스로-다시-배포한다2026-11-12).
 2. **섞인 릴리스에서 다시 시작할 수 없었다.** 재시도가 `web-mini_baseline_release_mismatch`로 거절돼 바뀐 워커 여섯 개를 스냅샷에서 손으로
    되돌린 뒤 처음부터 다시 배포했다.
    → `plan`/`run --resume --snapshot <멈춘 run 의 스냅샷>`은 **같은 목표**(SHA·두 이미지)로 멈춘 run을 이어 간다. 새 스냅샷은 만들지 않는다
