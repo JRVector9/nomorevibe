@@ -604,6 +604,7 @@
   line-height: 1.6;
 }
 .admin-prototype .mc-eyebrow {
+  display: block;
   color: var(--muted);
   font-size: calc(10px + var(--admin-font-delta, 0px));
   letter-spacing: .05em;
@@ -809,6 +810,70 @@
   font-size: calc(14px + var(--admin-font-delta, 0px));
   font-weight: 600;
 }
+.admin-prototype .mc-detail [role="tabpanel"] > .mc-settings-overview {
+  display: block;
+}
+.admin-prototype .mc-drawer .mc-settings-summary {
+  grid-template-columns: 95px minmax(0, 1fr);
+  gap: calc(10px / .8) calc(14px / .8);
+}
+.admin-prototype .mc-settings-editor {
+  margin-top: calc(22px / .8);
+}
+.admin-prototype .mc-settings-editor > h3 {
+  margin-bottom: calc(12px / .8);
+  line-height: 1.6;
+}
+.admin-prototype .mc-compact-settings > form {
+  display: block;
+}
+.admin-prototype .mc-settings-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(12px / .8);
+}
+.admin-prototype .mc-drawer .mc-settings-fields label {
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(5px / .8);
+}
+.admin-prototype .mc-settings-fields label > span {
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .mc-drawer .mc-settings-fields input {
+  width: 100%;
+  max-width: none;
+  padding: calc(8px / .8) calc(10px / .8);
+  border-radius: 5px;
+  font-family: inherit;
+}
+.admin-prototype .mc-settings-help {
+  margin-top: calc(7px / .8);
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .mc-settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(12px / .8);
+  padding-top: calc(17px / .8);
+  margin-top: calc(24px / .8);
+  border-top: 1px solid var(--line);
+}
+.admin-prototype .mc-settings-advanced {
+  display: grid;
+  gap: calc(12px / .8);
+  margin-top: calc(22px / .8);
+  padding-top: calc(22px / .8);
+  border-top: 1px solid var(--line);
+}
+.admin-prototype .mc-settings-diagnostics > section {
+  display: grid;
+  gap: calc(12px / .8);
+  padding-top: calc(22px / .8);
+  margin-top: calc(22px / .8);
+  border-top: 1px solid var(--line);
+}
 .admin-prototype .mc-drawer .mc-muted,
 .admin-prototype .mc-drawer .mc-hint {
   font-size: calc(12px + var(--admin-font-delta, 0px));
@@ -854,6 +919,13 @@
   }
   .admin-prototype .mc-drawer .mc-dl {
     grid-template-columns: 75px minmax(0, 1fr);
+  }
+  .admin-prototype .mc-settings-fields {
+    gap: calc(10px / .8);
+  }
+  .admin-prototype .mc-settings-foot {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .admin-prototype .mc-drawer .mc-form label {
     grid-template-columns: minmax(0, 1fr);

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { buildTaskRankEditor } from "@/lib/operations/flow-rank-editor";
 import { modelFixtureInput, modelFixtureRead } from "./fixtures/model-console";
-import { modelDuplicateAssignments, modelRowsFor } from "@/app/(operator)/admin/models/console/model-console-view";
+import { modelDuplicateAssignments, modelRowsFor, modelUsageText } from "@/app/(operator)/admin/models/console/model-console-view";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnectionAction: vi.fn(), readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn(),
@@ -13,8 +13,48 @@ vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTa
 import { ModelConsole, ModelDetail } from "@/app/(operator)/admin/models/console/ModelConsole";
 import { ModelAttachForm } from "@/app/(operator)/admin/models/console/ModelAttachForm";
 import { ModelAddFlow } from "@/app/(operator)/admin/models/new/ModelAddFlow";
+import { ModelSettingsForm } from "@/app/(operator)/admin/models/console/ModelSettingsForm";
 
 describe("unified model inventory", () => {
+  it("uses compact low-usage text locally while preserving known zero, unknown, and the shared production formatter", () => {
+    const row = modelFixtureRead().view.rows.find(entry => entry.id === "conn-lg-exaone")!;
+    expect(row.utilizationText).toBe("1% 미만");
+    expect(modelUsageText(row)).toBe("<1%");
+    expect(modelUsageText({ utilization: null, utilizationText: "1% 미만" })).toBe("—");
+    expect(modelUsageText({ utilization: 0, utilizationText: "1% 미만" })).toBe("0%");
+    expect(modelUsageText({ utilization: 0.01, utilizationText: "1%" })).toBe("1%");
+  });
+
+  it("opens compact name/limit controls without marking unchanged values dirty and keeps advanced settings folded", () => {
+    const data = modelFixtureRead(), row = data.view.rows[0];
+    const form = renderToStaticMarkup(<ModelSettingsForm row={row} device={null} secretBox={true} readOnly={false} compact />);
+    expect(form).toContain("화면에서 부를 이름");
+    expect(form).toContain(`value="${row.name}"`);
+    expect(form).toContain('id="model-connection-details" class="mc-settings-advanced" hidden=""');
+    expect(form).not.toContain('data-dirty="true"');
+    expect(form).not.toContain(">고치기</button>");
+    expect(form).toContain(">변경 확인</button>");
+    for (const label of ["추론 토큰 여유", "최대 토큰", "쓸 수 있는 단계", "새 키", "쉬게 하기", "키 바꾸기"]) expect(form).toContain(label);
+    const detail = renderToStaticMarkup(<ModelDetail row={row} device={null} secretBox={true} readOnly={false} now={data.view.checkedAt} />);
+    const summary = detail.match(/<dl class="mc-dl mc-settings-summary">[^]*?<\/dl>/)![0];
+    expect([...summary.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1])).toEqual(["이름", "장비", "연결 방식", "서버 목록", "공유 한도"]);
+  });
+
+  it("preserves standalone view-first behavior and read-only/secret protection in compact details", () => {
+    const row = modelFixtureRead().view.rows[0];
+    const standalone = renderToStaticMarkup(<ModelSettingsForm row={row} device={null} secretBox={true} readOnly={false} />);
+    expect(standalone).toContain(">고치기</button>");
+    expect(standalone).not.toContain("화면에서 부를 이름");
+    const locked = renderToStaticMarkup(<ModelSettingsForm row={row} device={null} secretBox={false} readOnly={true} compact />);
+    expect(locked).toContain('disabled="">변경 확인</button>');
+    expect(locked).toMatch(/type="text"[^>]*disabled=""/);
+    expect(locked).toMatch(/type="password"[^>]*disabled=""/);
+    expect(locked).not.toContain(">쉬게 하기</button>");
+    const revealed = renderToStaticMarkup(<ModelSettingsForm row={row} device={null} secretBox={true} readOnly={false} compact revealAdvanced />);
+    expect(revealed).toContain('aria-expanded="true"');
+    expect(revealed).not.toContain('class="mc-settings-advanced" hidden=""');
+  });
+
   it("orders real observations and keeps missing metrics last without changing the source rows", () => {
     const data = modelFixtureRead();
     const rows = [...data.view.rows];
