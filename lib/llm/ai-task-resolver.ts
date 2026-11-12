@@ -350,15 +350,18 @@ export class TextTaskRanks {
 
   /**
    * 순위를 쉬게 한다(이 틱 동안). 같은 순위의 둘째 까닭은 세기만 한다.
-   * 「동시에」에서 같은 연결·같은 장부 이름을 두 자리에 넣은 구성원(반복 선택, 0167)은 한 엔진·한 장부 줄이다 — 한쪽이 서면(포화·한도·엔진 실패·429)
-   * 다른 쪽도 같은 까닭으로 함께 쉰다. 그러지 않으면 쉬지 않은 쪽이 다음 일을 받아 같은 미룸·실패를 되풀이한다(2026-11-12 검토).
+   * 「동시에」에서 같은 연결·같은 장부 이름을 두 자리에 넣은 구성원(반복 선택, 0167)과 그와 같은 예비 순위는 한 엔진·한 장부 줄이다 — 한쪽이 서면
+   * (포화·한도·엔진 실패·429) 나머지도 같은 까닭으로 함께 쉰다. 그러지 않으면 쉬지 않은 쪽이 다음 일을 받아 같은 미룸·실패(엔진이면 호출 기한만큼)를
+   * 되풀이한다(2026-11-12 검토). 순위대로의 반복 순위는 예전 그대로 따로 쉰다.
    */
   pause(binding: Pick<TextTaskRankBinding, "rank" | "memberId">, reason: string): void {
-    this.mark(bindingKey(binding), reason);
-    const own = binding.memberId ? this.primaryBindings().find(row => row.memberId === binding.memberId) : undefined;
+    const key = bindingKey(binding);
+    this.mark(key, reason);
+    if (this.mode !== "workload_pool") return;
+    const all = this.bindings(), own = all.find(row => bindingKey(row) === key);
     if (!own) return;
-    for (const twin of this.primaryBindings())
-      if (twin.memberId !== own.memberId && twin.connectionId === own.connectionId && twin.identity === own.identity && twin.provider === own.provider)
+    for (const twin of all)
+      if (bindingKey(twin) !== key && twin.connectionId === own.connectionId && twin.identity === own.identity && twin.provider === own.provider)
         this.mark(bindingKey(twin), reason);
   }
   private mark(member: string, reason: string) {

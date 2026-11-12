@@ -248,8 +248,9 @@ describe("동시에 — 빈 칸이 없을 때·쉬는 구성원의 지난 일", 
     expect(await ranks.run(async chosen => chosen.identity)).toMatchObject({ kind: "served", value: "gpu3090-qwen" });
   });
 
-  it("줄에 세워 둔 구성원이 이 틱에 쉬면: 같은 이름의 예비 순위가 이어받는다", async () => {
-    const shared = binding(null, "gpu3090-qwen", 1);   // 예비 1순위가 구성원과 같은 장부 이름(운영 사례: gpt-oss 가 구성원이자 예비 1·2순위)
+  it("줄에 세워 둔 구성원이 이 틱에 쉬면: 같은 이름의 (다른 연결) 예비 순위가 이어받는다", async () => {
+    // 같은 장부 이름을 다른 연결(같은 주소의 연결 두 줄)로 묶은 예비 순위 — 같은 연결이면 함께 쉰다(아래 「같은 엔진」)
+    const shared = Object.freeze({ ...binding(null, "gpu3090-qwen", 1), connectionId: "another-connection" });
     const ranks = new TextTaskRanks(resolution([qwen, m1]), config([member("member-qwen", "gpu3090-qwen", 1, null), member("member-m1", "m1max", 2, null)], true),
       resolution([shared]));
     ranks.lanes(1);
@@ -306,6 +307,19 @@ describe("동시에 — 같은 엔진을 두 자리에 넣은 구성원(운영 �
     const ranks = pool();
     for (let index = 0; index < 5 && !ranks.failed(gemmaA, "network"); index++) { /* 연결 거절이 잇따른다 */ }
     expect(ranks.usable().map(row => row.memberId)).toEqual(["member-gpt"]);
+  });
+
+  it("같은 연결·같은 이름의 예비 순위도 함께 쉰다(운영 사례: gpt-oss 가 구성원이자 예비 1·2순위) — 엔진이 내려간 모델을 예비로 다시 부르지 않는다", async () => {
+    const ranks = new TextTaskRanks(resolution([gpt, gemmaA]),
+      config([member("member-gpt", "gpt-oss-120b", 1, null), member("member-gemma-a", "m1-gemma", 2, null)], true),
+      resolution([binding(null, "gpt-oss-120b", 1), binding(null, "gpt-oss-120b", 2), binding(null, "m1-gemma", 3)]));
+    ranks.lanes(1);
+    ranks.pause(gpt, "engine_network");
+    ranks.pause(gemmaA, "capacity");
+    const seen: string[] = [];
+    expect(await ranks.run(async chosen => { seen.push(`${chosen.rank}:${chosen.identity}`); return "ok"; })).toEqual({ kind: "unusable" });
+    expect(seen).toEqual([]);   // 예비 1·2(gpt-oss)·3(m1-gemma) 모두 구성원과 같은 엔진이라 함께 쉰다
+    expect(ranks.saturated()).toBe(true);
   });
 
   it("순위대로의 같은 모델 반복 순위는 그대로다(한 순위가 서도 다른 순위는 쉬지 않는다)", () => {

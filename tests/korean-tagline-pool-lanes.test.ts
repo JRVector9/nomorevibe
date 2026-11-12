@@ -73,6 +73,22 @@ describe("한국어 소개 「동시에」", () => {
     expect(ctx.log).toHaveBeenLastCalledWith("ai_task.ranks", expect.objectContaining({ pool_lanes: 3, pool_members: 2 }));
   });
 
+  // 2026-11-12 검토: 엔진이 막힌 묶음의 순위는 장부 이름으로 다시 찾지 않고 실제로 부른 구성원을 쉬게 한다 —
+  // 같은 이름을 가진 다른 구성원(같은 주소의 연결 두 줄)이나 예비 순위를 대신 쉬게 하면 막힌 구성원이 계속 일을 받는다
+  it("엔진이 막히면 실제로 부른 구성원을 쉬게 한다(같은 장부 이름의 다른 구성원이 아니라)", async () => {
+    const other = member("0b0c0d0e-0000-4000-8000-00000000cccc", QWEN, "0b0c0d0e-0000-4000-8000-0000000000c1", QWEN_BASE, 2, null);
+    const config = Object.freeze({ ...pool(null, null), members: [pool(null, null).members[0], other] });
+    setAiTaskExecutionConfigsForTest([config]);
+    mocks.choose.mockImplementation(async (_config, candidates: readonly TextTaskRankBinding[]) =>
+      candidates.find(row => row.memberId === other.memberId) ?? candidates[0] ?? null);
+    mocks.translate.mockResolvedValue({ ok: false, error: "network" });
+    const ctx = context();
+    await writeKoreanTaglines(ctx);
+    const summary = (ctx.log as ReturnType<typeof vi.fn>).mock.calls.filter(([event]) => event === "ai_task.ranks").at(-1)![1];
+    // 막힌 구성원은 한 번만 불린다(그 뒤로는 쉰다) — 예전에는 같은 이름의 첫 구성원을 쉬게 해 막힌 쪽이 남은 묶음을 모두 받았다
+    expect(summary).toMatchObject({ [`member_served.${other.memberId}`]: 1, [`member_unusable.${other.memberId}.engine_failed`]: 1 });
+  });
+
   it("칸 수를 적지 않은 옛 묶음은 예전처럼 단계 동시 수(1)만큼", async () => {
     setAiTaskExecutionConfigsForTest([pool(null, null)]);
     expect(await writeKoreanTaglines(context())).toEqual({ done: true });

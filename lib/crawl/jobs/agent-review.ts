@@ -152,8 +152,12 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       const avoid = new Set([...blockedModels, ...pausedModels]);
       const note: { poolBusy?: boolean } = {};
       const reviewer = await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined, avoid, note);
-      // 「동시에」: 줄에 설 구성원도 없다(모델 상한·경로 몫이 참·장비 없음) — 모델 쪽 사정이라 후보 탓으로 세지 않고 포화로 센다
-      if (!reviewer && note.poolBusy) { saturated = true; return skip(candidate, "model_deferred", { ranks: pool.length, pool: true }); }
+      // 「동시에」: 줄에 설 구성원도 없다(모델 상한·경로 몫이 참·장비 없음) — 모델 쪽 사정이라 후보 탓으로 세지 않는다. 다음 후보도 같은 답이므로
+      // 새 들임을 멈추고(modelDeferred) 포화로 미룬다(줄이 풀리면 곧 다시)
+      if (!reviewer && note.poolBusy) {
+        modelDeferred = true; saturated = true;
+        return skip(candidate, "model_deferred", { ranks: pool.length, pool: true });
+      }
       // 모든 순위가 이 틱에 쓸 수 없다(쉬는·막힌 모델) — 또는 살아 있는 호출·의도가 이 후보를 풀 밖 모델에 묶었다(first-reviewers.ts)
       if (!reviewer) return skip(candidate, pool.every(row => avoid.has(firstReviewerKey(row))) ? "all_ranks_unusable" : "reviewer_unassigned",
         { ranks: pool.length, unusable: pool.filter(row => avoid.has(firstReviewerKey(row))).length });

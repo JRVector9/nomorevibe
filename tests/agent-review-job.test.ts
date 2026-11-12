@@ -486,6 +486,19 @@ it("a tick that recorded no review while a pool model is paused stays deferred (
   expect(mocks.record).not.toHaveBeenCalled();
 });
 
+// 2026-11-12 「동시에」 검토: 고르기가 줄에 설 구성원도 못 찾으면(모델 상한·경로 몫이 참) 후보 탓(reviewer_unassigned, 건너뜀 상한에 셈)이 아니라 모델 쪽 미룸이다
+it("a 「동시에」 pool with no member that can even queue defers the tick as model capacity, without counting a candidate-bound skip", async () => {
+  mocks.settings = { ...mocks.settings!, reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }, { ...candidate(), id: 3 }]);
+  mocks.choose.mockImplementation(async (_context, _executor, _blocked, note?: { poolBusy?: boolean }) => { if (note) note.poolBusy = true; return null; });
+  const ctx = context();
+  expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.choose).toHaveBeenCalledTimes(1);   // 다음 후보는 들이지 않는다 — 같은 답이다
+  expect(mocks.claim).not.toHaveBeenCalled();
+  const saved = (ctx.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as { firstReviewSkips?: Record<string, unknown> } | undefined;
+  expect(saved?.firstReviewSkips ?? {}).toEqual({});
+});
+
 it("an additive pool still stops all new admission on a global drain", async () => {
   mocks.settings = { ...mocks.settings!, firstReview: { provider: "abcllm", model: "primary-model" },
     firstReviewAdditional: [{ provider: "abcllm", model: "extra-model" }], reviewConcurrency: 1 };
