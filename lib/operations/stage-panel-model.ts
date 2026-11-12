@@ -466,7 +466,7 @@ export function assignmentPreview(input: { task: string; slot: number; before: A
   for (const id of beforeIds.filter(entry => !afterIds.includes(entry))) {
     const found = connection(id);
     const share = others(id);
-    impact.push({ tone: "info", text: `${found?.label ?? "지워진 연결"}을(를) 이 단계에서 뺍니다${share.length ? ` — 다른 단계 ${formatCount(share.length)}개는 계속 씁니다` : ""}.` });
+    impact.push({ tone: "info", text: `${josa(found?.label ?? "지워진 연결", "을/를")} 이 단계에서 뺍니다${share.length ? ` — 다른 단계 ${formatCount(share.length)}개는 계속 씁니다` : ""}.` });
   }
   if (after.mode === "fallback" && !after.ranks[0]) impact.push({ tone: "bad", text: "1순위가 비면 이 단계가 멈춥니다(no_task_models)." });
   if (after.mode === "workload_pool" && !chosen(after.members).length) impact.push({ tone: "bad", text: "함께 쓸 모델이 없습니다 — 하나 이상 고르세요." });

@@ -8,6 +8,7 @@ vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTa
 vi.mock("@/app/(operator)/admin/models/limits/actions", () => ({ saveRuntimeLimits: vi.fn() }));
 
 import { StagePanel } from "@/app/(operator)/admin/flow/StagePanel";
+import type { StageModelsInitial } from "@/app/(operator)/admin/flow/StageModels";
 import type { AiConnectionView, AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
 import { buildChangeWatch, collectChanges } from "@/lib/operations/change-watch";
 import { buildConsoleTasks } from "@/lib/operations/console-tasks";
@@ -33,7 +34,7 @@ function editor(executions = consoleFixtureExecutions()) {
 }
 
 function render(key: StagePanelInput["key"], options: { csrf?: typeof csrf | null; lockReason?: string | null; withEditor?: boolean;
-  executions?: ReturnType<typeof consoleFixtureExecutions> } = {}) {
+  executions?: ReturnType<typeof consoleFixtureExecutions>; modelsInitial?: StageModelsInitial } = {}) {
   const inputs = consoleFixtureInputs();
   const executions = options.executions ?? consoleFixtureExecutions();
   const panel = buildStagePanel({ key, now: inputs.now, conveyor: inputs.conveyor as StagePanelInput["conveyor"], inputs, board: buildConsoleTasks(inputs),
@@ -43,7 +44,8 @@ function render(key: StagePanelInput["key"], options: { csrf?: typeof csrf | nul
   const watch = buildChangeWatch(collectChanges(WATCH_AUDIT, WATCH_CONTEXT), WATCH_LEDGER, WATCH_NOW);
   return renderToStaticMarkup(<StagePanel panel={panel} editor={options.withEditor === false ? null : editor(executions)} context={previewContext(inputs)} limits={limits}
     limitRows={scope.rows} limitImpact={scope.impact} changes={stageChanges(watch.rows, panel)} changesRead csrf={options.csrf === undefined ? csrf : options.csrf}
-    jobVersions={{ "crawl-agent-review": 27001, "crawl-fetch": 3 }} readOnly={false} lockReason={options.lockReason ?? null} now={new Date(inputs.now)} />);
+    jobVersions={{ "crawl-agent-review": 27001, "crawl-fetch": 3 }} readOnly={false} lockReason={options.lockReason ?? null} now={new Date(inputs.now)}
+    modelsInitial={options.modelsInitial} />);
 }
 
 describe("stage panel — AI 1차 (fixture 2026-11-12 08:59 KST)", () => {
@@ -146,5 +148,36 @@ describe("stage panel — other cases", () => {
     expect(plain).toMatch(/함께 gpu3090-qwen 이 단계 5칸 · 지금 \d+\/5칸/);
     expect(plain).toContain("함께 최대 6건(모델별 칸 수 합) · 예비 켬");
     expect(plain).toContain("예비로 쓰는 순위(묶음이 모두 서면): 1순위 m3-gpt-oss");
+  });
+
+  it("edits 「동시에」 with the task form's slot and reserve fields, and confirms the slot sum before saving (2a ↔ 2b)", () => {
+    const supa = { provider: "conn-supa-direct", model: "supa" }, gpu = { provider: "conn-gpu3090-qwen", model: "qwen3.8-flash-next" };
+    const ranks = [{ provider: "conn-m3-gpt-oss", model: "gpt-oss-120b" }];
+    // 고치는 걸음 — 작업 배정 실행 방식 폼과 같은 칸 수·예비 칸(이름은 사용자가 정한 이름)
+    const edit = render("product-translate", { modelsInitial: { key: "product-translate#1", step: "edit",
+      draft: { mode: "workload_pool", ranks, members: [supa, gpu], slots: ["1", "5"], reserve: true } } });
+    expect(edit).toContain('data-pool-slots="true"');
+    expect(edit).toMatch(/aria-label="함께 1 칸 수"[^>]*value="1"/);
+    expect(edit).toMatch(/aria-label="함께 2 칸 수"[^>]*value="5"/);
+    expect(text(edit)).toContain("함께 최대 6건을 처리합니다.");
+    expect(edit).toMatch(/data-pool-reserve="true"><input type="checkbox"[^>]*checked=""/);
+    // 칸 수를 하나만 적으면 작업 배정 폼과 같은 문장으로 막는다
+    const partial = render("product-translate", { modelsInitial: { key: "product-translate#1", step: "edit",
+      draft: { mode: "workload_pool", ranks, members: [supa, gpu], slots: ["1", ""], reserve: false } } });
+    expect(text(partial)).toContain("칸 수는 모든 모델에 적거나 모두 비워 주세요.");
+    expect(partial).toMatch(/<button type="button" class="button small primary" disabled="">바뀌는 내용 확인<\/button>/);
+    // 저장 전 확인 — 동시 처리는 칸 수 합, 함께 쓰는 모델은 칸 수와 함께, 예비는 따로 한 줄
+    const confirm = text(render("product-translate", { modelsInitial: { key: "product-translate#1", step: "confirm",
+      draft: { mode: "workload_pool", ranks, members: [supa, gpu], slots: ["1", "5"], reserve: true } } }));
+    expect(confirm).toContain("공개 번역 배정을 바꿉니다");
+    expect(confirm).toContain("방식 순위대로 동시에");
+    expect(confirm).toContain("동시 처리 한 모델씩(1순위가 막히면 다음 순위) 모델 2개가 함께 · 최대 6건(칸 수 합)");
+    expect(confirm).toContain("함께 쓰는 모델 없음 supa-direct 1칸 + gpu3090-qwen 5칸");
+    expect(confirm).toContain("예비 없음 순위(1·2·3)로 이어 처리");
+    // 1차 심사는 칸 수·예비를 따르지 않는다(2b 지원 표) — 칸 수·예비 칸이 없다
+    const first = render("first", { modelsInitial: { key: "first-review#1", step: "edit", draft: { mode: "workload_pool", ranks, members: [gpu], slots: [], reserve: false } } });
+    expect(first).not.toContain('data-pool-slots="true"');
+    expect(first).not.toContain('data-pool-reserve="true"');
+    expect(text(first)).toContain("이 작업은 아직 모델별 칸 수·예비를 따르지 않습니다");
   });
 });

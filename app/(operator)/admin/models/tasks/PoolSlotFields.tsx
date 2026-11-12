@@ -33,6 +33,7 @@ export function PoolSlotFields({ value, slots, disabled, onChange, lanes, nameOf
 export function PoolReserveField({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
   return <label className="flex min-w-0 items-start gap-2 text-[13px]" data-pool-reserve="true">
     <input type="checkbox" checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} className="mt-1" />
-    <span>예비 · 묶은 모델이 모두 설 때(실패·한도 초과·쉼) 이 작업의 순위(1·2·3)로 이어서 처리합니다. 끄면 예비 없이 기다립니다.</span>
+    {/* 관리자 .flex 는 줄을 넘긴다(flex-wrap) — 글이 상자 밑으로 떨어지지 않게 글 칸이 줄어들게 둔다 */}
+    <span className="min-w-0 flex-1">예비 · 묶은 모델이 모두 설 때(실패·한도 초과·쉼) 이 작업의 순위(1·2·3)로 이어서 처리합니다. 끄면 예비 없이 기다립니다.</span>
   </label>;
 }

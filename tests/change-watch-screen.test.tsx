@@ -52,9 +52,12 @@ describe("홈 · 바꾼 것 지켜보기 표", () => {
     expect(plain).toContain("접수 중단 → 다시 열림 (18분)");
     expect(plain).toContain("판정 못 함");
     expect(plain).toContain("잰 구간에 접수 중단 9분이 겹칩니다");
-    // 상태는 점 + 짧은 말, 바꾼 때는 오늘이면 「07:10 (2시간 전)」
+    // 상태는 점 + 짧은 말, 바꾼 때는 오늘이면 「07:10」 아래에 「2시간 전」(좁은 때 칸 — 시안 열 폭 100px)
     expect(html).toMatch(/data-state="failed"/);
-    expect(plain).toContain("07:10 (2시간 전)");
+    expect(plain).toContain("07:10 2시간 전");
+    expect(html).toContain('<col class="w-[100px]"/><col/><col class="w-[34%]"/><col class="w-[112px]"/>');
+    // 바꾼 것은 잘라 내지 않고 줄을 바꾼다
+    expect(html).not.toMatch(/class="block truncate font-semibold"/);
     // 쓰기 수단이 없다
     expect(html).not.toMatch(/<form|<button/);
   });

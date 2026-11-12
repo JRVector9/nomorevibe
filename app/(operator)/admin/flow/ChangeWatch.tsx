@@ -74,7 +74,8 @@ export function ChangeWatchTable({ watch, now }: { watch: ChangeWatchSnapshot | 
       <div className="relative overflow-hidden rounded-[12px] border border-line bg-bg-card">
         <ScrollTable label="바꾼 것 지켜보기">
           <table className="w-full min-w-[560px] table-fixed text-left text-[13px]">
-            <colgroup><col className="w-[128px]" /><col /><col className="w-[38%]" /><col className="w-[124px]" /></colgroup>
+            {/* 시안 「바꾼 것 지켜보기」의 열 폭(때 100 · 바꾼 것 나머지 · 전 → 후 34% · 판정 112) — 홈 오른쪽 칸이 좁아도 바꾼 것이 잘리지 않게 줄을 바꾼다 */}
+            <colgroup><col className="w-[100px]" /><col /><col className="w-[34%]" /><col className="w-[112px]" /></colgroup>
             <thead className="border-b border-line bg-bg-soft text-fg-3">
               <tr><th className="px-3 py-2 font-semibold">때</th><th className="px-3 py-2 font-semibold">바꾼 것</th>
                 <th className="px-3 py-2 font-semibold">전 → 후</th><th className="px-3 py-2 font-semibold">판정</th></tr>
@@ -85,11 +86,11 @@ export function ChangeWatchTable({ watch, now }: { watch: ChangeWatchSnapshot | 
                 const why = [row.reason, ...row.notes].filter(Boolean).join(" · ");
                 return (
                   <tr key={row.key} className="border-b border-line align-top last:border-0" data-verdict={row.verdict}>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-fg-2" title={formatDetailTime(row.at)}>{formatListTime(row.at, now)}</td>
+                    <td className="px-3 py-2 tabular-nums text-fg-2" title={formatDetailTime(row.at)}><WhenCell text={formatListTime(row.at, now)} /></td>
                     {/* 관리자 표의 몸 칸은 td 다(.admin-prototype th 는 머리 줄 모양이라 몸에 쓰면 회색 머리처럼 보인다) */}
                     <td className="px-3 py-2">
-                      <span className="block truncate font-semibold" title={row.title}>{row.title}</span>
-                      <span className="block truncate text-fg-3">{row.stage ? `${row.stage} · ` : ""}{row.actor}</span>
+                      <span className="block font-semibold [overflow-wrap:anywhere]">{row.title}</span>
+                      <span className="block text-fg-3 [overflow-wrap:anywhere]">{row.stage ? `${row.stage} · ` : ""}{row.actor}</span>
                     </td>
                     <td className="px-3 py-2 tabular-nums text-fg-2">
                       <span className="block" title={flow}>{flow}</span>
@@ -109,4 +110,11 @@ export function ChangeWatchTable({ watch, now }: { watch: ChangeWatchSnapshot | 
       </p>
     </ChangeWatchFrame>
   );
+}
+
+/** 「08:08 (1시간 전)」 → 시각 한 줄 + 지난 시간 한 줄(좁은 때 칸에서 잘리지 않게) */
+function WhenCell({ text }: { text: string }) {
+  const match = /^(.*?) \((.+)\)$/.exec(text);
+  if (!match) return <span className="whitespace-nowrap">{text}</span>;
+  return <><span className="block whitespace-nowrap">{match[1]}</span><span className="block whitespace-nowrap text-fg-3">{match[2]}</span></>;
 }

@@ -91,6 +91,13 @@
 .admin-prototype .mc-table .q {
   color: var(--muted);
 }
+/* 장비 칸은 한 줄 — 긴 장비 이름(기본은 장비 id)이 줄을 세 줄로 늘려 숫자 열이 들쭉날쭉해지지 않게 자르고, 전체는 title 로 본다(운영 콘솔 통합) */
+.admin-prototype .mc-table td.mc-machine {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .admin-prototype .mc-table td.top {
   vertical-align: top;
 }

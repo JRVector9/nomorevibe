@@ -42,7 +42,7 @@ export function ModelConsole({ data, selected, readOnly }: { data: ModelConsoleR
           {view.rows.map(entry => <tr key={entry.id} data-selected={entry.id === selected ? "true" : undefined} data-model={entry.id}>
             <th scope="row"><Link prefetch={false} scroll={false} href={`${modelHref(entry.id)}#model-detail`}
               aria-current={entry.id === selected ? "true" : undefined}>{entry.name}</Link></th>
-            <td className="q">{entry.machine}</td>
+            <td className="q mc-machine" title={entry.machine}>{entry.machine}</td>
             <td className="n">{formatCount(entry.limit)}</td>
             <td className="n">{entry.active === null ? "—" : `${formatCount(entry.active)} / ${formatCount(entry.limit)}`}</td>
             <td><span className="mc-use" data-idle={entry.utilization !== null && entry.utilization < 0.05 ? "true" : undefined}>

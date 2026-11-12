@@ -24,15 +24,21 @@ import { PoolReserveField, PoolSlotFields } from "../models/tasks/PoolSlotFields
  * 칸 수·예비는 실행 쪽이 따르는 작업에서만 보인다(line.features — aiTaskPoolFeatures). 구성원 검사는 작업 배정 폼과 같은 함수(task-pool-form poolMemberIssues).
  */
 type Step = "view" | "edit" | "confirm" | "saving" | "done";
-type Props = { lines: StageModelLine[]; editor: FlowRankEditor | null; context: PreviewContext; lockReason: string | null };
+/** 처음 열 때의 걸음(시험·화면 확인용 — RankDrawer 의 initial 과 같은 뜻). 없으면 늘 「보기」에서 시작한다 */
+export type StageModelsInitial = { key: string; step: "edit" | "confirm"; draft: AssignmentState };
+type Props = { lines: StageModelLine[]; editor: FlowRankEditor | null; context: PreviewContext; lockReason: string | null; initial?: StageModelsInitial;
+  /** 단계 이름(흐름 표의 말) — 작업이 하나인 단계의 저장 전 확인 제목(「AI 1차 배정을 바꿉니다」) */
+  stageLabel?: string };
 type Answer = { ok?: true; message?: string; issues?: string[]; warnings?: string[] } | null;
 
 const POOL_SLOTS = Array.from({ length: 4 }, (_, index) => ({ provider: `pool${index + 1}Connection`, model: `pool${index + 1}Model`,
   reasoningEffort: `pool${index + 1}ReasoningEffort` }));
 
-export function StageModels({ lines, editor, context, lockReason }: Props) {
+export function StageModels({ lines, editor, context, lockReason, initial, stageLabel }: Props) {
   return <div className="sp-models">{lines.map(line => <ModelLine key={line.key} line={line} showLabel={lines.length > 1}
-    flowLine={editor?.lines.find(entry => entry.key === line.key) ?? null} editor={editor} context={context} lockReason={lockReason} />)}</div>;
+    title={lines.length > 1 || !stageLabel ? line.label : stageLabel}
+    flowLine={editor?.lines.find(entry => entry.key === line.key) ?? null} editor={editor} context={context} lockReason={lockReason}
+    initial={initial?.key === line.key ? initial : undefined} />)}</div>;
 }
 
 /** 저장된 작업 분산 구성원 → 선택 값 */
@@ -55,14 +61,14 @@ function poolOptions(flowLine: FlowRankLine, connections: readonly AiConnectionV
   return options;
 }
 
-function ModelLine({ line, showLabel, flowLine, editor, context, lockReason }: { line: StageModelLine; showLabel: boolean; flowLine: FlowRankLine | null;
-  editor: FlowRankEditor | null; context: PreviewContext; lockReason: string | null }) {
+function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReason, initial }: { line: StageModelLine; showLabel: boolean; title: string; flowLine: FlowRankLine | null;
+  editor: FlowRankEditor | null; context: PreviewContext; lockReason: string | null; initial?: StageModelsInitial }) {
   const router = useRouter();
   const savedMode = flowLine?.execution?.mode ?? line.mode;
   const before: AssignmentState = { mode: savedMode, ranks: flowLine?.saved ?? [], members: savedMembers(flowLine),
     slots: poolSlotTexts(flowLine?.execution?.members ?? []), reserve: flowLine?.execution?.reserveRanks ?? false };
-  const [step, setStep] = useState<Step>("view");
-  const [draft, setDraft] = useState<AssignmentState>(before);
+  const [step, setStep] = useState<Step>(initial?.step ?? "view");
+  const [draft, setDraft] = useState<AssignmentState>(initial?.draft ?? before);
   const [ack, setAck] = useState(false);
   const [results, setResults] = useState<{ ok: boolean; text: string; issues: string[]; warnings: string[] }[]>([]);
   // 바꿀 수 없는 까닭 — 순위를 못 읽음 · 화면에서 못 바꾸는 작업(소개 검수) · 실제 적용 설정이 따로 있는 작업
@@ -161,9 +167,10 @@ function ModelLine({ line, showLabel, flowLine, editor, context, lockReason }: {
           <p className="sp-note">{line.features.slotCaps
             ? "고른 모델이 함께 처리합니다. 모델마다 이 단계에 내줄 칸 수를 적으면 그 합만큼 함께 돌고, 한 모델이 서도 남은 모델이 계속합니다."
             : "고른 모델이 일을 나눠 처리합니다. 같은 모델을 두 번 고르면 그 모델이 더 많이 맡습니다. 동시 실행 수는 장비 칸이 정합니다(이 작업은 아직 모델별 칸 수·예비를 따르지 않습니다)."}</p>
+          {/* 좁은 패널에서는 순위 고르기와 같은 가로 줄(rows) — 화면 폭 기준 네 칸 격자를 쓰지 않는다 */}
           <RankSelects<AiRankChoice> stage={{ id: `sp-pool-${line.key}`, label: line.label, slots: 4 }} selectionKind="pool" options={poolChoices}
             connections={editor.connections} value={draft.members} onChange={members => setDraft(current => ({ ...current, members }))} slotNames={POOL_SLOTS}
-            showProvider={false} note={null} validate={values => poolMemberIssues(values, draft.slots ?? [], editor.connections, poolRules)} />
+            showProvider={false} note={null} layout="rows" validate={values => poolMemberIssues(values, draft.slots ?? [], editor.connections, poolRules)} />
           {line.features.slotCaps && <PoolSlotFields value={draft.members} slots={draft.slots ?? []} disabled={false} nameOf={nameOf} lanes={draftLanes}
             onChange={(index, raw) => setDraft(current => ({ ...current,
               slots: Array.from({ length: 4 }, (_, at) => at === index ? raw : current.slots?.[at] ?? "") }))} />}
@@ -177,7 +184,7 @@ function ModelLine({ line, showLabel, flowLine, editor, context, lockReason }: {
     </div>}
 
     {(step === "confirm" || step === "saving") && preview && <div className="sp-dlg" role="group" aria-label="저장 전 확인">
-      <h4>{line.label} 배정을 바꿉니다</h4>
+      <h4>{title} 배정을 바꿉니다</h4>
       <ul className="sp-diff">{preview.rows.map(row => <li key={row.label}><span>{row.label}</span><span><s>{row.before}</s> {row.after}</span></li>)}</ul>
       {preview.impact.length > 0 && <ul className="sp-impact" aria-label="영향">{preview.impact.map(item => <li key={item.text} data-tone={item.tone}>{item.text}</li>)}</ul>}
       {warnings.filter(warning => !warning.existing).map(warning => <p key={warning.code} className="sp-warn" data-tone={warning.tone}>{warning.text}</p>)}

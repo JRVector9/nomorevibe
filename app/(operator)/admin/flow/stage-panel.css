@@ -339,3 +339,43 @@
     grid-column: 2;
   }
 }
+/* 패널 안의 순위·「동시에」 고르기(RankSelects layout="rows") — 서랍의 줄 모양(rank-drawer-rows.css)은 .fr 안에서만 걸리므로 패널 폭에 맞춰 따로 둔다(운영 콘솔 통합).
+   한 자리 = 왼쪽 이름(1순위·모델 1) + 오른쪽 고르기, 그 밑에 지금 칸·추론 강도 */
+.admin-prototype .sp-edit .fr-rank-rows {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row-label {
+  display: grid;
+  grid-template-columns: 4.6em minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: start;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row-name {
+  padding-top: 8px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.admin-prototype .sp-edit .fr-rank-row-model,
+.admin-prototype .sp-edit .fr-rank-row-effort {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row-model > .text-fg-2:first-child {
+  display: none; /* 「모델」 — 왼쪽 이름 칸이 이미 말한다 */
+}
+.admin-prototype .sp-edit .fr-rank-row-effort {
+  grid-column: 2;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  color: var(--muted);
+}

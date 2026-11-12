@@ -180,7 +180,7 @@ describe("save preview (저장 전 확인)", () => {
     expect(swap.rows).toEqual([{ label: "순위", before: "supa-direct → gpu3090-qwen", after: "M1max · Qwen3.8 → gpu3090-qwen" }]);
     expect(swap.saves).toEqual(["ranks"]);
     expect(swap.impact.map(item => item.text)).toEqual(["M1max: 지금 2칸 중 0칸 사용 · 다른 단계는 이 모델을 쓰지 않습니다",
-      expect.stringMatching(/^gpu3090-qwen: /), "supa-direct을(를) 이 단계에서 뺍니다 — 다른 단계 2개는 계속 씁니다."]);
+      expect.stringMatching(/^gpu3090-qwen: /), "supa-direct를 이 단계에서 뺍니다 — 다른 단계 2개는 계속 씁니다."]);
     const emptied = assignmentPreview({ task: "first-review", slot: 1, before, after: { ...before, ranks: [null, gpu] }, context });
     expect(emptied.impact.at(-1)).toEqual({ tone: "bad", text: "1순위가 비면 이 단계가 멈춥니다(no_task_models)." });
   });

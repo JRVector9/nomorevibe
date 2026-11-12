@@ -96,7 +96,10 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : choices.map(item)}
         </select>;
         // 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다)
-        const selectedServer = groups && row ? <span className={isRows ? "fr-rank-row-server truncate text-[13px] text-fg-2" : "truncate text-[13px] text-fg-2"} data-rank-server="true">{choices.find(option => rankOptionKey(option) === key)?.group ?? ""}</span> : null;
+        // 고른 선택지가 이미 모델 이름(사용자가 정한 이름) 그대로면 같은 이름을 밑에 또 적지 않는다(운영 콘솔 통합 — 이름 하나)
+        const picked = choices.find(option => rankOptionKey(option) === key);
+        const server = picked?.group && picked.text && (picked.group === picked.text || picked.group.startsWith(`${picked.text} · `)) ? "" : picked?.group ?? "";
+        const selectedServer = groups && row && server ? <span className={isRows ? "fr-rank-row-server truncate text-[13px] text-fg-2" : "truncate text-[13px] text-fg-2"} data-rank-server="true">{server}</span> : null;
         // 고른 모델의 관측 — 조각마다 작은 꼬리표(사람이 볼 것은 경고 색·테두리). 글자는 선택지와 같은 조각이다
         const selectedActivity = row ? <span id={activityId} className={`${isRows ? "fr-rank-row-activity " : ""}flex flex-wrap gap-1`} data-model-activity="true">
           {activityParts(row).map((part, at) => <span key={`${at}:${part.text}`} data-tone={part.tone ?? undefined}
