@@ -130,6 +130,7 @@ export const HOLD_STATION: Readonly<Record<string, StationKey>> = {
   repository_relationship_conflict: "judge",
   source_changed: "judge",
   ai_review_exhausted: "first",
+  ai_review_skip_exhausted: "first",
   second_review_split: "second",
   second_review_split_qwen_reject: "second",
   no_description: "profile",
@@ -148,6 +149,7 @@ export const HOLD_LABELS: Readonly<Record<string, string>> = {
   repository_relationship_conflict: "제품·저장소 관계 충돌",
   source_changed: "발행 URL 바뀜",
   ai_review_exhausted: "1차 재시도 소진",
+  ai_review_skip_exhausted: "1차 계속 건너뜀",
   second_review_split: "2차 갈림",
   second_review_split_qwen_reject: "2차 갈림(세 번째 표도 거부)",
   no_description: "소개 문구 없음",
@@ -155,7 +157,7 @@ export const HOLD_LABELS: Readonly<Record<string, string>> = {
 };
 
 /** 심사 큐가 갈래(?cause=)로 거를 수 있는 사유 — app/(operator)/admin/review/causes.ts 의 CAUSE_GUIDE 열쇠 */
-const REVIEW_CAUSES = new Set(["second_review_split", "no_description", "ai_review_exhausted", "source_refresh_failed", "repo_deleted", "suspected_spam",
+const REVIEW_CAUSES = new Set(["second_review_split", "no_description", "ai_review_exhausted", "ai_review_skip_exhausted", "source_refresh_failed", "repo_deleted", "suspected_spam",
   "review_approval_changed"]);
 export const holdHref = (reason: string) => REVIEW_CAUSES.has(reason) ? `/admin/review?cause=${reason}#review-list` : null;
 

@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, lte, or, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
-import { crawlCandidates, crawlReviewAttempts } from '@/lib/db/schema';
+import { crawlCandidates } from '@/lib/db/schema';
 import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from '@/lib/llm/capacity-deferred';
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
@@ -9,7 +9,8 @@ import { logger } from '@/lib/observability/logger';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { getSettings } from '../settings';
-import { reviewCandidatePredicate } from '../agent-review-repository';
+import { firstReviewSeenSql, reviewCandidatePredicate } from '../agent-review-repository';
+import type { CrawlSettings } from '../settings-schema';
 import { executeFirstReviewConsumerItem } from '../agent-review-item-lifecycle';
 import { FirstReviewModelDeferredError, firstReviewDeferralIsLocal, firstReviewRankState, firstReviewerKey } from '../first-reviewers';
 import { ensureReviewTaskRanks } from '../review-task-ranks';
@@ -17,20 +18,27 @@ import { readBlockedFirstReviewerKeys } from '../first-reviewer-blocks';
 
 const PAGE_SIZE = 24, MAX_PAGES = 4, IDLE_MS = 5_000;
 type Cursor = { id: number; reviewed: boolean; updatedAt: string; ceiling: number };
+/**
+ * hint 쪽 쿼리(실행하지 않은 builder — 시험이 toSQL 로 SQL 글자를 본다). 「심사한 적 있음」은 1차 잡의 쪽 쿼리와 같은 식(firstReviewSeenSql)이다 —
+ * 예전에는 여기서 바깥 후보 id 를 crawlCandidates.id 칸 그대로 적어 select 목록에서만 표 이름 없는 "id" 로 그려졌고(안쪽 seen.id 에 묶여 늘 false),
+ * 커서가 심사한 적 있는 후보 묶음의 처음으로 거듭 돌아갔다(2026-11-11 1차 잡의 정체와 같은 결함).
+ */
+export function firstReviewConsumerHintsQuery(settings: CrawlSettings, cursor: Cursor | null) {
+  const reviewed = firstReviewSeenSql();
+  const ceiling = cursor ? sql<number>`${cursor.ceiling}::integer` : sql<number>`(SELECT coalesce(max(id), 0) FROM ${crawlCandidates})`;
+  return db.select({ id: crawlCandidates.id, reviewed, updatedAt: sql<string>`${crawlCandidates.updatedAt}::text`, ceiling })
+    .from(crawlCandidates).where(and(reviewCandidatePredicate(settings, { readyOnly: true }),
+      cursor ? lte(crawlCandidates.id, cursor.ceiling) : undefined,
+      cursor ? or(gt(reviewed, cursor.reviewed), and(eq(reviewed, cursor.reviewed), or(
+        sql`${crawlCandidates.updatedAt} > (${cursor.updatedAt}::text)::timestamp`,
+        and(sql`${crawlCandidates.updatedAt} = (${cursor.updatedAt}::text)::timestamp`, gt(crawlCandidates.id, cursor.id)),
+      ))) : undefined)).orderBy(asc(reviewed), asc(crawlCandidates.updatedAt), asc(crawlCandidates.id)).limit(PAGE_SIZE);
+}
 /** Fixed bounded hints; only the actual claim/writer can grant authority. */
 async function hints(cursor: Cursor | null) {
   return onPrimary(async () => {
     const settings = await getSettings();
-    const reviewed = sql<boolean>`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} seen
-      WHERE seen.candidate_id = ${crawlCandidates.id} AND seen.state = 'succeeded')`;
-    const ceiling = cursor ? sql<number>`${cursor.ceiling}::integer` : sql<number>`(SELECT coalesce(max(id), 0) FROM ${crawlCandidates})`;
-    const rows = await db.select({ id: crawlCandidates.id, reviewed, updatedAt: sql<string>`${crawlCandidates.updatedAt}::text`, ceiling })
-      .from(crawlCandidates).where(and(reviewCandidatePredicate(settings, { readyOnly: true }),
-        cursor ? lte(crawlCandidates.id, cursor.ceiling) : undefined,
-        cursor ? or(gt(reviewed, cursor.reviewed), and(eq(reviewed, cursor.reviewed), or(
-          sql`${crawlCandidates.updatedAt} > (${cursor.updatedAt}::text)::timestamp`,
-          and(sql`${crawlCandidates.updatedAt} = (${cursor.updatedAt}::text)::timestamp`, gt(crawlCandidates.id, cursor.id)),
-        ))) : undefined)).orderBy(asc(reviewed), asc(crawlCandidates.updatedAt), asc(crawlCandidates.id)).limit(PAGE_SIZE);
+    const rows = await firstReviewConsumerHintsQuery(settings, cursor);
     return { rows, settings };
   });
 }

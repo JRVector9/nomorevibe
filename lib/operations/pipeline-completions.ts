@@ -219,7 +219,8 @@ export function pipelineCompletionsSql(): SQL {
     held AS (
       SELECT count(*) FILTER (WHERE c.reason IN ('source_refresh_failed', 'repo_deleted')) AS fetch,
         min(c.updated_at) FILTER (WHERE c.reason IN ('source_refresh_failed', 'repo_deleted')) AS fetch_oldest,
-        count(*) FILTER (WHERE c.reason = 'ai_review_exhausted') AS ai1, min(c.updated_at) FILTER (WHERE c.reason = 'ai_review_exhausted') AS ai1_oldest
+        count(*) FILTER (WHERE c.reason IN ('ai_review_exhausted', 'ai_review_skip_exhausted')) AS ai1,
+        min(c.updated_at) FILTER (WHERE c.reason IN ('ai_review_exhausted', 'ai_review_skip_exhausted')) AS ai1_oldest
       FROM crawl_candidates c WHERE c.state = 'needs_review'),
     ai2_rows AS MATERIALIZED (
       SELECT g.id, coalesce(g.fallback_for_id, g.id) AS root_id, g.candidate_id, g.created_at, g.reviewed_at, g.failure_count, g.second_decision

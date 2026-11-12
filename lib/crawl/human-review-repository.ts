@@ -13,7 +13,8 @@ import { judgeRevision } from './rules';
 import { getSettings, mergeWithDefaults } from './settings';
 import { currentReviewSource, reviewApprovalPredicate } from './agent-review-repository';
 import type { CrawlSettings } from './settings-schema';
-import { DEEPSEEK_MIN_CONFIDENCE, DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
+import { DEEPSEEK_MIN_CONFIDENCE, DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor, deepseekReviewTimeoutMs } from './deepseek-review-policy';
+import { STALE_LOCK_MS } from '@/lib/jobs/lease';
 import type { DeepSeekReviewResult } from './deepseek-review';
 import { delegatedModelOutcome, type DelegatedEnding } from './delegated-model-outcome';
 import { heldQwenConcluded, heldQwenOwns } from './held-qwen-retry-policy';
@@ -86,6 +87,44 @@ export async function humanReviewRepos(ids: number[], qwenReasons: readonly stri
       AND NOT (${crawlReviewAttempts.state} = 'superseded' AND ${inArray(crawlReviewAttempts.errorCode, [...UNCOUNTED_DEFERRALS])})) < ${MAX_DELEGATED_ATTEMPTS}`,
   )).orderBy(desc(crawlCandidates.updatedAt), desc(crawlCandidates.id)).limit(Math.max(1, options.limit ?? 50));
   return rows.map(row => row.repo);
+}
+
+/**
+ * 주인 잃은 위임 시도로 보기 전의 여유 — 시작한 지 「호출 상한(deepseekReviewTimeoutMs, 관리자 실시간 한도) + 이 값」이 지나야 본다.
+ * 잡 예산(110초)·자리 기다림·기록 트랜잭션을 넉넉히 덮는다. 주인이 살아 있는지는 시각이 아니라 그 시도의 lease 를 쥔 잡 행으로 가른다 —
+ * 이 여유는 그 위의 안전판이다.
+ */
+export const LOST_DELEGATED_REVIEW_MARGIN_MS = 5 * 60_000;
+
+/**
+ * 주인이 사라진 DeepSeek 위임 시도(running)를 닫는다 — 틱 시작마다, 스위치와 상관없이(보류 Qwen-v2 의 releaseLostHeldQwenAttempts 와 같은 자리).
+ *
+ * 2026-11-10 08:18Z·08:22Z 부터 위임 시도 두 건이 running 으로 남았다(주인 잡이 호출 중에 사라짐). 그 후보는 그사이 approved 가 되어
+ * 이 잡의 고르기(사람 큐)에 다시 들지 않으니 claimHumanReview 의 주인 없음 정리가 닿지 않았고, 1차 심사는 「위임이 이 후보를 보는 중」이라
+ * 매 틱 비켜(skipped running) 그 두 후보를 영영 보지 못했다(2026-11-11 1차 정체의 한 원인).
+ *
+ * 닫는 것: 이 공급자의 위임 시도 중 running 이고, 지금 lease 가 아니며, 그 lease 를 쥔 살아 있는 잡 행이 없고(1차의 HealthyLegacyReviewOwner·
+ * readyOnly 와 같은 기준 — 잡 행의 lease_token 이 같고 locked_at 이 STALE_LOCK_MS 안), 시작한 지 호출 상한 + 여유가 지난 것.
+ * claimHumanReview 의 주인 없음 정리와 같은 꼴로 닫는다(failed · owner_lost · 곧바로 다시 볼 수 있음) — 같은 입력의 위임 시도 수(3)에 든다.
+ * 잠금은 stage → 시도 행만이다(후보 행을 잡지 않는다) — claim 들의 stage → 후보 → 시도 순서의 앞부분과 같다.
+ */
+export async function releaseLostDelegatedReviews(lease: JobLease, callTimeoutMs: number = deepseekReviewTimeoutMs()):
+  Promise<{ id: number; candidateId: number; startedAt: Date; leaseToken: string | null }[]> {
+  if (lease.name !== JOB) throw new Error('human_review_job_required');
+  const graceMs = Math.max(0, Math.trunc(callTimeoutMs)) + LOST_DELEGATED_REVIEW_MARGIN_MS;
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    const rows = await tx.update(crawlReviewAttempts).set({ state: 'failed', errorCode: 'owner_lost', completedAt: new Date(), retryAfter: new Date() })
+      .where(and(eq(crawlReviewAttempts.kind, 'delegated'), eq(crawlReviewAttempts.provider, DEEPSEEK_REVIEW_PROVIDER),
+        eq(crawlReviewAttempts.state, 'running'), sql`${crawlReviewAttempts.leaseToken} IS DISTINCT FROM ${lease.token}`,
+        sql`${crawlReviewAttempts.startedAt} < now() - ${graceMs} * interval '1 millisecond'`,
+        sql`NOT EXISTS (SELECT 1 FROM ${jobs} owner WHERE owner.lease_token = ${crawlReviewAttempts.leaseToken}
+          AND owner.locked_at >= clock_timestamp() - ${STALE_LOCK_MS} * interval '1 millisecond')`))
+      .returning({ id: crawlReviewAttempts.id, candidateId: crawlReviewAttempts.candidateId, startedAt: crawlReviewAttempts.startedAt,
+        leaseToken: crawlReviewAttempts.leaseToken });
+    await assertJobLeaseAtWallTime(tx, lease);
+    return rows;
+  });
 }
 
 /** Claim the same candidate slot used by AI1; no DB transaction spans inference. */

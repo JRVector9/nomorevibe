@@ -2,7 +2,7 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { getSettings } from '../settings';
 import { humanQueueOverview } from '../review-overview';
 import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos, deferHumanReviewForModelCapacity,
-  HUMAN_REVIEW_SCAN_FACTOR, delegatedApprovalRoute, refreshStaleDelegatedSources } from '../human-review-repository';
+  HUMAN_REVIEW_SCAN_FACTOR, delegatedApprovalRoute, refreshStaleDelegatedSources, releaseLostDelegatedReviews } from '../human-review-repository';
 import { checkDelegatedRepository, type DelegatedRepoCheckResult } from '../delegated-repo-check';
 import { withLocalModelCapacity } from '@/lib/llm/local-model-capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
@@ -32,6 +32,10 @@ export async function reviewHumanQueue(ctx: JobContext<null>): Promise<JobOutcom
   const settings = await getSettings();
   const lease = ctx.lease;
   if (!lease) throw new Error('human_review_job_required');
+  // 주인이 사라진 위임 시도부터 닫는다 — 스위치와 상관없이. 남겨 두면 1차 심사가 그 후보를 영영 비킨다(2026-11-11 정체)
+  const released = await releaseLostDelegatedReviews(lease);
+  if (released.length) ctx.log('crawl.human_review_owner_lost', { released: released.length,
+    attempts: released.slice(0, 20).map(row => ({ id: row.id, candidateId: row.candidateId, startedAt: row.startedAt.toISOString() })) });
   const requeued = await requeueInvalidHumanApprovals(lease);
   if (!settings.enabled || !settings.humanReview.enabled) {
     ctx.log('crawl.human_review_skipped', { reason: 'disabled', requeued });

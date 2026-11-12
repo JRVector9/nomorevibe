@@ -142,6 +142,12 @@ export type DecisionReason =
   | "second_review_split_qwen_reject"
   /** Automatic first review exhausted its attempts; a person must decide. */
   | "ai_review_exhausted"
+  /**
+   * 1차 AI 심사가 같은 후보를 후보 자체에 묶인 같은 까닭(다른 검수가 보는 중 등)으로 거듭 건너뛰어 상한에 닿았다(2026-11-12,
+   * lib/crawl/first-review-skips.ts). 사람이 가른다 — AI 1차가 다시 집지 않는다(REVIEW_RETRIABLE_REASONS 에 없다). 건너뛴 까닭은
+   * signals.firstReviewSkipExhausted·stoppedAt 에 있다. 모델 장애 소진(ai_review_exhausted)과 달리 모델이 돌아와도 저절로 되돌리지 않는다.
+   */
+  | "ai_review_skip_exhausted"
   /** A requested source refresh ended without a newer GitHub document. */
   | "source_refresh_failed"
   /**
