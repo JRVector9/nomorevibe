@@ -16,7 +16,10 @@ const mocks = vi.hoisted(() => ({ pages: [] as unknown[][], reservedPages: [] as
 vi.mock('@/lib/db', () => ({ db: { select: mocks.select }, onPrimary: (load: () => unknown) => load() }));
 vi.mock('@/lib/db/replay-scope', () => ({ currentReplayDb: () => null }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: mocks.settings }));
-vi.mock('@/lib/crawl/agent-review-repository', () => ({ reviewCandidatePredicate: () => undefined }));
+vi.mock('@/lib/crawl/agent-review-repository', async () => {
+  const { sql } = await import('drizzle-orm');
+  return { reviewCandidatePredicate: () => undefined, firstReviewSeenSql: () => sql`false` };
+});
 vi.mock('@/lib/crawl/agent-review-item-lifecycle', () => ({ executeFirstReviewConsumerItem: mocks.first }));
 vi.mock('@/lib/crawl/second-review-item-lifecycle', () => ({ executeSecondReviewConsumerItem: mocks.second }));
 vi.mock('@/lib/crawl/first-reviewer-blocks', () => ({ readBlockedFirstReviewerKeys: async () => new Set<string>() }));

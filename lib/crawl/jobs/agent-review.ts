@@ -6,7 +6,7 @@ import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-revie
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
   requeueStaleReviewSources, handOffExhaustedFirstReviews, reopenProviderExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim,
   type CliModelCapacityReviewClaim, chooseFirstReviewForCandidate, listFirstReviewPoolCandidates,
-  listOwnPendingFirstReviewCandidates, type PendingFirstReviewCandidate } from "@/lib/crawl/agent-review-repository";
+  listOwnPendingFirstReviewCandidates, type PendingFirstReviewCandidate, handOffSkippedFirstReview } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
 import { reviewGatewayTimeoutMs, reviewWithGateway, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
@@ -27,6 +27,9 @@ import { agentReviewBinding } from "../agent-review-ownership";
 import { itemBindingHash } from "@/lib/jobs/items/types";
 import { AGENT_REVIEW_ALL_SKIPPED } from "../agent-review-skip";
 import { observeReviewCliHost } from "../review-cli-host-observe";
+import { applyFirstReviewTick, excludedFirstReviewCandidates, forgetFirstReviewSkips, readFirstReviewSkips,
+  type FirstReviewSkipTable, type FirstReviewTickOutcome } from "../first-review-skips";
+import { isDeepStrictEqual } from "node:util";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -73,14 +76,18 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const pool = ranks.pool;
   const blockedModels = await readBlockedFirstReviewerKeys();
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
-  const pending = await listOwnPendingFirstReviewCandidates(settings, lease);
-  if (pending.length) ctx.log("crawl.agent_review_pending_revisited", { count: pending.length,
-    reserved: pending.filter(row => row.state === "reserved").length, waiting: pending.filter(row => row.state === "waiting").length });
   // 격리 replay(순위 대신 설정 행 — ranks.resolution null)는 예전 단일 고르기의 후보 목록 그대로다. 운영은 늘 쪽 커서(pool)다
   const replay = ranks.resolution === null;
+  // 같은 까닭으로 거듭 건너뛴 후보의 표(first-review-skips.ts) — 상한에 닿은 후보는 잠시 쪽·다시 보기에서 뺀다. replay 는 예전 그대로 세지 않는다
+  const skipTable: FirstReviewSkipTable = replay ? {} : readFirstReviewSkips(ctx.cursor?.firstReviewSkips, startedAt);
+  const excludedIds = excludedFirstReviewCandidates(skipTable, startedAt);
+  const excluded = new Set(excludedIds);
+  const pending = (await listOwnPendingFirstReviewCandidates(settings, lease)).filter(row => !excluded.has(row.candidate.id));
+  if (pending.length) ctx.log("crawl.agent_review_pending_revisited", { count: pending.length,
+    reserved: pending.filter(row => row.state === "reserved").length, waiting: pending.filter(row => row.state === "waiting").length });
   const after = replay ? null : firstReviewPoolPosition(ctx.cursor?.firstReviewPoolScan);
   const pageLimit = Math.min(Math.max(20, concurrency * 2), 32 - pending.length);
-  const page = replay ? null : await listFirstReviewPoolCandidates(settings, pageLimit, after);
+  const page = replay ? null : await listFirstReviewPoolCandidates(settings, pageLimit, after, excludedIds);
   const candidates = page ? page.map(row => row.candidate) : await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   const work = [...pending.map(hint => ({ candidate: hint.candidate, hint, position: undefined })),
     ...candidates.map((candidate, index) => ({ candidate, hint: undefined, position: page?.[index].position }))];
@@ -111,35 +118,46 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   // 들인 후보가 호출 없이 끝난 까닭. 모든 건너뜀은 crawl.agent_review_skipped 로 남고 틱 요약(skipped)에 센다 — 2026-11-01 AI1 정체는
   // 들인 14건이 모두 말없이 return 해 틱 로그(admitted 14 · calls 0) 말고는 아무 흔적이 없었다
   const skipped: Record<string, number> = {};
-  const skip = (repo: string, reason: string, fields: Record<string, unknown> = {}) => {
+  // 후보마다 이 틱이 끝난 꼴 — 건너뜀 상한(first-review-skips.ts)이 센다. 표시 없는 후보는 모델·틱 쪽 사정(neutral)이다
+  const outcomes = new Map<number, FirstReviewTickOutcome>();
+  const skip = (candidate: { id: number; repo: string }, reason: string, fields: Record<string, unknown> = {}) => {
     skipped[reason] = (skipped[reason] ?? 0) + 1;
-    ctx.log("crawl.agent_review_skipped", { repo, reason, ...fields });
+    if (outcomes.get(candidate.id)?.kind !== "progressed") outcomes.set(candidate.id, { kind: "skipped", reason });
+    ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason, ...fields });
   };
+  const progressed = (candidate: { id: number }) => outcomes.set(candidate.id, { kind: "progressed" });
   const canStart = () => !stopped && !stageBlocked && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= minimumCeiling + 2_000;
   const canAdmit = () => !modelDeferred && canStart();
   const processCandidate = async (candidate: typeof candidates[number], hint?: PendingFirstReviewCandidate) => {
-    if (!isReviewCandidate(candidate)) return skip(candidate.repo, "not_review_candidate");
+    if (!isReviewCandidate(candidate)) return skip(candidate, "not_review_candidate");
     if (!await canStartLegacyAgentReview(lease, candidate.id)) {
       // Candidate-level refusal can mean a healthy foreign item. Only an actual
       // global stage refusal defers this request; this read is not dispatch fencing.
       if (!await canStartLegacyAgentReview(lease)) stageBlocked = true;
-      return skip(candidate.repo, stageBlocked ? "stage_inactive" : "item_owned");
+      return skip(candidate, stageBlocked ? "stage_inactive" : "item_owned");
     }
     const document = await loadReviewDocument(candidate.repo, lease);
-    if (!document) return skip(candidate.repo, "document_missing");
-    const input = await loadReviewInput(candidate, document, settings);
-    if (input.validUntil <= reviewSemanticNow()) return skip(candidate.repo, "input_expired");
+    if (!document) return skip(candidate, "document_missing");
+    // 입력이 상한보다 큰 후보 하나가 틱 전체를 던지게 두면 커서가 그 후보 앞에 멈춰 뒤의 후보와 새 후보가 모두 굶는다 — 이 후보만 건너뛴다.
+    // 같은 후보가 거듭 건너뛰어지면 상한(first-review-skips.ts)이 쪽에서 빼고 사람에게 넘긴다(2차 표·갈림 판가름도 같은 오류를 후보 탓으로 닫는다)
+    let input: Awaited<ReturnType<typeof loadReviewInput>>;
+    try { input = await loadReviewInput(candidate, document, settings); }
+    catch (error) {
+      if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
+      return skip(candidate, "input_too_large");
+    }
+    if (input.validUntil <= reviewSemanticNow()) return skip(candidate, "input_expired");
     // 순위대로 고른다: 고른 모델이 이 틱에 이 모델만의 까닭으로 거절되면 그 모델을 쉬게 하고 다음 순위로 — 순위 수만큼만 돈다
     for (let rank = 0; rank <= pool.length; rank++) {
       const avoid = new Set([...blockedModels, ...pausedModels]);
       const reviewer = await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined, avoid);
       // 모든 순위가 이 틱에 쓸 수 없다(쉬는·막힌 모델) — 또는 살아 있는 호출·의도가 이 후보를 풀 밖 모델에 묶었다(first-reviewers.ts)
-      if (!reviewer) return skip(candidate.repo, pool.every(row => avoid.has(firstReviewerKey(row))) ? "all_ranks_unusable" : "reviewer_unassigned",
+      if (!reviewer) return skip(candidate, pool.every(row => avoid.has(firstReviewerKey(row))) ? "all_ranks_unusable" : "reviewer_unassigned",
         { ranks: pool.length, unusable: pool.filter(row => avoid.has(firstReviewerKey(row))).length });
       const { provider: reviewProvider, model } = reviewer;
       if (hint && (hint.reviewer.provider !== reviewProvider || hint.reviewer.model !== model
         || hint.workKey !== `ai1:${candidate.id}:${itemBindingHash(agentReviewBinding(candidate.id, input, reviewer))}`))
-        return skip(candidate.repo, "pending_hint_mismatch", { provider: reviewProvider, model });
+        return skip(candidate, "pending_hint_mismatch", { provider: reviewProvider, model });
       const key = firstReviewerKey(reviewer), ceiling = timeoutFor(reviewProvider);
       const canExecuteClaim = () => canStart() && remaining() >= ceiling + 2_000;
       const canStartModel = () => canExecuteClaim() && !pausedModels.has(key);
@@ -147,19 +165,20 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         : stageBlocked ? "stage_inactive" : "tick_window_closed";
       // 다른 줄이 방금 이 모델을 쉬게 했다 — 다음 순위로 다시 고른다
       if (!canStartModel() && canExecuteClaim() && pausedModels.has(key)) continue;
-      if (!canStartModel()) return skip(candidate.repo, notStartable(), { provider: reviewProvider, model });
+      if (!canStartModel()) return skip(candidate, notStartable(), { provider: reviewProvider, model });
       const preparation = await prepareAgentReview({ candidate, document, settings, input }, reviewer);
       const { verdict, hardReason, evidenceHold, provider } = preparation;
       // README 를 받고 나서 드러난 스팸·악성 의심은 모델에게 보내지 않고 사람에게 넘긴다
       if (preparation.spam) {
         const held = await holdSuspectedSpam(candidate, verdict, lease);
+        progressed(candidate);
         ctx.log("crawl.agent_review_suspected_spam", { repo: candidate.repo, held });
         return;
       }
       // OpenCode 순위: claim TX 의 예약 전 계약 확인은 이 워커가 60초 안에 본 호스트 버전이 있어야 지난다 — TX 밖에서 낡았을 때만 카탈로그로
       // 채운다(실패하면 아무것도 바꾸지 않아 오늘처럼 provider_contract_unavailable → 다음 순위). 걸린 시간은 아래 여유 확인이 다시 잰다
       await observeReviewCliHost("crawl-agent-review", { provider, model });
-      if (!canAdmit() || !canStartModel()) return skip(candidate.repo, notStartable(), { provider: reviewProvider, model });
+      if (!canAdmit() || !canStartModel()) return skip(candidate, notStartable(), { provider: reviewProvider, model });
       const context = { candidate, document, settings, input };
       let claim: ModelCapacityReviewClaim | CliModelCapacityReviewClaim;
       let prepared: PreparedAi1GatewayCall | undefined;
@@ -207,7 +226,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         // 이 후보의 앞선 호출이 아직 보내진 중이거나(dispatched) 같은 후보가 다른 요청에 묶였다(work_busy, fence) — 이 후보만 건너뛴다.
         // 모델을 pause 하거나 틱 전체를 미루면 목록 맨 앞에 남은 한 건이 매 틱 다른 후보까지 막는다(2026-10-30 결정).
         // claim TX 는 되감겼고 호출·시도·실패 기록은 없다.
-        if (modelCapacityDeferralIsPerWork(error.reason)) return skip(candidate.repo, error.reason);
+        if (modelCapacityDeferralIsPerWork(error.reason)) return skip(candidate, error.reason);
         // The claim TX has rolled back. Stop new claims without cancelling any
         // already admitted lane; all real work settles before returning deferred.
         const local = firstReviewDeferralIsLocal(error.reason);
@@ -224,8 +243,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       }
       if (claim.kind === "skipped") {
         if (claim.reason === "stage_inactive") stageBlocked = true;
-        return skip(candidate.repo, claim.reason);
+        return skip(candidate, claim.reason);
       }
+      // claim 이 시도 행을 만들었다(재사용 포함) — 이 후보는 건너뛴 것이 아니다. 뒤의 호출 실패는 시도 수(MAX_REVIEW_ATTEMPTS)가 센다
+      progressed(candidate);
       if (!canExecuteClaim()) {
         ctx.log("crawl.agent_review_claim_cancelled_before_transport", { provider: reviewProvider, model,
           elapsedMs: Date.now() - startedAt, remainingMs: remaining(), modelPaused: pausedModels.has(key),
@@ -308,7 +329,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       }
       return;
     }
-    return skip(candidate.repo, "all_ranks_unusable", { ranks: pool.length, unusable: pool.length });
+    return skip(candidate, "all_ranks_unusable", { ranks: pool.length, unusable: pool.length });
   };
   const lanes = Array.from({ length: concurrency }, async () => {
     try {
@@ -327,10 +348,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     }
   });
   const settled = await Promise.allSettled(lanes);
+  // 건너뜀 상한 — 이 틱의 결과를 표에 반영한다(넘기기는 아래에서 잠근 행으로 다시 잰다)
+  const skipTick = replay ? { table: skipTable, capped: [] } : applyFirstReviewTick(skipTable, outcomes, Date.now());
   ctx.log("crawl.agent_review_tick", { admitted, calls: tally.calls, succeeded: progress, waits: tally.waits,
     waitGranted: tally.waitGranted, waitPolls: tally.waitPolls, waitMs: tally.waitMs, pendingRevisited: pending.length,
     waitWindowClosed: tally.waitWindowClosed, waitCapped: tally.waitCapped, pausedModels: pausedModels.size, modelDeferred, stageBlocked,
     durationMs: Date.now() - startedAt, skipped,
+    ...(excludedIds.length ? { skipExcluded: excludedIds.length } : {}), ...(skipTick.capped.length ? { skipCapped: skipTick.capped.length } : {}),
     models: Object.fromEntries(perModel) });
   // 순위 사정(관리 화면 「실행」 줄): 순위마다 부른 수와 쓸 수 없던 까닭 — 관측 job:crawl-agent-review 의 마지막 ai_task.ranks
   if (ranks.resolution) {
@@ -344,10 +368,29 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   }
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
+  // 상한에 닿은 후보: FIRST_REVIEW_SKIP_EXCLUDE_MS 동안 쪽에서 뺐다. 빼기를 FIRST_REVIEW_SKIP_STRIKE_LIMIT 번 거듭했으면 사람 확인으로 넘긴다 —
+  // 넘기기가 거절되면(살아 있는 주인·다른 후보의 진전 없음 등) 빼 두기만 이어진다. 둘 다 로그로 남고 아래 degraded detail 에도 센다
+  let skips = skipTick.table, skipHandedOff = 0;
+  const repoOf = new Map(work.map(row => [row.candidate.id, row.candidate.repo]));
+  for (const cap of skipTick.capped) {
+    const fields = { candidateId: cap.candidateId, repo: repoOf.get(cap.candidateId), reason: cap.reason, strikes: cap.strikes,
+      excludedUntil: new Date(skips[String(cap.candidateId)]?.excludedUntil ?? Date.now()).toISOString() };
+    if (!cap.handOff) { ctx.log("crawl.agent_review_skip_capped", fields); continue; }
+    const moved = await handOffSkippedFirstReview(settings, lease, { candidateId: cap.candidateId, skipReason: cap.reason,
+      strikes: cap.strikes, sinceMs: cap.firstCappedAt });
+    if (moved) { skipHandedOff++; skips = forgetFirstReviewSkips(skips, [cap.candidateId]); }
+    ctx.log(moved ? "crawl.agent_review_skip_handed_off" : "crawl.agent_review_skip_capped", { ...fields, ...(moved ? {} : { handOff: "refused" }) });
+  }
   // Advance only examined hints. A paused model prefix must not repeat forever on later ticks.
   // This saves no provider authority, and preserves unrelated durable cursor fields.
-  if (lastPagePosition) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: lastPagePosition });
-  else if (page && !page.length && after) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null });
+  const scan = lastPagePosition ?? (page && !page.length && after ? null : undefined);
+  const skipsChanged = !replay && !isDeepStrictEqual(skips, ctx.cursor?.firstReviewSkips ?? {});
+  if (scan !== undefined || skipsChanged) {
+    const cursor: FirstReviewCursor = { ...ctx.cursor, ...(scan !== undefined ? { firstReviewPoolScan: scan } : {}),
+      ...(Object.keys(skips).length ? { firstReviewSkips: skips } : {}) };
+    if (!Object.keys(skips).length) delete cursor.firstReviewSkips;
+    await ctx.save(cursor);
+  }
   if (stageBlocked) return { done: false, deferred: "stage_blocked" };
   // 이 틱에 들인 후보가 모두 「모든 순위를 쓸 수 없음」으로 건너뛰어졌다 — 순위의 일이다(all_ranks_unusable, 재시작이 고치지 못한다)
   const skippedTotalRanks = Object.values(skipped).reduce((sum, n) => sum + n, 0);
@@ -363,8 +406,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   // (worker-progress-query.ts applyAllSkippedBlock). 순위의 모든 모델이 이 틱에 쓸 수 없어 건너뛴 후보(all_ranks_unusable — 경로 없음·장비 미설정·
   // 계약 닫힘·실패로 쉼)도 여기 든다. 전역 미룸(draining·owner 등)·진짜 포화·줄에 선 채 끝난 후보가 있는 틱은 예전처럼 미룸이다.
   const skippedTotal = Object.values(skipped).reduce((sum, n) => sum + n, 0);
+  // 상한에 닿은 수(skip_capped)·사람에게 넘긴 수(skip_handed_off)도 detail 에 싣는다 — 관리 화면 「제 일 못 함」이 그대로 읽는다
+  const capTokens = [...(skipTick.capped.length ? [`skip_capped=${skipTick.capped.length}`] : []), ...(skipHandedOff ? [`skip_handed_off=${skipHandedOff}`] : [])];
   if (admitted > 0 && !progress && !tally.calls && skippedTotal === admitted && !modelDeferred && !windowLeft && !saturated) return { done: false, degraded: {
-    code: AGENT_REVIEW_ALL_SKIPPED, detail: Object.entries(skipped).sort(([a], [b]) => a.localeCompare(b)).map(([reason, n]) => `${reason}=${n}`).join(" ") } };
+    code: AGENT_REVIEW_ALL_SKIPPED, detail: [...Object.entries(skipped).sort(([a], [b]) => a.localeCompare(b)).map(([reason, n]) => `${reason}=${n}`),
+      ...capTokens].join(" ") } };
   // 틱 안에서 쉬게 된 모델(처음부터 쓸 수 없던 순위는 빼고) — 남은 일이 있으면 곧바로 다시 요청한다
   const pausedInTick = [...pausedModels].some(key => !ranks.unusable.has(key));
   if (modelDeferred || pausedInTick) {
@@ -376,7 +422,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (windowLeft) return progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()
     ? { done: false, continuation: "ready" } : { done: false, deferred: "model_capacity" };
   if (progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()) {
-    const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited], readyOnly: true });
+    const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited, ...excludedIds], readyOnly: true });
     if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };
   }
   return { done: false };

@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, sql, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { qualifiedColumn } from "@/lib/db/qualified-column";
 import { crawlCandidates, gateSplitTiebreaks, secondReviews } from "@/lib/db/schema";
 import { kstDayStart } from "@/lib/operations/windows";
 import { endpointBackoffActive, readQwenEndpointBackoff } from "./qwen-endpoint-backoff";
@@ -32,9 +33,11 @@ const liveVerdict = sql`${t.state} = 'succeeded' AND ${t.promptVersion} = ${QWEN
 /**
  * 목록의 맨 앞 — Qwen-v2 도 승인한 갈림 보류(«Qwen-v2 승인 — 발행 후보»). 사람이 확인만 하면 되는 것부터 보이게 어떤 정렬보다 앞에 둔다.
  * 거부·발행 목록에서는 늘 거짓이라 순서를 바꾸지 않는다.
+ * 칸은 모두 표 이름을 붙여 적는다(qualifiedColumn) — 심사 목록이 이 식을 select 목록(_cursorPriority, 다음 쪽 커서)에도 싣는데, 그 자리에서
+ * drizzle 이 맨 바깥 칸을 표 이름 없이 그려 바깥 후보 id 가 안쪽 gate_split_tiebreaks.id 로 묶였다(늘 거짓 → 둘째 쪽부터 우선 묶음이 빠졌다).
  */
-export const splitTiebreakApproved = sql<boolean>`(EXISTS (SELECT 1 FROM ${t} WHERE ${t.candidateId} = ${crawlCandidates.id}
-  AND ${t.decision} = 'approve' AND ${liveVerdict}))`;
+export const splitTiebreakApproved = sql<boolean>`(EXISTS (SELECT 1 FROM ${t} WHERE ${qualifiedColumn(t.candidateId)} = ${qualifiedColumn(crawlCandidates.id)}
+  AND ${qualifiedColumn(t.decision)} = 'approve' AND ${liveVerdict}))`;
 export const splitTiebreakApprovedFirst = sql`${splitTiebreakApproved} DESC`;
 
 export type SplitTiebreakView = {

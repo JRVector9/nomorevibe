@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -11,14 +11,14 @@ import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-
 import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { TEST_TEXT_BASE_URL, textRankRow } from "./text-task-ranks-fixture";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,blocked:vi.fn(),pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,blocked:vi.fn(),pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn(),skipHandOff:vi.fn()}));
 vi.mock("@/lib/crawl/first-reviewer-blocks", () => ({readBlockedFirstReviewerKeys:mocks.blocked}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
-vi.mock("@/lib/crawl/agent-review-repository", () => ({listOwnPendingFirstReviewCandidates:mocks.pendingList,listFirstReviewPoolCandidates:mocks.poolList,chooseFirstReviewForCandidate:mocks.choose,canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,reopenProviderExhaustedFirstReviews:async()=>[],listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
+vi.mock("@/lib/crawl/agent-review-repository", () => ({listOwnPendingFirstReviewCandidates:mocks.pendingList,listFirstReviewPoolCandidates:mocks.poolList,chooseFirstReviewForCandidate:mocks.choose,canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,reopenProviderExhaustedFirstReviews:async()=>[],listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record,handOffSkippedFirstReview:mocks.skipHandOff}));
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,reviewCliTimeoutMs:()=>20_000,reviewCliMaxOutputTokens:()=>2_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000,reviewGatewayTimeoutMs:()=>60_000}));
@@ -681,4 +681,84 @@ it("pre-pauses an unusable rank and sends every candidate to the next usable ran
   expect(mocks.gateway).toHaveBeenCalledTimes(2);
   // 틱 요약: 1순위의 까닭과 2순위가 부른 수
   expect(ctx.log).toHaveBeenCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 2, "unusable.1.cli_contract_missing": 1, "served.2": 2 }));
+});
+
+/**
+ * 건너뜀 상한(2026-11-12 사용자 지시) — 2026-11-11 두 후보가 매 틱 「running」으로 건너뛰어진 채 끝이 없었다.
+ * 같은 까닭으로 연속 FIRST_REVIEW_SKIP_STREAK_LIMIT 번이면 잠시 쪽에서 빼고, 빼기를 거듭하면 사람 확인으로 넘긴다(커서의 작은 표).
+ */
+describe("1차 건너뜀 상한", () => {
+  const entry = (fields: Partial<{ reason: string; streak: number; strikes: number; firstCappedAt: number | null; excludedUntil: number | null; lastAt: number }> = {}) =>
+    ({ reason: "running", streak: 4, strikes: 0, firstCappedAt: null, excludedUntil: null, lastAt: Date.now() - 60_000, ...fields });
+  const skippedRunning = () => mocks.claim.mockResolvedValue({ kind: "skipped", reason: "running" });
+
+  it("같은 까닭으로 다섯 번째 건너뛴 후보를 30분 쪽에서 빼고, 로그와 degraded detail 에 남긴다", async () => {
+    skippedRunning();
+    let saved: FirstReviewCursor | null = null;
+    const ctx = { ...context(), cursor: { firstReviewSkips: { "1": entry() } }, save: vi.fn(async (next: FirstReviewCursor) => { saved = next; }) };
+    expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false,
+      degraded: { code: "agent_review_all_skipped", detail: "running=1 skip_capped=1" } });
+    const skips = (saved as unknown as { firstReviewSkips: Record<string, { strikes: number; streak: number; excludedUntil: number }> }).firstReviewSkips;
+    expect(skips["1"]).toMatchObject({ reason: "running", streak: 0, strikes: 1 });
+    expect(skips["1"].excludedUntil).toBeGreaterThan(Date.now() + 29 * 60_000);
+    expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_skip_capped", expect.objectContaining({ candidateId: 1, repo: "acme/demo",
+      reason: "running", strikes: 1 }));
+    expect(mocks.skipHandOff).not.toHaveBeenCalled();
+  });
+
+  it("빼 둔 후보는 쪽 쿼리와 다시 보기에서 빠진다", async () => {
+    const ctx = { ...context(), cursor: { firstReviewSkips: { "7": entry({ streak: 0, strikes: 1, excludedUntil: Date.now() + 60_000 }) } } };
+    await reviewCrawlCandidates(ctx);
+    expect(mocks.poolList).toHaveBeenCalledWith(expect.anything(), expect.any(Number), null, [7]);
+  });
+
+  it("세 번째로 상한에 닿으면 사람 확인으로 넘기고 표에서 지운다", async () => {
+    skippedRunning();
+    mocks.skipHandOff.mockResolvedValue(true);
+    const firstCappedAt = Date.now() - 3 * 3600_000;
+    const ctx = { ...context(), cursor: { sentinel: "keep", firstReviewSkips: { "1": entry({ strikes: 2, firstCappedAt }) } } };
+    expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false,
+      degraded: { code: "agent_review_all_skipped", detail: "running=1 skip_capped=1 skip_handed_off=1" } });
+    expect(mocks.skipHandOff).toHaveBeenCalledExactlyOnceWith(mocks.settings, ctx.lease,
+      { candidateId: 1, skipReason: "running", strikes: 3, sinceMs: firstCappedAt });
+    expect(ctx.save).toHaveBeenCalledExactlyOnceWith({ sentinel: "keep", firstReviewPoolScan: expect.objectContaining({ id: 1 }) });
+    expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_skip_handed_off", expect.objectContaining({ candidateId: 1, strikes: 3 }));
+  });
+
+  it("넘기기가 거절되면(살아 있는 주인·다른 후보의 진전 없음) 빼 두기만 이어진다", async () => {
+    skippedRunning();
+    mocks.skipHandOff.mockResolvedValue(false);
+    let saved: FirstReviewCursor | null = null;
+    const ctx = { ...context(), cursor: { firstReviewSkips: { "1": entry({ strikes: 2, firstCappedAt: Date.now() - 3600_000 }) } },
+      save: vi.fn(async (next: FirstReviewCursor) => { saved = next; }) };
+    await reviewCrawlCandidates(ctx);
+    expect((saved as unknown as { firstReviewSkips: Record<string, { strikes: number }> }).firstReviewSkips["1"]).toMatchObject({ strikes: 3 });
+    expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_skip_capped", expect.objectContaining({ candidateId: 1, handOff: "refused" }));
+  });
+
+  it("심사로 나아간 후보와 모델 쪽 사정으로 건너뛴 후보는 세지 않는다", async () => {
+    mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2, repo: "acme/two" }]);
+    mocks.claim.mockImplementation(async ({ candidate }) => candidate.id === 1
+      ? { kind: "claimed", attempt: { id: 1, attemptNumber: 1 }, receipt: receipt() } : { kind: "skipped", reason: "reservation_lost" });
+    const ctx = { ...context(), cursor: { firstReviewSkips: { "1": entry(), "2": entry() } } };
+    await reviewCrawlCandidates(ctx);
+    const [[next]] = ctx.save.mock.calls as unknown as [[{ firstReviewSkips: Record<string, unknown> }]];
+    expect(Object.keys(next.firstReviewSkips)).toEqual(["2"]);
+    expect(next.firstReviewSkips["2"]).toMatchObject({ streak: 4, strikes: 0 });
+  });
+
+  // 입력 상한을 넘는 후보 하나가 틱 전체를 던지면 커서가 그 앞에 멈춰 뒤의 후보가 모두 굶는다 — 그 후보만 건너뛴다
+  it("입력이 상한보다 큰 후보만 건너뛰고 같은 틱의 다음 후보를 본다", async () => {
+    mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2, repo: "acme/two" }]);
+    mocks.input.mockImplementation(async (c, d, s) => {
+      if (c.id === 1) throw new Error("review_input_too_large");
+      return createReviewInput(c, d, s, { scan: null, observations: [] });
+    });
+    const ctx = context();
+    await reviewCrawlCandidates(ctx);
+    expect(mocks.claim.mock.calls.map(([value]) => value.candidate.id)).toEqual([2]);
+    expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_skipped", { repo: "acme/demo", reason: "input_too_large" });
+    expect(ctx.save).toHaveBeenCalledWith(expect.objectContaining({ firstReviewPoolScan: expect.objectContaining({ id: 2 }),
+      firstReviewSkips: { "1": expect.objectContaining({ reason: "input_too_large", streak: 1 }) } }));
+  });
 });
