@@ -1,10 +1,18 @@
 import type { AdminIconName } from "./components/AdminIcon";
 
-/** Stable URLs are kept as deep links; only the seven workspace destinations form the primary menu. */
-export type WorkspaceId = "home" | "review" | "requests" | "projects" | "models" | "content" | "settings";
+/**
+ * 관리자 메뉴 여섯(2026-11-12 운영 콘솔 개편 조각 1a) — 홈 · 사람 확인 · 모델 · 수집·작업 · 콘텐츠 · 기록.
+ * 화면과 주소는 그대로 두고 묶음만 바꿨다: 옛 작업 공간 7개(탭 28개·고급 편집기 8개)의 모든 주소가 여섯 메뉴 중 하나의 탭(과 2차 메뉴)을 켠다.
+ * 한 메뉴에 탭이 많은 곳(사람 확인)은 옛 작업 공간 이름을 탭으로 두고 그 아래 옛 탭을 2차 메뉴(secondary)로 둔다.
+ */
+export type WorkspaceId = "home" | "people" | "models" | "sources" | "content" | "log";
 export type WorkspaceLink = { id: string; label: string; href: string };
 export type Workspace = { id: WorkspaceId; label: string; href: string; icon: AdminIconName; tabs: readonly WorkspaceLink[] };
-export type WorkspaceLocation = { workspace: Workspace; tab: string; detail: "product" | null; secondary: readonly WorkspaceLink[] };
+/**
+ * secondaryTab — 2차 메뉴에서 켤 항목(없으면 null). 주소만으로 고를 수 없는 것(심사 큐의 stage·state 추정, 요청함의 옛 주소)은
+ * 해석하면서 정하고, 나머지는 2차 링크의 주소와 지금 주소를 견줘(secondaryIsActive) 정한다.
+ */
+export type WorkspaceLocation = { workspace: Workspace; tab: string; detail: "product" | null; secondary: readonly WorkspaceLink[]; secondaryTab: string | null };
 type Search = Pick<URLSearchParams, "get">;
 const none: Search = { get: () => null };
 
@@ -37,16 +45,26 @@ export const MODELS_ADVANCED_EDITORS = [
 export type ModelsAdvancedEditorId = (typeof MODELS_ADVANCED_EDITORS)[number]["id"];
 /** 편집기 하나의 이름·주소 — 하위 화면의 제목과 뒤로 가기·건너가기 링크가 쓴다 */
 export const modelsAdvancedEditor = (id: ModelsAdvancedEditorId) => MODELS_ADVANCED_EDITORS.find(editor => editor.id === id)!;
-/** 고급 설정 아래 화면(목록 자체 + 편집기) */
-const MODELS_ADVANCED_PATHS: readonly string[] = [MODELS_ADVANCED_HREF, ...MODELS_ADVANCED_EDITORS.map(editor => editor.href)];
-/** 옛 「LLM 운영」 탭(?tab=) → 새 화면. live·모르는 값은 대시보드, 용량·장비와 연결은 LLM 운영(연결 행에 한도·편집을 합침). */
-const MODELS_LEGACY_TABS: Readonly<Record<string, { tab: string; href: string }>> = {
-  live: { tab: "dashboard", href: "/admin/models" },
-  tasks: { tab: "tasks", href: "/admin/models/tasks" },
-  connections: { tab: "llm", href: "/admin/models/llm" },
-  capacity: { tab: "llm", href: "/admin/models/llm" },
-  history: { tab: "history", href: "/admin/models/history" },
+/**
+ * 사람 위임 모델은 고급 설정 목록(화면)에는 그대로 남지만 메뉴는 「사람 확인」의 탭이다 — 사람 확인 단계를 모델에 맡기는 스위치라서.
+ * 모델 메뉴의 고급 설정 2차 메뉴는 이것을 뺀 편집기 일곱 개다.
+ */
+const PEOPLE_DELEGATE_EDITOR = modelsAdvancedEditor("human");
+const MODELS_MENU_EDITORS = MODELS_ADVANCED_EDITORS.filter(editor => editor.id !== PEOPLE_DELEGATE_EDITOR.id);
+/** 모델 메뉴 › 고급 설정 아래 화면(목록 자체 + 편집기 일곱) */
+const MODELS_ADVANCED_PATHS: readonly string[] = [MODELS_ADVANCED_HREF, ...MODELS_MENU_EDITORS.map(editor => editor.href)];
+/**
+ * 옛 「LLM 운영」 탭(?tab=) → 새 화면. live·모르는 값은 대시보드, 용량·장비와 연결은 LLM 운영(연결 행에 한도·편집을 합침).
+ * 옛 기록 탭은 기록 메뉴의 「LLM 기록」이다.
+ */
+const MODELS_LEGACY_TABS: Readonly<Record<string, { menu: WorkspaceId; tab: string; href: string }>> = {
+  live: { menu: "models", tab: "dashboard", href: "/admin/models" },
+  tasks: { menu: "models", tab: "tasks", href: "/admin/models/tasks" },
+  connections: { menu: "models", tab: "llm", href: "/admin/models/llm" },
+  capacity: { menu: "models", tab: "llm", href: "/admin/models/llm" },
+  history: { menu: "log", tab: "llm", href: "/admin/models/history" },
 };
+const modelsLegacyTab = (tab: string | null) => tab !== null && Object.hasOwn(MODELS_LEGACY_TABS, tab) ? MODELS_LEGACY_TABS[tab] : null;
 /**
  * /admin/models 의 옛 주소를 새 화면으로 넘길 곳. 넘길 것이 없으면 null(그대로 그린다).
  * advanced=1 이 있으면 tab 과 상관없이 고급 설정 화면이다 — 옛 #model-settings 같은 조각은 브라우저가 넘김 뒤에도 지킨다.
@@ -55,57 +73,61 @@ export function modelsLegacyTabHref(search: Search): string | null {
   if (search.get("advanced") === "1") return MODELS_ADVANCED_HREF;
   const tab = search.get("tab");
   if (tab === null) return null;
-  return MODELS_LEGACY_TABS[tab]?.href ?? "/admin/models";
+  return modelsLegacyTab(tab)?.href ?? "/admin/models";
 }
 
+/**
+ * 메뉴 여섯과 그 탭. 탭 이름은 옛 메뉴의 것을 그대로 쓴다(새로 생긴 탭은 그 화면이 이미 쓰는 이름 — 운영센터의 「작업 흐름」·「크롤러 활동」).
+ * - 홈: 탭은 지금 그대로(실시간 전체 흐름·시스템 진단·할 일·변경 기록). 오늘 할 일은 「할 일·변경 기록」의 2차 메뉴.
+ * - 사람 확인: 옛 「검수 및 발행」·「요청함」과 품질관리·사람 위임 모델. 앞의 셋은 옛 탭을 2차 메뉴로 둔다.
+ * - 모델: 옛 「LLM 운영」에서 기록을 뺀 것. 고급 편집기는 「고급 설정」의 2차 메뉴.
+ * - 수집·작업: 옛 설정의 수집·판정·분류·근거·외부 연동과 운영센터(/admin/status)의 작업 흐름·크롤러 활동.
+ * - 콘텐츠: 옛 「프로젝트」(품질관리 제외)와 「콘텐츠 운영」.
+ * - 기록: 운영 기록·변경 기록(작업 로그)·LLM 기록.
+ */
 export const WORKSPACES: readonly Workspace[] = [
-  { id: "home", label: "운영 홈", href: "/admin/flow", icon: "flow", tabs: [
+  { id: "home", label: "홈", href: "/admin/flow", icon: "flow", tabs: [
     { id: "flow", label: "실시간 전체 흐름", href: "/admin/flow" },
     { id: "diagnostics", label: "시스템 진단", href: "/admin/flow?tab=diagnostics" },
     { id: "changes", label: "할 일·변경 기록", href: "/admin/flow?tab=changes" },
   ] },
-  { id: "review", label: "검수 및 발행", href: "/admin/review", icon: "check", tabs: [
-    { id: "human", label: "사람 확인", href: "/admin/review?tab=human" },
-    { id: "all", label: "전체 단계", href: "/admin/review?tab=all" },
-    { id: "publish", label: "발행 대기", href: "/admin/review?tab=publish&stage=publish" },
-    { id: "rejected", label: "반려 기록", href: "/admin/review?tab=rejected&stage=rejected" },
-  ] },
-  { id: "requests", label: "요청함", href: "/admin/requests", icon: "inbox", tabs: [
-    { id: "open", label: "처리 필요", href: "/admin/requests?tab=open" },
-    { id: "correction", label: "내림·수정", href: "/admin/requests?tab=correction" },
-    { id: "contact", label: "문의", href: "/admin/requests?tab=contact" },
-    { id: "posts", label: "글 검수", href: "/admin/requests?tab=posts" },
-    { id: "registration", label: "등록·인증 현황", href: "/admin/requests?tab=registration" },
-    { id: "history", label: "처리 기록", href: "/admin/requests?tab=history" },
-  ] },
-  { id: "projects", label: "프로젝트", href: "/admin/products", icon: "box", tabs: [
-    { id: "all", label: "전체 프로젝트", href: "/admin/products" },
+  { id: "people", label: "사람 확인", href: "/admin/review", icon: "check", tabs: [
+    { id: "review", label: "검수 및 발행", href: "/admin/review" },
+    { id: "requests", label: "요청함", href: "/admin/requests" },
     { id: "quality", label: "품질관리", href: "/admin/products?tab=quality" },
-    { id: "translations", label: "소개·번역", href: "/admin/products?tab=translations" },
+    { id: "delegate", label: PEOPLE_DELEGATE_EDITOR.label, href: PEOPLE_DELEGATE_EDITOR.href },
   ] },
-  // 2026-11-07 LLM 운영 개편(PR 1·2): 화면 4개 + 고급 설정. 옛 ?tab= 주소는 modelsLegacyTabHref 로 새 화면에 넘긴다.
-  { id: "models", label: "LLM 운영", href: "/admin/models", icon: "sliders", tabs: [
+  // 2026-11-07 LLM 운영 개편(PR 1·2)의 화면 넷. 옛 ?tab= 주소는 modelsLegacyTabHref 로 새 화면에 넘긴다.
+  { id: "models", label: "모델", href: "/admin/models", icon: "sliders", tabs: [
     { id: "dashboard", label: "대시보드", href: "/admin/models" },
     { id: "llm", label: "LLM 운영", href: "/admin/models/llm" },
     { id: "tasks", label: "작업 배정", href: "/admin/models/tasks" },
-    { id: "history", label: "기록", href: "/admin/models/history" },
     { id: "advanced", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
   ] },
-  { id: "content", label: "콘텐츠 운영", href: "/admin/content", icon: "news", tabs: [
+  { id: "sources", label: "수집·작업", href: "/admin/settings", icon: "pulse", tabs: [
+    { id: "collection", label: "수집·판정", href: "/admin/settings?tab=collection" },
+    { id: "crawlers", label: "크롤러 활동", href: "/admin/status?tab=crawlers" },
+    { id: "jobs", label: "작업 흐름", href: "/admin/status?tab=jobs" },
+    { id: "evidence", label: "분류·근거", href: "/admin/settings?tab=evidence" },
+    { id: "integrations", label: "외부 연동", href: "/admin/settings?tab=integrations" },
+  ] },
+  { id: "content", label: "콘텐츠", href: "/admin/products", icon: "box", tabs: [
+    { id: "products", label: "전체 프로젝트", href: "/admin/products" },
+    { id: "translations", label: "소개·번역", href: "/admin/products?tab=translations" },
     { id: "social", label: "SNS 화제", href: "/admin/content?tab=social" },
     { id: "news", label: "AI 소식", href: "/admin/content?tab=news" },
     { id: "ranking", label: "랭킹·공개 목록", href: "/admin/content?tab=ranking" },
   ] },
-  { id: "settings", label: "설정·기록", href: "/admin/settings", icon: "tag", tabs: [
-    { id: "collection", label: "수집·판정", href: "/admin/settings?tab=collection" },
-    { id: "evidence", label: "분류·근거", href: "/admin/settings?tab=evidence" },
-    { id: "integrations", label: "외부 연동", href: "/admin/settings?tab=integrations" },
+  { id: "log", label: "기록", href: "/admin/settings?tab=history", icon: "clock", tabs: [
     { id: "history", label: "운영 기록", href: "/admin/settings?tab=history" },
+    { id: "changes", label: "변경 기록", href: "/admin/activity" },
+    { id: "llm", label: "LLM 기록", href: "/admin/models/history" },
   ] },
 ];
+const menu = (id: WorkspaceId) => WORKSPACES.find(workspace => workspace.id === id)!;
 export const WORKSPACE_GROUPS = [
-  { title: "매일 운영", pages: WORKSPACES.slice(0, 5) },
-  { title: "필요할 때", pages: WORKSPACES.slice(5) },
+  { title: "매일 운영", pages: (["home", "people", "models", "sources"] as const).map(menu) },
+  { title: "필요할 때", pages: (["content", "log"] as const).map(menu) },
 ] as const;
 
 export const WORKSPACE_SECONDARY = {
@@ -113,12 +135,29 @@ export const WORKSPACE_SECONDARY = {
     { id: "inbox", label: "오늘 할 일", href: "/admin/inbox" },
     { id: "changes", label: "변경 기록", href: "/admin/activity?workspace=home&group=settings" },
   ],
-  /** 고급 설정 — 처음 설정하거나 장애를 분석할 때 여는 편집기. 이름은 MODELS_ADVANCED_EDITORS 하나에서 온다. */
+  /** 사람 확인 › 검수 및 발행 — 옛 「검수 및 발행」의 탭 넷 */
+  review: [
+    { id: "human", label: "사람 확인", href: "/admin/review?tab=human" },
+    { id: "all", label: "전체 단계", href: "/admin/review?tab=all" },
+    { id: "publish", label: "발행 대기", href: "/admin/review?tab=publish&stage=publish" },
+    { id: "rejected", label: "반려 기록", href: "/admin/review?tab=rejected&stage=rejected" },
+  ],
+  /** 사람 확인 › 요청함 — 옛 「요청함」의 탭 여섯 */
+  requests: [
+    { id: "open", label: "처리 필요", href: "/admin/requests?tab=open" },
+    { id: "correction", label: "내림·수정", href: "/admin/requests?tab=correction" },
+    { id: "contact", label: "문의", href: "/admin/requests?tab=contact" },
+    { id: "posts", label: "글 검수", href: "/admin/requests?tab=posts" },
+    { id: "registration", label: "등록·인증 현황", href: "/admin/requests?tab=registration" },
+    { id: "history", label: "처리 기록", href: "/admin/requests?tab=history" },
+  ],
+  /** 고급 설정 — 처음 설정하거나 장애를 분석할 때 여는 편집기. 이름은 MODELS_ADVANCED_EDITORS 하나에서 온다(사람 위임 모델은 사람 확인 메뉴). */
   modelsAdvanced: [
     { id: "overview", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
-    ...MODELS_ADVANCED_EDITORS.map(({ id, label, href }) => ({ id, label, href })),
+    ...MODELS_MENU_EDITORS.map(({ id, label, href }) => ({ id, label, href })),
   ],
-  projectQuality: [
+  /** 사람 확인 › 품질관리 — 옛 주소(감사·공개분 2차·규칙 재검수)에서 보인다. 품질관리 화면 자체는 검사 종류 탭을 직접 그린다 */
+  quality: [
     { id: "audit", label: "AI 감사·정책", href: "/admin/audit?tab=audit" },
     { id: "published", label: "공개분 2차 확인", href: "/admin/review?second=published" },
     { id: "recheck", label: "규칙 재검수", href: "/admin/products/recheck" },
@@ -149,81 +188,83 @@ export const WORKSPACE_LEGACY_SCREENS = [
   "/admin/news", "/admin/github-accounts", "/admin/activity", "/admin/login",
 ] as const;
 
-const get = (id: WorkspaceId) => WORKSPACES.find(workspace => workspace.id === id)!;
-const validTab = (id: WorkspaceId, tab: string | null, fallback: string) => get(id).tabs.some(item => item.id === tab) ? tab! : fallback;
+/** 설정 화면(/admin/settings)이 그리는 탭 — 운영 기록(history)만 기록 메뉴다 */
+const SETTINGS_SOURCE_TABS: readonly string[] = ["collection", "evidence", "integrations"];
+/** 콘텐츠 운영 화면(/admin/content)이 그리는 탭 */
+const CONTENT_PAGE_TABS: readonly string[] = ["social", "news", "ranking"];
+const pick = (allowed: readonly string[], value: string | null, fallback: string) => value !== null && allowed.includes(value) ? value : fallback;
+const ids = (links: readonly WorkspaceLink[]) => links.map(link => link.id);
 
-/** Query-aware ownership keeps old bookmarked screens in their new workspace without moving any mutations. */
-export function resolveWorkspace(pathname: string, search: Search = none): WorkspaceLocation {
-  let id: WorkspaceId = "home", tab = "flow";
-  if (pathname === "/admin/flow") {
-    tab = validTab("home", search.get("tab"), "flow");
-  } else if (pathname === "/admin/activity") {
-    const requested = search.get("workspace");
-    id = requested === "home" ? "home" : requested === "models" ? "models" : "settings";
-    tab = id === "home" ? "changes" : "history";
-  } else if (pathname === "/admin/status" && search.get("tab") === "manual") {
-    id = "review"; tab = "publish";
-  } else if (pathname === "/admin/status") {
-    tab = "diagnostics";
-  } else if (pathname === "/admin/inbox") {
-    tab = "changes";
-  } else if (pathname === "/admin/audit" && search.get("tab") === "requests") {
-    id = "requests"; tab = "correction";
-  } else if (pathname === "/admin/audit" || pathname === "/admin/products/recheck" || (pathname === "/admin/review" && search.get("second") === "published")) {
-    id = "projects"; tab = "quality";
-  } else if (pathname === "/admin/review") {
-    id = "review";
-    const stage = search.get("stage"), state = search.get("state");
-    const inferred = stage === "human" || stage === "agreed" ? "human" : stage === "publish" || state === "approved" ? "publish" : stage === "rejected" || state === "rejected" ? "rejected" : stage || state ? "all" : "human";
-    tab = validTab(id, search.get("tab"), inferred);
-  } else if (pathname === "/admin/requests") {
-    id = "requests";
-    const requested = search.get("tab");
-    // Match the server adapter: old state/offset-only bookmarks open contacts; an explicit invalid tab opens the queue.
-    const fallback = requested === null && (search.get("state") !== null || search.get("offset") !== null) ? "contact" : "open";
-    tab = validTab(id, requested, fallback);
-  } else if (["/admin/feedback", "/admin/maker-replies", "/admin/reactions"].includes(pathname)) {
-    id = "requests"; tab = "posts";
-  } else if (pathname === "/admin/translations") {
-    id = "projects"; tab = "translations";
-  } else if (pathname === "/admin/products") {
-    id = "projects"; tab = validTab(id, search.get("tab"), "all");
-  } else if (pathname.startsWith("/admin/products/")) {
-    id = "projects"; tab = "all";
-  } else if (pathname === "/admin/models/tasks") {
-    id = "models"; tab = "tasks";
-  } else if (pathname === "/admin/models/llm") {
-    id = "models"; tab = "llm";
-  } else if (pathname === "/admin/models/history") {
-    id = "models"; tab = "history";
-  } else if (MODELS_ADVANCED_PATHS.includes(pathname)) {
-    id = "models"; tab = "advanced";
-  } else if (pathname === "/admin/models") {
-    id = "models";
-    const legacy = search.get("tab");
-    tab = search.get("advanced") === "1" ? "advanced" : legacy !== null ? MODELS_LEGACY_TABS[legacy]?.tab ?? "dashboard" : "dashboard";
-  } else if (pathname.startsWith("/admin/models/")) {
-    id = "models"; tab = "dashboard";
-  } else if (pathname === "/admin/content") {
-    id = "content"; tab = validTab(id, search.get("tab"), "social");
-  } else if (["/admin/talk", "/admin/news", "/admin/ranking"].includes(pathname)) {
-    id = "content"; tab = pathname === "/admin/news" ? "news" : pathname === "/admin/ranking" ? "ranking" : "social";
-  } else if (pathname === "/admin/settings") {
-    id = "settings"; tab = validTab(id, search.get("tab"), "collection");
-  } else if (["/admin/categories", "/admin/evidence"].includes(pathname)) {
-    id = "settings"; tab = "evidence";
-  } else if (["/admin/github-accounts", "/admin/github-integrations"].includes(pathname)) {
-    id = "settings"; tab = "integrations";
-  } else if (pathname === "/admin") {
-    id = "settings"; tab = "collection";
+type Place = { id: WorkspaceId; tab: string; secondary?: readonly WorkspaceLink[]; secondaryTab?: string };
+
+/** 주소 하나 → 메뉴·탭·2차 메뉴. 화면과 쓰기 동작은 옮기지 않고, 옛 즐겨찾기 주소도 새 메뉴의 제자리에 켠다. */
+function place(pathname: string, search: Search): Place {
+  const tab = search.get("tab");
+  switch (pathname) {
+    case "/admin/flow": return { id: "home", tab: pick(ids(menu("home").tabs), tab, "flow") };
+    case "/admin/inbox": return { id: "home", tab: "changes", secondary: WORKSPACE_SECONDARY.homeChanges, secondaryTab: "inbox" };
+    case "/admin/activity":
+      // 홈의 「할 일·변경 기록」에서 연 변경 기록(?workspace=home)은 홈에 남는다. 나머지(LLM 기록에서 연 것 포함)는 기록 메뉴
+      return search.get("workspace") === "home"
+        ? { id: "home", tab: "changes", secondary: WORKSPACE_SECONDARY.homeChanges, secondaryTab: "changes" }
+        : { id: "log", tab: "changes" };
+    case "/admin/status":
+      if (tab === "manual") return { id: "people", tab: "review", secondary: WORKSPACE_SECONDARY.review, secondaryTab: "publish" };
+      if (tab === "jobs" || tab === "crawlers") return { id: "sources", tab };
+      return { id: "home", tab: "diagnostics" };
+    case "/admin/review": {
+      if (search.get("second") === "published") return { id: "people", tab: "quality", secondary: WORKSPACE_SECONDARY.quality };
+      const stage = search.get("stage"), state = search.get("state");
+      const inferred = stage === "human" || stage === "agreed" ? "human" : stage === "publish" || state === "approved" ? "publish"
+        : stage === "rejected" || state === "rejected" ? "rejected" : stage || state ? "all" : "human";
+      return { id: "people", tab: "review", secondary: WORKSPACE_SECONDARY.review, secondaryTab: pick(ids(WORKSPACE_SECONDARY.review), tab, inferred) };
+    }
+    case "/admin/requests": {
+      // Match the server adapter: old state/offset-only bookmarks open contacts; an explicit invalid tab opens the queue.
+      const fallback = tab === null && (search.get("state") !== null || search.get("offset") !== null) ? "contact" : "open";
+      return { id: "people", tab: "requests", secondary: WORKSPACE_SECONDARY.requests, secondaryTab: pick(ids(WORKSPACE_SECONDARY.requests), tab, fallback) };
+    }
+    case "/admin/audit":
+      return tab === "requests"
+        ? { id: "people", tab: "requests", secondary: WORKSPACE_SECONDARY.requests, secondaryTab: "correction" }
+        : { id: "people", tab: "quality", secondary: WORKSPACE_SECONDARY.quality };
+    case "/admin/products/recheck": return { id: "people", tab: "quality", secondary: WORKSPACE_SECONDARY.quality };
+    case "/admin/feedback": case "/admin/maker-replies": case "/admin/reactions":
+      return { id: "people", tab: "requests", secondary: WORKSPACE_SECONDARY.posts };
+    case PEOPLE_DELEGATE_EDITOR.href: return { id: "people", tab: "delegate" };
+    case "/admin/products":
+      return tab === "quality" ? { id: "people", tab: "quality" } : { id: "content", tab: tab === "translations" ? "translations" : "products" };
+    case "/admin/translations": return { id: "content", tab: "translations" };
+    case "/admin/content": return { id: "content", tab: pick(CONTENT_PAGE_TABS, tab, "social") };
+    case "/admin/talk": return { id: "content", tab: "social" };
+    case "/admin/news": return { id: "content", tab: "news" };
+    case "/admin/ranking": return { id: "content", tab: "ranking" };
+    case "/admin/models": {
+      if (search.get("advanced") === "1") return { id: "models", tab: "advanced", secondary: WORKSPACE_SECONDARY.modelsAdvanced };
+      const legacy = modelsLegacyTab(tab);
+      return legacy ? { id: legacy.menu, tab: legacy.tab } : { id: "models", tab: "dashboard" };
+    }
+    case "/admin/models/llm": return { id: "models", tab: "llm" };
+    case "/admin/models/tasks": return { id: "models", tab: "tasks" };
+    case "/admin/models/history": return { id: "log", tab: "llm" };
+    case "/admin/settings": return tab === "history" ? { id: "log", tab: "history" } : { id: "sources", tab: pick(SETTINGS_SOURCE_TABS, tab, "collection") };
+    case "/admin": return { id: "sources", tab: "collection" };
+    case "/admin/categories": case "/admin/evidence": return { id: "sources", tab: "evidence", secondary: WORKSPACE_SECONDARY.evidence };
+    case "/admin/github-accounts": case "/admin/github-integrations": return { id: "sources", tab: "integrations", secondary: WORKSPACE_SECONDARY.integrations };
   }
-  const secondary = id === "home" && tab === "changes" && pathname !== "/admin/flow" ? WORKSPACE_SECONDARY.homeChanges
-    : id === "models" && tab === "advanced" ? WORKSPACE_SECONDARY.modelsAdvanced
-    : id === "projects" && tab === "quality" && pathname !== "/admin/products" ? WORKSPACE_SECONDARY.projectQuality
-    : id === "requests" && tab === "posts" && pathname !== "/admin/requests" ? WORKSPACE_SECONDARY.posts
-    : id === "settings" && tab === "evidence" && pathname !== "/admin/settings" ? WORKSPACE_SECONDARY.evidence
-    : id === "settings" && tab === "integrations" && pathname !== "/admin/settings" ? WORKSPACE_SECONDARY.integrations : [];
-  return { workspace: get(id), tab, detail: pathname.startsWith("/admin/products/") && pathname !== "/admin/products/recheck" ? "product" : null, secondary };
+  if (MODELS_ADVANCED_PATHS.includes(pathname)) return { id: "models", tab: "advanced", secondary: WORKSPACE_SECONDARY.modelsAdvanced };
+  if (pathname.startsWith("/admin/models/")) return { id: "models", tab: "dashboard" };
+  if (pathname.startsWith("/admin/products/")) return { id: "content", tab: "products" };
+  return { id: "home", tab: "flow" };
+}
+
+/** Query-aware ownership keeps old bookmarked screens in their new menu without moving any mutations. */
+export function resolveWorkspace(pathname: string, search: Search = none): WorkspaceLocation {
+  const found = place(pathname, search);
+  const secondary = found.secondary ?? [];
+  const secondaryTab = found.secondaryTab ?? secondary.find(link => secondaryIsActive(link, pathname, search))?.id ?? null;
+  return { workspace: menu(found.id), tab: found.tab, secondary, secondaryTab,
+    detail: pathname.startsWith("/admin/products/") && pathname !== "/admin/products/recheck" ? "product" : null };
 }
 
 export function secondaryIsActive(link: WorkspaceLink, pathname: string, search: Search): boolean {
