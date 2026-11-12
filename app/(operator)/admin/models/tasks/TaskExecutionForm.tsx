@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { aiTaskSupportsWorkloadPool, aiTaskWorkloadPoolApiOnly, type AiTaskExecutionInput, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
+import { AI_TASK_POOL_MEMBER_SLOTS_MAX, aiTaskPoolCappedLanes, aiTaskPoolFeatures, aiTaskSupportsPool, aiTaskWorkloadPoolApiOnly,
+  type AiTaskExecutionInput, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
 import { aiRankReasoningEfforts, type AiConnectionView, type AiRankChoice, type AiRankOption } from "@/lib/operations/admin-ai-tasks";
 import { modelPickerConnectionLabel, modelPickerModelLabel } from "../model-picker-display";
@@ -50,6 +51,31 @@ export function taskPoolRuntimeGroups(view: AiTaskExecutionAdminView, runtime: N
   });
 }
 
+/**
+ * 「동시에」의 모델별 칸 수(0179) — 이 단계에 그 모델이 내줄 칸 수. 모두 비우면 예전 작업 분산(단계 동시 수를 함께 나눠 씀).
+ * 칸 수를 적으면 칸 수의 합만큼 함께 처리하고, 한 모델이 서도 남은 모델이 계속한다. 장비·모델 한도와 장부는 그대로 거친다.
+ */
+function PoolSlotFields({ value, slots, disabled, onChange, lanes }: { value: readonly (AiRankChoice | null)[]; slots: readonly string[];
+  disabled: boolean; onChange: (index: number, raw: string) => void; lanes: number | null }) {
+  const rows = value.flatMap((choice, index) => choice ? [{ choice, index }] : []);
+  if (!rows.length) return null;
+  return <div className="grid min-w-0 gap-1 text-[13px]">
+    <table className="w-full table-fixed border-collapse">
+      <colgroup><col style={{ width: "72px" }} /><col /><col style={{ width: "96px" }} /></colgroup>
+      <thead><tr className="text-left text-fg-3"><th className="font-normal">모델</th><th className="font-normal">고른 모델</th><th className="text-right font-normal">칸 수</th></tr></thead>
+      <tbody>{rows.map(({ choice, index }) => <tr key={index}>
+        <td className="tabular-nums">함께 {index + 1}</td>
+        <td className="truncate" title={choice.model}>{choice.model}</td>
+        <td className="text-right"><input type="number" inputMode="numeric" min={1} max={AI_TASK_POOL_MEMBER_SLOTS_MAX} step={1} placeholder="정하지 않음"
+          aria-label={`함께 ${index + 1} 칸 수`} value={slots[index] ?? ""} disabled={disabled} onChange={event => onChange(index, event.target.value)}
+          className="min-h-8 w-[88px] rounded-lg border border-line bg-bg-card px-2 text-right tabular-nums" /></td>
+      </tr>)}</tbody>
+    </table>
+    <p className="text-fg-3">{lanes !== null ? `함께 최대 ${lanes}건을 처리합니다. 모델마다 적은 칸 수를 넘겨 보내지 않습니다.`
+      : "칸 수를 비우면 예전처럼 단계 동시 수를 모델끼리 나눠 씁니다. 칸 수를 적으면 그 합만큼 함께 처리합니다."}</p>
+  </div>;
+}
+
 /** Pool members are separate settings; none of these fields are saved as rank 4. */
 export function TaskExecutionForm({ view, label, options, connections, readOnly = false, runtime }: Props) {
   const [state, action, saving] = useActionState<AiTaskActionState, FormData>(saveTaskExecutionAction, null);
@@ -57,25 +83,46 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
   const initial = view.members.map(member => ({ provider: member.connectionId, model: member.model,
     ...(typeof member.options.reasoningEffort === "string" && member.options.reasoningEffort ? { reasoningEffort: member.options.reasoningEffort } : {}) }));
   const [value, setValue] = useState<(AiRankChoice | null)[]>(initial);
-  const supported = aiTaskSupportsWorkloadPool(view.task, view.slot);
+  // 0179: 구성원마다 이 단계에 내줄 칸 수(빈 칸 = 정하지 않음)와 예비 순위
+  const initialSlots = Array.from({ length: 4 }, (_, index) => {
+    const saved = view.members.find(member => member.position === index + 1)?.maxSlots;
+    return typeof saved === "number" ? String(saved) : "";
+  });
+  const [slots, setSlots] = useState<string[]>(initialSlots);
+  const [reserve, setReserve] = useState(view.reserveRanks);
+  const supported = aiTaskSupportsPool(view.task, view.slot);
+  const features = aiTaskPoolFeatures(view.task, view.slot);
   const apiOnly = aiTaskWorkloadPoolApiOnly(view.task);
   const currentRuntime = currentTaskPoolRuntime(view, connections, runtime);
   if (!supported && view.mode === "fallback") return null;
-  const membersOf = (values: readonly (AiRankChoice | null)[]): AiTaskExecutionInput["members"] => values.flatMap((choice, index) => {
+  const slotOf = (raw: string | undefined): number | undefined => {
+    const parsed = Number(raw);
+    return features.slotCaps && raw && Number.isInteger(parsed) && parsed >= 1 && parsed <= AI_TASK_POOL_MEMBER_SLOTS_MAX ? parsed : undefined;
+  };
+  const membersOf = (values: readonly (AiRankChoice | null)[], counts: readonly string[]): AiTaskExecutionInput["members"] => values.flatMap((choice, index) => {
     if (!choice) return [];
     // Repeated engines are independent distribution members; never reuse one member id in two positions.
     const previous = view.members.find(member => member.position === index + 1 && member.connectionId === choice.provider && member.model === choice.model);
+    const maxSlots = slotOf(counts[index]);
     return [{ ...(previous ? { memberId: previous.memberId } : {}), connectionId: choice.provider, model: choice.model,
-      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}) }];
+      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}), ...(maxSlots ? { maxSlots } : {}) }];
   });
-  const members = membersOf(value);
-  const changed = mode !== view.mode || mode === "workload_pool" && JSON.stringify(members) !== JSON.stringify(membersOf(initial));
+  const members = membersOf(value, slots);
+  const reserveOn = features.reserve && reserve;
+  const changed = mode !== view.mode || mode === "workload_pool" && (JSON.stringify(members) !== JSON.stringify(membersOf(initial, initialSlots))
+    || reserveOn !== (features.reserve && view.reserveRanks));
+  const lanes = aiTaskPoolCappedLanes({ task: view.task, slot: view.slot, mode: "workload_pool", members });
   const issuesOf = (values: readonly (AiRankChoice | null)[]) => {
     const selected = values.filter((choice): choice is AiRankChoice => choice !== null);
     const issues: string[] = [];
     if (!selected.length) issues.push("분산할 모델을 하나 이상 선택하세요.");
     if (selected.some(choice => !connections.some(connection => connection.id === choice.provider && connection.enabled)))
       issues.push("꺼졌거나 없는 연결을 바꿔주세요.");
+    if (features.slotCaps) {
+      const counts = values.flatMap((choice, index) => choice ? [slots[index] ?? ""] : []);
+      if (counts.some(raw => raw !== "" && slotOf(raw) === undefined)) issues.push(`칸 수는 1~${AI_TASK_POOL_MEMBER_SLOTS_MAX} 사이로 적어 주세요.`);
+      else if (counts.some(raw => raw === "") && counts.some(raw => raw !== "")) issues.push("칸 수는 모든 모델에 적거나 모두 비워 주세요.");
+    }
     if (apiOnly && selected.some(choice => !connections.some(connection => connection.id === choice.provider && (connection.kind === "api" || connection.cliTool === "opencode"))))
       issues.push("발행 분류에는 API 또는 OpenCode 연결을 선택하세요.");
     if (selected.some((choice, index) => connections.some(connection => connection.id === choice.provider && connection.kind === "cli")
@@ -99,12 +146,13 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
       <input type="hidden" name="task" value={view.task} /><input type="hidden" name="slot" value={view.slot} />
       <input type="hidden" name="expectedRevision" value={view.revision ?? ""} />
       <input type="hidden" name="members" value={JSON.stringify(mode === "workload_pool" ? members : [])} />
+      {mode === "workload_pool" && reserveOn && <input type="hidden" name="reserveRanks" value="1" />}
       <div className="mt-task-form-toolbar">
       <label className="grid min-w-0 gap-1 text-[13px]">실행 방식
         <select name="mode" value={mode} disabled={saving || readOnly} className="min-h-9 min-w-0 rounded-lg border border-line bg-bg-card px-2"
           onChange={event => setMode(event.target.value as typeof mode)}>
-          <option value="fallback">{apiOnly ? "기존 CLI 분류" : "대체 실행 · 우선순위로 모델 하나 선택"}</option>
-          <option value="workload_pool" disabled={!supported}>작업 분산 · 최대 4칸</option>
+          <option value="fallback">{apiOnly ? "기존 CLI 분류" : "순위대로 · 앞 모델을 쓸 수 없을 때 다음 순위"}</option>
+          <option value="workload_pool" disabled={!supported}>동시에 · 묶은 모델이 함께 처리</option>
         </select>
       </label>
       <button type="submit" disabled={saving || readOnly || !changed || issues.length > 0 || mode === "workload_pool" && !supported}
@@ -117,6 +165,13 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
           options={choices} connections={connections} value={value} onChange={setValue} slotNames={MEMBER_FIELDS}
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
         {view.task === "second-review" && <p className="text-[13px] text-fg-3">후보별 모델 하나를 고르며, 투표 수는 늘리지 않습니다.</p>}
+        {features.slotCaps && <PoolSlotFields value={value} slots={slots} disabled={saving || readOnly}
+          onChange={(index, raw) => setSlots(current => current.map((entry, at) => at === index ? raw : entry))} lanes={lanes} />}
+        {features.reserve && <label className="flex min-w-0 items-start gap-2 text-[13px]">
+          <input type="checkbox" checked={reserve} disabled={saving || readOnly} onChange={event => setReserve(event.target.checked)} className="mt-1" />
+          <span>예비 · 묶은 모델이 모두 설 때(실패·한도 초과·쉼) 이 작업의 순위(1·2·3)로 이어서 처리합니다. 끄면 예비 없이 기다립니다.</span>
+        </label>}
+        {!features.slotCaps && <p className="text-[13px] text-fg-3">이 작업은 아직 모델별 상한·예비를 따르지 않습니다. 일 하나마다 모델 하나를 고릅니다.</p>}
       </> : <p className="text-[13px] text-fg-3">{apiOnly ? "API·OpenCode 모델을 쓰려면 작업 분산으로 전환하세요." : "우선 모델 하나를 사용하고, 대체가 필요할 때만 다음 순위로 전환합니다."}</p>}
       {view.mode === "workload_pool" && <div className="grid gap-1 text-[13px] text-fg-3">
         {currentRuntime?.pool ? <>

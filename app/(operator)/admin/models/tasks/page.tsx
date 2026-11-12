@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
-import { aiTaskSupportsWorkloadPool } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskSupportsPool } from "@/lib/llm/ai-task-execution-config";
 import { AI_TASK_IMPORT_CONFIRM, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
 import { aiTaskSlotRevision, aiTaskTargetLabel, previewAiTaskImport, readAiTasksAdminView, type AiTaskSlotView } from "@/lib/operations/admin-ai-tasks-repository";
 import { readAssistControls } from "@/lib/operations/llm-assist-controls";
@@ -67,7 +67,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
   const readOnly = adminWorkspaceReadOnly();
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
-  const modes = executionRead.executions.filter(execution => aiTaskSupportsWorkloadPool(execution.task, execution.slot) || execution.mode !== "fallback");
+  const modes = executionRead.executions.filter(execution => aiTaskSupportsPool(execution.task, execution.slot) || execution.mode !== "fallback");
   const pooled = modes.filter(execution => execution.mode === "workload_pool").length;
   const slotOf = (task: string, slot: number) => view.slots.find(entry => entry.task.id === task && entry.slot === slot);
   // 없앤 작업(예: 한국어 소개 번역 · 직접 경로)의 남은 순위 행 — 실행 쪽은 읽지 않는다. 칸마다 지우기만 받는다

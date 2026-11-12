@@ -86,7 +86,7 @@ async function exaoneConnection(extra: Record<string, string> = {}) {
   expect(saved).toMatchObject({ ok: true });
   return { saved, row: await connection("LG EXAONE") };
 }
-const poolForm = (task: string, members: { connectionId: string; model: string }[], expectedRevision = "") =>
+const poolForm = (task: string, members: { connectionId: string; model: string; maxSlots?: number }[], expectedRevision = "") =>
   form({ task, slot: "1", expectedRevision, mode: "workload_pool", members: JSON.stringify(members) });
 
 beforeAll(async () => {
@@ -184,6 +184,42 @@ describe("심사 사유 번역 작업 분산(m1-gemma + EXAONE)", () => {
     const call = prepareReasonTranslationGatewayCall(texts, { model: MODEL, timeoutMs: 45_000 });
     expect(call).toMatchObject({ kind: "prepared", provider: "abcllm", totalTokenBound: 524_288,
       wireHash: createHash("sha256").update(reasonTranslationGatewayWire(texts, MODEL, 4096)).digest("hex") });
+  });
+
+  // 0179(2026-11-12 「동시에」): 구성원별 칸 수·예비 순위가 같은 저장 TX 에 들어가고, 감사에 남고, 실행 스냅숏이 그대로 읽는다(마이그레이션 뒤 진짜 칸)
+  it("「동시에」 저장: 칸 수(구성원별)·예비를 저장·감사하고 실행 스냅숏이 칸 수의 합만큼 줄을 연다 — 칸 수를 일부만 적으면 거절", async () => {
+    const gemma = await gemmaToday();
+    const { row: exaone } = await exaoneConnection();
+    const { saveTaskExecutionAction } = await executionActions();
+    const partial = await saveTaskExecutionAction(null, poolForm("reason-translate", [{ connectionId: gemma.id, model: "m1-gemma", maxSlots: 2 },
+      { connectionId: exaone.id, model: MODEL }]));
+    expect(partial).toMatchObject({ issues: ["칸 수는 모든 모델에 적거나 모두 비워 주세요."] });
+    expect(await client`SELECT task FROM ai_task_pool_members`).toEqual([]);
+    const saved = await saveTaskExecutionAction(null, form({ task: "reason-translate", slot: "1", expectedRevision: "", mode: "workload_pool", reserveRanks: "1",
+      members: JSON.stringify([{ connectionId: gemma.id, model: "m1-gemma", maxSlots: 2 }, { connectionId: exaone.id, model: MODEL, maxSlots: 1 }]) }));
+    expect(saved).toMatchObject({ ok: true, message: expect.stringContaining("함께 최대 3건") });
+    expect(await client`SELECT position, model, max_slots FROM ai_task_pool_members ORDER BY position`).toEqual([
+      { position: 1, model: "m1-gemma", max_slots: 2 }, { position: 2, model: MODEL, max_slots: 1 }]);
+    expect(await client`SELECT mode, reserve_ranks, revision::int FROM ai_task_execution_configs WHERE task = 'reason-translate'`)
+      .toEqual([{ mode: "workload_pool", reserve_ranks: true, revision: 1 }]);
+    const [audit] = await audits("ai-task-execution-save");
+    expect(audit.detail).toMatchObject({ mode: "workload_pool", reserveRanksBefore: false, reserveRanks: true,
+      after: [expect.objectContaining({ model: "m1-gemma", maxSlots: 2 }), expect.objectContaining({ model: MODEL, maxSlots: 1 })] });
+    const [{ ensureAiTaskModels }, { ensureServingContracts }, { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig }, { TextTaskRanks }] = await Promise.all([
+      import("@/lib/llm/ai-task-models-snapshot"), import("@/lib/llm/serving-contract-store"), import("@/lib/llm/ai-task-execution-snapshot"), import("@/lib/llm/ai-task-resolver")]);
+    await Promise.all([ensureAiTaskModels(0), ensureServingContracts(0), ensureAiTaskExecutionConfigs(0)]);
+    const execution = readAiTaskExecutionConfig("reason-translate");
+    expect({ reserve: execution.reserveRanks, slots: execution.members.map(member => member.maxSlots) }).toEqual({ reserve: true, slots: [2, 1] });
+    const ranks = await TextTaskRanks.open("reason-translate", 0);
+    expect(ranks.lanes(1)).toBe(3);
+    // 예비 = 이 작업의 기존 순위(gemmaToday 가 저장한 1순위 m1-gemma)
+    expect(ranks.reserve?.candidates.map(candidate => [candidate.rank.rank, candidate.binding?.identity])).toEqual([[1, "m1-gemma"]]);
+    // 순위대로로 돌리면 실행은 순위만 읽는다 — 보관된 구성원·칸 수·예비 값은 지우지 않는다
+    const back = await saveTaskExecutionAction(null, form({ task: "reason-translate", slot: "1", expectedRevision: "1", mode: "fallback", members: "[]" }));
+    expect(back).toMatchObject({ ok: true });
+    expect(await client`SELECT mode, reserve_ranks FROM ai_task_execution_configs WHERE task = 'reason-translate'`).toEqual([{ mode: "fallback", reserve_ranks: true }]);
+    await ensureAiTaskExecutionConfigs(0);
+    expect((await TextTaskRanks.open("reason-translate", 0)).lanes(1)).toBe(1);
   });
 
   it("EXAONE 은 심사 사유 번역에만 — 공개 번역의 분산·순위 저장은 거절하고 아무것도 만들지 않는다", async () => {

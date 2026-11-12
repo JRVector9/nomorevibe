@@ -774,6 +774,8 @@ export const aiTaskExecutionConfigs = pgTable('ai_task_execution_configs', {
   revision: bigint('revision', { mode: 'number' }).notNull().default(1),
   updatedBy: varchar('updated_by', { length: 120 }).notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  /** 0179: 묶음이 모두 설 때 순위(ai_task_models)를 예비로 쓴다. 기본 false(예비 없음) */
+  reserveRanks: boolean('reserve_ranks').notNull().default(false),
 }, table => [
   primaryKey({ columns: [table.task, table.slot] }),
   check('ai_task_execution_configs_task_check', sql`${table.task} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
@@ -789,6 +791,8 @@ export const aiTaskPoolMembers = pgTable('ai_task_pool_members', {
   model: varchar('model', { length: 200 }).notNull(), options: jsonb('options').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   canonicalModel: varchar('canonical_model', { length: 200 }).notNull(), deviceId: varchar('device_id', { length: 120 }).notNull(),
   engineKey: varchar('engine_key', { length: 64 }).notNull(),
+  /** 0179: 이 단계에 내줄 칸 수(1~8). NULL = 정하지 않음(예전 작업 분산 — 단계 동시 수를 구성원끼리 나눠 씀) */
+  maxSlots: integer('max_slots'),
 }, table => [
   foreignKey({ columns: [table.task, table.slot], foreignColumns: [aiTaskExecutionConfigs.task, aiTaskExecutionConfigs.slot], name: 'ai_task_pool_members_config_fk' }).onDelete('cascade'),
   foreignKey({ columns: [table.connectionId], foreignColumns: [aiConnections.id], name: 'ai_task_pool_members_connection_fk' }).onDelete('restrict'),
@@ -799,5 +803,6 @@ export const aiTaskPoolMembers = pgTable('ai_task_pool_members', {
   check('ai_task_pool_members_device_check', sql`char_length(${table.deviceId}) BETWEEN 1 AND 120 AND ${table.deviceId} = btrim(${table.deviceId}) AND ${table.deviceId} !~ '[[:cntrl:]]'`),
   check('ai_task_pool_members_engine_check', sql`${table.engineKey} ~ '^[a-f0-9]{64}$'`),
   check('ai_task_pool_members_options_check', sql`jsonb_typeof(${table.options}) = 'object' AND pg_column_size(${table.options}) <= 4096`),
+  check('ai_task_pool_members_max_slots_check', sql`${table.maxSlots} IS NULL OR ${table.maxSlots} BETWEEN 1 AND 8`),
   index('ai_task_pool_members_connection_idx').on(table.connectionId),
 ]);
