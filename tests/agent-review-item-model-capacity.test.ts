@@ -233,7 +233,8 @@ it('chooses through the rank chooser with paused and blocked reviewers avoided',
   const exact = { provider: 'abcllm' as const, model: 'Exact Model' }, other = { provider: 'abcllm' as const, model: 'Other Model' };
   pinReviewRanks({ first: [other, exact] });
   await executeFirstReviewConsumerItem({ candidateId: 3, owner, pausedReviewers: new Set([firstReviewerKey(other)]), blockedReviewers: new Set(['blocked']) });
-  expect(mocks.choose).toHaveBeenCalledExactlyOnceWith(value.context, undefined, new Set([firstReviewerKey(other), 'blocked']));
+  // 넷째는 「동시에」 고르기가 줄에 설 구성원도 못 찾았는지 돌려받는 칸(2026-11-12)
+  expect(mocks.choose).toHaveBeenCalledExactlyOnceWith(value.context, undefined, new Set([firstReviewerKey(other), 'blocked']), {});
   // 1순위가 쉬니 2순위(Exact Model)로 준비·claim 한다
   expect(mocks.preparation).toHaveBeenCalledExactlyOnceWith(value.context, exact);
   expect(mocks.record).toHaveBeenCalledOnce();
@@ -250,6 +251,14 @@ it('a live intent bound outside the free ranks is protected, not all-unusable', 
   // 고르기가 null 인데 쓸 수 있는 순위가 남았다 — 살아 있는 의도·호출이 이 후보를 다른 모델에 묶었다
   mocks.choose.mockResolvedValue(null);
   expect(await executeFirstReviewConsumerItem({ candidateId: 3, owner })).toEqual({ state: 'skipped', reason: 'model_intent_protected' });
+  expect(mocks.claim).not.toHaveBeenCalled();
+});
+it('a 「동시에」 pool with no member that can even queue is a model-side deferral, not the candidate\'s fault', async () => {
+  mocks.choose.mockImplementation(async (_context: unknown, _executor: unknown, _blocked: unknown, note?: { poolBusy?: boolean }) => {
+    if (note) note.poolBusy = true;
+    return null;
+  });
+  expect(await executeFirstReviewConsumerItem({ candidateId: 3, owner })).toEqual({ state: 'skipped', reason: 'model_deferred' });
   expect(mocks.claim).not.toHaveBeenCalled();
 });
 it('always wraps a capacity refusal as a per-model deferral carrying the chosen reviewer', async () => {

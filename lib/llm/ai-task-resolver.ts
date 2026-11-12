@@ -348,8 +348,22 @@ export class TextTaskRanks {
     return this.usable().length ? null : this.degraded();
   }
 
-  /** 순위를 쉬게 한다(이 틱 동안). 같은 순위의 둘째 까닭은 세기만 한다. */
-  pause(binding: Pick<TextTaskRankBinding, "rank" | "memberId">, reason: string): void { this.mark(bindingKey(binding), reason); }
+  /**
+   * 순위를 쉬게 한다(이 틱 동안). 같은 순위의 둘째 까닭은 세기만 한다.
+   * 「동시에」에서 같은 연결·같은 장부 이름을 두 자리에 넣은 구성원(반복 선택, 0167)과 그와 같은 예비 순위는 한 엔진·한 장부 줄이다 — 한쪽이 서면
+   * (포화·한도·엔진 실패·429) 나머지도 같은 까닭으로 함께 쉰다. 그러지 않으면 쉬지 않은 쪽이 다음 일을 받아 같은 미룸·실패(엔진이면 호출 기한만큼)를
+   * 되풀이한다(2026-11-12 검토). 순위대로의 반복 순위는 예전 그대로 따로 쉰다.
+   */
+  pause(binding: Pick<TextTaskRankBinding, "rank" | "memberId">, reason: string): void {
+    const key = bindingKey(binding);
+    this.mark(key, reason);
+    if (this.mode !== "workload_pool") return;
+    const all = this.bindings(), own = all.find(row => bindingKey(row) === key);
+    if (!own) return;
+    for (const twin of all)
+      if (bindingKey(twin) !== key && twin.connectionId === own.connectionId && twin.identity === own.identity && twin.provider === own.provider)
+        this.mark(bindingKey(twin), reason);
+  }
   private mark(member: string, reason: string) {
     if (!this.paused.has(member)) this.paused.set(member, reason);
     const key = `${member}.${reason}`;
@@ -367,9 +381,9 @@ export class TextTaskRanks {
     return this.runRanked(this.bindings(), work, options);
   }
 
-  /** 순위 차례 대체(순위대로, 그리고 「동시에」의 예비). */
+  /** 순위 차례 대체(순위대로, 그리고 「동시에」의 예비). overflow: 묶음이 살아 있는데 빈 칸이 없어 예비로 넘긴 일 — 예비가 모두 서도 다 쓴 것이 아니다(idle). */
   private async runRanked<T>(bindings: TextTaskRankBinding[], work: (binding: TextTaskRankBinding) => Promise<T>,
-    options: Readonly<{ prefer?: string | null }>): Promise<TextRankRun<T>> {
+    options: Readonly<{ prefer?: string | null; overflow?: boolean }>): Promise<TextRankRun<T>> {
     const order = [...bindings];
     const preferred = options.prefer ? order.findIndex(binding => binding.identity === options.prefer) : -1;
     if (preferred > 0) order.unshift(...order.splice(preferred, 1));
@@ -385,6 +399,7 @@ export class TextTaskRanks {
         throw error;
       }
     }
+    if (options.overflow) { this.idleSaturated = true; return { kind: "idle" }; }
     this.exhausted = true;
     return { kind: "unusable" };
   }
@@ -400,6 +415,8 @@ export class TextTaskRanks {
     if (options.prefer && this.reserve && !this.primaryBindings().some(binding => binding.identity === options.prefer)
       && this.reserveBindings().some(binding => binding.identity === options.prefer)) return this.runReserve(work, options);
     const capped = this.capped();
+    /** 이 이름으로 부를 예비 순위가 쉬지 않고 있다 */
+    const reserveServes = (identity: string) => this.reserveBindings().some(binding => binding.identity === identity && !this.paused.has(bindingKey(binding)));
     for (let round = 0; round < 4; round++) {
       // 공급자 429 로 쉬는 구성원은 고르지 않는다 — 고른 뒤의 미룸은 이 일을 다른 구성원에 넘기지 않으므로(아래), 쉬는 동안 같은 구성원이 뽑혀 분산 전체가 멈추지 않게 한다
       const live = this.primaryBindings().filter(binding => binding.memberId && !this.paused.has(bindingKey(binding)) && !this.coolingDown(binding));
@@ -410,11 +427,27 @@ export class TextTaskRanks {
       }
       const free = capped ? live.filter(binding => this.load(binding) < this.capOf(binding)) : live;
       if (!free.length) return { kind: "idle" };
-      // 칸이 찬 구성원의 지난 일은 그 칸이 빌 때 이어받는다 — 이 일은 빈 칸이 있는 구성원이 받는다
-      const prefer = capped && options.prefer && !free.some(binding => binding.identity === options.prefer) ? null : options.prefer;
-      const selected = await chooseTaskWorkloadMember(execution, free.map(binding => ({ ...binding, memberId: binding.memberId! })), { preferIdentity: prefer });
-      // No eligible idle route is a capacity deferral, not proof that all configured models failed.
+      let prefer = options.prefer ?? null;
+      if (prefer && !free.some(binding => binding.identity === prefer)) {
+        // 칸이 찬 구성원의 지난 일은 그 칸이 빌 때 이어받는다 — 이 일은 빈 칸이 있는 구성원이 받는다
+        if (capped) prefer = null;
+        // 칸 수 없는 묶음: 줄에 세워 둔 구성원이 이 틱에 쉰다(포화·한도·엔진·429). 같은 이름의 예비 순위가 있으면 예비가 이어받고,
+        // 없으면 이 일만 넘긴다(장부의 대기 행·fence 가 이 일을 그 이름에 묶었다 — 다른 구성원에 넘기지 않는다). 예전에는 capacity 로 틱 전체를 접었다.
+        else if (reserveServes(prefer)) return this.runReserve(work, options);
+        else throw this.memberDeferral("capacity");
+      }
+      // 칸 수 없는 묶음·예비 없음: 빈 칸이 없으면 줄에 설 구성원을 고른다(requestSlot 이 대기 행을 쓰고 다음 틱이 이어받는다 — 순위대로와 같은 줄)
+      const selected = await chooseTaskWorkloadMember(execution, free.map(binding => ({ ...binding, memberId: binding.memberId! })),
+        { preferIdentity: prefer, queueWhenFull: !capped && !this.reserve });
       if (!selected) {
+        // 이어받을 구성원을 고르기가 받지 않았다(연결·경로가 그 사이 닫힘 등) — 같은 이름의 예비가 잇거나, 이 일만 넘긴다
+        if (prefer) {
+          if (reserveServes(prefer)) return this.runReserve(work, options);
+          throw this.memberDeferral("capacity");
+        }
+        // 묶음의 장비에 지금 빈 칸이 없다 — 예비가 있으면 예비 순위가 받는다(예비는 장부 줄에 선다, 「한도 초과」도 묶음이 선 것)
+        if (this.reserve) return this.runReserve(work, options, true);
+        // 줄에 설 구성원도 없다(경로 몫·모델 상한이 참, 장비 없음) — 순위대로의 모두 포화와 같다
         if (!capped) throw new ModelCapacityDeferredError("capacity");
         // 칸 수를 적은 묶음: 장비에 빈 칸이 없다는 힌트 — 이 줄만 끝내고 다른 줄은 계속한다(포화로 센다)
         this.idleSaturated = true;
@@ -450,11 +483,25 @@ export class TextTaskRanks {
     }
   }
 
-  /** 묶음이 모두 섰을 때의 예비(순위 차례) — 순위대로의 동시 수(lanes 의 base)만큼만 함께 부른다. */
-  private async runReserve<T>(work: (binding: TextTaskRankBinding) => Promise<T>, options: Readonly<{ prefer?: string | null }>): Promise<TextRankRun<T>> {
-    if (this.reserveInFlight >= this.reserveLimit) return { kind: "idle" };
+  /** 「동시에」에서 이 일만 넘기는 미룸(skipsWork) — 그 구성원이 이 일을 이 틱에 받을 수 없다 */
+  private memberDeferral(reason: ModelCapacityDeferredError["reason"]): ModelCapacityDeferredError {
+    const error = new ModelCapacityDeferredError(reason);
+    this.memberDeferrals.add(error);
+    return error;
+  }
+
+  /**
+   * 묶음이 모두 섰을 때의 예비(순위 차례) — 순위대로의 동시 수(lanes 의 base)만큼만 함께 부른다.
+   * overflow: 묶음은 살아 있지만 장비에 빈 칸이 없어 넘긴 일 — 예비도 모두 서면 다 쓴 것(unusable)이 아니라 이 줄만 끝낸다(idle).
+   */
+  private async runReserve<T>(work: (binding: TextTaskRankBinding) => Promise<T>, options: Readonly<{ prefer?: string | null }>,
+    overflow = false): Promise<TextRankRun<T>> {
+    if (this.reserveInFlight >= this.reserveLimit) {
+      if (overflow) this.idleSaturated = true;
+      return { kind: "idle" };
+    }
     this.reserveInFlight++;
-    try { return await this.runRanked(this.reserveBindings(), work, options); }
+    try { return await this.runRanked(this.reserveBindings(), work, { ...options, overflow }); }
     finally { this.reserveInFlight--; }
   }
 

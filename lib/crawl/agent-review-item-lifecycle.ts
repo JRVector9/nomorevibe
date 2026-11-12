@@ -40,7 +40,10 @@ export async function executeFirstReviewConsumerItem(input: {
   const context = loaded.context;
   // 늘 순위 고르기다(PR C1 — 「작업 ↔ 모델」 1차 AI 검수 1·2·3순위). 쓸 수 없는·쉬는·막힌 순위는 비켜 간다
   const avoid = new Set([...input.pausedReviewers ?? [], ...input.blockedReviewers ?? []]);
-  const reviewer = await chooseFirstReviewForCandidate(context, undefined, avoid);
+  const note: { poolBusy?: boolean } = {};
+  const reviewer = await chooseFirstReviewForCandidate(context, undefined, avoid, note);
+  // 「동시에」: 줄에 설 구성원도 없다 — 모델 쪽 사정(후보 탓 아님)
+  if (!reviewer && note.poolBusy) return { state: 'skipped', reason: 'model_deferred' };
   if (!reviewer) {
     const ranks = firstReviewRankState(context.settings);
     if (ranks.degraded) return { state: 'skipped', reason: ranks.degraded.code };

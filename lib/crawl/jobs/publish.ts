@@ -21,7 +21,7 @@ import { requeueInvalidStarApprovals, reviewApprovalPredicate, starAutoApprovalP
 import { requiresProfileCategory } from "@/lib/crawl/rules";
 import { requestJob } from "@/lib/jobs/control";
 import { publicationClassificationAuthority, publicationClassificationPath } from '@/lib/crawl/publication-classify-capacity';
-import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from '@/lib/llm/capacity-deferred';
 import { recordPublisherClassificationDraining } from '@/lib/operations/publisher-drain-progress';
 
 /**
@@ -81,6 +81,11 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
   // Independent classification batches; model admission still enforces each physical device's limit.
   const classifyConcurrency = pool ? jobKnob(runtimeSettings(), 'crawl-publish', 'classifierConcurrency') : 1;
   const classificationWaiting = new Set<number>();
+  /**
+   * 「동시에」 분류가 이 틱에 모델 쪽 사정(포화·한도·계약 없음)이나 전역 미룸으로 미뤄졌다 — 이 틱의 남은 새 묶음은 고르기·장부에 다시 묻지 않고
+   * 기다림으로 둔다(이미 분류된 후보의 발행은 계속). 예전에는 같은 빈 답을 받으려고 승인 대기열 끝까지 묶음마다 고르기·장부를 다시 읽었다(2026-11-12 검토).
+   */
+  let classificationSaturated = false;
   let classificationDrainObserved = false;
   const role = roleLeaseFromEnv('publisher', process.env);
   const pendingBatches = role ? await findOwnPendingPublicationApiBatches({ instanceId: role.instanceId, bootId: role.bootId }) : [];
@@ -140,7 +145,14 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     let classified: (Category | null)[] = [];
     if (resume && inputs.length === 0) await abandonPending(resume);
     if (inputs.length > 0) {
-      if (pool) {
+      if (pool && classificationSaturated && !resume) {
+        for (const input of inputs) {
+          const candidate = candidates.find(candidate => candidate.repo === input.repo);
+          if (candidate) classificationWaiting.add(candidate.id);
+        }
+        ctx.log('crawl.classification_deferred', { count: inputs.length, reason: 'saturated_this_tick' });
+        classified = inputs.map(() => null);
+      } else if (pool) {
         // Complete all started batches before publishing; an unsuccessful batch does not hide another batch's result.
         const batches = Array.from({ length: Math.ceil(inputs.length / BATCH) }, (_, index) => inputs.slice(index * BATCH, (index + 1) * BATCH));
         const outcomes = await Promise.allSettled(batches.map(batch => {
@@ -158,6 +170,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         classified = outcomes.flatMap((outcome, index) => {
           if (outcome.status === 'fulfilled') return outcome.value;
           if (!(outcome.reason instanceof ModelCapacityDeferredError)) throw outcome.reason;
+          if (!modelCapacityDeferralIsPerWork(outcome.reason.reason)) classificationSaturated = true;
           for (const input of batches[index]) {
             const candidate = candidates.find(candidate => candidate.repo === input.repo);
             if (candidate) classificationWaiting.add(candidate.id);

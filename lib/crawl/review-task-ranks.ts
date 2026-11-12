@@ -214,7 +214,9 @@ export async function chooseReviewWorkloadMember(resolution: ReviewRankResolutio
     return [{ memberId: member.memberId, routeId: binding.routeId, connectionId: binding.connectionId,
       provider: binding.provider, identity: binding.identity, engineModel: binding.engineModel, deviceId: binding.deviceId }];
   });
-  const chosen = await chooseTaskWorkloadMember(config, candidates);
+  // 빈 칸이 없어도 줄에 설 수 있는 구성원을 고른다 — claim(requestSlot)이 대기 행을 쓰고 차례를 기다린다(순위대로와 같은 줄, 2026-11-12 검토).
+  // 예전에는 장비가 그 순간 가득이면 null 이라 후보가 「순위 밖 모델에 묶임」(reviewer_unassigned)으로 건너뛰어지고 그 횟수가 후보 탓으로 쌓였다.
+  const chosen = await chooseTaskWorkloadMember(config, candidates, { queueWhenFull: true });
   return chosen ? { provider: chosen.provider as ReviewRankProvider, model: chosen.identity, poolSelection: chosen.poolSelection } : null;
 }
 
