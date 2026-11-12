@@ -176,6 +176,13 @@
 .admin-prototype .sp-line h4 {
   font-weight: 600;
 }
+/* 방식 고르기 + 「동시에」 도움말(ⓘ) 한 줄 */
+.admin-prototype .sp-seg-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(8px / .8);
+}
 .admin-prototype .sp-seg {
   display: inline-flex;
   width: fit-content;

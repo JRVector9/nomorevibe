@@ -23,6 +23,8 @@ import { buildConsoleTasks } from "@/lib/operations/console-tasks";
 import { stagePanel, type StagePanelDef } from "@/lib/operations/stage-panel-catalog";
 import { buildStagePanel, previewContext, stageChanges } from "@/lib/operations/stage-panel-model";
 import { readStagePanelExtra } from "@/lib/operations/stage-panel-read";
+import { readPoolHelpContext } from "@/lib/operations/pool-help-read";
+import type { PoolHelpContext } from "@/lib/operations/pool-help";
 import { homeTab } from "../workspace-navigation";
 import { ChangeWatch } from "./ChangeWatch";
 import { StagePanel, StagePanelLoading } from "./StagePanel";
@@ -94,6 +96,8 @@ async function HomeWorkspace({ admin, fresh, stage }: { admin: NonNullable<Await
   const def = stagePanel(stage);
   // 패널의 덧읽기는 홈 읽기와 함께 시작한다 — 패널은 따로 기다린다(Suspense), 홈을 막지 않는다
   const extraRead = def ? readStagePanelExtra(def, fresh) : null;
+  // 「동시에」 도움말의 숫자(장비 한도 · 실시간 한도 · 수집·판정 설정) — 모델을 쓰는 단계의 패널만, 읽기만
+  const poolHelpRead = def?.tasks.length ? readPoolHelpContext().catch(() => null) : Promise.resolve(null);
   const data = await readConsoleHome(fresh);
   const secret = authSecret();
   const readOnly = adminWorkspaceReadOnly();
@@ -101,14 +105,14 @@ async function HomeWorkspace({ admin, fresh, stage }: { admin: NonNullable<Await
   // 「바꾼 것 지켜보기」(조각 1c)는 스스로 읽고 스스로 기다린다(웹들이 나눠 쓰는 캐시)
   return <ConsoleHome data={data} csrf={csrf} changeWatch={<ChangeWatch fresh={fresh} />}
     panel={def && extraRead ? <Suspense key={def.key} fallback={<StagePanelLoading label={def.label} />}>
-      <StagePanelLoaded def={def} data={data} extraRead={extraRead} csrf={csrf} readOnly={readOnly} />
+      <StagePanelLoaded def={def} data={data} extraRead={extraRead} poolHelpRead={poolHelpRead} csrf={csrf} readOnly={readOnly} />
     </Suspense> : undefined} />;
 }
 
 /** 단계 패널 — 홈 읽기(진행·잡·연결·순위·장비·장부)에 패널 덧읽기(멈춘 기록·degraded·순위 사정·순위 편집기·한도·바뀐 것)를 더한다 */
-async function StagePanelLoaded({ def, data, extraRead, csrf, readOnly }: { def: StagePanelDef; data: ConsoleHomeRead;
-  extraRead: ReturnType<typeof readStagePanelExtra>; csrf: { token: string; expiresAt: number } | null; readOnly: boolean }) {
-  const extra = await extraRead;
+async function StagePanelLoaded({ def, data, extraRead, poolHelpRead, csrf, readOnly }: { def: StagePanelDef; data: ConsoleHomeRead;
+  extraRead: ReturnType<typeof readStagePanelExtra>; poolHelpRead: Promise<PoolHelpContext | null>; csrf: { token: string; expiresAt: number } | null; readOnly: boolean }) {
+  const [extra, poolHelp] = await Promise.all([extraRead, poolHelpRead]);
   const board = buildConsoleTasks(data.inputs);
   const panel = buildStagePanel({ key: def.key, now: data.checkedAt, conveyor: data.conveyor, inputs: data.inputs, board, jobStates: data.jobStates,
     pauses: extra.pauses, degraded: extra.degraded, runtime: extra.runtime, executions: data.executions });
@@ -117,7 +121,7 @@ async function StagePanelLoaded({ def, data, extraRead, csrf, readOnly }: { def:
     : !data.executions ? "실행 방식을 읽지 못했습니다 — 확인할 때까지 배정을 저장할 수 없습니다." : null;
   return <StagePanel panel={panel} editor={extra.editor} context={previewContext(data.inputs)} limits={extra.limits} limitRows={extra.limitRows}
     limitImpact={extra.limitImpact} changes={extra.changes ? stageChanges(extra.changes.rows, panel) : []} changesRead={!!extra.changes}
-    csrf={csrf} jobVersions={data.jobVersions} readOnly={readOnly} lockReason={lockReason} now={new Date(data.checkedAt)} />;
+    csrf={csrf} jobVersions={data.jobVersions} readOnly={readOnly} lockReason={lockReason} now={new Date(data.checkedAt)} poolHelp={poolHelp} />;
 }
 
 type DeskRead = Promise<OperatorDesk | null>;

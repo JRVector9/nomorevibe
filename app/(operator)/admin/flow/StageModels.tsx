@@ -14,6 +14,8 @@ import { RankSelects } from "../models/RankSelects";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
 import { saveTaskExecutionAction } from "../models/tasks/execution-actions";
 import { PoolReserveField, PoolSlotFields } from "../models/tasks/PoolSlotFields";
+import { PoolHelpTip, PoolMemberWarnings } from "../models/tasks/PoolHelp";
+import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
 
 /**
  * 단계 패널 「모델」 구역(운영 콘솔 개편 조각 2a) — 지금 배정(순위대로: 1·2·3순위 / 동시에: 함께 쓰는 모델)을 보이고 그 자리에서 고친다.
@@ -27,6 +29,8 @@ type Step = "view" | "edit" | "confirm" | "saving" | "done";
 /** 처음 열 때의 걸음(시험·화면 확인용 — RankDrawer 의 initial 과 같은 뜻). 없으면 늘 「보기」에서 시작한다 */
 export type StageModelsInitial = { key: string; step: "edit" | "confirm"; draft: AssignmentState };
 type Props = { lines: StageModelLine[]; editor: FlowRankEditor | null; context: PreviewContext; lockReason: string | null; initial?: StageModelsInitial;
+  /** 「동시에」 도움말이 읽은 한도(장비·실시간 한도·수집·판정 설정) — 없으면 도움말이 「읽지 못함」이라고 적는다 */
+  poolHelp?: PoolHelpContext | null;
   /** 단계 이름(흐름 표의 말) — 작업이 하나인 단계의 저장 전 확인 제목(「AI 1차 배정을 바꿉니다」) */
   stageLabel?: string };
 type Answer = { ok?: true; message?: string; issues?: string[]; warnings?: string[] } | null;
@@ -34,11 +38,11 @@ type Answer = { ok?: true; message?: string; issues?: string[]; warnings?: strin
 const POOL_SLOTS = Array.from({ length: 4 }, (_, index) => ({ provider: `pool${index + 1}Connection`, model: `pool${index + 1}Model`,
   reasoningEffort: `pool${index + 1}ReasoningEffort` }));
 
-export function StageModels({ lines, editor, context, lockReason, initial, stageLabel }: Props) {
+export function StageModels({ lines, editor, context, lockReason, initial, stageLabel, poolHelp = null }: Props) {
   return <div className="sp-models">{lines.map(line => <ModelLine key={line.key} line={line} showLabel={lines.length > 1}
     title={lines.length > 1 || !stageLabel ? line.label : stageLabel}
     flowLine={editor?.lines.find(entry => entry.key === line.key) ?? null} editor={editor} context={context} lockReason={lockReason}
-    initial={initial?.key === line.key ? initial : undefined} />)}</div>;
+    initial={initial?.key === line.key ? initial : undefined} poolHelp={poolHelp} />)}</div>;
 }
 
 /** 저장된 작업 분산 구성원 → 선택 값 */
@@ -61,8 +65,8 @@ function poolOptions(flowLine: FlowRankLine, connections: readonly AiConnectionV
   return options;
 }
 
-function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReason, initial }: { line: StageModelLine; showLabel: boolean; title: string; flowLine: FlowRankLine | null;
-  editor: FlowRankEditor | null; context: PreviewContext; lockReason: string | null; initial?: StageModelsInitial }) {
+function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReason, initial, poolHelp }: { line: StageModelLine; showLabel: boolean; title: string; flowLine: FlowRankLine | null;
+  editor: FlowRankEditor | null; context: PreviewContext; lockReason: string | null; initial?: StageModelsInitial; poolHelp: PoolHelpContext | null }) {
   const router = useRouter();
   const savedMode = flowLine?.execution?.mode ?? line.mode;
   const before: AssignmentState = { mode: savedMode, ranks: flowLine?.saved ?? [], members: savedMembers(flowLine),
@@ -116,10 +120,18 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
   const nameOf = (choice: AiRankChoice) => { const connection = editor?.connections.find(row => row.id === choice.provider); return connection ? aiModelChoiceName(connection, choice.model) : "지워진 연결"; };
   const draftLanes = aiTaskPoolCappedLanes({ task: line.task, slot: line.slot, mode: "workload_pool",
     members: draft.members.flatMap((choice, index) => choice ? [{ maxSlots: poolSlotOf(draft.slots?.[index], line.features) ?? null }] : []) });
+  // 「동시에」 도움말 — 고치는 중이면 고른 모델·칸 수로, 아니면 저장된 묶음으로 센다(권장 칸 수 · 같은 모델 두 줄 · 장비 한도 넘김)
+  const editing = step === "edit" || step === "confirm" || step === "saving";
+  const helpState = editing ? draft : before;
+  const help = buildPoolHelp({ task: line.task, slot: line.slot, taskLabel: title, members: helpState.mode === "workload_pool" ? helpState.members : [],
+    slots: helpState.slots ?? [], connections: editor?.connections ?? [], context: poolHelp });
+  const savedWarnings = savedMode === "workload_pool" ? poolHelpWarnings(buildPoolHelp({ task: line.task, slot: line.slot, taskLabel: title, members: before.members,
+    slots: before.slots ?? [], connections: editor?.connections ?? [], context: poolHelp })) : null;
   const savedLanes = aiTaskPoolCappedLanes({ task: line.task, slot: line.slot, mode: line.mode, members: line.members.map(member => ({ maxSlots: member.slots })) });
   return <section className="sp-line" data-task={line.task} data-mode={savedMode} data-dirty={step === "edit" || step === "confirm" ? true : undefined}
     aria-label={`${line.label} 배정`}>
     {showLabel && <h4>{line.label}</h4>}
+    <div className="sp-seg-row">
     <div className="sp-seg" role="group" aria-label={`${line.label} 방식`}>
       {(["fallback", "workload_pool"] as const).map(value => {
         const unsupported = value === "workload_pool" && !line.poolSupported;
@@ -129,10 +141,12 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
           onClick={() => { if (mode !== value && !disabled) start(value); }}>{value === "fallback" && line.apiOnly ? "기존 CLI 분류" : MODE_LABELS[value]}</button>;
       })}
     </div>
+    {line.poolSupported && <PoolHelpTip view={help} label="「동시에」" />}
+    </div>
     {step !== "edit" && step !== "confirm" && <ol className="sp-rank">
-      {line.members.map(member => <li key={`${member.tag}:${member.connectionId}:${member.model}`}>
+      {line.members.map((member, index) => <li key={`${member.tag}:${member.connectionId}:${member.model}`}>
         <span className="sp-tag">{member.tag}</span>
-        <span className="sp-name">{member.name}</span>
+        <span className="sp-name">{member.name}{savedWarnings && <PoolMemberWarnings warnings={savedWarnings[index] ?? []} />}</span>
         <span className="sp-facts">{member.facts}</span>
       </li>)}
       {!line.members.length && <li className="sp-empty"><span className="sp-tag">—</span><span>{line.mode === "workload_pool" ? "함께 쓰는 모델 없음" : line.apiOnly ? "기존 CLI 분류(모델 순위를 쓰지 않음)" : "순위 없음"}</span></li>}
@@ -175,6 +189,7 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
             connections={editor.connections} value={draft.members} onChange={members => setDraft(current => ({ ...current, members }))} slotNames={POOL_SLOTS}
             showProvider={false} note={null} layout="rows" validate={values => poolMemberIssues(values, draft.slots ?? [], editor.connections, poolRules)} />
           {line.features.slotCaps && <PoolSlotFields value={draft.members} slots={draft.slots ?? []} disabled={false} nameOf={nameOf} lanes={draftLanes}
+            help={<PoolHelpTip view={help} label="칸 수" />} warnings={poolHelpWarnings(help)}
             onChange={(index, raw) => setDraft(current => ({ ...current,
               slots: Array.from({ length: 4 }, (_, at) => at === index ? raw : current.slots?.[at] ?? "") }))} />}
           {line.features.reserve && <PoolReserveField checked={!!draft.reserve} disabled={false} onChange={reserve => setDraft(current => ({ ...current, reserve }))} />}

@@ -1,24 +1,31 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { AI_TASK_POOL_MEMBER_SLOTS_MAX } from "@/lib/llm/ai-task-execution-config";
 import type { AiRankChoice } from "@/lib/operations/admin-ai-tasks";
+import { PoolMemberWarnings } from "./PoolHelp";
 
 /**
  * 「동시에」의 모델별 칸 수(0179) — 이 단계에 그 모델이 내줄 칸 수. 모두 비우면 예전 작업 분산(단계 동시 수를 함께 나눠 씀).
  * 칸 수를 적으면 칸 수의 합만큼 함께 처리하고, 한 모델이 서도 남은 모델이 계속한다. 장비·모델 한도와 장부는 그대로 거친다.
  * 작업 배정의 실행 방식 폼과 단계 패널의 「동시에」가 같이 쓴다(운영 콘솔 통합). 모델은 사용자가 정한 이름(nameOf)으로만 적는다.
  */
-export function PoolSlotFields({ value, slots, disabled, onChange, lanes, nameOf }: { value: readonly (AiRankChoice | null)[]; slots: readonly string[];
-  disabled: boolean; onChange: (index: number, raw: string) => void; lanes: number | null; nameOf: (choice: AiRankChoice) => string }) {
+export function PoolSlotFields({ value, slots, disabled, onChange, lanes, nameOf, help, warnings }: { value: readonly (AiRankChoice | null)[]; slots: readonly string[];
+  disabled: boolean; onChange: (index: number, raw: string) => void; lanes: number | null; nameOf: (choice: AiRankChoice) => string;
+  /** 「칸 수」 머리 옆 도움말(ⓘ, PoolHelpTip) */
+  help?: ReactNode;
+  /** 자리마다 줄 옆 경고(같은 모델 두 줄 · 장비 한도 넘김 — pool-help poolHelpWarnings) */
+  warnings?: readonly (readonly string[])[] }) {
   const rows = value.flatMap((choice, index) => choice ? [{ choice, index }] : []);
   if (!rows.length) return null;
   return <div className="grid min-w-0 gap-1 text-[13px]" data-pool-slots="true">
     <table className="w-full table-fixed border-collapse">
       <colgroup><col style={{ width: "72px" }} /><col /><col style={{ width: "96px" }} /></colgroup>
-      <thead><tr className="text-left text-fg-3"><th className="font-normal">자리</th><th className="font-normal">고른 모델</th><th className="text-right font-normal">칸 수</th></tr></thead>
+      <thead><tr className="text-left text-fg-3"><th className="font-normal">자리</th><th className="font-normal">고른 모델</th><th className="text-right font-normal"><span className="cs-help-head">칸 수{help}</span></th></tr></thead>
       <tbody>{rows.map(({ choice, index }) => <tr key={index}>
         <td className="tabular-nums">함께 {index + 1}</td>
-        <td className="truncate" title={nameOf(choice)}>{nameOf(choice)}</td>
+        <td className="min-w-0"><span className="block truncate" title={nameOf(choice)}>{nameOf(choice)}</span>
+          <PoolMemberWarnings warnings={warnings?.[index] ?? []} /></td>
         <td className="text-right"><input type="number" inputMode="numeric" min={1} max={AI_TASK_POOL_MEMBER_SLOTS_MAX} step={1} placeholder="정하지 않음"
           aria-label={`함께 ${index + 1} 칸 수`} value={slots[index] ?? ""} disabled={disabled} onChange={event => onChange(index, event.target.value)}
           className="min-h-8 w-[88px] rounded-lg border border-line bg-bg-card px-2 text-right tabular-nums" /></td>
