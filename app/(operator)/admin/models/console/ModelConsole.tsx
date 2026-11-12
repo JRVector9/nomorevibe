@@ -10,7 +10,7 @@ import { formatSeconds, modelCompareHref, modelHref, modelKeyText, modelMaxToken
 import type { ModelConsoleRead } from "@/lib/operations/model-console-read";
 import { SAMPLE_COMPARE_SUPPORTED } from "@/lib/operations/model-sample-compare";
 import { MODELS_DASHBOARD_HREF } from "../../workspace-navigation";
-import { ModelSettingsForm } from "./ModelSettingsForm";
+import { ModelSettingsForm, type ModelSettingsConfirmationState } from "./ModelSettingsForm";
 import { ModelAttachForm } from "./ModelAttachForm";
 import type { FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import type { PoolHelpContext } from "@/lib/operations/pool-help";
@@ -124,13 +124,11 @@ export function ModelConsole({ data, selected, readOnly, attach = null, taskUses
         : <Link prefetch={false} className="text-button" href={MODELS_DASHBOARD_HREF}>연결·장비 고급 설정 ↗</Link>}
     </div>
     {selected && !row && <p role="alert" className="mc-notice">고른 모델을 찾지 못했습니다(지워졌거나 목록을 읽지 못함).</p>}
-    {row && !adding && <ModelDrawer title={row.name} eyebrow="모델 상세" titleId="model-detail-title" onClose={closeModel}>
-      <ModelDetail key={row.id} row={row} device={data.devices?.find(device => device.deviceId === row.deviceId) ?? null}
+    {row && !adding && <ModelDetailDrawer key={row.id} row={row} onClose={closeModel} device={data.devices?.find(device => device.deviceId === row.deviceId) ?? null}
         secretBox={data.secretBox} readOnly={readOnly} uses={usesOf(row)} usesKnown={usesKnown} onTaskOpen={onTaskOpen}
         attach={attach ? <ModelAttachForm connectionId={row.id} editor={attach.editor} poolHelp={attach.poolHelp} readOnly={readOnly}
           onTaskOpen={onTaskOpen} devices={data.devices?.map(entry => ({ deviceId: entry.deviceId, active: entry.active, limitSlots: entry.limitSlots })) ?? null} /> : undefined}
-        now={view.checkedAt} siblings={view.rows.filter(entry => entry.id !== row.id && entry.deviceId === row.deviceId).map(entry => ({ name: entry.name, models: entry.models }))} />
-    </ModelDrawer>}
+        now={view.checkedAt} siblings={view.rows.filter(entry => entry.id !== row.id && entry.deviceId === row.deviceId).map(entry => ({ name: entry.name, models: entry.models }))} />}
     {adding && !readOnly && <ModelDrawer title="모델 추가" eyebrow="넣기 → 이름과 한도 → 쓸 작업" titleId="model-add-title" onClose={() => setAdding(null)}>
       <div className="mc-add-content"><ModelAddFlow step={adding.step} row={added}
         missing={adding.step > 1 && view.errors.some(error => error.includes("모델(연결) 목록"))} recommendations={[]} secretBox={data.secretBox} readOnly={readOnly} drawer
@@ -147,12 +145,23 @@ export function ModelConsole({ data, selected, readOnly, attach = null, taskUses
 const LIMIT_SOURCE: Record<ModelConsoleRow["limitSource"], string> = { model: "장비의 모델별 한도", device: "장비 한도", connection: "연결 칸 수(장비 행 없음)" };
 const subscribeHash = (changed: () => void) => { window.addEventListener("hashchange", changed); return () => window.removeEventListener("hashchange", changed); };
 type ModelDetailTab = "tasks" | "settings";
+export type ModelDetailProps = { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean; attach?: ReactNode;
+  now: string; siblings?: readonly { name: string; models: readonly string[] }[]; uses?: readonly ModelTaskUse[]; usesKnown?: boolean;
+  onTaskOpen?: (taskKey: string, attachConnectionId?: string) => void;
+  onSettingsConfirmationChange?: (state: ModelSettingsConfirmationState) => void };
+
+/** Keyed by model ID: closing or switching models discards all confirmation chrome. */
+function ModelDetailDrawer({ onClose, ...props }: Omit<ModelDetailProps, "onSettingsConfirmationChange"> & { onClose: () => void }) {
+  const [confirmation, setConfirmation] = useState<ModelSettingsConfirmationState>(null);
+  return <ModelDrawer title={confirmation ? "모델 설정을 바꿉니다" : props.row.name} eyebrow={confirmation ? "저장 전 확인" : "모델 상세"}
+    titleId="model-detail-title" closeDisabled={!!confirmation?.pending} onClose={() => { if (!confirmation?.pending) onClose(); }}>
+    <ModelDetail {...props} onSettingsConfirmationChange={setConfirmation} />
+  </ModelDrawer>;
+}
 
 /** The drawer has one task entry point; all connection security and CAS forms stay intact. */
 export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = [], attach, uses, usesKnown = true,
-  onTaskOpen }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean; attach?: ReactNode;
-  now: string; siblings?: readonly { name: string; models: readonly string[] }[]; uses?: readonly ModelTaskUse[]; usesKnown?: boolean;
-  onTaskOpen?: (taskKey: string, attachConnectionId?: string) => void }) {
+  onTaskOpen, onSettingsConfirmationChange }: ModelDetailProps) {
   const hash = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
   const [tabChoice, setTabChoice] = useState<{ hash: string; tab: ModelDetailTab } | null>(null);
   const tab = tabChoice?.hash === hash ? tabChoice.tab : hash === "#model-actions" ? "settings" : "tasks";
@@ -171,7 +180,37 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
   const assignments = uses ?? row.stages.map(stage => ({ key: `${stage.task}#${stage.slot}`, label: stage.label, place: stage.place, href: stage.href, paused: stage.paused }));
   const problems = row.problems.filter(problem => problem.key === "unused" ? usesKnown && assignments.length === 0
     : problem.key === "paused" ? usesKnown && assignments.length > 0 && assignments.every(use => use.paused) : true);
-  return <article id="model-detail" className="mc-detail" aria-labelledby="model-detail-title" data-model-detail={row.id}>
+  const advancedDetails = <div className="mc-settings-diagnostics">
+    <section aria-label="연결 세부 값"><dl className="mc-dl">
+      <dt>방식</dt><dd>{connection.kind === "api" ? "API 주소" : `CLI · ${connection.cliTool ? AI_CLI_TOOL_LABELS[connection.cliTool] : "도구 미확인"}`}</dd>
+      {connection.host && <><dt>주소</dt><dd className="num">{connection.host}</dd></>}
+      <dt>동시 한도</dt><dd className="num">{formatCount(row.limit)} <span className="mc-muted">· {LIMIT_SOURCE[row.limitSource]}{row.sharedWith.length ? ` · 같은 장비: ${row.sharedWith.join(" · ")}` : ""}</span></dd>
+      {connection.kind === "api" && <><dt>최대 토큰</dt><dd className="num">{modelMaxTokens(connection) === null ? "—" : formatCount(modelMaxTokens(connection)!)}
+        {!connection.contextTokens && modelMaxTokens(connection) !== null && <span className="mc-muted"> · 서버가 알려 준 값</span>}</dd>
+        <dt>추론 여유</dt><dd className="num">{connection.reasoningTokenReserve ? formatCount(connection.reasoningTokenReserve) : "—"}</dd></>}
+      <dt>쓸 단계</dt><dd>{connection.allowedTasks?.length ? `${connection.allowedTasks.length}개만 허용` : "모든 단계"}</dd>
+      {connection.kind === "api" && <><dt>키</dt><dd className="num">{keyText ?? "없음"}</dd></>}
+    </dl>
+    <Link prefetch={false} className="text-button" href="/admin/models/contracts">서빙 계약·등록부 열기 ↗</Link></section>
+    <section aria-label="문제">
+      <h3>상태와 호출</h3>
+      <p className="mc-st" data-tone={status.tone}><i aria-hidden="true" />{status.text}</p>
+      <p className="mc-kv"><span>거절<b>{row.rejected === null ? "—" : formatCount(row.rejected)}</b></span>
+        <span>보내기 전에 끝남<b>{row.notStarted === null ? "—" : formatCount(row.notStarted)}</b></span>
+        <span>미확정<b>{row.indeterminate === null ? "—" : formatCount(row.indeterminate)}</b></span><span>사용률<b>{row.utilizationText}</b></span></p>
+      {problems.length ? <ul className="mc-cause">{problems.map(problem => <li key={problem.key}><span>{problem.label}</span>
+        <span>{problem.text}{problem.href ? <> <Link prefetch={false} href={problem.href}>{problem.action ?? "보기"} →</Link></> : null}</span></li>)}</ul>
+        : <p className="mc-muted">읽은 값에서 문제를 찾지 못했습니다.</p>}
+    </section>
+    <section aria-label="연결 확인">
+      <h3>연결 확인</h3>
+      <p className="mc-muted">서버가 알려 준 이름{row.served.length ? "" : " 없음"}
+        {row.served.map((group, index) => <span key={group.ids.join("\u0000")}>{index ? " · " : ": "}<code>{group.ids.join(" = ")}</code>
+          {group.maxModelLen ? ` (최대 ${formatCount(group.maxModelLen)})` : ""}</span>)}
+        {connection.modelsReadAt ? ` · ${formatKst(connection.modelsReadAt)} 읽음` : ""}{` · 장비 id ${row.deviceId}`}{connection.note ? ` · 메모: ${connection.note}` : ""}</p>
+    </section>
+  </div>;
+  const renderDetail = (settings: ReactNode) => <article id="model-detail" className="mc-detail" aria-labelledby="model-detail-title" data-model-detail={row.id}>
     <div className="mc-drawer-stats">
       <span>24시간 호출<b>{row.calls === null ? "—" : formatCount(row.calls)}</b></span>
       <span>평균 응답<b>{formatSeconds(row.avgSeconds)}</b></span>
@@ -208,37 +247,13 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
           <dt>공유 한도</dt><dd>{formatCount(row.limit)}칸</dd>
         </dl>
         <div className="mc-settings-editor"><h3>연결과 한도 고치기</h3>
-          <ModelSettingsForm row={row} device={device} secretBox={secretBox} readOnly={readOnly} siblings={siblings} compact
-            revealAdvanced={hash === "#model-actions"} advancedDetails={<div className="mc-settings-diagnostics">
-        <section aria-label="연결 세부 값"><dl className="mc-dl">
-          <dt>방식</dt><dd>{connection.kind === "api" ? "API 주소" : `CLI · ${connection.cliTool ? AI_CLI_TOOL_LABELS[connection.cliTool] : "도구 미확인"}`}</dd>
-          {connection.host && <><dt>주소</dt><dd className="num">{connection.host}</dd></>}
-          <dt>동시 한도</dt><dd className="num">{formatCount(row.limit)} <span className="mc-muted">· {LIMIT_SOURCE[row.limitSource]}{row.sharedWith.length ? ` · 같은 장비: ${row.sharedWith.join(" · ")}` : ""}</span></dd>
-          {connection.kind === "api" && <><dt>최대 토큰</dt><dd className="num">{modelMaxTokens(connection) === null ? "—" : formatCount(modelMaxTokens(connection)!)}
-            {!connection.contextTokens && modelMaxTokens(connection) !== null && <span className="mc-muted"> · 서버가 알려 준 값</span>}</dd>
-            <dt>추론 여유</dt><dd className="num">{connection.reasoningTokenReserve ? formatCount(connection.reasoningTokenReserve) : "—"}</dd></>}
-          <dt>쓸 단계</dt><dd>{connection.allowedTasks?.length ? `${connection.allowedTasks.length}개만 허용` : "모든 단계"}</dd>
-          {connection.kind === "api" && <><dt>키</dt><dd className="num">{keyText ?? "없음"}</dd></>}
-        </dl>
-        <Link prefetch={false} className="text-button" href="/admin/models/contracts">서빙 계약·등록부 열기 ↗</Link></section>
-      <section aria-label="문제">
-        <h3>상태와 호출</h3>
-        <p className="mc-st" data-tone={status.tone}><i aria-hidden="true" />{status.text}</p>
-        <p className="mc-kv"><span>거절<b>{row.rejected === null ? "—" : formatCount(row.rejected)}</b></span>
-          <span>보내기 전에 끝남<b>{row.notStarted === null ? "—" : formatCount(row.notStarted)}</b></span>
-          <span>미확정<b>{row.indeterminate === null ? "—" : formatCount(row.indeterminate)}</b></span><span>사용률<b>{row.utilizationText}</b></span></p>
-        {problems.length ? <ul className="mc-cause">{problems.map(problem => <li key={problem.key}><span>{problem.label}</span>
-          <span>{problem.text}{problem.href ? <> <Link prefetch={false} href={problem.href}>{problem.action ?? "보기"} →</Link></> : null}</span></li>)}</ul>
-          : <p className="mc-muted">읽은 값에서 문제를 찾지 못했습니다.</p>}
-      </section>
-      <section aria-label="연결 확인">
-        <h3>연결 확인</h3>
-        <p className="mc-muted">서버가 알려 준 이름{row.served.length ? "" : " 없음"}
-          {row.served.map((group, index) => <span key={group.ids.join("\u0000")}>{index ? " · " : ": "}<code>{group.ids.join(" = ")}</code>
-            {group.maxModelLen ? ` (최대 ${formatCount(group.maxModelLen)})` : ""}</span>)}
-          {connection.modelsReadAt ? ` · ${formatKst(connection.modelsReadAt)} 읽음` : ""}{` · 장비 id ${row.deviceId}`}{connection.note ? ` · 메모: ${connection.note}` : ""}</p>
-      </section>
-      </div>} /></div></section>
+          {settings}</div></section>
     </div>
   </article>;
+  return <ModelSettingsForm row={row} device={device} secretBox={secretBox} readOnly={readOnly} siblings={siblings} compact
+    revealAdvanced={hash === "#model-actions"} advancedDetails={advancedDetails} taskCount={usesKnown ? assignments.length : null}
+    drawerConfirmation={!!onSettingsConfirmationChange} onConfirmationChange={onSettingsConfirmationChange}
+    renderContent={(settings, confirmation) => confirmation
+      ? <article id="model-detail" className="mc-detail mc-confirm-mode" aria-labelledby="model-detail-title" data-model-detail={row.id}>{confirmation}</article>
+      : renderDetail(settings)} />;
 }

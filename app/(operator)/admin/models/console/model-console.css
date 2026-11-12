@@ -874,6 +874,45 @@
   margin-top: calc(22px / .8);
   border-top: 1px solid var(--line);
 }
+.admin-prototype .mc-settings-preview {
+  padding: calc(13px / .8) calc(15px / .8);
+  margin-bottom: calc(10px / .8);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .mc-settings-after {
+  background: var(--surface-2);
+}
+.admin-prototype .mc-preview-label {
+  margin-bottom: calc(7px / .8);
+  color: var(--muted);
+  font-size: calc(10px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .mc-settings-scope {
+  margin: calc(14px / .8) 0;
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  line-height: 1.8;
+}
+.admin-prototype .mc-settings-confirmation > .mc-diff,
+.admin-prototype .mc-settings-confirmation > .mc-msg {
+  margin-top: calc(12px / .8);
+}
+.admin-prototype .mc-settings-impact {
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .mc-settings-impact > summary {
+  width: fit-content;
+  color: var(--blue);
+  cursor: pointer;
+}
+.admin-prototype .mc-settings-impact > div {
+  display: grid;
+  gap: calc(8px / .8);
+  margin-top: calc(10px / .8);
+}
 .admin-prototype .mc-drawer .mc-muted,
 .admin-prototype .mc-drawer .mc-hint {
   font-size: calc(12px + var(--admin-font-delta, 0px));

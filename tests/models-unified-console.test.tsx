@@ -13,9 +13,36 @@ vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTa
 import { ModelConsole, ModelDetail } from "@/app/(operator)/admin/models/console/ModelConsole";
 import { ModelAttachForm } from "@/app/(operator)/admin/models/console/ModelAttachForm";
 import { ModelAddFlow } from "@/app/(operator)/admin/models/new/ModelAddFlow";
-import { ModelSettingsForm } from "@/app/(operator)/admin/models/console/ModelSettingsForm";
+import { CompactModelSavePlan, ModelSettingsForm } from "@/app/(operator)/admin/models/console/ModelSettingsForm";
+import { modelSavePlan, modelSettingsOf } from "@/lib/operations/model-console";
+import { modelFixtureDevices } from "./fixtures/model-console";
 
 describe("unified model inventory", () => {
+  it("shows the drawer before/after preview and retains advanced changes, critical warnings and every reviewed impact", () => {
+    const row = modelFixtureRead().view.rows.find(entry => entry.id === "conn-m3-gpt-oss")!;
+    const device = modelFixtureDevices().find(entry => entry.deviceId === row.deviceId)!;
+    const after = { ...modelSettingsOf(row), name: "M3 새 이름", limit: 4, maxTokens: 120_000, enabled: false };
+    const plan = modelSavePlan(row, device, after);
+    const html = renderToStaticMarkup(<CompactModelSavePlan plan={plan} preview={{ before: { name: row.name, limit: row.limit },
+      after: { name: after.name, limit: after.limit }, taskCount: 6 }} pending={false} disabled={false} />);
+    expect(html).toContain('class="mc-settings-preview"><div class="mc-preview-label">지금</div>');
+    expect(html).toContain('class="mc-settings-preview mc-settings-after"><div class="mc-preview-label">변경 후</div>');
+    expect(html).toContain("M3 새 이름 · 4칸");
+    expect(html).toContain("이 모델을 쓰는 6개 작업의 표시와 동시 한도에 적용합니다.");
+    expect(html).toContain("<summary>영향 자세히</summary>");
+    for (const text of [...plan.writes, ...plan.impacts, ...plan.warnings]) expect(html).toContain(text.replaceAll("&", "&amp;").replaceAll(">", "&gt;"));
+    expect(html.indexOf("최대 토큰")).toBeLessThan(html.indexOf("<details"));
+    expect(html.indexOf("쉬는 동안")).toBeLessThan(html.indexOf("<details"));
+    expect(html.indexOf('role="alert"')).toBeLessThan(html.indexOf("<details"));
+    expect(html).toContain(">돌아가기</button>");
+    expect(html).toContain(">바꾸기</button>");
+    const locked = renderToStaticMarkup(<CompactModelSavePlan plan={plan} preview={{ before: { name: row.name, limit: row.limit },
+      after: { name: after.name, limit: after.limit }, taskCount: null }} pending={true} disabled={true} />);
+    expect(locked).toContain("쓰는 작업 전체는 읽지 못했습니다.");
+    expect(locked).toContain('disabled="">돌아가기</button>');
+    expect(locked).toContain('disabled="">저장 중…</button>');
+  });
+
   it("uses compact low-usage text locally while preserving known zero, unknown, and the shared production formatter", () => {
     const row = modelFixtureRead().view.rows.find(entry => entry.id === "conn-lg-exaone")!;
     expect(row.utilizationText).toBe("1% 미만");
