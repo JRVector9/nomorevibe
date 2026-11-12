@@ -60,15 +60,15 @@ export function ModelConsole({ data, selected, readOnly }: { data: ModelConsoleR
       옛 화면(대시보드·LLM 운영·장비 한도·계약)은 「고급 설정」에서 엽니다.</p>
     {selected && !row && <p role="alert" className="mc-notice">고른 모델을 찾지 못했습니다(지워졌거나 목록을 읽지 못함).</p>}
     {row && <ModelDetail row={row} device={data.devices?.find(device => device.deviceId === row.deviceId) ?? null} secretBox={data.secretBox} readOnly={readOnly}
-      now={view.checkedAt} />}
+      now={view.checkedAt} siblings={view.rows.filter(entry => entry.id !== row.id && entry.deviceId === row.deviceId).map(entry => ({ name: entry.name, models: entry.models }))} />}
   </div>;
 }
 
 const LIMIT_SOURCE: Record<ModelConsoleRow["limitSource"], string> = { model: "장비의 모델별 한도", device: "장비 한도", connection: "연결 칸 수(장비 행 없음)" };
 
 /** 상세 — 머리(이름·상태·숫자) · 설정 · 쓰는 단계 · 문제 · 연결 확인. 설정·조치는 저장 전 확인을 거치는 폼(ModelSettingsForm) */
-export function ModelDetail({ row, device, secretBox, readOnly, now }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
-  now: string }) {
+export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = [] }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
+  now: string; siblings?: readonly { name: string; models: readonly string[] }[] }) {
   const { connection } = row;
   const keyText = modelKeyText(connection, now);
   const compareTask = row.stages.find(stage => SAMPLE_COMPARE_SUPPORTED.includes(stage.task))?.task ?? SAMPLE_COMPARE_SUPPORTED[0];
@@ -95,7 +95,7 @@ export function ModelDetail({ row, device, secretBox, readOnly, now }: { row: Mo
         <dt>쓸 단계</dt><dd>{connection.allowedTasks?.length ? `${connection.allowedTasks.length}개만 허용` : "모든 단계"}</dd>
         {connection.kind === "api" && <><dt>키</dt><dd className="num">{keyText ?? "없음"}</dd></>}
       </dl>
-      <ModelSettingsForm row={row} device={device} secretBox={secretBox} readOnly={readOnly} />
+      <ModelSettingsForm row={row} device={device} secretBox={secretBox} readOnly={readOnly} siblings={siblings} />
     </section>
     <section aria-label="쓰는 단계">
       <span className="mc-lab">쓰는 단계</span>

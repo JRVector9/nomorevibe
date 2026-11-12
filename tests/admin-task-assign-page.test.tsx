@@ -73,9 +73,11 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     for (const { task, slot } of aiTaskSlots()) expect(html, `${task.id}#${slot}`).toContain(`id="execution-${task.id}-${slot}"`);
     const first = html.match(/<tr id="execution-first-review-1"[^]*?<\/tr>/)![0];
     expect(text(first)).toContain("1차 AI 검수 대체 실행");
-    expect(first).toContain('<code class="tk-model">deepseek/deepseek-v4.1-flash</code>');
-    expect(text(first)).toMatch(/1순위 deepseek\/deepseek-v4\.1-flash 86 실패 2/);
-    expect(text(first)).toContain("2순위 qwen3.8-flash-next 93");
+    // 모델은 사용자가 정한 이름 하나(운영 콘솔 통합) — 모델 하나만 내놓는 연결은 서버 모델 이름을 따로 적지 않는다
+    expect(first).not.toContain('<code class="tk-model">deepseek/deepseek-v4.1-flash</code>');
+    expect(first).toContain('<span class="tk-conn">M3 OpenCode</span>');
+    expect(text(first)).toMatch(/1순위 M3 OpenCode 86 실패 2/);
+    expect(text(first)).toContain("2순위 gpu3090-qwen 93");
     expect(text(first)).toContain("설정과 다름 1순위가 아닌 모델이 52%를 처리");
     // 상태: 색 + 모양 + 글자, 까닭은 회색 한 줄
     expect(first).toContain('<span class="llm-level" data-level="warn"><span class="llm-level-shape" aria-hidden="true">▲</span>주의</span>');

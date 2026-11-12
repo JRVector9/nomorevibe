@@ -99,10 +99,15 @@ describe("저장 전 확인 — 바뀌는 값 전 → 후 · 함께 쓸 곳 · �
     const row = byLabel("m3-gpt-oss");
     const plan = modelSavePlan(row, device("m3-mlx"), { ...modelSettingsOf(row), limit: 3 });
     expect(plan.lines).toEqual([{ key: "limit", label: "동시 한도", before: "2", after: "3" }]);
-    expect(plan.writes).toEqual(["연결 칸 수 2 → 3", "장비 m3-mlx의 모델별 한도(gpt-oss-120b) 2 → 3"]);
+    // 장비·모델은 사용자가 정한 이름으로 — 장비 id·서버 모델 이름은 「연결 확인」 줄에만(운영 콘솔 통합)
+    expect(plan.writes).toEqual(["연결 칸 수 2 → 3", `장비 ${row.machine}의 이 모델 한도 2 → 3`]);
     expect(plan.device).toEqual({ deviceId: "m3-mlx", expectedVersion: 6, limitSlots: 3, modelLimits: [
       { model: "deepseek-v4.1-flash-1017", maxSlots: 1, engineMax: 1 }, { model: "gpt-oss-120b", maxSlots: 3, engineMax: 4 }] });
     expect(plan.impacts[0]).toMatch(/^이 모델을 쓰는 단계 6개: /);
+    // 같은 장비의 다른 모델 줄은 그 모델의 이름으로(모르면 「다른 모델」) — 서버 모델 이름을 따로 내지 않는다
+    expect(plan.impacts).toContain("같은 장비의 다른 모델 한도: 다른 모델 1 · 장비 한도 3");
+    expect(modelSavePlan(row, device("m3-mlx"), { ...modelSettingsOf(row), limit: 3 }, model => model === "deepseek-v4.1-flash-1017" ? "m3-deepseek" : null).impacts)
+      .toContain("같은 장비의 다른 모델 한도: m3-deepseek 1 · 장비 한도 3");
     expect(plan.warnings).toEqual([]);
     // 장비 한도보다 크면 저장 전에 알린다(막는 것은 기존 저장의 검증)
     expect(modelSavePlan(row, device("m3-mlx"), { ...modelSettingsOf(row), limit: 4 }).warnings[0]).toMatch(/장비 한도 3보다 큽니다/);
@@ -114,7 +119,7 @@ describe("저장 전 확인 — 바뀌는 값 전 → 후 · 함께 쓸 곳 · �
   it("모델별 한도가 없는 장비: 장비 한도도 함께 바꾼다", () => {
     const row = byLabel("gpu3090-qwen");
     const plan = modelSavePlan(row, device("gpu3090-qwen"), { ...modelSettingsOf(row), limit: 6 });
-    expect(plan.writes).toEqual(["연결 칸 수 5 → 6", "장비 gpu3090-qwen의 한도 5 → 6"]);
+    expect(plan.writes).toEqual(["연결 칸 수 5 → 6", `장비 ${row.machine}의 한도 5 → 6`]);
     expect(plan.device).toEqual({ deviceId: "gpu3090-qwen", expectedVersion: 5, limitSlots: 6, modelLimits: null });
   });
 

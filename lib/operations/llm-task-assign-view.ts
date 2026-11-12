@@ -1,6 +1,6 @@
 import { AI_CLI_TOOL_LABELS, AI_TASK_GROUP_LABELS, aiTaskLedgerTracked, isAiAssistTask, type AiTaskDef, type AiTaskGroup } from "@/lib/llm/ai-tasks";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
-import { aiConnectionHost, aiConnectionLabel, aiRankPendingText, aiSameUnderlyingModel, aiTaskRanksUnread, type AiConnectionView, type AiCurrentUse } from "./admin-ai-tasks";
+import { aiConnectionHost, aiModelDisplayName, aiRankPendingText, aiSameUnderlyingModel, aiTaskRanksUnread, type AiConnectionView, type AiCurrentUse } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import type { AiTaskSlotView } from "./admin-ai-tasks-repository";
 import type { AdminModelsObservation } from "./admin-models-observation";
@@ -148,10 +148,10 @@ function owner(agg: Agg, entries: readonly Expect[]): Expect | null {
 function currentConnectionLabel(use: AiCurrentUse, connections: readonly AiConnectionView[]): string {
   if (use.kind === "cli") {
     const connection = connections.find(row => row.kind === "cli" && row.cliTool === use.cliTool);
-    return connection ? aiConnectionLabel(connection) : use.provider;
+    return connection ? aiModelDisplayName(connection) : use.provider;
   }
   const connection = use.baseUrl ? connections.find(row => row.baseUrl === use.baseUrl) : undefined;
-  return connection ? aiConnectionLabel(connection) : aiConnectionHost(use.baseUrl) ?? "서버 모름";
+  return connection ? aiModelDisplayName(connection) : aiConnectionHost(use.baseUrl) ?? "서버 모름";
 }
 
 export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
@@ -267,12 +267,12 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     // 설정 칸
     const ranks: TaskAssignChoice[] = slot.rows.map(row => {
       const connection = connectionOf(row.connectionId);
-      return { position: row.rank, connectionId: row.connectionId, connection: connection ? aiConnectionLabel(connection) : "지워진 연결", model: row.model, effort: effortOf(row.options),
+      return { position: row.rank, connectionId: row.connectionId, connection: connection ? aiModelDisplayName(connection) : "지워진 연결", model: row.model, effort: effortOf(row.options),
         off: !row.enabled ? "순위 꺼짐" : !connection ? "연결 없음" : !connection.enabled ? "연결 꺼짐" : null };
     });
     const choices: TaskAssignChoice[] = mode === "fallback" ? ranks : mode === "workload_pool" ? (execution?.members ?? []).map(member => {
       const connection = connectionOf(member.connectionId);
-      return { position: member.position, connectionId: member.connectionId, connection: connection ? aiConnectionLabel(connection) : "지워진 연결", model: member.model,
+      return { position: member.position, connectionId: member.connectionId, connection: connection ? aiModelDisplayName(connection) : "지워진 연결", model: member.model,
         effort: effortOf(member.options), off: !connection ? "연결 없음" : !connection.enabled ? "연결 꺼짐" : null };
     }) : (slot.current?.uses ?? []).map((use, index) => ({ position: index + 1, connectionId: null, connection: currentConnectionLabel(use, connections), model: use.model,
       effort: effortOf(use.options), off: null }));

@@ -305,7 +305,9 @@ const taskList = (ids: readonly string[]) => ids.length ? `${ids.length}개만 �
  * 같은 장비를 다른 모델이 나눠 쓰는 장비 한도를 바꾸면 그 모델도 영향을 받는다 — impacts 에 적는다.
  */
 export function modelSavePlan(row: Pick<ModelConsoleRow, "name" | "machine" | "limit" | "limitSource" | "stages" | "sharedWith" | "connection" | "deviceId" | "models">,
-  device: ModelDeviceState | null, after: ModelSettings): ModelSavePlan {
+  device: ModelDeviceState | null, after: ModelSettings,
+  /** 같은 장비의 다른 모델 줄(서버 이름) → 사용자가 정한 이름. 모르면 null — 그때는 「다른 모델」로만 적는다(서버 이름을 화면에 따로 내지 않는다) */
+  nameOf: (model: string) => string | null = () => null): ModelSavePlan {
   const before = modelSettingsOf(row);
   const lines: ModelDiffLine[] = [];
   const line = (key: string, label: string, was: string, now: string) => { if (was !== now) lines.push({ key, label, before: was, after: now }); };
@@ -331,18 +333,19 @@ export function modelSavePlan(row: Pick<ModelConsoleRow, "name" | "machine" | "l
   const mine = split.find(entry => names.has(entry.model));
   if (device && device.source === "table" && mine) {
     if (mine.maxSlots !== after.limit) {
-      writes.push(`장비 ${row.deviceId}의 모델별 한도(${mine.model}) ${formatCount(mine.maxSlots ?? 0)} → ${formatCount(after.limit)}`);
+      // 장비·모델은 사용자가 정한 이름으로(운영 콘솔 통합 — 장비 id·서버 모델 이름은 「연결 확인」 줄에만)
+      writes.push(`장비 ${row.machine}의 이 모델 한도 ${formatCount(mine.maxSlots ?? 0)} → ${formatCount(after.limit)}`);
       if (device.limitSlots !== null && after.limit > device.limitSlots)
         warnings.push(`장비 한도 ${formatCount(device.limitSlots)}보다 큽니다 — 같은 장비의 모델별 한도 검증에 걸려 장비 쪽 저장이 거절될 수 있습니다.`);
       deviceWrite = { deviceId: row.deviceId, expectedVersion: device.version, limitSlots: device.limitSlots ?? after.limit,
         modelLimits: split.map(entry => ({ model: entry.model, maxSlots: entry.model === mine.model ? after.limit : entry.maxSlots!, engineMax: entry.engineMax })) };
       const others = split.filter(entry => entry.model !== mine.model);
-      if (others.length && device.limitSlots !== null) impacts.push(`같은 장비의 모델별 한도: ${others.map(entry => `${entry.model} ${formatCount(entry.maxSlots ?? 0)}`).join(" · ")}`
+      if (others.length && device.limitSlots !== null) impacts.push(`같은 장비의 다른 모델 한도: ${others.map(entry => `${nameOf(entry.model) ?? "다른 모델"} ${formatCount(entry.maxSlots ?? 0)}`).join(" · ")}`
         + ` · 장비 한도 ${formatCount(device.limitSlots)}`);
     }
   } else if (device && device.source === "table") {
     if (device.limitSlots !== after.limit) {
-      writes.push(`장비 ${row.deviceId}의 한도 ${formatCount(device.limitSlots ?? 0)} → ${formatCount(after.limit)}`);
+      writes.push(`장비 ${row.machine}의 한도 ${formatCount(device.limitSlots ?? 0)} → ${formatCount(after.limit)}`);
       deviceWrite = { deviceId: row.deviceId, expectedVersion: device.version, limitSlots: after.limit, modelLimits: null };
       if (row.sharedWith.length) impacts.push(`같은 장비를 나눠 쓰는 ${row.sharedWith.join(" · ")}도 이 한도를 함께 씁니다.`);
     }

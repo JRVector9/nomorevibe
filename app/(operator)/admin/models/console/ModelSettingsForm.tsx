@@ -40,7 +40,9 @@ export function settingsFromDraft(draft: Draft, kind: "api" | "cli"): { settings
  * - 저장은 기존 서버 동작 둘을 차례로 부른다: 연결 저장(saveAiConnectionAction — 감사 ai-connection-save) → (한도가 장비에도 걸리면) 장비 한 줄 저장
  *   (saveDeviceRowAction — 같은 장비의 모델 한도 합 검증·감사). 새 쓰기 경로는 없다.
  */
-export function ModelSettingsForm({ row, device, secretBox, readOnly }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean }) {
+export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings = [] }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
+  /** 같은 장비를 쓰는 다른 모델(사용자가 정한 이름과 그 서버 이름들) — 저장 전 확인이 장비의 다른 모델 한도를 이름으로 적는다 */
+  siblings?: readonly { name: string; models: readonly string[] }[] }) {
   const router = useRouter();
   const base = useMemo(() => draftOf(modelSettingsOf(row)), [row]);
   const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
@@ -59,7 +61,7 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly }: { row: M
     const parsed = settingsFromDraft(next, connection.kind);
     setIssues(parsed.issues);
     if (!parsed.settings) return;
-    const made = modelSavePlan(row, device, parsed.settings);
+    const made = modelSavePlan(row, device, parsed.settings, model => siblings.find(entry => entry.models.includes(model))?.name ?? null);
     if (!made.changed) { setIssues(["바뀐 값이 없습니다."]); return; }
     setDraft(next); setPlan(made); setMode("confirm");
   };
@@ -80,7 +82,7 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly }: { row: M
       const deviceForm = new FormData();
       for (const [name, value] of deviceRowFormEntries(plan.device)) deviceForm.append(name, value);
       const deviceSaved = await saveDeviceRowAction(null, deviceForm);
-      if (deviceSaved?.ok) out.push({ text: `장비 ${plan.device.deviceId}: ${deviceSaved.message ?? "저장했습니다."}`, tone: "ok" },
+      if (deviceSaved?.ok) out.push({ text: `장비 ${row.machine}: ${deviceSaved.message ?? "저장했습니다."}`, tone: "ok" },
         ...(deviceSaved.changes ?? []).map(text => ({ text, tone: "ok" as const })), ...(deviceSaved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
       else out.push(...(deviceSaved?.issues ?? ["저장 결과를 확인하지 못했습니다."]).map(text => ({ text: `연결은 저장했지만 장비 한도는 저장하지 못했습니다: ${text}`, tone: "bad" as const })));
     }

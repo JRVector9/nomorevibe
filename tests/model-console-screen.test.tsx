@@ -98,7 +98,8 @@ describe("저장 전 확인(다섯 걸음의 4)", () => {
     const html = renderToStaticMarkup(<SavePlanDialog title="M3 gpt-oss 설정을 바꿉니다" plan={plan} pending={false} disabled={false} />);
     expect(html).toContain("<li><span>이름</span><span><s>m3-gpt-oss</s>M3 gpt-oss</span></li>");
     expect(html).toContain("<li><span>동시 한도</span><span><s>2</s>3</span></li>");
-    expect(text(html)).toContain("함께 씀 장비 m3-mlx의 모델별 한도(gpt-oss-120b) 2 → 3");
+    expect(text(html)).toContain(`함께 씀 장비 ${row.machine}의 이 모델 한도 2 → 3`);
+    expect(text(html)).not.toContain("gpt-oss-120b");
     expect(text(html)).toContain("영향 이 모델을 쓰는 단계 6개:");
     expect(html).toContain(">바꾸기</button>");
   });

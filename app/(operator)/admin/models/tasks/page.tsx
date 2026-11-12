@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
 import { aiTaskSupportsPool } from "@/lib/llm/ai-task-execution-config";
-import { AI_TASK_IMPORT_CONFIRM, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
+import { AI_TASK_IMPORT_CONFIRM, aiModelDisplayName, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
 import { aiTaskSlotRevision, aiTaskTargetLabel, previewAiTaskImport, readAiTasksAdminView, type AiTaskSlotView } from "@/lib/operations/admin-ai-tasks-repository";
 import { readAssistControls } from "@/lib/operations/llm-assist-controls";
 import { JOB_CONCURRENCY_CONTROL, readSettingsControl } from "@/lib/operations/admin-runtime-settings";
@@ -19,7 +19,6 @@ import { TaskImportCard } from "./TaskImportCard";
 import { TaskAssignSlot } from "./task-assign-slot";
 import { AssistControlsCard } from "./AssistControlsCard";
 import { ClearRecordsButton } from "./ConnectionButtons";
-import { modelPickerConnectionLabel } from "../model-picker-display";
 import "../llm-ops.css";
 import "./tasks.css";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
@@ -82,7 +81,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
     {errors.map(([key, error]) => <p key={key} role="alert" className="llm-notice">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
     {unread.length > 0 && <p role="status" data-unread={unread.length} className="llm-notice">
       모델 목록을 못 읽은 서버 — {unread.map((row, index) => <span key={row.id}>{index > 0 && ", "}<Link href={`/admin/models/llm?edit=${row.id}#conn-${row.id}`} prefetch={false}
-        className="font-semibold underline">{modelPickerConnectionLabel(view.connections.find(connection => connection.id === row.id)!)}</Link>({row.reason})</span>)}. 이 서버의 모델은 순위 선택지에 없습니다 — 이름을 눌러 LLM 운영에서 키를 넣거나 「다시 읽기」를 누르세요.</p>}
+        className="font-semibold underline">{aiModelDisplayName(view.connections.find(connection => connection.id === row.id)!)}</Link>({row.reason})</span>)}. 이 서버의 모델은 순위 선택지에 없습니다 — 이름을 눌러 LLM 운영에서 키를 넣거나 「다시 읽기」를 누르세요.</p>}
     <section id="tasks" className="min-w-0 scroll-mt-6" aria-label="작업 배정 — 설정과 실제">
       <Suspense fallback={<p aria-busy="true" className="notice">작업 순위와 최근 1시간 호출을 읽는 중…</p>}>
         <TaskAssignSlot view={view} executions={executionRead.failed ? null : executionRead.executions} readOnly={readOnly} />
