@@ -487,7 +487,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
       fact: [`대기 ${formatCount(human.waiting)}건`, human.oldestDays !== null ? `가장 오래된 것 ${formatCount(human.oldestDays)}일` : null,
         human.decided24h !== null ? `24시간 동안 사람이 끝낸 것 ${formatCount(human.decided24h)}건` : null].filter(Boolean).join(" · "),
       why: agreedText ? `${agreedText}은 표본만 보고 한 번에 끝낼 수 있습니다.` : null,
-      actions: [link("묶음 보기", agreedTotal ? "/admin/review?tab=human&stage=agreed" : "/admin/review?tab=human")],
+      actions: [link("묶음 보기", "/admin/review/batches")],
     });
   }
   if (!inputs.audit) unknown("pile", "감사 거절");

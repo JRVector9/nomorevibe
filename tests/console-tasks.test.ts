@@ -84,7 +84,7 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
       actions: [{ label: "모델 붙이기", href: "/admin/flow?stage=product-translate#sp-models" }] });
     // 키워드 검수(워커 진행 단계)는 키워드 등록 패널을 연다
     expect(all.find(task => task.id === "pile:stage:keyword-verify")!.actions[0]).toMatchObject({ href: "/admin/flow?stage=keywords#sp-models" });
-    expect(all.find(task => task.id === "pile:human")!.actions[0]).toMatchObject({ label: "묶음 보기", href: "/admin/review?tab=human&stage=agreed" });
+    expect(all.find(task => task.id === "pile:human")!.actions[0]).toMatchObject({ label: "묶음 보기", href: "/admin/review/batches" });
     expect(all.find(task => task.id === "tidy:no-result:conn-lg-exaone")).toMatchObject({ tone: "off", notify: false,
       actions: [{ label: "쉬게 하기", href: "/admin/models/llm?edit=conn-lg-exaone#conn-conn-lg-exaone" },
         { kind: "keep", label: "그대로 두기", taskId: "tidy:no-result:conn-lg-exaone" }] });
