@@ -18,7 +18,9 @@ import { logger } from "@/lib/observability/logger";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { OPS_FRESH_COOKIE } from "../status/fresh";
 import { jobControlCsrf } from "../status/job-control-csrf";
+import { readConsoleHome } from "@/lib/operations/console-home-read";
 import { readOperatorAway, readOperatorChanges, readOperatorDeskShared, readOperatorDiagnostics } from "./desk";
+import { ConsoleHome } from "./ConsoleHome";
 import type { FlowControls } from "./FlowBoard";
 import { FlowBoard } from "./FlowBoard";
 import { HumanModelSettings } from "./HumanModelSettings";
@@ -54,8 +56,9 @@ async function readControls(admin: { login: string; exp: number }): Promise<Flow
 }
 
 /**
- * 전체 흐름 — 탐색 → 검수 → 프로필 준비 → 발행 → 공개. 검색·번역은 공개 후 별도 분기로 보인다.
- * 기존 공용 집계와 잡·역할 관측의 시각·단위를 함께 표시한다. 추가 모델 호출이나 DB 집계를 하지 않는다.
+ * 운영 홈 — 기본 탭(home)은 「지금 할 일」(네 묶음) + 「흐름」 표(운영 콘솔 개편 조각 1b, ConsoleHome).
+ * 「흐름 상세」(tab=detail, 옛 주소 tab=flow 도 같다)는 지금까지의 전체 흐름이다 — 탐색 → 검수 → 프로필 준비 → 발행 → 공개. 검색·번역은 공개 후 별도 분기로 보인다.
+ * 기존 공용 집계와 잡·역할 관측의 시각·단위를 함께 표시한다. 추가 모델 호출을 하지 않는다(홈의 24시간 장부 집계는 공유 캐시로 나눠 쓴다).
  * 그 자리의 장애 대응, 그리고 1인 관리자 필수 칸(할 일 — 경보·사람 판단·자리 비운 사이·모두 보기, 최근 바뀐 설정·장비·점검 창).
  * 이 화면이 직접 바꾸는 것은 작업 멈춤·재개(운영센터와 같은 서버 동작, 사유 필수, 작업 로그) 하나다. 나머지는 각 조치의 링크가 보내는 화면에서 한다.
  */
@@ -64,22 +67,33 @@ export default async function AdminFlowPage({ searchParams }: { searchParams?: P
   if (!admin) redirect("/admin/login");
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   const params = await searchParams;
-  const tab = typeof params?.tab === "string" ? params.tab : "flow";
+  const tab = typeof params?.tab === "string" ? params.tab : "home";
   const advanced = params?.advanced === "1";
+  const stage = typeof params?.stage === "string" ? params.stage : null;
   return (
     <main className="stack pb-10 pt-4"><PageStamp />
       <h1 className="admin-vh">운영 홈 · 실시간 전체 흐름</h1>
       <Suspense fallback={<p className="notice" aria-busy="true">운영 흐름을 읽는 중…</p>}>
-        <FlowWorkspace admin={admin} fresh={fresh} tab={tab} advanced={advanced} />
+        {tab === "home" ? <HomeWorkspace admin={admin} fresh={fresh} />
+          : <FlowWorkspace admin={admin} fresh={fresh} tab={tab} advanced={advanced} stage={stage} />}
       </Suspense>
     </main>
   );
 }
 
+/** 운영 홈 — 할 일 규칙의 입력을 한 번 읽어(읽기마다 따로 실패) 할 일·흐름 표를 그린다 */
+async function HomeWorkspace({ admin, fresh }: { admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean }) {
+  const data = await readConsoleHome(fresh);
+  const secret = authSecret();
+  const csrf = secret && !adminWorkspaceReadOnly() ? { token: jobControlCsrf(admin, secret), expiresAt: admin.exp } : null;
+  // 「바꾼 것 지켜보기」(조각 1c)는 ConsoleHome 의 changeWatch 자리에 그 서버 구성 요소를 넘겨 끼운다
+  return <ConsoleHome data={data} csrf={csrf} />;
+}
+
 type DeskRead = Promise<OperatorDesk | null>;
 
-async function FlowWorkspace({ admin, fresh, tab, advanced }: {
-  admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean; tab: string; advanced: boolean;
+async function FlowWorkspace({ admin, fresh, tab, advanced, stage }: {
+  admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean; tab: string; advanced: boolean; stage: string | null;
 }) {
   if (tab === "changes") {
     const desk = await readOperatorChanges(admin.login).catch(quiet("desk.changes_unavailable"));
@@ -118,7 +132,7 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
     : <Suspense fallback={<p className="small muted" aria-busy="true">고급 운영 관측을 읽는 중…</p>}>
         <AdvancedFlow data={conveyor} controls={controls} deskRead={fullDeskRead} editor={editor} readRanks={diagnostics} login={admin.login} fresh={fresh} />
       </Suspense>;
-  return <PrototypeFlow humanModelSettings={!diagnostics ? <Suspense fallback={<p className="small muted" aria-busy="true">AI 보조 모델 설정을 읽는 중…</p>}><HumanModelSettings /></Suspense> : undefined} data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab} humanAssist={humanAssist}
+  return <PrototypeFlow initialStage={stage} humanModelSettings={!diagnostics ? <Suspense fallback={<p className="small muted" aria-busy="true">AI 보조 모델 설정을 읽는 중…</p>}><HumanModelSettings /></Suspense> : undefined} data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab} humanAssist={humanAssist}
     reactionRequests={reactions?.count ?? null} advancedContent={advancedContent}
     overviewContent={!diagnostics ? <Suspense fallback={<p className="notice" aria-busy="true">프로젝트 등록 수와 발행 추이를 읽는 중…</p>}>
       <FlowOverviewSummary data={conveyor} desk={desk} reactionRequests={reactions?.count ?? null} />

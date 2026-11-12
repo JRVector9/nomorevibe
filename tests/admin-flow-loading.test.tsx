@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const read = vi.hoisted(() => ({
   admin: vi.fn(), conveyor: vi.fn(), sharedDesk: vi.fn(), away: vi.fn(), changes: vi.fn(), diagnostics: vi.fn(),
-  jobs: vi.fn(), versions: vi.fn(), editor: vi.fn(), reactions: vi.fn(),
+  jobs: vi.fn(), versions: vi.fn(), editor: vi.fn(), reactions: vi.fn(), home: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: (href: string) => { throw new Error(`redirect:${href}`); } }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ has: () => false }) }));
@@ -22,8 +22,12 @@ vi.mock("@/app/(operator)/admin/flow/desk", () => ({ readOperatorDeskShared: rea
 vi.mock("@/app/(operator)/admin/flow/FlowBoard", () => ({ FlowBoard: () => null }));
 vi.mock("@/app/(operator)/admin/flow/PrototypeFlow", () => ({ PrototypeFlow: () => null,
   PrototypeFlowAway: () => null, PrototypeFlowChanges: () => null }));
+// 운영 홈(할 일 + 흐름) — 읽기 하나로 모은다. 이 시험은 어느 탭이 무엇을 읽는지만 본다
+vi.mock("@/lib/operations/console-home-read", () => ({ readConsoleHome: read.home }));
+vi.mock("@/app/(operator)/admin/flow/ConsoleHome", () => ({ ConsoleHome: () => null }));
 
 import Page from "@/app/(operator)/admin/flow/page";
+import { ConsoleHome } from "@/app/(operator)/admin/flow/ConsoleHome";
 import { PrototypeFlow, PrototypeFlowChanges } from "@/app/(operator)/admin/flow/PrototypeFlow";
 
 const at = "2026-11-04T12:00:00.000Z";
@@ -35,8 +39,8 @@ function workspace(page: ReactElement<{ children: ReactNode }>): ServerSlot {
   if (!isValidElement<{ children: ServerSlot }>(boundary)) throw new Error("Missing loading boundary");
   return boundary.props.children;
 }
-async function view(tab: string) {
-  const page = await Page({ searchParams: Promise.resolve({ tab }) });
+async function view(tab?: string, extra: Record<string, string> = {}) {
+  const page = await Page({ searchParams: Promise.resolve({ tab, ...extra }) });
   const slot = workspace(page);
   return slot.type(slot.props);
 }
@@ -53,9 +57,23 @@ beforeEach(() => {
   read.versions.mockResolvedValue({});
   read.editor.mockResolvedValue(null);
   read.reactions.mockResolvedValue({ count: 0, items: [] });
+  read.home.mockResolvedValue({ checkedAt: at, inputs: { now: at }, conveyor: null, jobControls: {} });
 });
 
 describe("flow loading isolation", () => {
+  it("opens the operating home (tasks + flow) by default and reads only its own inputs", async () => {
+    const result = await view();
+    expect(result.type).toBe(ConsoleHome);
+    expect(result.props).toMatchObject({ data: { checkedAt: at }, csrf: null });
+    expect(read.home).toHaveBeenCalledWith(false);
+    for (const work of [read.sharedDesk, read.away, read.changes, read.diagnostics, read.editor, read.reactions]) expect(work).not.toHaveBeenCalled();
+    expect((await view("home")).type).toBe(ConsoleHome);
+  });
+  it("keeps the previous live board as the flow detail tab, old ?tab=flow included, and opens the asked stage", async () => {
+    for (const tab of ["detail", "flow"]) expect((await view(tab)).type).toBe(PrototypeFlow);
+    expect((await view("detail", { stage: "first" })).props).toMatchObject({ initialStage: "first" });
+    expect(read.home).not.toHaveBeenCalled();
+  });
   it("returns the live board while personal history is still pending", async () => {
     read.away.mockImplementation(() => new Promise(() => {}));
     const result = await view("flow");
@@ -82,6 +100,7 @@ describe("flow loading isolation", () => {
   it("authenticates before starting any protected reader", async () => {
     read.admin.mockResolvedValue(null);
     await expect(view("flow")).rejects.toThrow("redirect:/admin/login");
-    for (const work of [read.conveyor, read.sharedDesk, read.changes, read.jobs, read.editor, read.reactions]) expect(work).not.toHaveBeenCalled();
+    await expect(view()).rejects.toThrow("redirect:/admin/login");
+    for (const work of [read.conveyor, read.sharedDesk, read.changes, read.jobs, read.editor, read.reactions, read.home]) expect(work).not.toHaveBeenCalled();
   });
 });

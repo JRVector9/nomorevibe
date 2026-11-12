@@ -142,9 +142,12 @@ function HumanWork({ data, controls, modelSettings, assist }: { data: Conveyor; 
   </section>;
 }
 
-export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", userRequests, reactionRequests = null, awayContent, advancedContent, overviewContent, socialContent, humanModelSettings, humanAssist }: { data: Conveyor; desk: OperatorDesk | null; controls: FlowControls; editor: FlowRankEditor | null; tab?: string; reactionRequests?: number | null; userRequests?: { count: number | null; knownCount: number; failed: number }; awayContent?: ReactNode; advancedContent?: ReactNode; overviewContent?: ReactNode; socialContent?: ReactNode; humanModelSettings?: ReactNode; humanAssist?: Partial<Record<string, ReactNode>> }) {
+export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", userRequests, reactionRequests = null, awayContent, advancedContent, overviewContent, socialContent, humanModelSettings, humanAssist, initialStage = null }: { data: Conveyor; desk: OperatorDesk | null; controls: FlowControls; editor: FlowRankEditor | null; tab?: string; reactionRequests?: number | null; userRequests?: { count: number | null; knownCount: number; failed: number }; awayContent?: ReactNode; advancedContent?: ReactNode; overviewContent?: ReactNode; socialContent?: ReactNode; humanModelSettings?: ReactNode; humanAssist?: Partial<Record<string, ReactNode>>;
+  /** 운영 홈 할 일의 「단계 열기」(?stage=) — 처음 고를 단계. 없는 열쇠면 지금처럼 병목 칸 */
+  initialStage?: string | null }) {
   const [range, setRange] = useState<Range>("1h");
-  const [selected, setSelected] = useState<Station["key"] | "public">(data.bottleneck && data.bottleneck !== "human" ? data.bottleneck : "second");
+  const [selected, setSelected] = useState<Station["key"] | "public">(() => data.stations.find(station => station.key === initialStage)?.key
+    ?? (initialStage === "public" ? "public" : data.bottleneck && data.bottleneck !== "human" ? data.bottleneck : "second"));
   const [changing, setChanging] = useState<LlmStationKey | null>(null);
   const current = data.stations.find(station => station.key === selected) ?? null;
   const observation = current ? jobObservation(current.key, controls) : null;
