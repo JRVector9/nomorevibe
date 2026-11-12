@@ -284,8 +284,8 @@ const jobHref = (job: string) => `/admin/status?tab=jobs&job=${encodeURIComponen
  * model-console.ts 는 이 파일의 기준값을 모듈을 읽을 때 쓰므로 거꾸로 가져오지 않는다(순환 import 의 초기화 순서).
  */
 const modelDetailHref = (id: string) => `/admin/models?model=${encodeURIComponent(id)}#model-detail`;
-/** 모델 추가 ③ 쓸 단계(3a) — 넣어 두고 아직 붙이지 않은 모델을 밀린 단계부터 권한다 */
-const modelStagesHref = (id: string) => `/admin/models/new?id=${encodeURIComponent(id)}&step=3`;
+/** 모델 상세의 바로 붙이기 칸(모델 화면 「쓰는 단계」의 ModelAttachForm) */
+const modelAttachHref = (id: string) => `/admin/models?model=${encodeURIComponent(id)}#model-attach`;
 /** 표본 비교(3a) — 붙이기 전에 결과를 나란히 본다. 지금 실행까지 붙은 작업만(SAMPLE_COMPARE_SUPPORTED) */
 const compareHref = (task: string, candidate: string) => `/admin/models/compare?task=${encodeURIComponent(task)}&candidate=${encodeURIComponent(candidate)}`;
 /** 모델 접수 칸 — 3a 가 옮긴 대시보드의 접수 칸(#admission). 여닫는 것은 사람이 그 칸에서 한다 */
@@ -592,7 +592,8 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     add("tidy", {
       id: `tidy:unused:${stat.connection.id}`, rule: "unused-or-duplicate", title: `${josa(name(stat), "을/를")} 아직 안 씁니다`,
       fact: [`${formatKst(stat.connection.updatedAt)} 저장`, stat.calls === null ? "호출 셀 수 없음" : `호출 ${formatCount(stat.calls)}건`, "쓰는 단계 없음"].join(" · "),
-      why: null, actions: [link("단계에 붙이기", modelStagesHref(stat.connection.id)), link("모델 상세", modelDetailHref(stat.connection.id))],
+      // 「단계에 붙이기」는 모델 상세의 바로 붙이기 칸(#model-attach)으로 — 작업 배정을 따로 열지 않는다(2026-11-12 소유자)
+      why: null, actions: [link("단계에 붙이기", modelAttachHref(stat.connection.id)), link("모델 상세", modelDetailHref(stat.connection.id))],
     });
   }
   if (inputs.ranks) {

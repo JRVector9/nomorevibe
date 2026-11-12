@@ -9,6 +9,7 @@ import { aiModelChoiceName, aiRankReasoningEfforts, type AiConnectionView, type 
 import { poolMemberIssues, poolMembersInput, poolSlotTexts } from "@/lib/operations/task-pool-form";
 import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
 import { PoolHelpTip } from "./PoolHelp";
+import { modelPickerOptionName } from "../model-picker-display";
 import { RankSelects } from "../RankSelects";
 import type { AiTaskActionState } from "./actions";
 import { saveTaskExecutionAction } from "./execution-actions";
@@ -78,10 +79,12 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
     || reserveOn !== (features.reserve && view.reserveRanks));
   const lanes = aiTaskPoolCappedLanes({ task: view.task, slot: view.slot, mode: "workload_pool", members });
   const issuesOf = (values: readonly (AiRankChoice | null)[]) => poolMemberIssues(values, slots, connections, { apiOnly, features });
-  const nameOf = (choice: AiRankChoice) => { const connection = connections.find(row => row.id === choice.provider); return connection ? aiModelChoiceName(connection, choice.model) : "지워진 연결"; };
+  // 고르는 상자와 같은 이름 하나(modelPickerOptionName — 별칭은 한 이름)
+  const nameOf = (choice: AiRankChoice) => { const connection = connections.find(row => row.id === choice.provider); return connection ? modelPickerOptionName(connection, choice.model) : "지워진 연결"; };
   const issues = mode === "workload_pool" ? issuesOf(value) : [];
   // 「동시에」 도움말 — 지금 고른 모델·칸 수로 다시 센다(권장 칸 수 · 같은 모델 두 줄 · 장비 한도 넘김)
-  const poolHelp = buildPoolHelp({ task: view.task, slot: view.slot, taskLabel: label, members: mode === "workload_pool" ? value : [], slots, connections, context: help });
+  const poolHelp = buildPoolHelp({ task: view.task, slot: view.slot, taskLabel: label, members: mode === "workload_pool" ? value : [], slots, connections, context: help,
+    nameOf: modelPickerOptionName });
   // Keep a missing saved choice visible until the operator explicitly changes it.
   const choices = options.filter(option => !apiOnly || connections.some(connection => connection.id === option.provider && (connection.kind === "api" || connection.cliTool === "opencode")));
   for (const member of view.members) if (!choices.some(option => option.provider === member.connectionId && option.model === member.model)) {
@@ -111,8 +114,12 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
         className="min-h-9 self-end rounded-lg bg-fg px-3 text-[13px] text-bg disabled:opacity-40">{saving ? "저장 중…" : "실행 방식 저장"}</button>
       </div>
       {mode === "workload_pool" ? <>
-        <p className="text-[13px] text-fg-3">같은 모델도 반복 선택할 수 있습니다. <Link href="/admin/models/limits" prefetch={false} className="text-accent-ink underline">동시 실행 수</Link>는 단계·장비 공유 한도를 따릅니다.</p>
-        {["first-review", "second-review"].includes(view.task) && <p className="text-[13px] text-fg-3">같은 연결·모델을 반복하면 추론 강도도 같게 설정하세요.</p>}
+        {/* #925 도움말과 같은 말 — 같은 모델 두 줄은 동시 처리 수를 늘리지 않는다(고를 차례만 는다) */}
+        <p className="text-[13px] text-fg-3" data-pool-rule="true">{features.slotCaps
+          ? "같은 모델은 한 줄만 넣고 동시에 여러 개는 칸 수로 정하세요. 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다."
+          : "같은 모델은 한 줄만 넣으세요. 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다."}{" "}
+          <Link href="/admin/models/limits" prefetch={false} className="text-accent-ink underline">실시간 한도</Link>에서 작업의 동시 호출을 봅니다.</p>
+        {["first-review", "second-review"].includes(view.task) && <p className="text-[13px] text-fg-3">같은 연결·모델이 두 줄이면 추론 강도도 같게 설정하세요.</p>}
         <RankSelects<AiRankChoice> stage={{ id: `pool-${view.task}-${view.slot}`, label, slots: 4 }} selectionKind="pool"
           options={choices} connections={connections} value={value} onChange={setValue} slotNames={MEMBER_FIELDS}
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
@@ -129,7 +136,7 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
           {taskPoolRuntimeGroups(view, currentRuntime).map(group => {
             const member = group.members[0];
             const connection = connections.find(row => row.id === member.connectionId);
-            return <p key={group.key}>{group.members.map(row => `모델 ${row.position}`).join("·")} · {connection ? aiModelChoiceName(connection, member.model) : "연결 없음"}
+            return <p key={group.key}>{group.members.map(row => `모델 ${row.position}`).join("·")} · {connection ? modelPickerOptionName(connection, member.model) : "연결 없음"}
               {group.served === null ? " · 사용 집계 없음" : ` · ${group.shared ? "동일 모델 공유 업무" : "맡은 업무"} ${group.served}건`}
               {group.unusable > 0 && <span> · 사용 불가 {group.unusable}건</span>}</p>;
           })}

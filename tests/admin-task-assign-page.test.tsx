@@ -308,8 +308,9 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
     // supa 의 두 이름은 한 모델(같은 root) — 사용자가 정한 이름 하나로 보인다(운영 콘솔 통합)
     expect(html).toContain(`<option value="${SUPA}/supa" disabled="">supa-direct — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
     expect(html).not.toContain("Inferact/Qwen3.8-27B-NVFP4 —");
-    expect(html).toContain(`<option value="${MLX}/gpt-oss-120b" disabled="">gpt-oss-120b — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
-    expect(html).toContain('<optgroup label="supa-direct · API">');
+    // 서로 다른 모델을 여럿 내는 연결(m3-mlx (2))만 「이름 · 서버 모델 이름」 — 묶음 머리(optgroup) 없이 모델마다 한 줄(2026-11-12)
+    expect(html).toContain(`<option value="${MLX}/gpt-oss-120b" disabled="">m3-mlx (2) · gpt-oss-120b — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
+    expect(html).not.toContain("<optgroup");
     // 작업 분산 칸의 링크는 작업 배정의 실행 방식 접힘으로
     const pooled = buildTaskRankEditor(llmConnections, llmRankRows, () => "a".repeat(64), [{ task: "first-review", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null,
       members: [{ memberId: "m1", position: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {} }] } as never]);

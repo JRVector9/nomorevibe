@@ -689,15 +689,16 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     const html = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
       value: [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], connections: CONNECTIONS, slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false,
       validate: slots => validateAiTaskRanks("crawl-tagline", 1, slots, { connections: CONNECTIONS, rows: [] }), note: createElement("p", null, "안내") }));
-    // 연결·전송별로 묶고, 모델 이름 옆에 실시간 관측 상태를 표시한다.
+    // 2026-11-12 소유자 「모델 목록의 이름이 바로 떠야」 — 묶음 머리 없이 모델마다 한 줄. 서로 다른 모델을 여럿 내는 연결만 「이름 · 서버 모델 이름」
     // 고른 선택지는 이름만(관측은 상자 밑 줄), 나머지는 「이름 — 관측」
-    expect(html).toContain(`<optgroup label="gpu3090 · API"><option value="${GPU}/qwen3.8-flash-next" selected="">qwen3.8-flash-next</option>`);
-    expect(html).toContain('<optgroup label="검색 서버 · API"><option value="55555555-5555-4555-8555-555555555555/bge-m3">bge-m3 — ');
+    expect(html).not.toContain("<optgroup");
+    expect(html).toContain(`<option value="${GPU}/qwen3.8-flash-next" selected="">gpu3090 · qwen3.8-flash-next</option>`);
+    expect(html).toContain('<option value="55555555-5555-4555-8555-555555555555/bge-m3">검색 서버 · bge-m3 — ');
     expect(html).toContain(`aria-describedby="crawl-tagline-1-rank-1-activity"`);
     expect(html).toContain('<span id="crawl-tagline-1-rank-1-activity" class="flex flex-wrap gap-1" data-model-activity="true">');
-    expect(html).not.toContain("gpu3090 · qwen3.8-flash-next");
-    // 모델 이름이 같아도 연결·전송과 숨은 원래 모델 바인딩을 구분한다.
-    expect(html.match(/data-rank-server="true">([^<]*)</g)).toEqual(['data-rank-server="true">gpu3090 · API<', 'data-rank-server="true">supa · API<']);
+    // 모델 이름이 같아도 연결(이름)과 숨은 원래 모델 바인딩으로 가른다 — 상자 밑 서버 줄은 이제 없다(이름에 이미 연결이 있다)
+    expect(html).toContain(`<option value="${SUPA}/qwen3.8-flash-next" selected="">supa · qwen3.8-flash-next</option>`);
+    expect(html).not.toContain('data-rank-server="true"');
     expect(html).not.toContain("(abcllm)");
     expect(html).toContain(`name="rank1Connection" value="${GPU}"`);
     expect(html).toContain('name="rank3Model" value="qwen3.8-flash-next"');
