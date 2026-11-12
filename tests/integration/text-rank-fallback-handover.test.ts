@@ -160,6 +160,7 @@ describe("product-translate", () => {
     const second = ask(SECOND);
     const slot = await second.slot();
     expect(slot).toEqual({ kind: "deferred", reason: "capacity" });
+    if (slot.kind !== "deferred") throw new Error("expected_deferred");
     expect(await capacityRefusalReason(second.request, slot)).toBe("work_busy");
     expect((await rows(task)).map(row => [row.model, row.state])).toEqual([[FIRST, "reserved"]]);
   });
@@ -172,6 +173,7 @@ describe("product-translate", () => {
     const mine = ask(SECOND);
     const slot = await mine.slot();
     expect(slot).toEqual({ kind: "deferred", reason: "capacity" });
+    if (slot.kind !== "deferred") throw new Error("expected_deferred");
     expect(await capacityRefusalReason(mine.request, slot)).toBe("work_busy");
     expect((await rows(task)).map(row => [row.model, row.state])).toEqual([[FIRST, "waiting"]]);
   });
