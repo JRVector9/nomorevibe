@@ -403,7 +403,8 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-12 운영 콘솔 조각 3a admin/models/compare/actions.ts: requestSampleComparisonAction(표본 비교 요청 — 계약 준비·비교 줄·감사) 하나가 더해져 128.
   // 2026-11-12 운영 콘솔 조각 4a admin/sources/actions.ts: 잡 주기 저장(saveJobIntervalAction)·글 목록 수집원 저장(saveFeedSourceAction)·
   // 수집원 미리 보기(previewFeedSourceAction — 쓰지 않지만 같은 관문) 셋이 더해져 131.
-  expect(wrapped).toBe(131);
+  // 2026-11-12 운영 콘솔 통합: 4a(수집·작업 — 주기 저장·수집원 저장·미리 보기 셋)와 4b(알림 설정 저장 하나)를 합쳐 132.
+  expect(wrapped).toBe(132);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");
