@@ -1,0 +1,250 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
+/* 홈 › 알림(운영 콘솔 개편 조각 4b) — 표는 열 폭 고정, 때는 tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만(prototype.css 토큰). */
+.admin-prototype .al-page {
+  display: grid;
+  gap: calc(14px / .8);
+  min-width: 0;
+}
+.admin-prototype .al-page > *,
+.admin-prototype .al-list > * {
+  min-width: 0;
+}
+.admin-prototype .al-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(4px / .8) calc(12px / .8);
+  padding-bottom: calc(10px / .8);
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .al-head h1 {
+  font-size: calc(20px + var(--admin-font-delta, 0px));
+  font-weight: 800;
+}
+.admin-prototype .al-note,
+.admin-prototype .al-muted {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .al-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px / .8) calc(28px / .8);
+  padding: calc(10px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.admin-prototype .al-strip b {
+  margin-left: calc(6px / .8);
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
+}
+.admin-prototype .al-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(14px / .8);
+}
+@media (min-width: 1100px) {
+  .admin-prototype .al-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.admin-prototype .al-card {
+  display: grid;
+  align-content: start;
+  gap: calc(10px / .8);
+  min-width: 0;
+  padding: calc(14px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.admin-prototype .al-card h2,
+.admin-prototype .al-list h2 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .al-form {
+  display: grid;
+  gap: calc(10px / .8);
+}
+.admin-prototype .al-check {
+  display: flex;
+  align-items: center;
+  gap: calc(8px / .8);
+  font-weight: 600;
+}
+.admin-prototype .al-quiet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(8px / .8) calc(16px / .8);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.admin-prototype .al-quiet legend {
+  margin-bottom: calc(4px / .8);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .al-quiet label {
+  display: flex;
+  align-items: center;
+  gap: calc(6px / .8);
+}
+.admin-prototype .al-quiet input {
+  padding: calc(4px / .8) calc(8px / .8);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .al-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(8px / .8);
+}
+.admin-prototype .al-confirm {
+  display: grid;
+  gap: calc(8px / .8);
+  padding: calc(12px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.admin-prototype .al-confirm h3 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .al-diff {
+  display: grid;
+  gap: calc(4px / .8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .al-diff li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: calc(8px / .8);
+}
+.admin-prototype .al-diff li > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .al-diff s {
+  margin-right: calc(6px / .8);
+  color: var(--muted);
+}
+.admin-prototype .al-route {
+  display: grid;
+  gap: calc(6px / .8);
+  margin: 0;
+  padding-left: calc(18px / .8);
+}
+.admin-prototype .al-route b {
+  margin-right: calc(6px / .8);
+}
+.admin-prototype .al-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px / .8) calc(14px / .8);
+}
+.admin-prototype .al-list {
+  display: grid;
+  gap: calc(10px / .8);
+}
+.admin-prototype .al-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(4px / .8) calc(10px / .8);
+}
+.admin-prototype .al-empty {
+  padding: calc(24px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+}
+.admin-prototype .al-scroll {
+  /* 숨긴 글자(admin-vh, position: absolute)가 이 칸을 기준으로 잡혀 옆 넘김 안에 머문다 */
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .al-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12.5px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .al-table th,
+.admin-prototype .al-table td {
+  padding: calc(9px / .8) calc(12px / .8);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .al-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .al-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-prototype .al-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .al-when {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: var(--f-mono);
+}
+.admin-prototype .al-title,
+.admin-prototype .al-fact {
+  display: block;
+}
+.admin-prototype .al-fact {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .al-st {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7px / .8);
+}
+.admin-prototype .al-st > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.admin-prototype .al-st[data-tone="ok"] > i {
+  background: var(--green);
+}
+.admin-prototype .al-st[data-tone="warn"] > i {
+  background: var(--amber);
+}
+.admin-prototype .al-st[data-tone="off"] {
+  color: var(--muted);
+}

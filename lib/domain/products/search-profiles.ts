@@ -223,12 +223,15 @@ const MAX_VERIFY_ATTEMPTS = 5;
  * 검수할 키워드 — 지은 뒤 아직 검수하지 않은 공개 제품. 오래 기다린 것부터.
  * 키워드가 하나도 없는 것은 검수할 것이 없다.
  */
-export async function pendingVerifications(limit: number): Promise<ProfileTask[]> {
+export async function pendingVerifications(limit: number, excludedProductIds: readonly number[] = []): Promise<ProfileTask[]> {
+  // Exclude handled targets before LIMIT, so a deferred head window cannot hide later work.
+  const excluded = [...new Set(excludedProductIds.filter(id => Number.isSafeInteger(id) && id > 0))];
   const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
     .from(products)
     .innerJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
     .where(and(
       inArray(products.status, ["seeded", "verified"]),
+      excluded.length ? notInArray(products.id, excluded) : undefined,
       sql`not ${productSearchProfiles.needsRefresh} and ${productSearchProfiles.errorCode} is null and ${productSearchProfiles.verifiedAt} is null
         and jsonb_array_length(${productSearchProfiles.keywordsEn}) + jsonb_array_length(${productSearchProfiles.keywordsKo}) > 0
         and ${productSearchProfiles.verifyAttempts} < ${MAX_VERIFY_ATTEMPTS}

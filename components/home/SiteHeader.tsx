@@ -228,7 +228,7 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
         <LanguageSwitcher />
         {authEnabled && <AlertBell />}
         {authEnabled && <Suspense fallback={<Link prefetch={false} href={localePath(locale, "/login")} className="text-[14px] font-semibold" {...trackAttrs("nav_click", { target: "login", surface: "header" })}>{t("account.login")}</Link>}><AccountMenu /></Suspense>}
-        <Link className="primary" href={localePath(locale, "/launch")} {...trackAttrs("nav_click", { target: "launch", surface: "header" })}>{t("navigation.launch")}</Link>
+        <Link prefetch={false} className="primary" href={localePath(locale, "/launch")} {...trackAttrs("nav_click", { target: "launch", surface: "header" })}>{t("navigation.launch")}</Link>
       </div>
     </header>
   );

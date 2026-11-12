@@ -13,6 +13,7 @@ import { auditFloor, auditRowsAfter, ensureSchema } from "./setup";
 const admin = vi.hoisted(() => ({ login: null as { login: string } | null }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: async () => admin.login, localOperatorName: async () => null }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/operations/runtime-settings", async importOriginal => {
   const actual = await importOriginal<typeof import("@/lib/operations/runtime-settings")>();
   try { await actual.readRuntimeSettingsRow(); return actual; }
@@ -34,8 +35,9 @@ vi.mock("@/lib/operations/runtime-settings", async importOriginal => {
     readRuntimeSettingsApply: async () => ({ savedVersion: storedSettingsVersion(state.values), roles: [], allApplied: false, attention: null }),
     saveRuntimeSettings: async (patch, actor, options) => {
       const audit = async (ok: boolean, detail: Record<string, unknown>, error?: string) => { await db.insert(operationsAudit).values(await adminAuditRow(actor,
-        { action: actual.RUNTIME_SETTINGS_AUDIT_ACTION, target: actual.runtimeSettingsAuditTarget(options.group), detail, ok, error })); };
-      if (!isObject(patch) || Object.keys(patch).some(key => key !== options.group || !(RUNTIME_SETTING_GROUPS as readonly string[]).includes(key))) {
+        { action: actual.RUNTIME_SETTINGS_AUDIT_ACTION, target: actual.runtimeSettingsAuditTarget(typeof options.group === "string" ? options.group : options.group[0]), detail, ok, error })); };
+      const groups: readonly string[] = typeof options.group === "string" ? [options.group] : options.group;
+      if (!isObject(patch) || Object.keys(patch).some(key => !groups.includes(key) || !(RUNTIME_SETTING_GROUPS as readonly string[]).includes(key))) {
         await audit(false, { patch }, "runtime_settings_invalid:patch"); return { ok: false, issues: ["runtime_settings_invalid:patch"] };
       }
       if (options.expectedRevision !== undefined && options.expectedRevision !== state.revision) {
@@ -45,7 +47,7 @@ vi.mock("@/lib/operations/runtime-settings", async importOriginal => {
       const before = resolveRuntimeSettings(state.values).settings, after = resolveRuntimeSettings(next);
       if (after.issues.length) { await audit(false, { issues: after.issues }, after.issues.join(",").slice(0, 300)); return { ok: false, issues: after.issues }; }
       state.values = next; state.revision += 1; state.updatedBy = actor; state.updatedAt = new Date().toISOString();
-      const group = options.group as keyof typeof before;
+      const group = (typeof options.group === "string" ? options.group : options.group[0]) as keyof typeof before;
       await audit(true, { revision: state.revision, changes: settingsChanges(before[group], after.settings[group]) });
       return { ok: true, revision: state.revision, version: storedSettingsVersion(next) };
     },
@@ -68,9 +70,10 @@ afterAll(async () => { await db.delete(operationsObservations).where(like(operat
 const form = (entries: Record<string, string>) => { const data = new FormData(); for (const [key, value] of Object.entries(entries)) data.set(key, value); return data; };
 const saved = () => auditRowsAfter(floor, "runtime-settings-save").orderBy(desc(operationsAudit.id));
 
-it("저장 → 감사 한 줄(바뀐 값) → 화면 모형이 덮어씀·새 revision·감사 줄·env 등록부 역할을 보인다", async () => {
+it("저장 → 감사 한 줄(바뀐 값) → 옮긴 칸 묶음·저장 기록·「실시간 한도」 화면 모형이 덮어씀·새 revision·env 등록부 역할을 보인다", async () => {
   const { saveRuntimeSettingsGroup } = await import("@/app/(operator)/admin/models/limits/actions");
-  const { readRuntimeSettingsAdminView } = await import("@/lib/operations/admin-runtime-settings");
+  const { readRuntimeSettingsAudit, readSettingsControl, TRANSLATION_LIMITS_CONTROL } = await import("@/lib/operations/admin-runtime-settings");
+  const { readLimitsAdminView } = await import("@/lib/operations/admin-limits-repository");
   const { readRuntimeSettingsRow } = await import("@/lib/operations/runtime-settings");
   const { revision } = await readRuntimeSettingsRow();
   const result = await saveRuntimeSettingsGroup(null, form({ group: "translation", expectedRevision: String(revision),
@@ -85,14 +88,53 @@ it("저장 → 감사 한 줄(바뀐 값) → 화면 모형이 덮어씀·새 re
   // 다른 키는 patch 에 없다 — 저장 문서는 바뀐 키만 담는다(sparse)
   expect(JSON.stringify(row.detail.changes)).not.toContain("maxAttempts");
 
-  const view = await readRuntimeSettingsAdminView();
-  expect(view).toMatchObject({ revision: revision + 1, updatedBy: "operator", rowError: null, issues: [] });
+  const control = await readSettingsControl(TRANSLATION_LIMITS_CONTROL);
+  expect(control).toMatchObject({ revision: revision + 1, rowError: null });
+  expect(control.fields.find(field => field.path === "translation.product.batchChars")).toMatchObject({ value: 6_000, overridden: true, input: "6000", defaultInput: "8000" });
+  expect(control.fields.find(field => field.path === "translation.product.maxAttempts")).toMatchObject({ overridden: false });
+  expect((await readRuntimeSettingsAudit())[0]).toMatchObject({ actor: "operator", ok: true, group: "번역·묶음", revision: revision + 1, changes: ["공개 번역 묶음 글자 임계: 8000 → 6000"] });
+  // 화면 전체 읽기 — 저장 행·적용 확인·관측·감사·잡 멈춤·장부 실측(실제 SQL)을 함께 읽고, 실측을 못 읽어도 화면은 뜬다
+  const view = await readLimitsAdminView();
+  expect(view).toMatchObject({ revision: revision + 1, updatedBy: "operator", rowError: null, issues: [], measureError: null });
   expect(view.shortVersion).toMatch(/^v[0-9a-f]{6}$/);
-  expect(view.translation.find(field => field.path === "translation.product.batchChars")).toMatchObject({ value: 6_000, overridden: true, input: "6000", defaultInput: "8000" });
-  expect(view.translation.find(field => field.path === "translation.product.maxAttempts")).toMatchObject({ overridden: false });
-  expect(view.audit[0]).toMatchObject({ actor: "operator", ok: true, group: "번역·묶음", revision: revision + 1, changes: ["공개 번역 묶음 글자 임계: 8000 → 6000"] });
   expect(view.roles.find(role => role.role === "text")).toMatchObject({ registryEnv: true });
-  expect(view.budgets.find(row => row.job === "product-translate")).toMatchObject({ supervisorFloorMs: 180_000 });
+  expect(view.groups.flatMap(group => group.rows)).toHaveLength(19);
+  expect(view.audit[0]).toMatchObject({ group: "번역·묶음", revision: revision + 1 });
+});
+
+it("실시간 한도 화면 한 폼 — 호출 상한(routes)과 틱 시간(budgets)을 한 번에: 따로면 거절될 저장이 한 revision·그룹마다 감사 한 줄로 들어간다", async () => {
+  const { saveRuntimeLimits } = await import("@/app/(operator)/admin/models/limits/actions");
+  const { readRuntimeSettingsRow } = await import("@/lib/operations/runtime-settings");
+  const { resolveRuntimeSettings } = await import("@/lib/operations/runtime-settings-schema");
+  const before = await readRuntimeSettingsRow();
+  // 상한만 70초로 올리면(틱 55초) 예산 검사가 거절한다 — 한 폼으로 틱 90초를 함께 보내면 받는다
+  const capOnly = await saveRuntimeLimits(null, form({ expectedRevision: String(before.revision),
+    "value:routes.limits.reason-translate.timeoutMs": "70", "initial:routes.limits.reason-translate.timeoutMs": "45" }));
+  expect(capOnly).toEqual({ issues: ["사유 번역 틱 예산이 호출 상한보다 짧습니다 — 예산 ≥ 상한 + 2초"] });
+  const result = await saveRuntimeLimits(null, form({ expectedRevision: String(before.revision),
+    "value:routes.limits.reason-translate.timeoutMs": "70", "initial:routes.limits.reason-translate.timeoutMs": "45",
+    "value:budgets.reason-translate": "90", "initial:budgets.reason-translate": "55", "initialAuto:budgets.reason-translate": "0",
+    "value:budgets.crawl-tagline": "25", "initial:budgets.crawl-tagline": "25", "initialAuto:budgets.crawl-tagline": "0" }));
+  expect(result).toMatchObject({ ok: true, message: expect.stringContaining(`바뀐 값 2개`) });
+  const after = await readRuntimeSettingsRow();
+  expect(after.revision).toBe(before.revision + 1);
+  const settings = resolveRuntimeSettings(after.values).settings;
+  expect(settings.routes.limits["reason-translate"].timeoutMs).toBe(70_000);
+  expect(settings.budgets["reason-translate"]).toBe(90_000);
+  // 손대지 않은 틱(소개 생성)은 저장 문서에 들어가지 않는다
+  expect(JSON.stringify(after.values)).not.toContain("crawl-tagline");
+  const rows = (await saved()).slice(0, 2);
+  expect(rows.map(entry => entry.target).sort()).toEqual(["runtime_settings:budgets", "runtime_settings:routes"]);
+  for (const entry of rows) expect(entry.detail).toMatchObject({ revision: before.revision + 1, groups: ["routes", "budgets"] });
+  expect(JSON.stringify(rows.find(entry => entry.target === "runtime_settings:routes")!.detail.changes)).not.toContain("budgets.");
+  // 되돌린다(기본값으로 — 같은 한 폼)
+  const reset = await saveRuntimeLimits(null, form({ expectedRevision: String(after.revision),
+    "value:routes.limits.reason-translate.timeoutMs": "70", "initial:routes.limits.reason-translate.timeoutMs": "70", "stored:routes.limits.reason-translate.timeoutMs": "1",
+    "reset:routes.limits.reason-translate.timeoutMs": "on",
+    "value:budgets.reason-translate": "90", "initial:budgets.reason-translate": "90", "initialAuto:budgets.reason-translate": "0", "stored:budgets.reason-translate": "1",
+    "reset:budgets.reason-translate": "on" }));
+  expect(reset).toMatchObject({ ok: true });
+  expect(JSON.stringify((await readRuntimeSettingsRow()).values)).not.toContain("reason-translate");
 });
 
 it("CAS — 옛 revision 으로 다시 저장하면 stale_form 을 한국어로 거절하고 거절도 감사에 남는다; 문서는 바뀌지 않는다", async () => {
@@ -122,16 +164,17 @@ it("검사 거절 — 호출 상한보다 짧은 예산은 저장되지 않고 �
 
 it("「기본값으로」는 그 키만 지워 판이 default 로 돌아간다", async () => {
   const { saveRuntimeSettingsGroup } = await import("@/app/(operator)/admin/models/limits/actions");
-  const { readRuntimeSettingsAdminView } = await import("@/lib/operations/admin-runtime-settings");
+  const { readRuntimeSettingsAudit, readSettingsControl, TRANSLATION_LIMITS_CONTROL } = await import("@/lib/operations/admin-runtime-settings");
   const { readRuntimeSettingsRow } = await import("@/lib/operations/runtime-settings");
+  const { storedSettingsVersion } = await import("@/lib/operations/runtime-settings-schema");
   const before = await readRuntimeSettingsRow();
   const result = await saveRuntimeSettingsGroup(null, form({ group: "translation", expectedRevision: String(before.revision),
     "value:translation.product.batchChars": "6000", "initial:translation.product.batchChars": "6000", "stored:translation.product.batchChars": "1", "reset:translation.product.batchChars": "on" }));
   expect(result).toMatchObject({ ok: true, message: expect.stringContaining("판 default") });
-  const view = await readRuntimeSettingsAdminView();
-  expect(view.translation.find(field => field.path === "translation.product.batchChars")).toMatchObject({ value: 8_000, overridden: false });
-  expect(view.version).toBe("default");
-  expect(view.audit[0].changes).toEqual(["공개 번역 묶음 글자 임계: 6000 → 8000"]);
+  const control = await readSettingsControl(TRANSLATION_LIMITS_CONTROL);
+  expect(control.fields.find(field => field.path === "translation.product.batchChars")).toMatchObject({ value: 8_000, overridden: false });
+  expect(storedSettingsVersion((await readRuntimeSettingsRow()).values)).toBe("default");
+  expect((await readRuntimeSettingsAudit())[0].changes).toEqual(["공개 번역 묶음 글자 임계: 6000 → 8000"]);
 });
 
 it("비관리자는 쓰기 관문 뒤에서 막히고 저장 경로·감사에 닿지 않는다", async () => {

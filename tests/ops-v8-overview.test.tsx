@@ -225,7 +225,7 @@ describe("레일 옆 칸", () => {
     const x = xSummary(readXStatus([], NOW, false));
     const ok = renderToStaticMarkup(createElement(SourceCell, { summary: sourceSummary({ ok: true, value: { at: "2026-10-17T23:44:02.000Z",
       signals: [{ signal: "agent-trailer", count: 449 }, { signal: "Show HN", count: 23 }, { signal: "admin-evidence-refresh", count: 2 }] } }, settings), x }));
-    expect(ok).toContain("GitHub 449 · Show HN 23 · 기타 2");
+    expect(ok).toContain("GitHub 449 · Show HN 23 · Show GN 0 · 기타 2");
     expect(ok).toContain("이번 시");
     expect(ok).toContain("X 연결 전");
     expect(ok).toContain("기준 08:44:02 (DB)");

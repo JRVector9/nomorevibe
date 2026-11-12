@@ -2,6 +2,7 @@ import { AdminShell } from "./AdminShell";
 import { currentAdmin } from "@/lib/auth/admin";
 import { analyticsPropertyUrl } from "@/lib/analytics/property-url";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
+import { CONSOLE_FONT_CLASS } from "./console-fonts";
 import "./admin.css";
 import "./prototype-content-type.css";
 
@@ -12,11 +13,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // 이 시각은 레이아웃을 그릴 때마다(처음·자동 갱신·새로고침) 바뀐다 — 화면 머리의 "마지막 갱신"이 된다.
   // 화면을 옮길 때는 레이아웃을 다시 그리지 않으므로 AdminShell 이 배지를 다시 받으며 그 시각을 쓴다
   const renderedAt = new Date().toISOString();
-  return <AdminShell account={admin?.login} renderedAt={renderedAt}
+  // 운영 콘솔 글꼴 변수(IBM Plex) — 자리를 차지하지 않는 칸(display: contents)에 달아 관리자 화면 전체(대화상자·알림 포함)가 물려받는다
+  return <div className={CONSOLE_FONT_CLASS} style={{ display: "contents" }}><AdminShell account={admin?.login} renderedAt={renderedAt}
     analyticsUrl={admin ? analyticsPropertyUrl() : null}>
     {admin && adminWorkspaceReadOnly() && <aside role="note" className="border-b border-line bg-accent-soft px-6 py-2 text-[13px] text-accent-ink">
       실데이터 · 읽기 전용 미리보기 — 운영 복제본을 조회합니다. 저장·승인·반려·작업 실행은 차단됩니다.
     </aside>}
     {children}
-  </AdminShell>;
+  </AdminShell></div>;
 }

@@ -108,16 +108,20 @@ export async function recordTaglineResult(task: TaglineTask, lease: JobLease, re
       || written?.writtenBy || !isDeepStrictEqual(candidate, task.candidate) || !isDeepStrictEqual(document, task.document)
       || !isDeepStrictEqual(written ?? null, task.written)) return { stored: false, released: false };
     const sourceHash = taglineHash(taglineEvidence(candidate.repo, document!));
+    // The document row is held FOR SHARE. Copy its SQL timestamp directly: a JS Date loses
+    // microseconds, leaving documentAt distinct from fetchedAt after every cache reuse.
+    const documentAt = sql`(select ${crawlDocuments.fetchedAt} from ${crawlDocuments}
+      where ${crawlDocuments.id} = ${document!.id})`;
     let line = "";
     if (result.kind === "reuse") {
       if (!written || written.errorCode || written.sourceHash !== sourceHash) return { stored: false, released: false };
       line = written.tagline;
-      await tx.update(crawlTaglines).set({ documentAt: document!.fetchedAt, updatedAt: sql`now()` })
+      await tx.update(crawlTaglines).set({ documentAt, updatedAt: sql`now()` })
         .where(eq(crawlTaglines.repo, candidate.repo));
     } else {
       line = result.kind === "success" ? result.tagline.slice(0, 200) : "";
       const attempt = result.kind === "failure" && result.error === "tokenizer_unavailable" ? 0 : 1;
-      const common = { sourceHash, documentAt: document!.fetchedAt, updatedAt: sql`now()`,
+      const common = { sourceHash, documentAt, updatedAt: sql`now()`,
         errorCode: result.kind === "failure" ? result.error.slice(0, 60) : null };
       const [saved] = await tx.insert(crawlTaglines).values({ repo: candidate.repo, ...common, tagline: line,
         source: result.kind === "success" ? result.source : "page", model: result.kind === "success" ? result.model : "",

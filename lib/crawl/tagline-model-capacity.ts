@@ -72,7 +72,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
   const slot = await requestCrawlTaglineModelSlot(request, input);
   // 줄에 서지 못한 capacity(같은 후보·같은 단계 fence — 미확인 단계 행 포함)는 이 후보만의 work_busy — 잡은 다음 후보로 간다(2026-10-30 결정)
-  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
+  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot));
   let prepared: Awaited<ReturnType<typeof prepareCrawlTaglineDispatch>>;
   try {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");

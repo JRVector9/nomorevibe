@@ -51,6 +51,7 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "crawl-seed", role: "crawler", intervalMs: 60_000, lane: "discovery" },
   // 하루 약 123건이 올라온다. 30분이면 한 번에 100건 상한에 걸릴 일이 없다.
   { name: "hn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },
+  { name: "gn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },
   // HN 화제 글 기록 — 최근 72시간·10점 이상 GitHub 글을 한두 요청으로 다시 읽는다(lib/social/hn-talk.ts)
   { name: "hn-talk", role: "crawler", intervalMs: 30 * 60_000 },
   /**
@@ -205,6 +206,12 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 선언(MODEL_CAPACITY_AUTO_RECLAIM)이 없으면 DB 를 읽지 않고 끝난다. 한가한 maintenance 에 둔다.
    */
   { name: "model-capacity-reclaim", role: "maintenance", intervalMs: 60_000 },
+  /**
+   * 휴대폰 알림(2026-11-12 운영 콘솔 조각 4b) — 홈 할 일 중 멈춤·평소와 다름이 새로 생기면 알림 줄(console_alerts)을 연다. 실제 전송은 감시(monitor) →
+   * 복구 게이트웨이 → Oracle watchdog 의 기존 Telegram 통로. 홈과 같은 읽기(공유 캐시)를 5분마다 한 번 — 알림이 꺼져 있으면 할 일을 읽지 않는다.
+   * 새 카탈로그 잡이다 — 이 잡을 담은 릴리스는 scheduler 를 먼저 배포한다(새 잡 → scheduler 먼저).
+   */
+  { name: "console-alerts", role: "maintenance", intervalMs: 5 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
   { name: "product-site-evidence-refresh", role: "site-evidence", intervalMs: 60_000, batchVersion: 1 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)

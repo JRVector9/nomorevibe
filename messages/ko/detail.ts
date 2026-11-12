@@ -119,6 +119,7 @@ export const detail = {
   "readme.excerpt": "저장된 README 발췌",
   "readme.body": "README 본문",
   "readme.empty": "README에 표시할 내용이 없습니다.",
+  "readme.truncated": "여기까지가 README 앞부분입니다. 나머지는 원문에서 읽을 수 있습니다.",
   "languages.title": "언어 구성",
   "languages.other": "기타",
   "languages.rest": "{name} 외",

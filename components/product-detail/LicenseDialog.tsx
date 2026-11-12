@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useTranslations } from "@/lib/i18n/context";
 import { Icon } from "@/components/home/icons";
 import type { LicensePresentation, LicenseValue } from "@/lib/domain/products/detail-view";
@@ -25,6 +26,10 @@ function LicenseSource({ value, observed }: { value: LicenseValue; observed: boo
   );
 }
 
+/**
+ * 라이선스 칸의 단추와 설명 창. 창 속(비교 표·출처 설명)은 처음 열 때 그린다 — 닫힌 창의 표가 상세마다 HTML 13KB·외부 링크 16개를
+ * 차지했다(2026-11-11 상세 HTML 줄이기). 한 번 연 뒤에는 닫아도 그대로 둔다.
+ */
 export function LicenseDialog({ license, source, repositoryUrl, label }: {
   license: LicensePresentation;
   source: { state: string; lastSuccess: string; lastFailure: string } | null;
@@ -36,6 +41,7 @@ export function LicenseDialog({ license, source, repositoryUrl, label }: {
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreScroll = useRef<(() => void) | null>(null);
   const id = useId();
+  const [mounted, setMounted] = useState(false);
   const unidentifiedLicense = license.state === "unidentified";
   const sourceStatus = source?.state === "disconnected" ? t("license.disconnected")
     : source?.state === "failed" ? t("license.failed")
@@ -53,6 +59,8 @@ export function LicenseDialog({ license, source, repositoryUrl, label }: {
   function open() {
     const node = dialog.current;
     if (!node || node.open) return;
+    // 창 속을 먼저 그려야 showModal 이 처음 초점·스크린리더 이름(aria-labelledby)을 창 속 제목에서 찾는다
+    if (!mounted) flushSync(() => setMounted(true));
     node.showModal();
     if (restoreScroll.current) return;
     const restorers = [document.documentElement.style, document.body.style].map((style) => {
@@ -106,7 +114,7 @@ export function LicenseDialog({ license, source, repositoryUrl, label }: {
         className="whitespace-normal text-[14px] font-normal leading-relaxed tracking-normal"
         style={{ margin: "auto", width: "min(960px, calc(100vw - 24px))", maxWidth: "calc(100vw - 24px)", maxHeight: "calc(100dvh - 24px)", overflow: "hidden", padding: 0 }}
       >
-        <div className="flex max-h-[calc(100dvh-26px)] flex-col">
+        {mounted && <div className="flex max-h-[calc(100dvh-26px)] flex-col">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
             <h2 id={`${id}-title`} className="m-0 text-[18px] font-semibold">{t("license.title")}</h2>
             <button type="button" onClick={close} aria-label={t("action.close")} className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-[10px] bg-bg-soft text-fg-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-ink"><Icon name="close" /></button>
@@ -151,7 +159,7 @@ export function LicenseDialog({ license, source, repositoryUrl, label }: {
             <p className="mb-0 mt-3 text-[13px] text-fg-2">{t("license.suffixNote")}</p>
             <p className="mb-0 mt-3 text-[13px]"><a href={GITHUB_LICENSE_GUIDE_URL} target="_blank" rel="noopener noreferrer" className="text-accent-ink underline underline-offset-2">{t("license.githubGuide")} ↗</a></p>
           </div>
-        </div>
+        </div>}
       </dialog>
     </>
   );

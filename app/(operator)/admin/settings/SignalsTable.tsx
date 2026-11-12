@@ -40,33 +40,31 @@ function Yield({ value }: { value?: SignalYieldView }) {
 export function SignalsTable({ id, discover, yields }: { id: string; discover: CrawlSettings["discover"]; yields: Record<string, SignalYieldView> }) {
   // 우선순위가 높은 것부터 — 조사하는 순서와 같다. 저장하면 이 순서로 남는다(동작은 우선순위로만 정해진다)
   const [rows, setRows] = useState<Query[]>(() => [...[...discover.queries].sort((a, b) => b.priority - a.priority), BLANK]);
-  const showHn = discover.showHn;
-  const enabledCount = discover.queries.filter((q) => q.enabled).length + (showHn.enabled ? 1 : 0);
-  const total = discover.queries.length + 1;
-  // Show HN 은 우선순위 자리에 끼운다 — 전용 수집기(hn-show-seed)라 이름·검색어는 고칠 수 없다
-  const showHnAt = rows.findIndex((row) => !row.label || row.priority < showHn.priority);
-
-  const showHnRow = (
-    <tr key="show-hn" className="[&:has(.signal-on:not(:checked))]:opacity-60">
-      <td className={cell}><Switch name="showHn.enabled" defaultChecked={showHn.enabled} label="Show HN 사용" inputClassName="signal-on" /></td>
+  const sources = (["showHn", "showGn"] as const).map(key => ({ key, config: discover[key], label: key === "showHn" ? "Show HN" : "Show GN" })).sort((a, b) => b.config.priority - a.config.priority);
+  const enabledCount = discover.queries.filter(q => q.enabled).length + sources.filter(row => row.config.enabled).length;
+  const total = discover.queries.length + sources.length;
+  // 전용 수집기도 설정된 우선순위 자리에 끼운다.
+  const sourceRowsAt = (index: number) => sources.filter(({ config }) => rows.findIndex(row => !row.label || row.priority < config.priority) === index).map(({ key, config, label }) => (
+    <tr key={key} className="[&:has(.signal-on:not(:checked))]:opacity-60">
+      <td className={cell}><Switch name={`${key}.enabled`} defaultChecked={config.enabled} label={`${label} 사용`} inputClassName="signal-on" /></td>
       <td className={`${cell} min-w-[240px]`}>
-        <div className="px-2 font-semibold">Show HN</div>
-        <div className="px-2 font-mono text-[13px] text-fg-3">news.ycombinator.com/show · 전용 수집</div>
+        <div className="px-2 font-semibold">{label}</div>
+        <div className="px-2 font-mono text-[13px] text-fg-3">{key === "showHn" ? "news.ycombinator.com/show" : "news.hada.io/rss/news"} · 전용 수집</div>
       </td>
-      <td className={cell}><span className="rounded-md bg-bg-hover px-2 py-0.5 text-[13px] font-semibold">Show HN</span></td>
+      <td className={cell}><span className="rounded-md bg-bg-hover px-2 py-0.5 text-[13px] font-semibold">{label}</span></td>
       <td className={`${cell} text-fg-3`}>—</td>
       <td className={cell}>
-        <input name="showHn.priority" type="number" min={0} max={1000} defaultValue={showHn.priority} aria-label="Show HN 우선순위"
+        <input name={`${key}.priority`} type="number" min={0} max={1000} defaultValue={config.priority} aria-label={`${label} 우선순위`}
           className={priorityInput} />
       </td>
       <td className={cell}>
-        <input type="checkbox" name="showHn.requireEvidence" defaultChecked={showHn.requireEvidence ?? false} aria-label="Show HN AI 흔적 필요"
+        <input type="checkbox" name={`${key}.requireEvidence`} defaultChecked={config.requireEvidence ?? false} aria-label={`${label} AI 흔적 필요`}
           className="h-4 w-4 accent-[var(--accent)]" />
       </td>
-      <td className={`${cell} whitespace-nowrap text-right tabular-nums`}>{yields["Show HN"] ? fmt(yields["Show HN"].enqueued) : "—"}</td>
-      <td className={cell}><Yield value={yields["Show HN"]} /></td>
+      <td className={`${cell} whitespace-nowrap text-right tabular-nums`}>{yields[label] ? fmt(yields[label].enqueued) : "—"}</td>
+      <td className={cell}><Yield value={yields[label]} /></td>
     </tr>
-  );
+  ));
 
   return (
     <SettingsCard id={id} title="검색 신호" note="AI로 만든 것을 찾는 단서 하나하나입니다. 높은 우선순위부터 조사합니다."
@@ -122,7 +120,7 @@ export function SignalsTable({ id, discover, yields }: { id: string; discover: C
                   <td className={cell}><Yield value={q.label ? yields[q.label] : undefined} /></td>
                 </tr>
               );
-              return i === showHnAt ? [showHnRow, row] : [row];
+              return [...sourceRowsAt(i), row];
             })}
           </tbody>
         </table>

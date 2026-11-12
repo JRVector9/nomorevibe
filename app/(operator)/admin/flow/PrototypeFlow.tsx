@@ -13,6 +13,8 @@ import { FlowPromptButton } from "./FlowPrompt";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { flowRankLinesFor, type FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import { STATION_JOBS } from "@/lib/operations/flow-response";
+import { stagePanelHref, stagePanelKeyOf } from "@/lib/operations/stage-panel-catalog";
+import { MODELS_DASHBOARD_HREF } from "../workspace-navigation";
 import { JobControl } from "../status/JobControl";
 import { FlowBoard, jobObservation, STATION_ROLE, type FlowControls } from "./FlowBoard";
 import { RankDrawer } from "./RankDrawer";
@@ -36,6 +38,13 @@ const humanStageLabel = flowModelStage("human")?.label ?? "사람 확인 · AI �
 const publicStageLabel = flowModelStage("public")?.label ?? "공개 완료";
 const publicStagePhase = flowModelStage("public")?.phase ?? "결과";
 const REQUEST_KEYS = ["takedown", "introRequest", "feedback", "makerReply", "contact"];
+/**
+ * 「실제 호출·모델」 — 그 단계의 단계 패널 모델 구역(운영 콘솔 2a). 패널이 없는 칸(공개)은 대시보드의 단계별 상태(3a 가 옮긴 /admin/models/dashboard).
+ * 옛 /admin/models#flow-stage-* 앵커는 어느 화면에도 없다(모델 목록으로 바뀜).
+ */
+const stageModelsHref = (key: string) => stagePanelKeyOf(key) ? stagePanelHref(key, "models") : `${MODELS_DASHBOARD_HREF}#llm-stages-title`;
+/** 모델 접수 칸 — 대시보드의 #admission(운영 콘솔 3a 가 옮김) */
+const ADMISSION_HREF = `${MODELS_DASHBOARD_HREF}#admission`;
 export function requestCount(desk: Pick<OperatorDesk, "decisions"> | null, reactionRequests: number | null = null): number | null {
   if (!desk?.decisions || reactionRequests === null) return null;
   const counts = REQUEST_KEYS.map(key => desk.decisions!.sections.find(section => section.key === key)?.count ?? (desk.decisions!.clear.some(section => section.key === key) ? 0 : null));
@@ -90,7 +99,7 @@ function HumanWork({ data, controls, modelSettings, assist }: { data: Conveyor; 
   const slot = (key: string) => assist?.[key] ?? "—";
   return <section className="panel flow-human-work" id="flow-human-work" aria-labelledby="flow-human-title">
     <div className="panel-head"><div><h3 id="flow-human-title">{humanStageLabel}</h3><p>자동 검수에서 남은 보류 → AI가 먼저 판단 → 남은 것만 사람이 승인·반려</p></div>
-      <div className="right"><FlowPromptButton stage="human" /><Link prefetch={false} className="text-button" href="/admin/models#flow-stage-human">모델·단계 설정 →</Link><Tag tone={human?.waiting ? "amber" : human ? "green" : "gray"}>{human ? human.waiting ? "판단 대기" : "대기 없음" : "미확인"}</Tag><ReadStamp at={data.measuredAt} /></div></div>
+      <div className="right"><FlowPromptButton stage="human" /><Link prefetch={false} className="text-button" href="/admin/models/human#human-review">모델·단계 설정 →</Link><Tag tone={human?.waiting ? "amber" : human ? "green" : "gray"}>{human ? human.waiting ? "판단 대기" : "대기 없음" : "미확인"}</Tag><ReadStamp at={data.measuredAt} /></div></div>
     <div className="panel-body flow-human-grid">
       <section className="flow-human-decisions"><h4>사람이 처리할 일</h4>
         {human?.agreed ? <Link prefetch={false} className="flow-human-quick" href={humanStageHref("agreed")} aria-label={`확정 필요 ${number(human.agreed)}건 목록 보기`}>
@@ -142,9 +151,12 @@ function HumanWork({ data, controls, modelSettings, assist }: { data: Conveyor; 
   </section>;
 }
 
-export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", userRequests, reactionRequests = null, awayContent, advancedContent, overviewContent, socialContent, humanModelSettings, humanAssist }: { data: Conveyor; desk: OperatorDesk | null; controls: FlowControls; editor: FlowRankEditor | null; tab?: string; reactionRequests?: number | null; userRequests?: { count: number | null; knownCount: number; failed: number }; awayContent?: ReactNode; advancedContent?: ReactNode; overviewContent?: ReactNode; socialContent?: ReactNode; humanModelSettings?: ReactNode; humanAssist?: Partial<Record<string, ReactNode>> }) {
+export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", userRequests, reactionRequests = null, awayContent, advancedContent, overviewContent, socialContent, humanModelSettings, humanAssist, initialStage = null }: { data: Conveyor; desk: OperatorDesk | null; controls: FlowControls; editor: FlowRankEditor | null; tab?: string; reactionRequests?: number | null; userRequests?: { count: number | null; knownCount: number; failed: number }; awayContent?: ReactNode; advancedContent?: ReactNode; overviewContent?: ReactNode; socialContent?: ReactNode; humanModelSettings?: ReactNode; humanAssist?: Partial<Record<string, ReactNode>>;
+  /** 운영 홈 할 일의 「단계 열기」(?stage=) — 처음 고를 단계. 없는 열쇠면 지금처럼 병목 칸 */
+  initialStage?: string | null }) {
   const [range, setRange] = useState<Range>("1h");
-  const [selected, setSelected] = useState<Station["key"] | "public">(data.bottleneck && data.bottleneck !== "human" ? data.bottleneck : "second");
+  const [selected, setSelected] = useState<Station["key"] | "public">(() => data.stations.find(station => station.key === initialStage)?.key
+    ?? (initialStage === "public" ? "public" : data.bottleneck && data.bottleneck !== "human" ? data.bottleneck : "second"));
   const [changing, setChanging] = useState<LlmStationKey | null>(null);
   const current = data.stations.find(station => station.key === selected) ?? null;
   const observation = current ? jobObservation(current.key, controls) : null;
@@ -157,7 +169,7 @@ export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", user
   const listingGap = listingExclusionText(data.listing);
   const pickedBadge = current ? flowStageBadge(current, STATION_JOBS[current.key].map(job => controls.jobs[job.job]), desk?.window?.admission ?? null) : null;
   const changeModels = current && flowRankLinesFor(editor, current.key).length > 0;
-  const actions = <div className="flex"><FlowUnknownReviews /><Link prefetch={false} className="button" href="/admin/status">자동 파이프라인 제어</Link><Link prefetch={false} className="button" href="/admin/models">모델 접수 {admission}</Link></div>;
+  const actions = <div className="flex"><FlowUnknownReviews /><Link prefetch={false} className="button" href="/admin/status">자동 파이프라인 제어</Link><Link prefetch={false} className="button" href={ADMISSION_HREF}>모델 접수 {admission}</Link></div>;
   const jobs = Object.entries(controls.jobs);
   const advanced = <details className="panel" id="flow-advanced"><summary>고급 전체 흐름·장애 대응·모든 제어</summary><div className="panel-body">{advancedContent ?? <FlowBoard data={data} desk={desk} controls={controls} editor={editor} />}</div></details>;
 
@@ -170,7 +182,7 @@ export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", user
   if (tab === "changes") return <PrototypeFlowChanges desk={desk} />;
 
   return <div className="stack home-workspace flow-workspace"><div className="scenario-strip flow-observation-row"><div className="flow-observation-meta"><span>실제 운영 관측 · 기존 자동 갱신 주기 · KST</span><ReadStamp at={data.measuredAt} /></div>{actions}</div>
-    <div className={`callout ${tone(data.headline.tone)}`}><div className="flex"><span className="callout-icon">!</span><div><h3>{data.headline.title}</h3><p>{data.headline.detail || "관측 시각·업무 완료와 모델 호출 상태를 함께 확인하세요."}</p></div></div><Link prefetch={false} className="button" href="/admin/models">원인·호출 확인 →</Link></div>
+    <div className={`callout ${tone(data.headline.tone)}`}><div className="flex"><span className="callout-icon">!</span><div><h3>{data.headline.title}</h3><p>{data.headline.detail || "관측 시각·업무 완료와 모델 호출 상태를 함께 확인하세요."}</p></div></div><Link prefetch={false} className="button" href={MODELS_DASHBOARD_HREF}>원인·호출 확인 →</Link></div>
     {overviewContent ?? <div className="grid four home-kpis"><Stat label="최근 1시간 공개" value={number(data.publishedHour)} foot="실제 발행 결과 기준" tone="good" spark={data.stations.find(station => station.key === "publish")?.spark} /><Stat label="사람이 판단할 후보" value={<>{number(data.human?.waiting)}<small>건</small></>} foot={`직접 판단 ${number(data.human?.direct)} · 확정 ${number(data.human?.agreed)} · 자동 대기 제외`} /><Stat label="열린 사용자 요청" value={<>{number(requests)}<small>건</small></>} foot={userRequests?.failed ? `확인된 ${number(userRequests.knownCount)}건 · 일부 조회 실패` : requests === null ? "일부 요청 집계를 확인하지 못함" : "내림·소개 수정·문의·사용자 글 3종"} tone={requests ? "warn" : ""} /><Stat label="LLM 확인 필요" value={ledger && ledger.status !== "unknown" ? number(ledger.reviewCount) : "—"} foot="미확정 검토 · 물리 점유와 별도" tone={ledger?.reviewCount ? "bad" : ""} /></div>}
     <section className="panel flow-overview"><div className="panel-head"><div><h3>자동 수집의 전체 흐름</h3><p>단계를 선택하면 대기·실행·모델·담당 워커와 가능한 조치가 연결됩니다.</p></div><div className="right"><ReadStamp at={data.measuredAt} /><div className="segmented" aria-label="집계 기간">{(["5m", "1h", "24h"] as const).map(value => <button key={value} type="button" aria-pressed={range === value} onClick={() => setRange(value)}>{rangeLabel(value)}</button>)}</div></div></div>
       <div className="flow-conveyor-scroll" role="region" aria-label="자동 수집 9단계 흐름" tabIndex={0}>
@@ -214,7 +226,7 @@ export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", user
         </section>
       </div>
       {current?.key === "keywords" && <div className="notice mt small"><b>현재 수치는 검색 키워드의 대기·완료입니다.</b><br />공개 후 소개·번역의 실제 사용: <RecentModelRows llm={data.supportLlm ?? null} /><br />번역·소개 검수의 완료는 언어별·업무별 원본에서 별도로 확인합니다.<div className="flow-prompt-support"><FlowPromptButton stage="support" /></div></div>}
-      <div className="flex mt stage-detail-links"><Link prefetch={false} className="button small" href={stageTargets[selected]}>{selected === "public" ? "전체 프로젝트 보기" : current?.key === "keywords" ? "검색 후처리 진단" : current?.key === "discover" || current?.key === "fetch" ? "수집·작업 진단" : "이 단계 대상 보기"} →</Link><Link prefetch={false} className="button small" href={`/admin/models#flow-stage-${selected}`}>실제 호출·모델 →</Link><Link prefetch={false} className="text-button" href="/admin/activity?group=settings">관련 설정 변경 →</Link></div></div>
+      <div className="flex mt stage-detail-links"><Link prefetch={false} className="button small" href={stageTargets[selected]}>{selected === "public" ? "전체 프로젝트 보기" : current?.key === "keywords" ? "검색 후처리 진단" : current?.key === "discover" || current?.key === "fetch" ? "수집·작업 진단" : "이 단계 대상 보기"} →</Link><Link prefetch={false} className="button small" href={stageModelsHref(selected)}>실제 호출·모델 →</Link><Link prefetch={false} className="text-button" href="/admin/activity?group=settings">관련 설정 변경 →</Link></div></div>
       <aside className="control-box"><h4>이 단계의 제어</h4><p>다음 실행부터 멈추거나 재개합니다. 진행 중인 호출은 실제 종료까지 관측합니다.</p>{current ? STATION_JOBS[current.key].map(job => { const state = controls.jobs[job.job]; return <details key={job.job}><summary className="button">{job.label} {state?.paused ? "재개" : "멈춤"}…</summary>{state && controls.csrf ? <JobControl name={job.job} paused={state.paused} notBefore={state.notBefore} version={state.version} csrf={controls.csrf} /> : <p className="small muted">이 화면에서는 제어할 수 없습니다. <Link prefetch={false} href={`/admin/status?tab=jobs&job=${job.job}`}>작업 상세 →</Link></p>}</details>; }) : <Link prefetch={false} className="button" href="/admin/products">프로젝트 관리 →</Link>}{changeModels && current ? <button className="button" type="button" onClick={() => setChanging(current.key)}>모델 순위·적용 출처</button> : <Link prefetch={false} className="button" href="/admin/models/tasks">모델 순위·적용 출처 →</Link>}<div className="scope"><b>영향 범위</b><br />{current?.key === "second" ? "second-review 잡만 제어합니다. AI2 소비자 전체의 중단을 보장하지 않습니다." : "선택한 잡만 제어합니다. 전역 자동 파이프라인 관문·모델 DRAIN은 다른 범위입니다."}</div></aside></div></Panel>
     {socialContent}
     <div className="grid two"><Panel title="먼저 처리할 일" tool={<Link prefetch={false} className="text-button" href="/admin/requests">요청함 전체 →</Link>}><ul className="list-rows">{desk?.decisions?.sections.slice(0, 4).map(section => <li key={section.key}><span className={`dot ${section.tone === "critical" ? "red" : "amber"}`} /><div className="main"><b>{section.title} · {number(section.count)}건</b><p>{section.rows[0]?.name ? `${section.rows[0].name} · ${section.rows[0].why}` : section.hint}</p></div><Link prefetch={false} className="text-button" href={section.href}>{section.action} →</Link></li>)}{!desk?.decisions && <li>처리할 일을 읽지 못했습니다.</li>}{desk?.decisions && !desk.decisions.sections.length && <li>현재 집계된 처리 대상이 없습니다.</li>}</ul></Panel><Panel title="자리 비운 사이">{awayContent ?? <PrototypeFlowAway desk={desk} />}</Panel></div>

@@ -1,0 +1,750 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
+/* 운영 콘솔 모양(2026-11-12 「1인 운영 콘솔 시안」) — 머리 막대 · 단추 · 제목 · 탭 · 표 머리 · 숫자 글꼴.
+   색 토큰은 prototype.css 맨 앞(.admin-prototype)에 있고, 이 파일은 그 뒤에 실려(AdminShell) 옛 시안 규칙을 같은 이름으로 덮는다.
+   규칙: 색은 상태에만, 단추는 먹색 하나(--primary), 숫자·사실 줄·눈썹은 IBM Plex Mono(--f-mono). */
+
+/* ── 머리 막대(시안 .bar) ─────────────────────────────────────────── */
+.admin-prototype .cs-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(6px / .8) calc(20px / .8);
+  padding: calc(10px / .8) max(18px, env(safe-area-inset-right, 0px)) calc(10px / .8) max(18px, env(safe-area-inset-left, 0px));
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  --admin-font-delta: 2px;
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  line-height: 1.5;
+}
+/* 막대 안의 작은 표시(배지·시각·머리글자)는 옛 규칙이 보정을 0 으로 되돌린다 — 막대에서는 다시 2px */
+.admin-prototype .cs-bar :is(.nav-badge, .live-indicator, .freshness, .icon-button, .top-avatar, .top-admission) {
+  --admin-font-delta: 2px;
+}
+.admin-prototype .cs-brand {
+  color: var(--ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.admin-prototype .cs-nav {
+  display: flex;
+  gap: calc(16px / .8);
+  min-width: 0;
+  color: var(--muted);
+}
+.admin-prototype .cs-nav > a {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px / .8);
+  padding: 2px 0;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.admin-prototype .cs-nav > a:hover {
+  color: var(--ink);
+}
+.admin-prototype .cs-nav > a[aria-current="page"] {
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 2px 0 var(--ink);
+}
+/* 메뉴 배지 — 이름 뒤 작은 수. 빨강은 지금 막힘, 노랑은 사람이 볼 것, 회색은 참고 */
+.admin-prototype .cs-nav .nav-badge {
+  margin: 0;
+  min-width: 0;
+  padding: 0 calc(6px / .8);
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-family: var(--f-mono);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  line-height: 17px;
+}
+.admin-prototype .cs-nav .nav-badge[data-tone="critical"] {
+  background: var(--red);
+  color: var(--surface);
+}
+.admin-prototype .cs-nav .nav-badge[data-tone="neutral"] {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+/* ⌘K 찾기 · 바꾸기(시안 .find) — 오른쪽으로 민다 */
+.admin-prototype .cs-bar .search-launch {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / .8);
+  margin: 0 0 0 auto;
+  min-height: 0;
+  padding: calc(3px / .8) calc(12px / .8);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--faint);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  white-space: nowrap;
+}
+.admin-prototype .cs-bar .search-launch:hover {
+  color: var(--muted);
+  border-color: var(--faint);
+}
+.admin-prototype .cs-bar .search-launch > svg {
+  display: none;
+}
+.admin-prototype .cs-bar .search-launch > span {
+  margin: 0;
+}
+.admin-prototype .cs-bar .search-launch kbd {
+  color: var(--muted);
+  font-family: var(--f-mono);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+/* 접수 · 갱신 · 계정 */
+.admin-prototype .cs-tools {
+  display: flex;
+  align-items: center;
+  gap: calc(10px / .8);
+  min-width: 0;
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-tools .prototype-live {
+  gap: calc(8px / .8);
+}
+.admin-prototype .cs-tools .live-indicator {
+  color: var(--muted);
+}
+.admin-prototype .cs-tools .live-indicator i {
+  background: var(--ok);
+  box-shadow: none;
+}
+.admin-prototype .cs-tools .live-indicator.paused {
+  color: var(--amber);
+}
+.admin-prototype .cs-tools .live-indicator.paused i {
+  background: var(--amber);
+}
+.admin-prototype .cs-tools .freshness {
+  font-family: var(--f-mono);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-tools .icon-button {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-tools .button.small {
+  padding: 1px calc(9px / .8);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-account {
+  position: relative;
+}
+.admin-prototype .cs-account > summary {
+  display: block;
+  list-style: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.admin-prototype .cs-account > summary::-webkit-details-marker {
+  display: none;
+}
+.admin-prototype .cs-bar .top-avatar {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--f-mono);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+}
+.admin-prototype .cs-account[open] .top-avatar {
+  border-color: var(--ink);
+}
+.admin-prototype .cs-account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: calc(8px / .8);
+  width: 240px;
+  padding: calc(12px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ink) 14%, transparent);
+  color: var(--ink);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-account-menu a {
+  color: var(--link);
+}
+.admin-prototype .cs-account-who {
+  display: grid;
+  gap: 1px;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .cs-account-who b {
+  font-weight: 600;
+}
+.admin-prototype .cs-account-who small {
+  color: var(--muted);
+}
+.admin-prototype .cs-account-menu .logout {
+  justify-self: start;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-account-menu .logout:hover {
+  color: var(--ink);
+}
+
+/* 본문 */
+.admin-prototype .cs-main {
+  min-width: 0;
+}
+.admin-prototype .cs-main #page {
+  max-width: 1440px;
+  min-height: calc(100dvh - 110px);
+  padding: calc(20px / .8) max(18px, env(safe-area-inset-right, 0px)) calc(40px / .8) max(18px, env(safe-area-inset-left, 0px));
+}
+.admin-prototype .cs-main .app-footer {
+  color: var(--faint);
+  font-family: var(--f-mono);
+}
+
+/* 넓지 않은 화면 — 막대가 두 줄: 브랜드 · 찾기 · 계정 / 메뉴(가로로 밀기) · 접수 · 갱신 */
+@media (max-width: 1180px) {
+  .admin-prototype .cs-tools {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+  .admin-prototype .cs-bar .search-launch {
+    margin-left: auto;
+  }
+}
+@media (max-width: 760px) {
+  /* 휴대폰 — 막대가 세 줄이라 붙여 두지 않는다(본문이 화면을 쓰게) */
+  .admin-prototype .cs-bar {
+    position: static;
+    gap: calc(8px / .8) calc(12px / .8);
+    padding-block: calc(8px / .8);
+  }
+  .admin-prototype .cs-nav {
+    order: 3;
+    flex: 1 1 100%;
+    gap: calc(18px / .8);
+    overflow-x: auto;
+    padding: 2px 0 calc(4px / .8);
+    scrollbar-width: none;
+  }
+  .admin-prototype .cs-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .admin-prototype .cs-tools {
+    order: 4;
+    justify-content: space-between;
+  }
+  .admin-prototype .cs-bar .search-launch {
+    order: 1;
+    padding: calc(4px / .8) calc(9px / .8);
+  }
+  .admin-prototype .cs-bar .search-launch > svg {
+    display: block;
+  }
+  .admin-prototype .cs-bar .search-launch > kbd,
+  .admin-prototype .cs-bar .search-launch > span {
+    display: none;
+  }
+  .admin-prototype .cs-tools .freshness {
+    display: none;
+  }
+  .admin-prototype .cs-account-menu {
+    position: fixed;
+    top: 52px;
+    right: 12px;
+  }
+}
+
+/* ── 글자(시안 h1 28/600 · h2 19/600 · h3 14/600, 눈썹 mono) ─────── */
+.admin-prototype h1 {
+  font-weight: 600;
+  letter-spacing: -.015em;
+  line-height: 1.25;
+}
+.admin-prototype h2,
+.admin-prototype h3,
+.admin-prototype h4 {
+  font-weight: 600;
+  letter-spacing: -.01em;
+  line-height: 1.35;
+}
+.admin-prototype h3 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+}
+.admin-prototype strong,
+.admin-prototype b {
+  font-weight: 600;
+}
+.admin-prototype .eyebrow {
+  color: var(--muted);
+  font-family: var(--f-mono);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 400;
+  letter-spacing: .04em;
+  text-transform: none;
+}
+.admin-prototype .mono,
+.admin-prototype code,
+.admin-prototype kbd,
+.admin-prototype .num,
+.admin-prototype .font-mono {
+  font-family: var(--f-mono);
+}
+.admin-prototype .mono {
+  letter-spacing: 0;
+}
+.admin-prototype a:focus-visible,
+.admin-prototype button:focus-visible,
+.admin-prototype input:focus-visible,
+.admin-prototype select:focus-visible,
+.admin-prototype textarea:focus-visible,
+.admin-prototype summary:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+/* ── 단추(시안 .btn · .btn.p) — 한 크기, 기본 단추만 먹색 ─────────── */
+.admin-prototype .button,
+.admin-prototype .button.small {
+  height: auto;
+  min-height: 0;
+  gap: calc(6px / .8);
+  padding: calc(3px / .8) calc(12px / .8);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  line-height: 1.6;
+}
+.admin-prototype .button:hover {
+  filter: none;
+  border-color: var(--faint);
+}
+.admin-prototype .button.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+.admin-prototype .button.primary:hover {
+  border-color: var(--primary);
+  opacity: .88;
+}
+.admin-prototype .button.danger {
+  border-color: color-mix(in srgb, var(--red) 40%, var(--line));
+  color: var(--red);
+}
+.admin-prototype .button.subtle {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.admin-prototype .text-button {
+  color: var(--link);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+/* 손가락으로 누르는 화면은 누를 자리를 조금 넓힌다(모양은 같다) */
+@media (pointer: coarse) {
+  .admin-prototype .button,
+  .admin-prototype .button.small {
+    min-height: 32px;
+  }
+}
+/* 방식 고르기(시안 .seg) — 켜진 쪽만 먹색 */
+.admin-prototype .segmented {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.admin-prototype .segmented button,
+.admin-prototype .segmented a,
+.admin-prototype .segmented > button,
+.admin-prototype .segmented > a {
+  border-radius: 0;
+  padding: calc(3px / .8) calc(14px / .8);
+  color: var(--muted);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .segmented [aria-pressed="true"],
+.admin-prototype .segmented [aria-current="page"] {
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 500;
+}
+.admin-prototype .tag {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* ── 2차 탭(최종 시안 기능) — 시안 메뉴처럼 지금 것은 먹색 굵게 + 밑줄 ─ */
+.admin-prototype .tabs.admin-workspace-tabs {
+  gap: calc(4px / .8) calc(18px / .8);
+  margin-bottom: calc(18px / .8);
+}
+.admin-prototype .tabs.admin-workspace-tabs > a {
+  min-height: 0;
+  padding: calc(6px / .8) 0 calc(8px / .8);
+  color: var(--muted);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .tabs.admin-workspace-tabs > a:hover {
+  color: var(--ink);
+}
+.admin-prototype .tabs.admin-workspace-tabs [aria-current="page"] {
+  border-bottom-color: var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+}
+.admin-prototype .admin-workspace-secondary .button[aria-current="page"] {
+  border-color: var(--ink);
+  font-weight: 600;
+}
+
+/* ── 표(시안 표 공통) — 머리 12/500, 칸 8px 12px ─────────────────── */
+.admin-prototype th {
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+}
+.admin-prototype td {
+  border-bottom-color: var(--line);
+}
+.admin-prototype td p {
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+
+/* ── 추가 세 단계(시안 .steps · .step · dl.f · .pick) — 모델 추가 · 수집원 추가가 같이 쓴다 ── */
+.admin-prototype .cs-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: calc(14px / .8);
+  align-items: start;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .cs-step {
+  display: grid;
+  gap: calc(10px / .8);
+  align-content: start;
+  min-width: 0;
+  padding: calc(14px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+/* 지금 단계만 테두리를 조금 짙게, 다음 단계는 할 일만 흐리게 */
+.admin-prototype .cs-step[data-state="now"] {
+  border-color: var(--faint);
+}
+.admin-prototype .cs-step[data-state="next"] > :not(.cs-k) {
+  color: var(--muted);
+}
+.admin-prototype .cs-k {
+  color: var(--muted);
+  font-family: var(--f-mono);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-step[data-state="now"] .cs-k {
+  color: var(--ink);
+}
+.admin-prototype dl.cs-f {
+  display: grid;
+  grid-template-columns: 5.6em minmax(0, 1fr);
+  gap: calc(6px / .8) calc(10px / .8);
+  align-items: baseline;
+  margin: 0;
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+.admin-prototype dl.cs-f dt {
+  color: var(--muted);
+}
+.admin-prototype dl.cs-f dd {
+  margin: 0;
+  padding: calc(2px / .8) calc(9px / .8);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+.admin-prototype dl.cs-f dd.t {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.admin-prototype .cs-pick {
+  display: grid;
+  gap: calc(6px / .8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-step .cs-pick label,
+.admin-prototype .cs-pick label,
+.admin-prototype .cs-pick li > :is(a, button, div) {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: calc(8px / .8);
+  align-items: center;
+  cursor: pointer;
+}
+.admin-prototype .cs-pick input {
+  margin: 0;
+  accent-color: var(--primary);
+}
+.admin-prototype .cs-pick label > span:last-child,
+.admin-prototype .cs-pick li > :is(a, button, div) > span:last-child {
+  color: var(--muted);
+  font-family: var(--f-mono);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  white-space: nowrap;
+}
+/* 「한 번 불러 보기」(기존 선택 모델 응답 시험 SelectedModelProbe) — 추가 단계 칸에서는 시안 .btn 모양 */
+.admin-prototype .cs-step .fr-response-probe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(4px / .8) calc(10px / .8);
+}
+.admin-prototype .cs-step .fr-btn {
+  min-height: 0;
+  padding: calc(3px / .8) calc(12px / .8);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  cursor: pointer;
+}
+.admin-prototype .cs-step .fr-probe-result {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .cs-step .fr-probe-result[data-ok="true"] {
+  color: var(--ok);
+}
+.admin-prototype .cs-step .fr-probe-result[data-ok="false"] {
+  color: var(--bad);
+}
+/* 고르기 줄의 네모(시안 .pick i) — 고른 것은 먹색으로 채움, 아직 못 하는 것(data-off)은 흐리게 */
+.admin-prototype .cs-pick li > :is(a, button, div) {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.admin-prototype .cs-pick li > :is(a, button, div) > i {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--muted);
+  border-radius: 3px;
+}
+.admin-prototype .cs-pick li[data-on="true"] > :is(a, button, div) > i {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+.admin-prototype .cs-pick li[data-off="true"] > div {
+  color: var(--muted);
+  cursor: default;
+}
+.admin-prototype .cs-pick li[data-off="true"] > div > i {
+  border-color: var(--line);
+}
+.admin-prototype .cs-pick li > a:hover > span:nth-of-type(1),
+.admin-prototype .cs-pick li > button:hover > span:nth-of-type(1) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 단계 칸 안의 폼 — 시안 dl.f 처럼 이름표 5.6em · 값 칸은 sunken. 라디오·체크는 한 줄 */
+.admin-prototype .cs-step :is(.mc-form, .sc-form) label:not(:has(> input[type="radio"], > input[type="checkbox"])) {
+  grid-template-columns: 5.6em minmax(0, 1fr);
+  gap: calc(6px / .8) calc(10px / .8);
+}
+.admin-prototype .cs-step :is(.mc-form, .sc-form) :is(input[type="text"], input[type="number"], input[type="password"], input[type="url"], select) {
+  max-width: none;
+  padding: calc(2px / .8) calc(9px / .8);
+  background: var(--surface-2);
+}
+.admin-prototype .cs-step .mc-form fieldset .mc-acts label,
+.admin-prototype .cs-step .mc-form label:has(> input[type="radio"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / .8);
+}
+.admin-prototype .cs-step .mc-form fieldset legend {
+  float: left;
+  width: 5.6em;
+  margin: 0 calc(10px / .8) 0 0;
+}
+.admin-prototype dl.cs-f a {
+  color: var(--link);
+}
+
+/* ── 도움말(ⓘ) — 「동시에」·「칸 수」 옆. 올리기·포커스·누르기로 열고, 설명은 화면 맨 위(popover)에 단추에 붙여 뜬다 ── */
+.admin-prototype .cs-help-head {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / .8);
+}
+.admin-prototype .cs-help {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--faint);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--f-mono);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  line-height: 1;
+  cursor: help;
+}
+.admin-prototype .cs-help:hover,
+.admin-prototype .cs-help[aria-expanded="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+}
+/* 손가락으로 누르는 화면은 누를 자리를 넓힌다(모양은 같다) */
+@media (pointer: coarse) {
+  .admin-prototype .cs-help {
+    width: 24px;
+    height: 24px;
+  }
+}
+.admin-prototype .cs-help-pop {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  max-width: calc(100vw - 24px);
+  overflow: auto;
+  padding: calc(14px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ink) 16%, transparent);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  line-height: 1.55;
+  text-align: left;
+  font-weight: 400;
+  white-space: normal;
+}
+.admin-prototype .cs-help-body {
+  display: grid;
+  gap: calc(10px / .8);
+}
+.admin-prototype .cs-help-body h4 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .cs-help-body section {
+  display: grid;
+  gap: calc(6px / .8);
+}
+.admin-prototype .cs-help-body p {
+  margin: 0;
+}
+.admin-prototype .cs-help-em {
+  padding: calc(6px / .8) calc(10px / .8);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.admin-prototype .cs-help-lab {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+}
+.admin-prototype .cs-help-q {
+  color: var(--muted);
+}
+.admin-prototype .cs-help-warn,
+.admin-prototype .cs-pool-warn {
+  color: var(--warn);
+}
+.admin-prototype .cs-help-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.admin-prototype .cs-help-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+/* 화면마다의 표 규칙(작업 배정의 td 테두리 없음 등)이 도움말 표에 걸리지 않게 한 단계 더 좁힌다 */
+.admin-prototype .cs-help-pop .cs-help-table :is(th, td) {
+  padding: calc(6px / .8) calc(8px / .8);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.admin-prototype .cs-help-pop .cs-help-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .cs-help-pop .cs-help-table thead th {
+  font-family: var(--f-sans);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+}
+.admin-prototype .cs-help-table tbody th {
+  background: transparent;
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .cs-help-pop .cs-help-table .n {
+  text-align: right;
+}
+.admin-prototype .cs-help-pop .cs-help-table td.n {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .cs-help-table .q {
+  color: var(--muted);
+}
+/* 줄 옆 경고 — 모델 이름 아래 한 줄 */
+.admin-prototype .cs-pool-warn {
+  display: block;
+  font-family: var(--f-sans);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  white-space: normal;
+}

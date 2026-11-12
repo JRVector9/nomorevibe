@@ -3,6 +3,7 @@ import { profileEvidence } from "@/lib/domain/products/search-profile";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
+import { taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import { displayProjectName } from "@/lib/domain/products/display-name";
@@ -90,7 +91,7 @@ const context = (name: string): JobContext<null> => ({ cursor: null, lease: { na
 const product = (id: number) => ({ id, slug: `doc-${id}`, name: `Doc ${id}`, url: `https://doc-${id}.test`, category: "Tools",
   tagline: "Document tool", description: "Manage documents", status: "verified", searchTopics: null, searchPageText: null, searchReadme: null });
 const profileTask = (id: number) => ({ product: product(id), profile: null, reviewerNote: null });
-const tagTask = (id: number) => ({ candidate: { repo: `fixture/doc-${id}` },
+const tagTask = (id: number) => ({ candidate: { id, repo: `fixture/doc-${id}` },
   document: { productUrl: `https://doc-${id}.test`, repoMeta: {}, pageMeta: { title: `Doc ${id}`, textSample: "Document manager" } }, written: null });
 const scenarios = [
   { name: "crawl-tagline", run: writeTaglines, tasks: mocks.tagTasks, call: mocks.tagline, write: mocks.tagWrite,
@@ -185,10 +186,30 @@ it.each(["dispatched", "work_busy"] as const)("crawl-tagline passes one candidat
     return { ok: true, tagline: "Document manager", source: "page" };
   });
   const ctx = context("crawl-tagline");
-  expect(await writeTaglines(ctx)).toEqual({ done: true });
+  expect(await writeTaglines(ctx)).toEqual({ done: false });
   expect(mocks.tagWrite.mock.calls.map(call => call[0].candidate.id).sort()).toEqual([2, 3]);
-  expect(mocks.tagTasks.mock.calls.map(call => call[1])).toEqual([{ skipBusy: true, exclude: [] }, { skipBusy: true, exclude: [1] }]);
+  expect(mocks.tagTasks.mock.calls.map(call => call[1])).toEqual([{ skipBusy: true, exclude: [] }, { skipBusy: true, exclude: [1, 2, 3] }]);
   expect(ctx.log).toHaveBeenCalledWith("tagline.passed", { repo: "fixture/doc-1", reason });
+  expect(ctx.log).toHaveBeenCalledWith("tagline.done", expect.objectContaining({ drained: false, unresolved: 1 }));
+});
+
+it("crawl-tagline handles an unchanged empty cache once per tick and reaches the next candidate", async () => {
+  const original = tagTask(1), next = tagTask(2);
+  const cached = { ...original, written: { tagline: "", errorCode: null,
+    sourceHash: taglineHash(taglineEvidence(original.candidate.repo, original.document)) } };
+  // Simulate a row that stays selectable after reuse, independently of the timestamp repair.
+  mocks.tagTasks.mockImplementation(async (_limit, selection: { exclude: number[] }) => {
+    if (mocks.tagTasks.mock.calls.length > 4) throw new Error("repeated_candidate_selection");
+    if (!selection.exclude.includes(1)) return [cached];
+    if (!selection.exclude.includes(2)) return [next];
+    return [];
+  });
+  mocks.tagline.mockResolvedValue({ ok: true, tagline: "Document manager", source: "page" });
+
+  expect(await writeTaglines(context("crawl-tagline"))).toEqual({ done: true });
+
+  expect(mocks.tagWrite.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 2]);
+  expect(mocks.tagline).toHaveBeenCalledTimes(1);
 });
 
 it("crawl-tagline still defers the whole tick on a saturation capacity refusal", async () => {
@@ -200,6 +221,38 @@ it("crawl-tagline still defers the whole tick on a saturation capacity refusal",
   await expect(writeTaglines(ctx)).resolves.toEqual({ done: false, deferred: "model_capacity" });
   expect(mocks.tagWrite).not.toHaveBeenCalled();
   expect(ctx.log).toHaveBeenLastCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 1, "unusable.1.capacity": expect.any(Number) }));
+});
+
+it.each(["dispatched", "work_busy", "ledger_mismatch"] as const)("search verification reaches work behind a full window of %s targets", async reason => {
+  const tasks = Array.from({ length: 17 }, (_, index) => ({ ...profileTask(index + 1),
+    profile: { keywordsEn: ["document tool"], keywordsKo: [], verifyError: null } }));
+  mocks.verifications.mockImplementation(async (_limit, excluded: number[] = []) =>
+    tasks.filter(task => !excluded.includes(task.product.id)).slice(0, 16));
+  mocks.verify.mockImplementation(async ({ evidence }: { evidence: { name: string } }) => {
+    if (evidence.name !== "Doc 17") throw new ModelCapacityDeferredError(reason);
+    return { ok: true, unsupported: [] };
+  });
+
+  expect(await verifySearchKeywords(context("product-search-verify"))).toEqual({ done: false });
+
+  expect(mocks.verifyWrite).toHaveBeenCalledTimes(1);
+  expect(mocks.verifyWrite.mock.calls[0][0].product.id).toBe(17);
+  expect(mocks.verify).toHaveBeenCalledTimes(17);
+});
+
+it("search verification visits a failed result CAS once before processing the next window", async () => {
+  const tasks = [1, 2].map(id => ({ ...profileTask(id),
+    profile: { keywordsEn: ["document tool"], keywordsKo: [], verifyError: null } }));
+  mocks.verifications.mockImplementation(async (_limit, excluded: number[] = []) => {
+    if (mocks.verifications.mock.calls.length > 4) throw new Error("repeated_verification_selection");
+    return tasks.filter(task => !excluded.includes(task.product.id)).slice(0, 1);
+  });
+  mocks.verify.mockResolvedValue({ ok: true, unsupported: [] });
+  mocks.verifyWrite.mockImplementation(async task => task.product.id !== 1);
+
+  expect(await verifySearchKeywords(context("product-search-verify"))).toEqual({ done: false });
+
+  expect(mocks.verifyWrite.mock.calls.map(call => call[0].product.id)).toEqual([1, 2]);
 });
 
 it.each(["dispatched", "work_busy"] as const)("product-translate passes a %s batch and translates the next demanded field in the same tick", async reason => {

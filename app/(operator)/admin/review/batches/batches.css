@@ -1,0 +1,344 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
+/* 사람 확인 · 묶음 — 2026-11-12 최종 시안 「화면 3 사람 확인」의 구조·정렬. 색·글꼴은 관리자 시안 토큰(prototype.css)을 그대로 쓴다.
+   표는 열 폭 고정, 숫자는 오른쪽 정렬·tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만. */
+.admin-prototype .human-batches {
+  display: grid;
+  gap: calc(18px / .8);
+  min-width: 0;
+}
+.admin-prototype .hb-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px / .8) calc(28px / .8);
+  padding: calc(10px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.admin-prototype .hb-strip b,
+.admin-prototype .hb-inline b {
+  margin-left: calc(6px / .8);
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .hb-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(20px / .8);
+  align-items: start;
+}
+@media (min-width: 1100px) {
+  .admin-prototype .hb-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.admin-prototype .hb-grid > section,
+.admin-prototype .hb-panel,
+.admin-prototype .hb-log,
+.admin-prototype .hb-threshold {
+  display: grid;
+  gap: calc(10px / .8);
+  min-width: 0;
+}
+.admin-prototype .hb-grid > section {
+  gap: calc(18px / .8);
+}
+.admin-prototype .hb-grid > section > .hb-head + .hb-scroll {
+  margin-top: calc(-8px / .8);
+}
+.admin-prototype .hb-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(4px / .8) calc(10px / .8);
+}
+.admin-prototype .hb-head h2,
+.admin-prototype .hb-head h3 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .hb-count {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
+}
+.admin-prototype .hb-more {
+  margin-left: auto;
+}
+
+/* 표 */
+.admin-prototype .hb-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .hb-table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .hb-table th,
+.admin-prototype .hb-table td {
+  padding: calc(8px / .8) calc(12px / .8);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .hb-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .hb-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-prototype .hb-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+  white-space: normal;
+}
+.admin-prototype .hb-table .n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: var(--f-mono);
+}
+.admin-prototype .hb-table tr[data-current] > * {
+  background: var(--surface-2);
+}
+.admin-prototype .hb-mono,
+.admin-prototype .hb-time {
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .hb-mono a {
+  color: inherit;
+}
+.admin-prototype .hb-mono a:hover {
+  color: var(--blue);
+}
+.admin-prototype .hb-reason-cell {
+  color: var(--muted);
+}
+.admin-prototype .hb-auto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px calc(8px / .8);
+}
+.admin-prototype .hb-auto small,
+.admin-prototype .hb-inline small {
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .hb-st {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7px / .8);
+  white-space: nowrap;
+}
+.admin-prototype .hb-st > i,
+.admin-prototype .hb-picks i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.admin-prototype .hb-st[data-tone="ok"] > i {
+  background: var(--green);
+}
+.admin-prototype .hb-none,
+.admin-prototype .hb-quiet,
+.admin-prototype .hb-hint,
+.admin-prototype .hb-note,
+.admin-prototype .hb-last,
+.admin-prototype .hb-progress {
+  color: var(--muted);
+}
+.admin-prototype .hb-box {
+  padding: calc(10px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .hb-progress {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 표본 관문 */
+.admin-prototype .hb-gate {
+  display: grid;
+  gap: calc(10px / .8);
+}
+.admin-prototype .hb-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(6px / .8) calc(8px / .8);
+}
+.admin-prototype .hb-hint {
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .hb-picks {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.admin-prototype .hb-picks li + li {
+  border-top: 1px solid var(--line);
+}
+.admin-prototype .hb-picks button {
+  display: grid;
+  grid-template-columns: 8px 18px minmax(0, 1fr) 40px;
+  gap: calc(10px / .8);
+  align-items: center;
+  width: 100%;
+  padding: calc(7px / .8) calc(12px / .8);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  text-align: left;
+  cursor: pointer;
+}
+.admin-prototype .hb-picks li[data-open] button {
+  background: var(--surface-2);
+}
+.admin-prototype .hb-picks li[data-verdict="ok"] i {
+  background: var(--green);
+}
+.admin-prototype .hb-picks li[data-verdict="wrong"] i {
+  background: var(--red);
+}
+.admin-prototype .hb-pick-n,
+.admin-prototype .hb-pick-state {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .hb-pick-state {
+  text-align: right;
+}
+.admin-prototype .hb-picks li[data-verdict="wrong"] .hb-pick-state {
+  color: var(--red);
+  font-weight: 600;
+}
+.admin-prototype .hb-pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-prototype .hb-card {
+  display: grid;
+  gap: calc(8px / .8);
+  padding: calc(12px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .hb-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(4px / .8) calc(10px / .8);
+}
+.admin-prototype .hb-card h4 {
+  min-width: 0;
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .hb-card header .text-button {
+  margin-left: auto;
+}
+.admin-prototype .hb-card-n {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .hb-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px / .8) calc(12px / .8);
+}
+.admin-prototype .hb-facts {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: calc(4px / .8) calc(12px / .8);
+  margin: 0;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .hb-facts .hb-fact-row {
+  display: contents;
+}
+.admin-prototype .hb-facts dt {
+  color: var(--muted);
+}
+.admin-prototype .hb-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .hb-reason {
+  display: block;
+  color: var(--muted);
+}
+.admin-prototype .hb-card .button[data-on] {
+  border-color: var(--ink);
+  font-weight: 600;
+}
+.admin-prototype .hb-wrong {
+  display: grid;
+  gap: calc(4px / .8);
+  padding: calc(10px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--red);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .hb-wrong ul {
+  margin: 0;
+  padding-left: calc(18px / .8);
+}
+.admin-prototype .hb-confirm {
+  display: grid;
+  gap: calc(4px / .8);
+  margin: 0;
+  padding-left: calc(18px / .8);
+}
+
+/* 요청과 감사 한 줄 */
+.admin-prototype .hb-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6px / .8) calc(22px / .8);
+  padding: calc(10px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.admin-prototype .hb-inline small {
+  margin-left: calc(6px / .8);
+}
+.admin-prototype .hb-inline a {
+  color: inherit;
+}
+.admin-prototype .hb-inline a:hover {
+  color: var(--blue);
+}

@@ -73,9 +73,11 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     for (const { task, slot } of aiTaskSlots()) expect(html, `${task.id}#${slot}`).toContain(`id="execution-${task.id}-${slot}"`);
     const first = html.match(/<tr id="execution-first-review-1"[^]*?<\/tr>/)![0];
     expect(text(first)).toContain("1차 AI 검수 대체 실행");
-    expect(first).toContain('<code class="tk-model">deepseek/deepseek-v4.1-flash</code>');
-    expect(text(first)).toMatch(/1순위 deepseek\/deepseek-v4\.1-flash 86 실패 2/);
-    expect(text(first)).toContain("2순위 qwen3.8-flash-next 93");
+    // 모델은 사용자가 정한 이름 하나(운영 콘솔 통합) — 모델 하나만 내놓는 연결은 서버 모델 이름을 따로 적지 않는다
+    expect(first).not.toContain('<code class="tk-model">deepseek/deepseek-v4.1-flash</code>');
+    expect(first).toContain('<span class="tk-conn">M3 OpenCode</span>');
+    expect(text(first)).toMatch(/1순위 M3 OpenCode 86 실패 2/);
+    expect(text(first)).toContain("2순위 gpu3090-qwen 93");
     expect(text(first)).toContain("설정과 다름 1순위가 아닌 모델이 52%를 처리");
     // 상태: 색 + 모양 + 글자, 까닭은 회색 한 줄
     expect(first).toContain('<span class="llm-level" data-level="warn"><span class="llm-level-shape" aria-hidden="true">▲</span>주의</span>');
@@ -173,7 +175,14 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     // 장비 칸을 작업마다 나누는 곳(칸 배분, step 3)
     expect(html).toContain('href="/admin/models/allocation">장비 칸을 작업별로 나누기(칸 배분) →</a>');
     expect(html).not.toContain('name="baseUrl"');
-    expect(html).not.toContain("칸 수");
+    // 연결의 동시 실행 칸(연결 폼)은 없다 — 「칸 수」는 「동시에」로 저장된 1차의 모델별 칸 수·예비 칸뿐이다(2026-11-12 1·2차도 칸 수·예비를 따름)
+    const connections = html.slice(html.indexOf('id="connections"'));
+    expect(connections).not.toContain("칸 수");
+    const firstMode = html.slice(html.indexOf('id="mode-first-review-1"'), html.indexOf('id="mode-crawl-tagline-1"'));
+    expect(firstMode).toContain('data-pool-slots="true"');
+    expect(firstMode).toContain('aria-label="함께 1 칸 수"');
+    expect(firstMode).toContain('data-pool-reserve="true"');
+    expect(firstMode).not.toContain("아직 모델별 상한·예비를 따르지 않습니다");
     expect(html).not.toContain('id="connection-form"');
     // 목록을 못 읽은 서버는 LLM 운영의 그 행으로 보낸다
     expect(html).toContain(`href="/admin/models/llm?edit=${M1}#conn-${M1}"`);
@@ -258,7 +267,8 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
     const changed = renderToStaticMarkup(<RankDrawer editor={editor} lines={editor.lines.filter(line => line.task === "crawl-tagline")} title="수집 소개 짓기" secondWaiting={null}
       onClose={() => {}} fullViewHref={null} devices={devices} initial={{ step: "confirm", drafts: { "crawl-tagline#1": [{ provider: GPU, model: "qwen3.8-flash-next" }] } }} />);
     expect(changed).toContain("1순위 m3-mlx (2) · gpt-oss-120b");
-    expect(changed).toContain("1순위 gpu3090-qwen · qwen3.8-flash-next");
+    expect(changed).toContain("1순위 gpu3090-qwen");
+    expect(changed).not.toContain("1순위 gpu3090-qwen · qwen3.8-flash-next");
     expect(changed).toContain("장비 한도 · 함께 쓰는 작업");
     expect(text(changed)).toContain("gpu3090-qwen 2 / 5칸 사용 중 1차 AI 검수");
     const resave = renderToStaticMarkup(<RankDrawer editor={editor} lines={editor.lines.filter(line => line.task === "crawl-tagline")} title="수집 소개 짓기" secondWaiting={null}
@@ -295,9 +305,12 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
       onClose={() => {}} fullViewHref={null} />);
     expect(html.match(/aria-label="2차 AI 검수 · 투표자 [123] [123]순위"/g)).toHaveLength(9);
     // 투표자 2 칸에서는 투표자 1의 supa 를, 투표자 1 칸에서는 투표자 2의 gpt-oss 를 고를 수 없다(같은 모델 두 표 금지)
-    expect(html).toContain(`<option value="${SUPA}/supa" disabled="">Inferact/Qwen3.8-27B-NVFP4 — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
-    expect(html).toContain(`<option value="${MLX}/gpt-oss-120b" disabled="">gpt-oss-120b — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
-    expect(html).toContain('<optgroup label="supa-direct · API">');
+    // supa 의 두 이름은 한 모델(같은 root) — 사용자가 정한 이름 하나로 보인다(운영 콘솔 통합)
+    expect(html).toContain(`<option value="${SUPA}/supa" disabled="">supa-direct — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
+    expect(html).not.toContain("Inferact/Qwen3.8-27B-NVFP4 —");
+    // 서로 다른 모델을 여럿 내는 연결(m3-mlx (2))만 「이름 · 서버 모델 이름」 — 묶음 머리(optgroup) 없이 모델마다 한 줄(2026-11-12)
+    expect(html).toContain(`<option value="${MLX}/gpt-oss-120b" disabled="">m3-mlx (2) · gpt-oss-120b — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
+    expect(html).not.toContain("<optgroup");
     // 작업 분산 칸의 링크는 작업 배정의 실행 방식 접힘으로
     const pooled = buildTaskRankEditor(llmConnections, llmRankRows, () => "a".repeat(64), [{ task: "first-review", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null,
       members: [{ memberId: "m1", position: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {} }] } as never]);

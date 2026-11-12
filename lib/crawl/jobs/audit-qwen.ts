@@ -10,7 +10,7 @@ import { auditReviewer, sameAuditReviewer, type AuditReviewer } from "@/lib/craw
 import { qwenDirectConfig, QwenDirectError, qwenEndpointFailure, reviewWithQwenDirect, QWEN_V2_PROMPT_VERSION,
   type QwenDirectErrorCode, type QwenDirectReview } from "@/lib/crawl/qwen-direct-review";
 import { REVIEW_PROMPT_VERSION, type ReviewInput, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
-import { recheckDirectEndpoint, recheckLimits, recheckReviewerPlan, recheckYields, rollingStream } from "@/lib/crawl/published-recheck";
+import { recheckDirectEndpoint, recheckLimits, recheckReviewerPlan, recheckReviewerRefusal, recheckYields, rollingStream } from "@/lib/crawl/published-recheck";
 import { claimRecheckItem, clearRecheckRankPause, noteRecheckItemRankRefused, noteRecheckRankPaused, recheckLaneOf, recheckSkips, recheckTurn,
   releaseRecheckItem } from "@/lib/crawl/published-recheck-lanes";
 import { LocalModelDomainRefusedError } from "@/lib/llm/local-model-domain-refusal";
@@ -127,7 +127,8 @@ async function askRecheckDirect(ctx: JobContext<null>, settings: CrawlSettings):
         if (!startable()) break items;
         const pause = (reason: string) => { paused.add(reviewer.rank); noteRecheckRankPaused(reviewer, reason); deferred.push(`${reviewer.rank}:${reason}`); };
         const endpoint = recheckDirectEndpoint(reviewer);
-        if (!endpoint) { pause("connection_unavailable"); continue; }
+        // 까닭을 남긴다 — 순위가 바뀜·꺼짐, 연결이 이 작업을 더 받지 않음(2026-11-12 검수 F4), 주소·키 없음
+        if (!endpoint) { pause(recheckReviewerRefusal(reviewer) ?? "connection_unavailable"); continue; }
         // 남은 시간이 상한보다 짧으면 그만큼 줄여 부른다 — 줄인 제한 시간에 걸린 것은 틱 끝 때문이라 적지 않는다
         const timeoutMs = Math.min(ceiling, remaining());
         if (timeoutMs <= 0) break items;

@@ -338,6 +338,28 @@ def _preserves_containers(original, current, sha, kind, *, web_image=None, retir
     return True
 
 
+def rolled_back_to_original(snapshot, short, repo):
+    """After a Swarm rollback: is the service the plan's exact original again? Read only; never raises.
+
+    The same proof verify_fleet holds a retained app to (service identity, exact spec, release, image, rendered
+    containers, health and source bytes of the original release), plus Swarm reporting the rollback settled
+    (rollback_completed). Swarm restores the previous spec itself, so anything else, including an unreadable
+    runtime, is False: the caller must not redeploy on an unproven state.
+    """
+    try:
+        original, old_runtime, baseline = snapshot['apps'][short], snapshot['runtime'][short], snapshot['baseline'][short]
+        release = baseline['release']
+        manifest = _manifest(short, release, repo, {})
+        raw = git_rollout.inspect_runtime(short, original, manifest=manifest)
+        return bool((raw.get('updateStatus') or {}).get('State') == 'rollback_completed' and
+                    raw.get('serviceId') == old_runtime.get('serviceId') and
+                    raw.get('serviceSpec') == old_runtime.get('serviceSpec') and
+                    _runtime_state(short, original, raw, release, manifest, repo) == baseline and
+                    _preserves_containers(old_runtime, raw, release, shared.app_metadata(short)[3]))
+    except Exception:
+        return False
+
+
 def verify_fleet(client, snapshot, target, selected, receipts, repo, *, output_snapshot=None, retired_settings=()):
     """Prove selected new runtimes and retained exact originals; return safe state hashes.
 

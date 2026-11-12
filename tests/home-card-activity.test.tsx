@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ProjectCard } from "@/components/home/ProjectCard";
 import { CompactCard } from "@/components/home/CompactCard";
+import { compactCardItem } from "@/components/home/compact-item";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
 const product: ProductListItem = {
@@ -38,7 +39,8 @@ describe("home card activity", () => {
   });
 
   it("keeps the compact card to its one meta line without activity", () => {
-    const html = renderToStaticMarkup(<CompactCard product={{ ...product, activity }} trailing="category" />);
+    // 카드에는 compactCardItem 이 고른 칸만 간다 — 활동 칸은 떨어진다
+    const html = renderToStaticMarkup(<CompactCard product={compactCardItem({ ...product, activity }, "ko")} trailing="category" />);
     expect(text(html)).toContain("A public product");
     expect(text(html)).toContain("★ 10");
     expect(text(html)).toContain("개발 도구");

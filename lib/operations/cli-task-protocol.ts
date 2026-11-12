@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { cliModelDispatchSchema } from '@/lib/llm/capacity';
 import { cliTransportSchema } from '@/lib/llm/cli-serving-contract';
-import { CLI_HOST_BODY_LIMIT, cliHostHandleSchema, cliHostNotStartedResponseSchema } from '@/lib/operations/cli-host-protocol';
+import { CLI_HOST_BODY_LIMIT, cliHostHandleSchema, cliHostNotStartedResponseSchema } from '@/lib/operations/cli-rpc-common';
 
 type JsonObject = Record<string, unknown>;
 

@@ -453,10 +453,36 @@ def github_integration_preflight(client, apps):
     return {'configurationMatched': True, 'flags': flags, 'maintenance': maintenance}
 
 
+# Swarm 의 UpdateStatus(updating·completed·paused·rollback_*)와 최근 태스크 오류(예: "No such container")를 원격에서
+# 걸러 160자로 자른다. REMOTE_PROBE 와 REMOTE_SWARM_STATUS 가 같은 함수를 쓴다(앞에 json·command 가 있어야 한다).
+REMOTE_SWARM_DETAIL = r'''def swarm_detail(service):
+ import re
+ clean=lambda v:re.sub(r'[^A-Za-z0-9 :._/@()=,+-]','?',str(v or ''))[:160]
+ out={'updateStatusInspected':False,'updateState':'unknown'}
+ try:
+  status=json.loads(command('docker','service','inspect',service,'--format','{{json .UpdateStatus}}'))
+  if status is None:
+   out['updateStatusInspected']=True
+   out.pop('updateState')
+  elif isinstance(status,dict) and isinstance(status.get('State'),str) and status['State'].strip():
+   out['updateStatusInspected']=True
+   out['updateState']=clean(status['State'])
+   if status.get('Message'): out['updateMessage']=clean(status.get('Message'))
+ except Exception: pass
+ errors=[]
+ for line in command('docker','service','ps',service,'--no-trunc','--format','{{json .}}').splitlines()[:8]:
+  try: task=json.loads(line)
+  except Exception: continue
+  if isinstance(task,dict) and task.get('Error'): errors.append(clean(task['Error']))
+ if errors: out['taskErrors']=errors[:3]
+ return out
+'''
+
+
 # expected: Dokploy 에 적힌 복제본 수, 또는 'any'(실행 중인 수가 원하는 수와 같기만 하면 — 배포 전 기준선).
 # 웹은 여러 대가 같은 요청을 나눠 받으므로 모든 컨테이너가 새 이미지·릴리스·상태 확인을 통과해야 준비다.
-# 준비가 아니면 Swarm 의 UpdateStatus(updating·completed·paused·rollback_*)와 최근 태스크 오류(예: "No such container")를
-# 걸러 160자로 자른 글로 더한다 — Dokploy 가 done 을 내도 Swarm 이 새 태스크를 옛 spec 으로 되돌린 것을 시간 초과 전에 알아챈다.
+# 준비가 아니면 Swarm 의 UpdateStatus 와 최근 태스크 오류(REMOTE_SWARM_DETAIL)를 더한다 — Dokploy 가 done 을 내도
+# Swarm 이 새 태스크를 옛 spec 으로 되돌린 것을 시간 초과 전에 알아챈다.
 REMOTE_PROBE = r'''import json,subprocess,sys
 service,image,sha,kind,expected=sys.argv[1:6]
 detail=sys.argv[6:]==['detail']
@@ -489,7 +515,7 @@ def container(cid):
   (c.get('health')=='healthy' if kind=='worker' else c.get('webHealthMatch')) and
   c.get('deploymentIdMatch'))
  return c
-rows=[line.split('\t') for line in command('docker','service','ls','--format','{{.Name}}\t{{.Image}}\t{{.Replicas}}').splitlines()]
+''' + REMOTE_SWARM_DETAIL + r'''rows=[line.split('\t') for line in command('docker','service','ls','--format','{{.Name}}\t{{.Image}}\t{{.Replicas}}').splitlines()]
 matches=[row for row in rows if len(row)==3 and row[0]==service]
 result={'ready':False,'serviceFound':len(matches)==1}
 if len(matches)==1:
@@ -507,27 +533,15 @@ if len(matches)==1:
   if ids_seen: result['instanceId']=','.join(ids_seen)
   result['ready']=bool(result['serviceImageMatch'] and all(c['ok'] for c in checks))
 if len(matches)==1 and (detail or not result['ready']):
- import re
- clean=lambda v:re.sub(r'[^A-Za-z0-9 :._/@()=,+-]','?',str(v or ''))[:160]
- result['updateStatusInspected']=False
- result['updateState']='unknown'
- try:
-  status=json.loads(command('docker','service','inspect',service,'--format','{{json .UpdateStatus}}'))
-  if status is None:
-   result['updateStatusInspected']=True
-   result.pop('updateState')
-  elif isinstance(status,dict) and isinstance(status.get('State'),str) and status['State'].strip():
-   result['updateStatusInspected']=True
-   result['updateState']=clean(status['State'])
-   if status.get('Message'): result['updateMessage']=clean(status.get('Message'))
- except Exception: pass
- errors=[]
- for line in command('docker','service','ps',service,'--no-trunc','--format','{{json .}}').splitlines()[:8]:
-  try: task=json.loads(line)
-  except Exception: continue
-  if isinstance(task,dict) and task.get('Error'): errors.append(clean(task['Error']))
- if errors: result['taskErrors']=errors[:3]
+ result.update(swarm_detail(service))
 print(json.dumps(result))
+'''
+# The same Swarm detail for any registered kind (monitor included): only the host and the service name are used.
+REMOTE_SWARM_STATUS = r'''import json,subprocess,sys
+def command(*args):
+ r=subprocess.run(args,capture_output=True,text=True)
+ return r.stdout.strip() if r.returncode==0 else ''
+''' + REMOTE_SWARM_DETAIL + r'''print(json.dumps(swarm_detail(sys.argv[1])))
 '''
 
 
@@ -556,6 +570,31 @@ def probe(short, app, target, expected='any', *, detail=False):
     raw = ssh_python(host, REMOTE_PROBE, app['appName'], target[kind],
                      target['sha'], kind, str(expected), *(('detail',) if detail else ()))
     return json.loads(raw)
+
+
+def swarm_status(short, app):
+    """Swarm UpdateStatus and the newest task errors of one service, for any registered kind (monitor included).
+
+    probe() indexes the target by kind and knows only worker/web; this read needs only the host and the service name.
+    The reply holds filtered codes only (REMOTE_SWARM_DETAIL); a reply that is not an object is treated as unread."""
+    result = json.loads(ssh_python(app_metadata(short)[2][1], REMOTE_SWARM_STATUS, app['appName']))
+    return result if isinstance(result, dict) else {}
+
+
+# 2026-09-14·10-22·11-08·11-10·11-12: Dokploy reported done, the new task failed with this error naming its own container
+# (cleaned on the host, the surrounding quotes become '?') and Swarm rolled the service back; a same-config redeploy worked.
+SWARM_START_RACE = 'No such container'
+
+
+def swarm_start_race(service, evidence):
+    """True only when the newest task error is the known start race for this service's own task container:
+    "No such container: <service>.<slot>.<task id>". Any other or missing error is not the start race."""
+    errors = evidence.get('taskErrors') if isinstance(evidence, dict) else None
+    if not isinstance(service, str) or not re.fullmatch(r'[a-z0-9-]+', service) or not isinstance(errors, list) or not errors:
+        return False
+    newest = errors[0]
+    return isinstance(newest, str) and re.fullmatch(
+        r'\??' + SWARM_START_RACE + ': ' + re.escape(service) + r'\.[0-9]{1,3}\.[a-z0-9]{1,64}\??', newest) is not None
 
 
 # Dokploy 의 done 은 `docker service update` 요청이 끝났다는 뜻일 뿐이다. 새 태스크가 실패하면(2026-10-17 maintenance·scheduler,
@@ -601,13 +640,16 @@ def check_app_deployed(client, short, target, previous_id, *, timeout=None, paus
     raise TimeoutError(swarm_detail(f'{short}_verification_timeout', last))
 
 
-def await_rollback_settled(client, short, expected, *, timeout=SWARM_ROLLBACK_SETTLE_SECONDS, pause=APP_POLL_SECONDS):
-    """Swarm 이 되돌리기를 끝낼 때까지(rollback_completed) 기다린다. 되돌리는 중에 다시 배포하면 두 update 가 겹친다."""
+def await_rollback_settled(client, short, expected, *, timeout=SWARM_ROLLBACK_SETTLE_SECONDS, pause=APP_POLL_SECONDS,
+                           read=None):
+    """Swarm 이 되돌리기를 끝낼 때까지(rollback_completed) 기다린다. 되돌리는 중에 다시 배포하면 두 update 가 겹친다.
+
+    read 가 있으면 probe 대신 그 읽기(예: swarm_status)로 Swarm 상태를 본다 — probe 가 모르는 monitor 도 같은 기다림을 쓴다."""
     deadline = time.monotonic() + timeout
     evidence = None
     while time.monotonic() < deadline:
         try:
-            evidence = probe(short, client.app(short), expected, 'any')
+            evidence = read() if read is not None else probe(short, client.app(short), expected, 'any')
         except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired):
             evidence = None
         state = (evidence or {}).get('updateState')

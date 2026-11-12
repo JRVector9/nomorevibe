@@ -193,6 +193,52 @@ class RuntimeProofTests(unittest.TestCase):
         self.assertEqual(baseline, before)
         self.assertNotIn('synthetic-secret', json.dumps(observed))
 
+    def roll_back(self, short):
+        """Swarm restored the previous spec and started a fresh task from it; the service reports rollback_completed."""
+        row = self.client.rows[short]
+        row['updateStatus'] = {'State': 'rollback_completed', 'Message': 'rollback completed'}
+        row['version']['Index'] += 2
+        for container in row['containers']:
+            container['id'] += '-rolled-back'
+
+    def test_a_settled_swarm_rollback_is_proven_only_when_the_runtime_is_the_exact_original(self):
+        snapshot = self.collect()
+        before = copy.deepcopy(snapshot)
+        for short in ('reviewer-m3', 'web-mini', 'monitor-m3', 'ai2-consumer-m3'):
+            self.roll_back(short)
+            with self.subTest(short=short), redirect_stdout(io.StringIO()) as output:
+                self.assertIs(runtime.rolled_back_to_original(snapshot, short, ROOT), True)
+                self.assertEqual(output.getvalue(), '')
+        self.assertEqual(snapshot, before)
+        rolled_back = copy.deepcopy(self.client.rows['reviewer-m3'])
+        def new_release(row):
+            cs = row['serviceSpec']['TaskTemplate']['ContainerSpec']
+            cs['Env'] = [value.replace(OLD, NEW) for value in cs['Env']]
+            row['specHash'] = runtime.git_rollout.spec_hash(row['serviceSpec'])
+        mutations = {
+            'still rolling back': lambda row: row.update(updateStatus={'State': 'rollback_started'}),
+            'rollback paused': lambda row: row.update(updateStatus={'State': 'rollback_paused'}),
+            'completed is not a rollback': lambda row: row.update(updateStatus={'State': 'completed'}),
+            'no update status': lambda row: row.update(updateStatus=None),
+            'new spec still applied': new_release,
+            'other spec': lambda row: row['serviceSpec']['TaskTemplate']['Resources']['Limits'].update(MemoryBytes=1),
+            'replaced service': lambda row: row.update(serviceId='another-service'),
+            'container on the new release': lambda row: row['containers'][0]['config'].update(
+                Env=[value.replace(OLD, NEW) for value in row['containers'][0]['config']['Env']]),
+            'unhealthy container': lambda row: row['containers'][0]['state']['Health'].update(Status='starting'),
+            'other source bytes': lambda row: row['containers'][0]['codeHashes'].update({'package-lock.json': '0' * 64}),
+            'no container': lambda row: row.update(containers=[]),
+        }
+        for name, mutate in mutations.items():
+            row = copy.deepcopy(rolled_back); mutate(row)
+            self.client.rows['reviewer-m3'] = row
+            with self.subTest(mutation=name):
+                self.assertIs(runtime.rolled_back_to_original(snapshot, 'reviewer-m3', ROOT), False)
+        # An unreadable runtime is not a proof either; nothing is raised to the caller.
+        for error in (RuntimeError('command_failed:ssh:255'), json.JSONDecodeError('Expecting value', '', 0)):
+            with self.subTest(error=type(error).__name__), patch.object(runtime.git_rollout, 'inspect_runtime', side_effect=error):
+                self.assertIs(runtime.rolled_back_to_original(snapshot, 'reviewer-m3', ROOT), False)
+
     def web_health_transition(self):
         baseline = self.collect(); baseline['target'] = TARGET
         receipts = self.select(['web-mini', 'web-m3'])

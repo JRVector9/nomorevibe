@@ -3,7 +3,7 @@ import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { cliModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestIdentitySchema, type CliModelDispatch,
   type ModelCapacityRequestIdentity, type ModelSlotResult } from '@/lib/llm/capacity';
 import { findOwnPendingModelRequest, requestCliModelSlot, cancelReservedModelSlot, markModelDispatchIndeterminate,
-  reconcileCliProcessTerminal, type CliTarget } from '@/lib/llm/capacity-repository';
+  reconcileCliProcessTerminal, type CliTarget, type ModelSlotMemberCap } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
 import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
@@ -12,6 +12,7 @@ import { itemBindingHash } from '@/lib/jobs/items/types';
 import { agentReviewBinding } from './agent-review-ownership';
 import { claimAgentReviewWithCliModelReservation, claimConsumerItemAgentReviewWithCliModelReservation, AgentReviewItemCliModelReservationRequired,
   type CliModelCapacityReviewClaim, type ReviewDomainContext } from './agent-review-repository';
+import { firstReviewMemberSlotCap } from './first-review-member-cap';
 import { claimSecondReviewItemWithCliModelReservation, SecondReviewCliModelReservationRequired, type SecondReviewCliModelClaim } from './second-review-ownership';
 import { isReviewCliProvider, prepareReviewCliCall, releaseReviewCliCall, reviewWithReservedCli, settleReviewCliNotStarted,
   type PreparedReviewCliCall, type ReviewCliOutcome } from './review-cli-call';
@@ -37,12 +38,14 @@ function reviewerOwner() {
   if (!lease) throw new ModelCapacityDeferredError('owner_unavailable');
   return modelCapacityOwnerSchema.parse({ instanceId: lease.instanceId, bootId: lease.bootId });
 }
-/** 같은 work 의 대기 요청은 같은 requestId 로 다시 묻는다(순번 유지). 이미 dispatch 된 호출은 다시 띄우지 않는다. */
-async function requestSlot(identity: ModelCapacityRequestIdentity, target: CliTarget): Promise<Extract<ModelSlotResult, { kind: 'granted' }>> {
+/** 같은 work 의 대기 요청은 같은 requestId 로 다시 묻는다(순번 유지). 이미 dispatch 된 호출은 다시 띄우지 않는다.
+ * memberCap: 1차 「동시에」 구성원의 칸 수 — 장부 입장 TX 가 원자적으로 지킨다(2026-11-12 검수 F2). */
+async function requestSlot(identity: ModelCapacityRequestIdentity, target: CliTarget,
+  memberCap: ModelSlotMemberCap | null): Promise<Extract<ModelSlotResult, { kind: 'granted' }>> {
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
-  const slot = await requestCliModelSlot(request, target);
+  const slot = await requestCliModelSlot(request, target, { memberCap });
   // AI1·AI2: 줄에 서지 못한 capacity(같은 대상 fence)는 이 대상만의 work_busy — 모델을 멈추지 않는다.
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
   return slot;
@@ -50,10 +53,10 @@ async function requestSlot(identity: ModelCapacityRequestIdentity, target: CliTa
 /** 준비한 호출을 claim 까지 가져간다. commit 된 fresh dispatch 가 아니면 예약을 돌려주고 임시 디렉터리를 지운다. */
 async function admit<C extends { kind: string; dispatch?: CliModelDispatch }>(call: PreparedReviewCliCall, identity: ModelCapacityRequestIdentity,
   target: CliTarget, signal: AbortSignal | undefined, claim: (slot: Extract<ModelSlotResult, { kind: 'granted' }>) => Promise<C>,
-  fresh: (claim: C) => boolean): Promise<{ claim: C; call: PreparedReviewCliCall }> {
+  fresh: (claim: C) => boolean, memberCap: ModelSlotMemberCap | null = null): Promise<{ claim: C; call: PreparedReviewCliCall }> {
   let kept = false;
   try {
-    const slot = await requestSlot(identity, target);
+    const slot = await requestSlot(identity, target, memberCap);
     let claimed: C;
     try {
       if (signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');
@@ -99,7 +102,8 @@ export async function claimAgentReviewCliModelCapacity(input: Context): Promise<
     workKey: `ai1:${input.candidate.id}:${itemBindingHash(agentReviewBinding(input.candidate.id, input.input, { provider: input.provider, model: input.model }))}` });
   return admit(call, identity, { kind: 'ai1', candidateId: input.candidate.id }, signal,
     slot => claimAgentReviewWithCliModelReservation({ ...input, reservation: slot.reservation, identity, call }),
-    claim => claim.kind === 'claimed' && claim.receipt.origin === 'fresh' && claim.dispatch?.binding.kind === 'ai1_legacy_cli');
+    claim => claim.kind === 'claimed' && claim.receipt.origin === 'fresh' && claim.dispatch?.binding.kind === 'ai1_legacy_cli',
+    firstReviewMemberSlotCap(input.settings, { provider: input.provider, model: input.model }));
 }
 
 /** AI1 item consumer: CLI 의도 class 만 받는다. */
@@ -117,7 +121,8 @@ export async function claimAgentReviewItemCliModelCapacity(intent: AgentReviewIt
   return admit(call, identity, { kind: 'ai1', candidateId: context.candidate.id }, signal,
     slot => claimConsumerItemAgentReviewWithCliModelReservation({ expected, reservation: slot.reservation, identity, call }),
     claim => claim.kind === 'claimed' && claim.receipt.origin === 'fresh' && claim.receipt.ownership.kind === 'item'
-      && claim.dispatch?.binding.kind === 'ai1_item_cli');
+      && claim.dispatch?.binding.kind === 'ai1_item_cli',
+    firstReviewMemberSlotCap(context.settings, { provider, model }));
 }
 
 /** AI2 item consumer: CLI 의도 class 만 받는다. 슬롯 deferred 는 recordSecondReview 앞에서 끝나 예비모델 행이 생기지 않는다. */

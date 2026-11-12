@@ -9,6 +9,8 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 import { gatewayHttpRejectedEventTerminalSql, gatewayHttpRejectedTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
+import { opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
+import { applied0168Rules, OPENCODE_TASK_FIX_FROM, OPENCODE_TASK_FIX_TAG, OPENCODE_TASK_FIX_TO } from "@/scripts/ops/generate-opencode-task-sql";
 import { LEDGER_RULE_CHECKS, ledgerCheckDefs, ledgerCheckExpressions } from "./ledger-check-defs";
 import { TEST_DATABASE_URL } from "./setup";
 
@@ -206,8 +208,8 @@ it("0174 는 HTTP 거절 정산 가지 둘만(requests·events terminal) 다음 
   const before0174 = await ledgerCheckDefs(client, MOVED);
   const maxOrdinal = Object.fromEntries((await client<{ name: string; n: number }[]>`SELECT constraint_name AS name, max(ordinal)::int AS n
     FROM model_capacity_check_rules GROUP BY constraint_name`).map(row => [row.name, Number(row.n)]));
-  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  await migrateThrough(174);
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 174).length);
   const rules = await client<{ table_name: string; constraint_name: string; ordinal: number; predicate: string }[]>`SELECT table_name, constraint_name, ordinal, predicate
     FROM model_capacity_check_rules WHERE source = '0174_gateway_http_rejected' ORDER BY constraint_name`;
   expect(rules.map(rule => [rule.table_name, rule.constraint_name, Number(rule.ordinal), rule.predicate])).toEqual([
@@ -230,4 +232,56 @@ it("0174 는 HTTP 거절 정산 가지 둘만(requests·events terminal) 다음 
     if (sql.startsWith("INSERT")) await client.unsafe(sql);
   }
   expect(await count()).toBe(beforeCount);
+});
+
+it("0175 는 0168 의 OpenCode dispatch·events terminal 두 행만 같은 ordinal 에서 고친 글로 바꾸고, 다른 행·판정은 그대로이며 다시 실행해도 같고 어긋난 rules 에서는 멈춘다", async () => {
+  // 앞 시험이 0174 까지 올렸다 — 지금 rules 는 운영과 같은 0168 의 결함 행을 가진다
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 174).length);
+  type Rule = { table_name: string; constraint_name: string; ordinal: number; predicate: string; source: string };
+  const rulesNow = () => client<Rule[]>`SELECT table_name, constraint_name, ordinal, predicate, source FROM model_capacity_check_rules
+    ORDER BY table_name, constraint_name, ordinal`;
+  const rulesBefore = await rulesNow(), defs0174 = await ledgerCheckDefs(client, MOVED);
+  const applied = applied0168Rules(readFileSync(path.join(root, "drizzle/0168_opencode_task_cli.sql"), "utf8"));
+  expect(Object.fromEntries(rulesBefore.filter(rule => rule.source === "0168_opencode_task_cli").map(rule => [rule.constraint_name, rule.predicate])))
+    .toEqual(applied);
+  for (const name of ["model_capacity_requests_dispatch_check", "model_capacity_events_terminal_check"])
+    expect(applied[name].split(OPENCODE_TASK_FIX_FROM), `${name}: 0168 left the JSON claude-cli provider twice`).toHaveLength(3);
+  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  const after = await rulesNow();
+  const fixed: Record<string, string> = { model_capacity_requests_dispatch_check: opencodeTaskDispatchSql, model_capacity_events_terminal_check: opencodeTaskEventTerminalSql };
+  // 같은 (표, 제약, ordinal) 자리 — 행 수·순서·나머지 행의 글은 한 글자도 바뀌지 않는다
+  expect(after.map(rule => [rule.table_name, rule.constraint_name, Number(rule.ordinal)]))
+    .toEqual(rulesBefore.map(rule => [rule.table_name, rule.constraint_name, Number(rule.ordinal)]));
+  after.forEach((rule, index) => {
+    const old = rulesBefore[index];
+    if (old.source === "0168_opencode_task_cli" && fixed[rule.constraint_name]) {
+      expect(rule, rule.constraint_name).toMatchObject({ source: OPENCODE_TASK_FIX_TAG, predicate: fixed[rule.constraint_name] });
+      expect(rule.predicate).toBe(old.predicate.replaceAll(OPENCODE_TASK_FIX_FROM, OPENCODE_TASK_FIX_TO));
+      expect(rule.predicate).not.toContain("claude-cli");
+    } else expect(rule, `${rule.constraint_name}#${rule.ordinal}`).toEqual(old);
+  });
+  const defs0175 = await ledgerCheckDefs(client, MOVED);
+  for (const name of MOVED) {
+    if (!fixed[name]) { expect(defs0175[name], `${name}: 0175 unchanged`).toBe(defs0174[name]); continue; }
+    expect(defs0175[name]).toBe(defs0174[name].replace(`(${applied[name]})`, () => `(${fixed[name]})`));
+  }
+  for (const table of ["model_capacity_requests", "model_capacity_events"]) expect(await guardSource(table)).toContain(`'"opencode-cli"'::jsonb`);
+  expect(await constraintNames()).toEqual(SMALL.toSorted());
+  expect(await verdicts()).toEqual(before);
+  // 다시 실행: preflight 는 고친 글을 받아들이고 UPDATE 는 0행, postflight·rebuild 뒤에도 rules 는 그대로다
+  const statements = readFileSync(path.join(root, `drizzle/${OPENCODE_TASK_FIX_TAG}.sql`), "utf8").split("--> statement-breakpoint")
+    .map(statement => statement.split("\n").filter(line => !line.trimStart().startsWith("--")).join("\n").trim()).filter(Boolean);
+  await client.begin(async tx => { for (const statement of statements) await tx.unsafe(statement); });
+  expect(await rulesNow()).toEqual(after);
+  // 어긋난 rules(손으로 바뀐 글·지워진 행)에서는 23514 로 멈추고 아무것도 바꾸지 않는다
+  for (const drift of ["UPDATE model_capacity_check_rules SET predicate = predicate || ' ' WHERE source = '0175_opencode_task_provider_literal' AND constraint_name = 'model_capacity_requests_dispatch_check'",
+    "DELETE FROM model_capacity_check_rules WHERE source = '0175_opencode_task_provider_literal' AND constraint_name = 'model_capacity_events_terminal_check'"]) {
+    const failure = await client.begin(async tx => {
+      await tx.unsafe(drift);
+      for (const statement of statements) await tx.unsafe(statement);
+    }).then(() => null, (error: { code?: string; message?: string }) => error);
+    expect(failure, drift).toMatchObject({ code: "23514", message: expect.stringContaining("opencode_task_rule_baseline_unexpected") });
+  }
+  expect(await rulesNow()).toEqual(after);
 });

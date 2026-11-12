@@ -7,7 +7,7 @@ import remarkGfm from "remark-gfm";
 import { englishLang } from "@/lib/i18n/content-language";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { getReadmeContent } from "@/lib/domain/products/readme-content";
-import { SafeMarkdownLink } from "./IntroSection";
+import { readmePreview } from "@/lib/domain/products/readme-preview";
 import { safeExternalUrl } from "./format";
 
 type Props = { product: ProductDetailView["product"]; readmeExcerpt: string | null };
@@ -38,7 +38,20 @@ export async function ReadmeFallback({ product, readmeExcerpt, pending = false, 
   );
 }
 
-/** Async server section: only the README waits for GitHub, while the rest of the detail page streams. */
+/**
+ * README 속 링크 — 모양은 상자의 [&_a] 규칙이 준다. 링크마다 class 를 달면 HTML·RSC 데이터에 링크 수만큼 두 번씩 실렸다.
+ * 바깥으로 나가는 http(s)·루트 상대 주소만 링크로 남긴다(IntroSection SafeMarkdownLink 와 같은 규칙).
+ */
+function ReadmeLink({ href, children }: ComponentPropsWithoutRef<"a">) {
+  const safe = href?.startsWith("/") ? href : safeExternalUrl(href ?? null);
+  if (!safe) return <span>{children}</span>;
+  return <a href={safe} target="_blank" rel="noopener noreferrer">{children}</a>;
+}
+
+/**
+ * Async server section: only the README waits for GitHub, while the rest of the detail page streams.
+ * 앞부분만 싣는다(readme-preview.ts) — 잘렸으면 상자 끝에서 원문으로 잇는다.
+ */
 export async function ReadmeSection({ product, readmeExcerpt }: Props) {
   if (!product.repoUrl || product.repoGone) return null;
   const t = await getTranslator(await getRequestLocale(), "detail");
@@ -53,16 +66,20 @@ export async function ReadmeSection({ product, readmeExcerpt }: Props) {
         ? new URL(`.${props.href}`, readme.repositoryRootUrl).href
         : new URL(props.href, readme.sourceUrl).href : undefined;
     } catch { /* Render unsafe links as text. */ }
-    return <SafeMarkdownLink {...props} href={href} />;
+    return <ReadmeLink href={href}>{props.children}</ReadmeLink>;
   };
+  const preview = readmePreview(readme.markdown);
   return (
     <section aria-labelledby="readme-title" className="flex flex-col gap-3">
       <h2 id="readme-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">README</h2>
       <div role="region" aria-label={t("readme.body")} tabIndex={0} lang={englishLang(readme.markdown)}
-        className={`${scrollClass} space-y-3 [&_h1]:mt-5 [&_h1]:text-[20px] [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-[18px] [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-[16px] [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_ol>li]:list-decimal [&_p]:my-3 [&_pre]:whitespace-pre-wrap [&_pre]:rounded-lg [&_pre]:bg-bg-soft [&_pre]:p-3 [&_pre]:text-[13px] [&_table]:w-full [&_table]:table-fixed [&_td]:border [&_td]:border-line [&_td]:p-2 [&_th]:border [&_th]:border-line [&_th]:p-2`}>
+        className={`${scrollClass} space-y-3 [&_a]:font-medium [&_a]:text-accent-ink [&_a:hover]:underline [&_h1]:mt-5 [&_h1]:text-[20px] [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-[18px] [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-[16px] [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_ol>li]:list-decimal [&_p]:my-3 [&_pre]:whitespace-pre-wrap [&_pre]:rounded-lg [&_pre]:bg-bg-soft [&_pre]:p-3 [&_pre]:text-[13px] [&_table]:w-full [&_table]:table-fixed [&_td]:border [&_td]:border-line [&_td]:p-2 [&_th]:border [&_th]:border-line [&_th]:p-2`}>
         {readme.markdown.trim() ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} skipHtml components={{ a: link, img: () => null }}>
-          {readme.markdown}
+          {preview.markdown}
         </ReactMarkdown> : <p className="m-0 text-fg-2">{t("readme.empty")}</p>}
+        {preview.truncated && <p className="m-0 border-t border-line pt-3 text-[13px] text-fg-2">
+          {t("readme.truncated")} <a href={readme.sourceUrl} target="_blank" rel="noopener noreferrer">{t("readme.full")} ↗</a>
+        </p>}
       </div>
       <OriginalLink url={readme.sourceUrl} label={t("readme.full")} />
     </section>

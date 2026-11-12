@@ -292,7 +292,7 @@ const REVIEW_QUEUE_SCAN_CHUNK = 1_000;
 export type ReviewQueueBucket = AmbiguityCause | 'ai_reject' | 'resolved' | 'unknown' | HumanOnlyReason;
 /** AI 심사가 다시 집지 않고 사람만 가르는 보류 사유(2026-09-19) — 규칙으로 되돌려도 같은 곳에 다시 선다 */
 export const HUMAN_ONLY_REASONS = ['second_review_split', 'no_description',
-  'ai_review_exhausted', 'source_refresh_failed', 'repo_deleted', 'suspected_spam', 'review_approval_changed'] as const;
+  'ai_review_exhausted', 'ai_review_skip_exhausted', 'source_refresh_failed', 'repo_deleted', 'suspected_spam', 'review_approval_changed'] as const;
 export type HumanOnlyReason = typeof HUMAN_ONLY_REASONS[number];
 const isHumanOnly = (reason: string | null): reason is HumanOnlyReason => HUMAN_ONLY_REASONS.some((value) => value === reason);
 /**
@@ -478,6 +478,7 @@ function summarizeAttempt(attempt: CrawlReviewAttempt | undefined): AdminReviewA
     at: attempt.startedAt.toISOString() } : null;
 }
 export type AdminReviewEntry = {
+  discoverySource?: import("@/lib/db/crawl-schema").DiscoverySource | null;
   candidate: CrawlCandidate; inputHash: string | null; sourceRevisionHash: string | null; candidateRevisionHash: string;
   name: string; description: string; relationship: string; scanState: string;
   evidence: { id: string; label: string; url: string }[]; status: AdminReviewStatus; refreshCount: number;
@@ -564,7 +565,8 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: A
   const page = candidates.slice(0, limit);
   if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null, nextCursor: null as ReviewCursor | null, total, hiddenByAge };
   const ids = page.map(row => row.id), repos = page.map(row => row.repo);
-  const [documents, scans, latest, latestAutomatic, latestSuccessfulAutomatic] = await Promise.all([
+  const [frontiers, documents, scans, latest, latestAutomatic, latestSuccessfulAutomatic] = await Promise.all([
+    db.select({ repo: crawlFrontier.repo, discoverySource: crawlFrontier.discoverySource }).from(crawlFrontier).where(inArray(crawlFrontier.repo, repos)),
     db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, repos)),
     db.selectDistinctOn([agentRepositoryScans.repositoryKey]).from(agentRepositoryScans).where(and(
       inArray(agentRepositoryScans.repositoryKey, repos.map(repo => repo.toLowerCase())), eq(agentRepositoryScans.scope, ''),
@@ -614,6 +616,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: A
     const review = latestAutomatic.find(row => row.candidateId === candidate.id);
     const succeeded = latestSuccessfulAutomatic.find(row => row.candidateId === candidate.id);
     return {
+      discoverySource: frontiers.find(row => row.repo === candidate.repo)?.discoverySource ?? null,
       candidate, inputHash: input?.inputHash ?? null, sourceRevisionHash: input?.sourceRevisionHash ?? null,
       candidateRevisionHash: candidateRevisionHash(candidate), name: input?.snapshot.product.name ?? candidate.repo,
       description: input?.snapshot.product.description ?? '', relationship: input?.snapshot.relationship ?? 'unknown',

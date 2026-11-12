@@ -608,6 +608,7 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "시간당 새 저장소 상한", read: (s) => s.discover.maxNewPerHour },
   { label: "검수 대기열 상한", read: (s) => s.discover.maxReviewBacklog },
   { label: "Show HN 수집", read: (s) => s.discover.showHn.enabled },
+  { label: "Show GN 수집", read: (s) => s.discover.showGn.enabled },
   { label: "자동 승인 최소 스타", read: (s) => s.judge.autoApproveMinStars },
   { label: "스타 하한", read: (s) => s.judge.minStars },
   { label: "방치 기준(일)", read: (s) => s.judge.maxPushAgeDays },
@@ -663,7 +664,10 @@ function resetPatch(): Partial<CrawlSettings> {
   // saveSettings의 행 잠금 안에서 읽은 스위치를 유지한다. 잠금 전 값을 다시 쓰면
   // 동시에 들어온 비상 정지를 되돌려 수집이 다시 켜질 수 있다.
   delete defaults.enabled;
-  return defaults;
+  // 화면에서 더한 글 목록 수집원(discover.feeds)은 수집원 화면만 바꾼다 — 기본값 되돌리기가 지우지 않는다(합치기가 지금 값을 남긴다)
+  const discover: Partial<CrawlSettings["discover"]> = { ...DEFAULT_CRAWL_SETTINGS.discover };
+  delete discover.feeds;
+  return { ...defaults, discover: discover as CrawlSettings["discover"] };
 }
 
 /**

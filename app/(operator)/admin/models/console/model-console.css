@@ -1,0 +1,430 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
+/* 운영 콘솔 「모델」(2026-11-12 최종 시안 화면 4 · 흐름 2·3, 조각 3a) — 구조·정렬만 시안에서 가져오고 색·글꼴은 관리자 토큰(prototype.css).
+   표는 열 폭 고정, 숫자는 오른쪽 정렬·tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만. */
+.admin-prototype .model-console {
+  display: grid;
+  gap: calc(14px / .8);
+  min-width: 0;
+}
+.admin-prototype .mc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(6px / .8) calc(10px / .8);
+}
+.admin-prototype .mc-head h2 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .mc-count {
+  font-family: var(--f-mono);
+}
+.admin-prototype .mc-count,
+.admin-prototype .mc-muted {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-head .mc-right {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6px / .8);
+}
+.admin-prototype .mc-notice {
+  padding: calc(8px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.admin-prototype .mc-notice[data-tone="warn"] {
+  color: var(--ink);
+}
+.admin-prototype .mc-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .mc-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .mc-table th,
+.admin-prototype .mc-table td {
+  padding: calc(8px / .8) calc(12px / .8);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .mc-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .mc-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-prototype .mc-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .mc-table tbody th a {
+  color: inherit;
+}
+.admin-prototype .mc-table tbody th a:hover,
+.admin-prototype .mc-table tbody tr[data-selected="true"] th a {
+  color: var(--blue);
+}
+.admin-prototype .mc-table tbody tr[data-selected="true"] > * {
+  background: var(--surface-2);
+}
+.admin-prototype .mc-table .n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: var(--f-mono);
+}
+.admin-prototype .mc-table .q {
+  color: var(--muted);
+}
+/* 장비 칸은 한 줄 — 긴 장비 이름(기본은 장비 id)이 줄을 세 줄로 늘려 숫자 열이 들쭉날쭉해지지 않게 자르고, 전체는 title 로 본다(운영 콘솔 통합) */
+.admin-prototype .mc-table td.mc-machine {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-prototype .mc-table td.top {
+  vertical-align: top;
+}
+/* 사용률 막대 — 막대 길이만 회색·초록, 글자는 늘 잉크 */
+.admin-prototype .mc-use {
+  display: grid;
+  grid-template-columns: minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: calc(8px / .8);
+}
+/* 시안 .use — 8px 막대(sunken·테두리), 쓴 만큼 먹색. 남는 모델(.use.idle)은 초록 */
+.admin-prototype .mc-use > span {
+  height: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.admin-prototype .mc-use > span > i {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+}
+.admin-prototype .mc-use[data-idle="true"] > span > i {
+  background: var(--ok);
+}
+.admin-prototype .mc-use b {
+  min-width: 5.5em;
+  text-align: right;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
+}
+.admin-prototype .mc-st {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7px / .8);
+  white-space: nowrap;
+}
+.admin-prototype .mc-st > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.admin-prototype .mc-st[data-tone="ok"] > i { background: var(--green); }
+.admin-prototype .mc-st[data-tone="warn"] > i { background: var(--amber); }
+.admin-prototype .mc-st[data-tone="bad"] { color: var(--red); font-weight: 600; }
+.admin-prototype .mc-st[data-tone="bad"] > i { background: var(--red); }
+.admin-prototype .mc-st[data-tone="off"] { color: var(--muted); }
+
+/* 상세 패널 */
+.admin-prototype .mc-detail {
+  display: grid;
+  max-width: 760px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  scroll-margin-top: 80px;
+}
+.admin-prototype .mc-detail > section {
+  display: grid;
+  gap: calc(8px / .8);
+  padding: calc(14px / .8) calc(16px / .8);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.admin-prototype .mc-detail > section:last-child {
+  border-bottom: 0;
+}
+.admin-prototype .mc-detail h3 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .mc-lab {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .mc-kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px / .8) calc(24px / .8);
+  color: var(--muted);
+}
+.admin-prototype .mc-kv b {
+  margin-left: calc(6px / .8);
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
+}
+.admin-prototype .mc-dl {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: calc(6px / .8) calc(14px / .8);
+  margin: 0;
+}
+.admin-prototype .mc-dl dt {
+  color: var(--muted);
+}
+.admin-prototype .mc-dl dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .mc-dl dd.num {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
+}
+.admin-prototype .mc-cause {
+  display: grid;
+  gap: calc(4px / .8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .mc-cause li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: calc(10px / .8);
+}
+.admin-prototype .mc-cause li > span:first-child {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(6px / .8);
+}
+.admin-prototype .mc-form {
+  display: grid;
+  gap: calc(10px / .8);
+}
+.admin-prototype .mc-form label {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: calc(4px / .8) calc(14px / .8);
+}
+.admin-prototype .mc-form label > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .mc-form input[type="text"],
+.admin-prototype .mc-form input[type="number"],
+.admin-prototype .mc-form input[type="password"],
+.admin-prototype .mc-form input[type="url"],
+.admin-prototype .mc-form select,
+.admin-prototype .mc-form textarea {
+  min-width: 0;
+  max-width: 360px;
+  padding: calc(6px / .8) calc(8px / .8);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.admin-prototype .mc-form input.num {
+  max-width: 140px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
+}
+.admin-prototype .mc-form fieldset {
+  display: grid;
+  gap: calc(4px / .8);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.admin-prototype .mc-form fieldset legend {
+  margin-bottom: calc(4px / .8);
+  color: var(--muted);
+}
+.admin-prototype .mc-tasks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: calc(4px / .8) calc(12px / .8);
+}
+.admin-prototype .mc-form .mc-tasks label {
+  display: flex;
+  gap: calc(6px / .8);
+  align-items: center;
+}
+.admin-prototype .mc-hint {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+/* 저장 전 확인 — 바뀌는 값(전 → 후), 함께 쓰는 곳, 영향 */
+.admin-prototype .mc-dlg {
+  display: grid;
+  gap: calc(8px / .8);
+  padding: calc(12px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.admin-prototype .mc-dlg h4 {
+  font-weight: 600;
+}
+.admin-prototype .mc-diff {
+  display: grid;
+  gap: calc(4px / .8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .mc-diff li {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: calc(10px / .8);
+}
+.admin-prototype .mc-diff li > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .mc-diff s {
+  margin-right: calc(8px / .8);
+  color: var(--muted);
+}
+.admin-prototype .mc-msg[role="alert"] {
+  color: var(--red);
+}
+.admin-prototype .mc-msg[data-warn="true"] {
+  color: var(--amber);
+}
+.admin-prototype .mc-card {
+  display: grid;
+  gap: calc(10px / .8);
+  max-width: 760px;
+  padding: calc(14px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .mc-pick {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.admin-prototype .mc-pick li {
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .mc-pick li:last-child {
+  border-bottom: 0;
+}
+.admin-prototype .mc-pick label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(10px / .8);
+  padding: calc(8px / .8) calc(12px / .8);
+  cursor: pointer;
+}
+.admin-prototype .mc-pick label > span:last-child {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-prototype .mc-out[data-pass="false"] {
+  color: var(--muted);
+}
+
+/* 모델 상세 「쓰는 단계」의 바로 붙이기(ModelAttachForm) — 단계 · 모델 · 방식(순위대로 N순위 / 함께) · 저장 전 확인 */
+.admin-prototype .mc-attach {
+  display: grid;
+  gap: calc(10px / .8);
+  min-width: 0;
+  padding: calc(12px / .8) calc(14px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.admin-prototype .mc-attach .mc-form fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(6px / .8) calc(14px / .8);
+}
+.admin-prototype .mc-attach .mc-form fieldset legend {
+  float: left;
+  width: 112px;
+  margin: 0;
+  color: var(--muted);
+}
+.admin-prototype .mc-attach .mc-form fieldset .mc-acts {
+  align-items: center;
+}
+.admin-prototype .mc-attach .mc-form .mc-acts label {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / .8);
+}
+.admin-prototype .mc-attach .mc-form .mc-acts select {
+  min-height: 0;
+  padding: calc(2px / .8) calc(8px / .8);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.admin-prototype .mc-attach-name {
+  font-weight: 600;
+}
+.admin-prototype .mc-attach .mc-dlg {
+  background: var(--surface);
+}
+.admin-prototype .mc-attach ul.mc-msg {
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--bad);
+}
+.admin-prototype .mc-ack {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / .8);
+}

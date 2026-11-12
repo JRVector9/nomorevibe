@@ -118,7 +118,7 @@ async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promi
       WHERE ${crawlPublicationChanges.delta} = 1 AND ${recent(sql`${crawlPublicationChanges.occurredAt}`, 5)}
     ), manual_holds AS (
       SELECT count(*) FILTER (WHERE ${crawlCandidates.reason} IN ('source_refresh_failed', 'repo_deleted'))::int AS fetch,
-        count(*) FILTER (WHERE ${crawlCandidates.reason} = 'ai_review_exhausted')::int AS first
+        count(*) FILTER (WHERE ${crawlCandidates.reason} IN ('ai_review_exhausted', 'ai_review_skip_exhausted'))::int AS first
       FROM ${crawlCandidates} WHERE ${crawlCandidates.state} = 'needs_review'
     ), publish_candidates AS MATERIALIZED (
       -- 분류 보류는 retry_at 이 지나야 발행 대상이 된다. 보류를 건 시각(updated_at)으로 재면 막 풀린 후보가

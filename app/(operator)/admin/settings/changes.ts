@@ -39,8 +39,11 @@ const SCALARS: Record<string, string> = {
   secondReviewAgreeAt: "일치 기준 확신",
   secondReviewIncludeAiHeld: "1차 AI도 못 가른 것",
   "showHn.enabled": "Show HN",
+  "showGn.enabled": "Show GN",
   "showHn.priority": "Show HN 우선순위",
+  "showGn.priority": "Show GN 우선순위",
   "showHn.requireEvidence": "Show HN AI 흔적",
+  "showGn.requireEvidence": "Show GN AI 흔적",
   risingFreshDays: "지금 뜨는 확인 기간(일)",
 };
 
@@ -57,7 +60,7 @@ const STUB_TEXT_MODES: Record<string, string> = { off: "꺼짐", shadow: "관측
 const PROVIDERS: Record<string, string> = { abcllm: "abcllm · 직접 연결 계약", "claude-cli": "Claude CLI", "grok-cli": "Grok CLI" };
 
 const CHECKBOXES = new Set(["excludeForks", "excludeOrganizations", "holdAmbiguous", "agentEvidenceEnabled",
-  "agentEvidenceEnforce", "secondReviewEnabled", "secondReviewIncludeAiHeld", "showHn.enabled", "showHn.requireEvidence"]);
+  "agentEvidenceEnforce", "secondReviewEnabled", "secondReviewIncludeAiHeld", "showHn.enabled", "showHn.requireEvidence", "showGn.enabled", "showGn.requireEvidence"]);
 
 function shown(key: string, value: string | undefined): string {
   if (CHECKBOXES.has(key)) return value === "on" ? "켬" : "끔";
@@ -76,13 +79,13 @@ export function describeChanges(before: FieldValues, after: FieldValues): string
   const differs = (key: string) => (before[key] ?? "") !== (after[key] ?? "");
 
   // 신호는 행 단위라 한 줄로 — 무엇이 바뀌었는지는 표가 보여 준다
-  if (keys.some((key) => (key.startsWith("query.") || key.startsWith("showHn.") || key === "queryCount") && differs(key))) {
+  if (keys.some((key) => (key.startsWith("query.") || key.startsWith("showHn.") || key.startsWith("showGn.") || key === "queryCount") && differs(key))) {
     const added = (rows: FieldValues) => Object.keys(rows).filter((key) => /^query\.\d+\.label$/.test(key) && rows[key].trim()).length;
     const delta = added(after) - added(before);
     changes.push(delta > 0 ? `검색 신호 +${delta}` : delta < 0 ? `검색 신호 ${delta}` : "검색 신호");
   }
   for (const key of Object.keys(SCALARS)) {
-    if (key.startsWith("showHn.") || !differs(key)) continue;
+    if (key.startsWith("showHn.") || key.startsWith("showGn.") || !differs(key)) continue;
     changes.push(`${SCALARS[key]} ${shown(key, before[key])} → ${shown(key, after[key])}`);
   }
   for (const [key, label] of Object.entries(LISTS)) {

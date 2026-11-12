@@ -397,7 +397,14 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-09 admin/models/devices/cli-actions.ts: saveCliTaskModelAction(CLI 순위 모델·강도)·saveCliStageModelAction(소개 검수 CLI 모델·강도) 둘이 더해져 119.
   // 2026-11-09 admin/audit/actions.ts: saveRecheckLimits(공개분 변경 재판정 한도를 재판정 탭에서 저장 — 실시간 한도와 같은 saveRuntimeSettings) 하나가 더해져 120.
   // 2026-11-11 admin/models/tasks/assist-actions.ts: saveAssistControlAction(LLM 보강 제어 — 보강 일마다 단계·보내기·반영) 하나가 더해져 121.
-  expect(wrapped).toBe(121);
+  // 2026-11-11 실시간 한도 개편 admin/models/limits/actions.ts: saveRuntimeLimits(한 화면의 바뀐 칸을 그룹 여럿 한 TX 로 저장) 하나가 더해져 122.
+  // 2026-11-12 운영 콘솔 조각 2a admin/flow/task-keep-actions.ts: 할 일 「사유 남기고 유지」·「그대로 두기」(keepConsoleTaskAction) 하나.
+  // 2026-11-12 운영 콘솔 조각 3b admin/review/batches/actions.ts: 사람 확인 묶음의 표본 뽑기·표본 판정·일괄 결정·묶음째 되돌리기 넷이 더해져 127.
+  // 2026-11-12 운영 콘솔 조각 3a admin/models/compare/actions.ts: requestSampleComparisonAction(표본 비교 요청 — 계약 준비·비교 줄·감사) 하나가 더해져 128.
+  // 2026-11-12 운영 콘솔 조각 4a admin/sources/actions.ts: 잡 주기 저장(saveJobIntervalAction)·글 목록 수집원 저장(saveFeedSourceAction)·
+  // 수집원 미리 보기(previewFeedSourceAction — 쓰지 않지만 같은 관문) 셋이 더해져 131.
+  // 2026-11-12 운영 콘솔 통합: 4a(수집·작업 — 주기 저장·수집원 저장·미리 보기 셋)와 4b(알림 설정 저장 하나)를 합쳐 132.
+  expect(wrapped).toBe(132);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

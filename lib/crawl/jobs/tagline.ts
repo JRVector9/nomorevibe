@@ -1,7 +1,7 @@
 import { modelRequestBudget, modelRouteTimeoutMs } from "@/lib/llm/model-registry";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
 import { taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
@@ -70,25 +70,34 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
     const remaining = tickRemaining(ctx, JOB, startedAt);
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
-    const concurrency = modelRequestBudget(JOB).concurrency, callMs = modelRouteTimeoutMs(JOB);
+    // 「동시에」(칸 수를 적은 묶음)면 칸 수의 합만큼 함께 돈다 — 그 밖은 예전처럼 단계 동시 수(TextTaskRanks.lanes)
+    const concurrency = ranks.lanes(modelRequestBudget(JOB).concurrency), callMs = modelRouteTimeoutMs(JOB);
     let written = 0, empty = 0, failed = 0, released = 0, blocked = "";
     /** 이 틱에 넘긴 후보(같은 작업의 미룸) — 다시 고르지 않는다 */
     const passed = new Set<number>();
+    // A completed cache reuse or a concurrently changed source must not monopolize this tick.
+    const seen = new Set<number>();
+    // Exclusion is not completion: retain CAS rejects and candidate-local deferrals until the next tick.
+    const unresolved = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
-      const tasks = (await pendingTaglines(batch, { skipBusy: true, exclude: [...passed] }))
-        .filter(task => !passed.has(task.candidate.id));
+      const tasks = (await pendingTaglines(batch, { skipBusy: true, exclude: [...seen] }))
+        .filter(task => !seen.has(task.candidate.id));
       if (tasks.length === 0) {
-        ctx.log("tagline.done", { written, empty, failed, released, passed: passed.size, drained: true });
-        return { done: true };
+        const drained = unresolved.size === 0;
+        ctx.log("tagline.done", { written, empty, failed, released, passed: passed.size, unresolved: unresolved.size, drained });
+        return { done: drained };
       }
 
       let next = 0, skipped = false;
+      const roundStart = written + empty + failed + passed.size;
       const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
             if (skipped || blocked || ranks.exhausted || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
+            seen.add(task.candidate.id);
+            unresolved.add(task.candidate.id);
             try {
               const { candidate, document, written: stored } = task;
               const evidence = taglineEvidence(candidate.repo, document);
@@ -105,12 +114,14 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 const saved = await recordTaglineResult(task, lease, { kind: "reuse" });
                 if (saved.released) released++;
                 if (!saved.stored) return;
+                unresolved.delete(task.candidate.id);
                 continue;
               }
               // 읽을 글이 아무 데도 없다. 모델을 불러도 지을 수 없으므로 사람에게 남긴다
               if (!evidence.pageText && !evidence.readme && !evidence.pageTitle) {
                 const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: "", source: "page", model: "" });
                 if (!saved.stored) return;
+                unresolved.delete(task.candidate.id);
                 empty++;
                 continue;
               }
@@ -148,12 +159,18 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                   if (capacity.kind === "skipped") { skipped = true; return "stop"; }
                   result = capacity.result;
                 }
+                // The first empty reply is an unfinished phase, not the final empty cache.
+                // If ask2 cannot start in this window, keep settled ask1 for the next tick.
+                if (result.ok && !result.tagline && capacity.askOrdinal === 1) { skipped = true; return "stop"; }
                 const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
                   ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
-                if (signal.aborted) return "stop";
+                // A completed answer can outlive this tick's admission budget. The writer
+                // still checks its lease and source; external shutdown and unknown failures keep resting.
+                if (ctx.signal?.aborted || signal.aborted && !result.ok) return "stop";
                 if (!result.ok) {
                   const saved = await save({ kind: "failure", error: result.error });
                   if (!saved.stored) { skipped = capacity.kind === "result"; return "stop"; }
+                  unresolved.delete(task.candidate.id);
                   failed++;
                   // 그 후보의 실패로 남겼다(같은 증거에만 502 를 돌려주는 긴 페이지 글이 있었다 — 2026-09-20). 엔진이 모든 후보에 대해
                   // 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 후보는 다음 순위로 간다
@@ -164,17 +181,21 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 ranks.answered(binding);
                 const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: textTaskModel(JOB) });
                 if (!saved.stored) { skipped = capacity.kind === "result"; return "stop"; }
+                unresolved.delete(task.candidate.id);
                 if (!result.tagline) { empty++; return "next"; }
                 written++;
                 if (saved.released) released++;
                 return "next";
               }, { prefer });
               // 모든 순위를 이 틱에 쓸 수 없다 — 이 후보는 그대로 두고(호출·시도 기록 없음) 틱을 접는다
+              // 「동시에」에서 이 줄에 빈 칸이 없다 — 이 후보를 놓고(다음 바퀴가 다시 집는다) 이 줄만 끝낸다
+              if (attempt.kind === "idle") { seen.delete(task.candidate.id); return; }
               if (attempt.kind === "unusable") return;
               if (attempt.value === "stop") return;
             } catch (error) {
-              if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) throw error;
+              if (!ranks.skipsWork(error)) throw error;
               // 이 후보만의 미룸이다(호출·시도·실패 기록 없음) — 이 후보를 넘기고 같은 줄의 다음 후보로 간다.
+              // 「동시에」에서 고른 구성원만의 미룸도 같다(그 구성원은 이 틱 동안 쉬고 다음 후보는 남은 구성원이 받는다).
               passed.add(task.candidate.id);
               ctx.log("tagline.passed", { repo: task.candidate.repo, reason: error.reason });
             }
@@ -193,6 +214,8 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
         throw failure.reason;
       }
       if (skipped) return { done: false };
+      // 「동시에」: 장비에 빈 칸이 없다는 힌트로 모든 줄이 이 바퀴에 한 건도 못 했다 — 다음 바퀴로 훑지 않고 포화로 미룬다
+      if (ranks.poolIdle() && written + empty + failed + passed.size === roundStart) return deferredJob("model_capacity", written + empty + failed);
       if (ranks.exhausted || !ranks.usable().length) {
         // 모든 순위가 이 틱에 쉰다. 포화면 예전처럼 미루고(줄이 풀리면 곧 다시), 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
         const processed = written + empty + failed;

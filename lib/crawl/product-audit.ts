@@ -24,6 +24,7 @@ import { saveRecheckBaseline } from "./published-recheck-baseline";
 
 import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import { taskModels } from "@/lib/llm/ai-task-resolver";
+import { aiConnectionTaskAllowed } from "@/lib/llm/ai-tasks";
 import { cliEngineRevision, isCliEngineConnection, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { cliHostTargetFromConnection } from "@/lib/operations/cli-host-target";
 
@@ -105,7 +106,8 @@ export async function startProductAudit(input: {
   await ensureAiTaskModels(0);
   // 2026-11-09: 「발행분 감사 · 변경 재판정」 순위는 API 연결도 받지만 그것은 변경 재판정만 부른다(감사 직접 경로) — 사람이 연 감사는 CLI 순위 중 가장 앞의 것을
   // 시작할 때 고정한다. 감사 행은 provider·model 과 OpenCode 연결(cliSource)만 굳히고, 감사 직접 경로는 감사 행의 심사자가 qwen-direct 일 때만 묻기 때문이다
-  const live = taskModels("product-audit").filter(row => row.enabled && row.connection.enabled);
+  // 연결의 「쓸 수 있는 작업」에서 이 작업을 뺀 순위는 고르지 않는다(변경 재판정 계획과 같은 규칙 — 2026-11-12 검수 F4)
+  const live = taskModels("product-audit").filter(row => row.enabled && row.connection.enabled && aiConnectionTaskAllowed("product-audit", row.connection));
   const rank = live.find(row => row.connection.kind === "cli");
   if (!rank && live.length) return { ok: false, error: "사람이 연 감사는 OpenCode·Claude CLI 순위로 시작합니다 — API 연결 순위는 변경 재판정만 씁니다. "
     + "「발행분 감사 · 변경 재판정」에 CLI 순위를 하나 더한 뒤 시작하세요." };

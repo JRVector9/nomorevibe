@@ -4,12 +4,15 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
-import { aiTaskSupportsWorkloadPool } from "@/lib/llm/ai-task-execution-config";
-import { AI_TASK_IMPORT_CONFIRM, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
+import { aiTaskSupportsPool } from "@/lib/llm/ai-task-execution-config";
+import { AI_TASK_IMPORT_CONFIRM, aiModelDisplayName, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
 import { aiTaskSlotRevision, aiTaskTargetLabel, previewAiTaskImport, readAiTasksAdminView, type AiTaskSlotView } from "@/lib/operations/admin-ai-tasks-repository";
 import { readAssistControls } from "@/lib/operations/llm-assist-controls";
+import { JOB_CONCURRENCY_CONTROL, readSettingsControl } from "@/lib/operations/admin-runtime-settings";
+import { SettingsFieldsForm } from "../limits/SettingsFieldsForm";
 import { isRetiredAiTask, RETIRED_AI_TASKS } from "@/lib/llm/ai-tasks";
 import { readAiTaskExecutionAdminViews } from "@/lib/operations/admin-ai-task-execution";
+import { readPoolHelpContext } from "@/lib/operations/pool-help-read";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { PageStamp } from "../../components/PageStamp";
 import { TaskExecutionForm, type TaskRuntimeLine } from "./TaskExecutionForm";
@@ -17,7 +20,6 @@ import { TaskImportCard } from "./TaskImportCard";
 import { TaskAssignSlot } from "./task-assign-slot";
 import { AssistControlsCard } from "./AssistControlsCard";
 import { ClearRecordsButton } from "./ConnectionButtons";
-import { modelPickerConnectionLabel } from "../model-picker-display";
 import "../llm-ops.css";
 import "./tasks.css";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
@@ -59,12 +61,15 @@ export default async function AiTasksPage({ searchParams }: Props) {
   const editId = one(params.edit);
   if (UUID.test(editId)) redirect(`/admin/models/llm?edit=${editId}#conn-${editId}`);
   const now = new Date();
-  const [view, preview, executionRead, assist] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null),
-    readAiTaskExecutionAdminViews().then(executions => ({ executions, failed: false }), () => ({ executions: [], failed: true })), readAssistControls()]);
+  const [view, preview, executionRead, assist, concurrency, poolHelp] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null),
+    readAiTaskExecutionAdminViews().then(executions => ({ executions, failed: false }), () => ({ executions: [], failed: true })), readAssistControls(),
+    readSettingsControl(JOB_CONCURRENCY_CONTROL),
+    // 「동시에」 도움말의 숫자(장비 한도 · 실시간 한도 · 수집·판정 설정) — 읽기만, 못 읽으면 도움말이 「읽지 못함」이라고 적는다
+    readPoolHelpContext().catch(() => null)]);
   const readOnly = adminWorkspaceReadOnly();
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
-  const modes = executionRead.executions.filter(execution => aiTaskSupportsWorkloadPool(execution.task, execution.slot) || execution.mode !== "fallback");
+  const modes = executionRead.executions.filter(execution => aiTaskSupportsPool(execution.task, execution.slot) || execution.mode !== "fallback");
   const pooled = modes.filter(execution => execution.mode === "workload_pool").length;
   const slotOf = (task: string, slot: number) => view.slots.find(entry => entry.task.id === task && entry.slot === slot);
   // 없앤 작업(예: 한국어 소개 번역 · 직접 경로)의 남은 순위 행 — 실행 쪽은 읽지 않는다. 칸마다 지우기만 받는다
@@ -79,7 +84,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
     {errors.map(([key, error]) => <p key={key} role="alert" className="llm-notice">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
     {unread.length > 0 && <p role="status" data-unread={unread.length} className="llm-notice">
       모델 목록을 못 읽은 서버 — {unread.map((row, index) => <span key={row.id}>{index > 0 && ", "}<Link href={`/admin/models/llm?edit=${row.id}#conn-${row.id}`} prefetch={false}
-        className="font-semibold underline">{modelPickerConnectionLabel(view.connections.find(connection => connection.id === row.id)!)}</Link>({row.reason})</span>)}. 이 서버의 모델은 순위 선택지에 없습니다 — 이름을 눌러 LLM 운영에서 키를 넣거나 「다시 읽기」를 누르세요.</p>}
+        className="font-semibold underline">{aiModelDisplayName(view.connections.find(connection => connection.id === row.id)!)}</Link>({row.reason})</span>)}. 이 서버의 모델은 순위 선택지에 없습니다 — 이름을 눌러 LLM 운영에서 키를 넣거나 「다시 읽기」를 누르세요.</p>}
     <section id="tasks" className="min-w-0 scroll-mt-6" aria-label="작업 배정 — 설정과 실제">
       <Suspense fallback={<p aria-busy="true" className="notice">작업 순위와 최근 1시간 호출을 읽는 중…</p>}>
         <TaskAssignSlot view={view} executions={executionRead.failed ? null : executionRead.executions} readOnly={readOnly} />
@@ -109,10 +114,21 @@ export default async function AiTasksPage({ searchParams }: Props) {
             return <section key={`${execution.task}#${execution.slot}`} id={`mode-${execution.task}-${execution.slot}`} className="mt-task-mode-item grid gap-1 scroll-mt-6">
               <h3 className="text-[14px] font-semibold">{slot.label}</h3>
               <TaskExecutionForm key={`${execution.task}#${execution.slot}#${execution.revision ?? "default"}`} view={execution} label={slot.label} options={[...slot.options]}
-                connections={view.connections} readOnly={readOnly} runtime={runtimeLine(slot, now)} />
+                connections={view.connections} readOnly={readOnly} runtime={runtimeLine(slot, now)} help={poolHelp} />
             </section>;
           })}
       </div>
+    </details>
+    {/* 동시 업무(runtime_settings jobs.second-review.consumerConcurrency · jobs.crawl-publish.classifierConcurrency) — 2026-11-11 실시간 한도 개편으로 옮겼다 */}
+    <details className={FOLD}>
+      <summary className={SUMMARY}><h2>동시 업무</h2><span className="text-[13px] font-normal text-fg-3">2차 심사 소비자 {concurrency.fields[0]?.input ?? "?"}건 · 발행 분류 묶음 {concurrency.fields[1]?.input ?? "?"}개
+        — 호출 상한·틱 시간은 실시간 한도</span></summary>
+      <section id="concurrency" className="grid gap-2 px-3 pb-3 scroll-mt-6">
+        <p className="text-[13px] text-fg-3">작업 하나가 한꺼번에 맡는 일의 수입니다. 실제 동시 호출은 장비 한도가 막습니다. 저장하면 30초 안에 다음 틱부터 씁니다.</p>
+        {concurrency.rowError && <p role="alert" className="text-[13px] text-red-600">실시간 한도 행을 읽지 못했습니다({concurrency.rowError}) — 기본값을 보이며 저장할 수 없습니다.</p>}
+        <SettingsFieldsForm group="jobs" fields={concurrency.fields} revision={concurrency.revision} readOnly={readOnly || concurrency.revision === null}
+          units={{ "jobs.second-review.consumerConcurrency": "건", "jobs.crawl-publish.classifierConcurrency": "개" }} />
+      </section>
     </details>
     <section id="connections" className={`${FOLD} grid gap-1 px-3 py-2`} aria-labelledby="connections-title">
       <h2 id="connections-title" className="text-[15px] font-semibold">AI 연결</h2>

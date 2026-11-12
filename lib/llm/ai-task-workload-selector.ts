@@ -9,7 +9,7 @@ import { deviceFits, deviceModelQuotaFits, deviceRoleRank, deviceRouteQuotaFits 
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { taskPoolEngineKey } from "./ai-task-pool-identity";
 import { aiTaskUsesCliEngine, cliEngineRevision, type CliEngineSource } from "./cli-engine-config";
-import { aiTaskSupportsWorkloadPool, type AiTaskExecutionConfig, type AiTaskWorkloadCandidate, type AiTaskWorkloadChoice } from "./ai-task-execution-config";
+import { aiTaskSupportsPool, type AiTaskExecutionConfig, type AiTaskWorkloadCandidate, type AiTaskWorkloadChoice } from "./ai-task-execution-config";
 
 const cursors = new Map<string, number>();
 
@@ -44,11 +44,18 @@ function sameCliEngineSource(left: CliEngineSource, right: CliEngineSource): boo
  * Device state uses grantOne's existing CTE/role/helper rules. Concurrent observations may race;
  * only existing requestSlot + domain claim/dispatch transactions authorize work and enforce caps.
  * Existing waiting/resumed identities are selected first and never replaced by a newly idle route.
+ *
+ * queueWhenFull(2026-11-12 「동시에」 검토): 지금 빈 칸이 있는 구성원이 없으면 줄에 설 구성원(압력이 가장 낮은 것)을 고른다.
+ * 순위대로는 requestSlot 이 대기 행을 남기고 칸이 비면 grantOne 이 차례대로 예약해 다음 틱이 이어받는다 — 힌트가 빈 칸만 고르면
+ * 「동시에」는 그 줄에 한 번도 서지 못해 같은 장비를 쓰는 다른 경로(줄에 선 대기 행)에 계속 밀린다. 줄에 서지 못하는 구성원
+ * (장비 없음·꺼짐, 경로 몫·모델 상한이 참 — requestSlot 이 대기 행 없이 거절, 도우미 닫힘·가득)은 고르지 않는다. 판정은 여전히 장부다.
+ * rotate: 압력보다 돌림 차례를 먼저 본다 — 장부에 행을 쓰지 않고 잇달아 고르는 쪽(2차 표 배정)이 같은 장비 상태를 보고 한 구성원에 몰리지 않게.
  */
 export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate>(config: AiTaskExecutionConfig,
-  candidates: readonly T[], options: Readonly<{ preferIdentity?: string | null; preferMemberId?: string | null; executor?: ProductTransaction }> = {}): Promise<AiTaskWorkloadChoice<T> | null> {
+  candidates: readonly T[], options: Readonly<{ preferIdentity?: string | null; preferMemberId?: string | null; executor?: ProductTransaction;
+    queueWhenFull?: boolean; rotate?: boolean }> = {}): Promise<AiTaskWorkloadChoice<T> | null> {
   if (config.mode !== "workload_pool") return null;
-  if (!aiTaskSupportsWorkloadPool(config.task, config.slot)) throw new ModelCapacityDeferredError("assignments_unavailable");
+  if (!aiTaskSupportsPool(config.task, config.slot)) throw new ModelCapacityDeferredError("assignments_unavailable");
   if (config.revision === null || config.members.length < 1 || config.members.length > 4)
     throw new ModelCapacityDeferredError("assignments_unavailable");
   const task = aiTask(config.task);
@@ -97,33 +104,37 @@ export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate
       }
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "disabled" ? "disabled" : "draining");
       const [states, settings] = await Promise.all([readModelCapacityDeviceStates(tx), listModelCapacityDevices(tx)]);
-      const ready = eligible.flatMap(row => {
+      const judged = eligible.flatMap(row => {
         const state = states.find(item => item.deviceId === row.route.groupId);
         const configured = settings.find(item => item.deviceId === row.route.groupId);
         if (!state || configured && !configured.enabled) return [];
         const helper = state.helpers?.filter(item => item.routeId === row.candidate.routeId
           && item.provider === row.candidate.provider && item.model === row.candidate.identity) ?? [];
+        // A closed or full helper route is refused as helper_ineligible without queuing.
+        if (helper.some(item => !item.ok || item.active >= item.maxSlots)) return [];
         // Route quota (step 2) hint, same expression as deviceCandidateSql/deviceRouteQuotaGateSql: a route at its cap on this device
         // would be refused as route_quota without queuing, and other routes' unmet guarantees stay free. SQL stays the authority.
         const quota = deviceRouteQuotaFits(state, row.candidate.routeId);
-        if (!quota.fits) return [];
         // Model cap (0170) hint, same expression as deviceModelQuotaGateSql: the ledger model string on this device at its cap would be
         // refused as model_quota without queuing. Absolute, whatever the route guarantee says.
-        if (!deviceModelQuotaFits(state, row.route.model).fits) return [];
+        const model = deviceModelQuotaFits(state, row.route.model);
+        if (quota.atCap || model.atCap) return [];
         // Match capacity-devices effectiveRank: helper routes never receive the rank-1 bypass. A route under its guarantee
         // passes the secondary bound like rank 1 (non-helper only), as in deviceCandidateSql.
         const roleRank = deviceRoleRank(configured?.roles ?? [], row.candidate.routeId);
         const rank = helper.length ? Math.max(roleRank, 2) : quota.underGuarantee ? 1 : roleRank;
-        if (!deviceFits({ active: state.active, limitSlots: state.limitSlots, rank,
-          secondaryActive: state.secondaryActive, secondaryBound: state.secondaryBound })) return [];
-        if (helper.some(item => !item.ok || item.active >= item.maxSlots)) return [];
-        return [{ ...row, pressure: (state.active + state.waiting) / state.limitSlots }];
+        const fits = quota.fits && model.fits && deviceFits({ active: state.active, limitSlots: state.limitSlots, rank,
+          secondaryActive: state.secondaryActive, secondaryBound: state.secondaryBound });
+        return [{ ...row, fits, pressure: (state.active + state.waiting) / state.limitSlots }];
       });
-      if (!ready.length) return null;
+      const ready = judged.filter(row => row.fits);
+      // 빈 칸이 없으면(그리고 부른 쪽이 원하면) 줄에 설 수 있는 구성원 중에서 — requestSlot 이 대기 행을 쓴다
+      const pool = ready.length ? ready : options.queueWhenFull ? judged : [];
+      if (!pool.length) return null;
       const key = `${config.task}#${config.slot}@${config.revision}`, cursor = cursors.get(key) ?? 0;
-      ready.sort((a, b) => a.pressure - b.pressure
-        || (a.member.position - 1 - cursor + 4) % 4 - (b.member.position - 1 - cursor + 4) % 4);
-      const chosen = ready[0];
+      const turn = (row: typeof pool[number]) => (row.member.position - 1 - cursor + 4) % 4;
+      pool.sort((a, b) => options.rotate ? turn(a) - turn(b) || a.pressure - b.pressure : a.pressure - b.pressure || turn(a) - turn(b));
+      const chosen = pool[0];
       if (cursors.size >= 256 && !cursors.has(key)) cursors.delete(cursors.keys().next().value!);
       cursors.set(key, chosen.member.position % 4);
       return result(chosen);

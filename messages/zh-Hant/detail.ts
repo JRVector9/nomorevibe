@@ -122,6 +122,7 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "readme.excerpt": "已儲存的 README 摘錄",
   "readme.body": "README 內容",
   "readme.empty": "README 沒有可顯示的內容。",
+  "readme.truncated": "以上為 README 的開頭部分。其餘內容請閱讀原文。",
   "languages.title": "語言組成",
   "languages.other": "其他",
   "languages.rest": "{name} 等",

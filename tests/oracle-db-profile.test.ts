@@ -72,10 +72,10 @@ it('lets every job-running Oracle principal read the admin runtime settings, reg
     expect(ORACLE_DB_PROFILES[service].tables.runtime_settings, service).toEqual({ select: true });
     expect(ORACLE_DB_PROFILES[service].tables.model_registry_overrides, service).toEqual({ select: true });
   }
-  for (const service of ['scheduler', 'attest'] as const) {
-    expect(ORACLE_DB_PROFILES[service].tables.runtime_settings).toBeUndefined();
-    expect(ORACLE_DB_PROFILES[service].tables.model_registry_overrides).toBeUndefined();
-  }
+  // scheduler 는 잡 주기 덮어쓰기(jobs.<잡>.intervalMs)만 읽는다(2026-11-12 소유자 결정) — 모델 설정·계약은 여전히 없다
+  expect(ORACLE_DB_PROFILES.scheduler.tables.runtime_settings).toEqual({ select: true });
+  expect(ORACLE_DB_PROFILES.attest.tables.runtime_settings).toBeUndefined();
+  for (const service of ['scheduler', 'attest'] as const) expect(ORACLE_DB_PROFILES[service].tables.model_registry_overrides, service).toBeUndefined();
   // model_serving_contracts: 소유자 결정(2026-10-30) 으로 읽기 권한 — api_key_ciphertext 는 암호문이고 box key 는 Oracle 에 없다
   for (const service of ['translation', 'product-health', 'site-evidence', 'official-news'] as const) expect(ORACLE_DB_PROFILES[service].tables.model_serving_contracts, service).toEqual({ select: true });
   for (const service of ['scheduler', 'attest'] as const) expect(ORACLE_DB_PROFILES[service].tables.model_serving_contracts, service).toBeUndefined();
@@ -93,7 +93,8 @@ it('lets every job-running Oracle principal read the admin runtime settings, reg
   expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_agent_scan;');
   expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_capacity_supervisor;');
   expect(rendered).toContain('GRANT SELECT ON TABLE public.model_serving_contracts TO nomorevibe_oracle_translation;');
-  expect(rendered.match(/public\.runtime_settings TO/g)).toHaveLength(7);
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_scheduler;');
+  expect(rendered.match(/public\.runtime_settings TO/g)).toHaveLength(8);
 });
 
 it('lets every job-running Oracle principal read the device admission settings (PR 1b, 0153) and nobody write them', () => {

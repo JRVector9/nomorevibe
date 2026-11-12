@@ -67,3 +67,18 @@ describe('migration journal order', () => {
     expect(migration).not.toMatch(/ALTER TABLE|DROP |CREATE (OR REPLACE )?(FUNCTION|TRIGGER)|UPDATE model_capacity/);
   });
 });
+
+describe("운영 콘솔 개편 migration(0179·0180·0181, 2026-11-12 통합)", () => {
+  // 0177·0178 은 비워 둔 번호다(0159 처럼). drizzle 은 journal 의 tag 로 파일을 읽고 when 으로 적용 여부를 정하며, 배포 관문(deploy_shared_images.py
+  // migration_journal)은 journal 항목 수·마지막 when·해시를 본다 — 번호가 건너뛰어도 둘 다 받아들인다. journal 은 idx·when 이 함께 커져야 하므로
+  // 0177·0178 은 다시 쓰지 않는다 — 다음 migration 은 0182(when 1794355200006 이상)다.
+  it("keeps the console migrations after 0176 with the next whens, each taking a 5s lock timeout first", async () => {
+    const { readFileSync } = await import('node:fs');
+    const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as { entries: { idx: number; when: number; tag: string }[] };
+    const tags = ['0176_geeknews_discovery_source', '0179_task_pool_member_slots', '0180_model_sample_comparisons', '0181_human_batch_gates'];
+    const rows = tags.map(tag => journal.entries.find(entry => entry.tag === tag)!);
+    expect(rows.map(row => [row.idx, row.when])).toEqual([[176, 1794355200000], [179, 1794355200003], [180, 1794355200004], [181, 1794355200005]]);
+    expect(journal.entries.some(entry => entry.idx === 177 || entry.idx === 178)).toBe(false);
+    for (const tag of tags.slice(1)) expect(readFileSync(`drizzle/${tag}.sql`, 'utf8').split('--> statement-breakpoint')[0], tag).toContain("SET LOCAL lock_timeout = '5s';");
+  });
+});

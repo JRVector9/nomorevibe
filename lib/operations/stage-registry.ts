@@ -49,6 +49,7 @@ export const PIPELINE_STAGES = Object.freeze([
   // 들어오는 곳 — pipelineFlow 의 discover 는 소스 합계라 소스마다 잇지 않는다
   stage({ key: "github", group: "source", label: "GitHub 검색", code: "crawl-seed", jobs: ["crawl-seed", "crawl-ko-apply"], role: "crawler" }),
   stage({ key: "show-hn", group: "source", label: "Show HN", code: "hn-show-seed", jobs: ["hn-show-seed"], role: "crawler" }),
+  stage({ key: "show-gn", group: "source", label: "Show GN", code: "gn-show-seed", jobs: ["gn-show-seed"], role: "crawler" }),
   // X 는 시험 스크립트(lib/social/x-pilot.ts)만 있고 카탈로그 잡이 없다 — 연결은 v8 PR9
   stage({ key: "x", group: "source", label: "X", code: "x-pilot", jobs: [], role: null, connected: false }),
 
@@ -110,6 +111,7 @@ export type StageKey = (typeof PIPELINE_STAGES)[number]["key"];
  */
 export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   heartbeat: "스케줄러가 살아 있다는 관측 — 후보·제품을 처리하지 않는다",
+  "console-alerts": "운영 홈 할 일의 휴대폰 알림 줄 — 할 일 규칙을 읽어 알림만 열고 닫는다(후보·제품을 처리하지 않는다)",
   "grok-session-check": "Grok 로그인 토큰 유지 — 심사 결과를 만들지 않는다",
   "product-search-health": "검색 데이터 자동 점검 — 읽기만 하고 고치지 않는 관측",
   "github-integration-reconcile": "GitHub 연동 재조회 — 읽기 전용 해시·검색 사본 대조",

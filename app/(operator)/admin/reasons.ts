@@ -19,6 +19,7 @@ export const REASON_LABELS: Record<string, string> = {
   second_review_split: "2차 심사 갈림 — 사람 확인",
   second_review_split_qwen_reject: "2차 갈림 — Qwen-v2 세 번째 표도 거부",
   ai_review_exhausted: "1차 AI 심사 재시도 소진 — 사람 확인",
+  ai_review_skip_exhausted: "1차 AI 심사가 같은 까닭으로 계속 건너뜀 — 사람 확인",
   source_refresh_failed: "GitHub 원본 재수집 실패 — 사람 확인",
   repo_deleted: "레포 삭제됨",
   suspected_spam: "스팸·악성 의심",

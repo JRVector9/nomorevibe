@@ -257,6 +257,27 @@ it("dispatches the real ordered eight-member Korean job and ACKs only quality-ch
   });
 }), 20_000);
 
+it("stores a physically settled result after the tick admission budget ends and does not resend it next tick", exercise(async () => {
+  const { products: [product] } = await seed();
+  await server(async ({ bodies, setReply }) => {
+    let admit = true;
+    setReply(response => { admit = false; response.end(JSON.stringify(replyBody())); });
+    await tracked(requestJob(jobName));
+
+    expect(await tracked(runJob(jobName, (ctx: JobContext<null>) => writeKoreanTaglines({ ...ctx,
+      hasBudget: () => admit && ctx.hasBudget() }), { requestedOnly: true, roleLease: role })))
+      .toMatchObject({ status: "completed", done: false });
+
+    expect(bodies).toHaveLength(1);
+    expect((await admin`SELECT state,terminal_evidence->>'kind' AS terminal FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)[0])
+      .toEqual({ state: "settled", terminal: "product_tagline_ko_gateway_terminal" });
+    expect(await admin`SELECT tagline_ko,attempts,error_code FROM product_korean_taglines WHERE product_id=${product.id}`)
+      .toEqual([{ tagline_ko: "문서를 관리하는 도구", attempts: 1, error_code: null }]);
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(1);
+  });
+}), 20_000);
+
 it("admits the actual versioned translation role after local stored-result readback and preserves disabled legacy behavior", exercise(async () => {
   const first = await seed();
   await server(async ({ bodies }) => {

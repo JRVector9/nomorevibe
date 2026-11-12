@@ -16,6 +16,10 @@ export default defineConfig({
     maxWorkers: Math.max(1, Math.min(availableParallelism() - 1, 20)),
   },
   resolve: {
-    alias: { "@": path.resolve(__dirname) },
+    alias: {
+      "@": path.resolve(__dirname),
+      // 관리자 글꼴(app/(operator)/admin/console-fonts.ts) — 진짜 함수는 Next 컴파일러가 빌드 때 넣는다. 시험에서는 빈 값
+      "next/font/google": path.resolve(__dirname, "tests/stubs/next-font-google.ts"),
+    },
   },
 });

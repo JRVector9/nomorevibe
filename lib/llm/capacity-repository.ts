@@ -631,12 +631,14 @@ async function localModelFence(tx: ProductTransaction, logicalKey: string, ownId
   return Boolean(blocked);
 }
 
-/** Fixed AI1 logical fence starts with the original waiting INSERT, not dispatch. */
-export async function requestAi1ModelSlot(value: ModelCapacityRequest, candidateId: number): Promise<ModelSlotResult> {
+/** Fixed AI1 logical fence starts with the original waiting INSERT, not dispatch.
+ * memberCap: 1차 「동시에」 구성원의 칸 수를 이 입장 TX 에서 원자적으로 지킨다(2026-11-12 검수 F2, firstReviewMemberSlotCap). */
+export async function requestAi1ModelSlot(value: ModelCapacityRequest, candidateId: number,
+  options: Readonly<{ memberCap?: ModelSlotMemberCap | null }> = {}): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value);
   fixedAi1Identity(checked, candidateId);
-  return requestSlot(checked, `ai1:${candidateId}`);
+  return requestSlot(checked, `ai1:${candidateId}`, undefined, undefined, undefined, { memberCap: options.memberCap ?? null });
 }
 
 /** AI1 게이트웨이 kind 의 고정 identity. provider 는 abcllm 계약 또는 local-direct 엔진이다(PR 3b-C, 0157). */
@@ -658,8 +660,27 @@ async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: strin
   return !!blocked;
 }
 
+/**
+ * 1차 「동시에」 구성원의 칸 수(2026-11-12 검수 F2) — 새 의도의 대기 행을 쓰기 전에 이 TX(control FOR UPDATE 아래)에서 그 구성원의 살아 있는 장부 행을 센다.
+ * load 는 부르는 쪽(lib/crawl/agent-review-repository.ts firstReviewMemberSlotCap)이 고르기 힌트와 같은 기준으로 준다. 칸 수에 닿았으면 대기 행 없이
+ * model_quota(모델 범위 — 다음 후보는 남은 구성원·예비가 받는다)로 미룬다. 이미 줄에 선 자기 요청(같은 requestId)은 세지 않는다.
+ */
+export type ModelSlotMemberCap = Readonly<{ maxSlots: number; load: (tx: ProductTransaction) => Promise<number> }>;
+type RequestSlotOptions = Readonly<{
+  /**
+   * 순위 넘김(2026-11-12 검수 F1): 같은 일의 앞 순위(다른 모델)가 남긴 「아직 보내지 않은」 자기 대기 행이 이 요청을 fence 로 막을 때, 이 요청이 바로 예약을
+   * 받을 수 있으면 같은 TX 에서 그 대기 행을 거두고(wait_cancelled) 이 요청을 예약한다. 받을 수 없으면 아무것도 바꾸지 않는다(앞 순위의 줄 자리를 지킨다).
+   */
+  handover?: boolean;
+  memberCap?: ModelSlotMemberCap | null;
+}>;
+/** savepoint 를 되감고 이 결과를 돌려준다(순위 넘김을 시험했지만 이 요청이 예약을 받지 못했다) */
+class RankHandoverUndo extends Error {
+  constructor(readonly result: ModelSlotResult) { super("rank_handover_undo"); }
+}
+
 function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, memberKeys?: string[], crawl?: CrawlTaglineInput,
-  websearch?: WebsearchQueryInput): Promise<ModelSlotResult> {
+  websearch?: WebsearchQueryInput, options: RequestSlotOptions = {}): Promise<ModelSlotResult> {
   return transaction(async tx => {
     const state = await control(tx);
     if (state.fenced) return { kind: "deferred", reason: "draining" }; // fenced: 만료 정리·대기 행·예약을 쓰지 않는다
@@ -678,91 +699,159 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       if (memberKeys && !isDeepStrictEqual(original.logicalMemberKeys, memberKeys)) fail("model_capacity_logical_work_mismatch");
     }
     await expireRequests(tx, state);
-    if (memberKeys && await (crawl ? crawlTaglineFence(tx, crawl, checked.requestId) : websearch ? websearchQueryFence(tx, websearch, checked.requestId)
-      : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
-      : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
-      : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
-        : checked.routeId === "product-intro-check" || checked.routeId === "crawl-publish-classify" ? introCheckFence(tx, memberKeys, checked.requestId, checked.routeId)
-          : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
-    if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("direct:")
-      ? localModelFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("ai2:")
-      ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
-        ? textProfileFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("bg:")
-          ? cliKeyFence(tx, logicalKey, checked.routeId, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
-    const [existing] = await tx.select({ ...getTableColumns(modelCapacityRequests),
-      live: sql<boolean>`${modelCapacityRequests.reservedUntil} > clock_timestamp()` }).from(modelCapacityRequests)
-      .where(eq(modelCapacityRequests.requestId, checked.requestId));
-    if (existing) {
-      sameIdentity(existing, checked);
-      if (existing.state === "reserved" && existing.live) return { kind: "granted", reservation: reservation(existing) };
-      if (existing.state === "reserved" && await expireReservation(tx, existing)) return { kind: "deferred", reason: "withdrawn" };
-      if (existing.state !== "waiting") return { kind: "deferred", reason: existing.state === "withdrawn" ? "withdrawn" : "dispatched" };
+    const fenced = (executor: ProductTransaction) => requestFenced(executor, checked, logicalKey, memberKeys, crawl, websearch);
+    if (await fenced(tx)) {
+      if (!options.handover || logicalKey === null) return { kind: "deferred", reason: "capacity" };
+      return handOverRankWaiting(tx, checked, logicalKey, memberKeys ?? null, async savepoint =>
+        await fenced(savepoint) ? null : admitRequest(savepoint, state, checked, logicalKey, memberKeys, options.memberCap ?? null));
     }
-    if (state.mode !== "open") return { kind: "deferred", reason: state.mode };
-    if (!state.policy) return fail("model_capacity_policy_missing");
-    const route = state.policy.routes.find(route => route.routeId === checked.routeId
-      && route.provider === checked.provider && route.model === checked.model);
-    if (!route) return { kind: "deferred", reason: "unmapped" };
-    if (!await deviceConfigured(tx, state.policy, route.groupId)) return { kind: "deferred", reason: "device_unconfigured" };
-    // 결과 미확정 점유(2026-11-10): 유지 시간을 control 잠금 아래에서 한 번 읽어 이 TX 의 모든 칸 판정(도우미·경로 몫·모델 상한·grantOne)에 쓴다.
-    // 저장 즉시 다음 입장부터 바뀐다(30초 스냅숏을 거치지 않는다). 정책 변경(옛 세대) 판정과 작업 키 fence 는 이 값을 쓰지 않는다(10-30 그대로).
-    const unknownHoldMs = await readModelCapacityUnknownHoldMs(tx);
-    // 도우미 경로(PR 2a): 닫혀 있거나(신호 없음·만료·다른 epoch·판·계정, 감시자 꺼짐, 정지·mode·판정) 배정 점유가 찼으면 대기 행·event 없이 미룬다.
-    // 도우미가 아닌 경로는 0 줄이라 이 검사를 지나간다 — 우선 역할 일은 도우미 상태로 막히지 않는다.
-    const helperGates = await helperRouteGates(tx, route.groupId, checked, unknownHoldMs);
-    if (helperGates.some(gate => !gate.ok || gate.active >= gate.maxSlots)) return { kind: "deferred", reason: "helper_ineligible" };
-    // 경로 몫(step 2): 이 장비에서 이 route 가 상한에 닿았으면 줄에 서지 않고 바로 미룬다(route_quota, 모델 범위) — 호출자는 다음 순위로 넘긴다.
-    // 이미 줄에 서 있던 이 요청이면(상한이 그 사이 찼다) 그 대기 행을 같은 TX 에서 거둔다(도우미 grant-or-nothing 과 같은 wait_cancelled):
-    // 남은 대기 행은 같은 작업의 다음 순위 요청을 fence 로 막고, 나중에 예약되면 쓸 사람 없이 칸을 쥔다. 몫이 없으면 0 행이라 지나간다.
-    const ownWaiting = existing?.state === "waiting" ? existing.requestId : null;
-    if (await routeQuotaCapped(tx, state, route.groupId, checked.routeId, ownWaiting, unknownHoldMs)) {
-      await withdrawOwnWaiting(tx, existing);
-      return { kind: "deferred", reason: "route_quota" };
-    }
-    // 모델 상한(0170): 이 장비에서 이 model(장부 문자열, 공급자 무관)이 상한에 닿았으면 같은 방식으로 줄에 서지 않고 미룬다(model_quota, 모델 범위).
-    // 상한 줄이 없으면 0 행이라 지나간다 — 경로 몫이 보장한 경로라도 모델 상한은 넘지 못한다(절대 상한).
-    if (await modelQuotaCapped(tx, state, route.groupId, checked.model, ownWaiting, unknownHoldMs)) {
-      await withdrawOwnWaiting(tx, existing);
-      return { kind: "deferred", reason: "model_quota" };
-    }
-    const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
-      policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
-      .where(sql`${occupyingStateSql(modelCapacityRequests.state)} AND (
-        ${modelCapacityRequests.epoch} <> ${state.epoch} OR ${modelCapacityRequests.revision} <> ${state.revision}
-        OR ${modelCapacityRequests.policyHash} <> ${state.policyHash})`);
-    if (oldActive.some(row => !compatibleModelCapacityGeneration(state.policy!, row, state)))
-      return { kind: "deferred", reason: "policy_changed" };
-    if (!existing) {
-      const [duplicateWork] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests)
-        .where(and(eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
-          eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
-          sql`${liveStateSql(modelCapacityRequests.state)}`)).limit(1);
-      if (duplicateWork) return { kind: "deferred", reason: "capacity" };
-      const [queue] = await tx.select({ count: sql<number>`count(*)::integer` }).from(modelCapacityRequests)
-        .where(eq(modelCapacityRequests.state, "waiting"));
-      if (queue.count >= state.policy.maxWaiting) return { kind: "deferred", reason: "queue_full" };
-      const [waiting] = await tx.insert(modelCapacityRequests).values({ requestId: checked.requestId,
-        workKey: checked.workKey, ownerInstanceId: checked.owner.instanceId, ownerBootId: checked.owner.bootId,
-        class: checked.class, pool: checked.pool, routeId: checked.routeId, provider: checked.provider,
-        model: checked.model, providerBudgetId: route.providerBudgetId, groupId: route.groupId,
-        epoch: state.epoch, revision: state.revision, policyHash: state.policyHash!, state: "waiting",
-        logicalWorkKey: logicalKey, ...(memberKeys ? { logicalMemberKeys: memberKeys } : {}),
-        queueUntil: sql`clock_timestamp() + ${state.policy.queueTtlMs} * interval '1 millisecond'` }).returning();
-      await event(tx, waiting, "queued", null, "waiting");
-    }
-    await grantOne(tx, state, unknownHoldMs);
-    const [own] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
-    sameIdentity(own, checked);
-    if (own.state === "reserved") return { kind: "granted", reservation: reservation(own) };
-    // 도우미 요청은 grant-or-nothing: 이 pass 에서 예약되지 않으면 같은 TX 에서 대기 행을 거둔다. 1칸 장비에 남은 대기 행이 나중에 예약되면
-    // 쓸 사람 없이 우선 역할의 칸을 예약 TTL 동안 쥐기 때문이다(pr2-plan §2.3).
-    if (helperGates.length && own.state === "waiting") {
-      const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
-        .where(and(eq(modelCapacityRequests.requestId, own.requestId), eq(modelCapacityRequests.state, "waiting"))).returning();
-      if (withdrawn) await event(tx, withdrawn, "wait_cancelled", "waiting", "withdrawn");
-    }
-    return { kind: "deferred", reason: "capacity" };
+    return admitRequest(tx, state, checked, logicalKey, memberKeys, options.memberCap ?? null);
   });
+}
+
+/** 같은 작업 fence — 이 요청이 아닌 살아 있는 행이 같은 일(작업 키·멤버 키)을 쥐었는가. 막혔으면 true(행 없이 capacity 로 미룬다). */
+async function requestFenced(tx: ProductTransaction, checked: ModelCapacityRequest, logicalKey: string | null, memberKeys: string[] | undefined,
+  crawl: CrawlTaglineInput | undefined, websearch: WebsearchQueryInput | undefined): Promise<boolean> {
+  if (memberKeys) return crawl ? crawlTaglineFence(tx, crawl, checked.requestId) : websearch ? websearchQueryFence(tx, websearch, checked.requestId)
+    : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
+    : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
+    : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
+      : checked.routeId === "product-intro-check" || checked.routeId === "crawl-publish-classify" ? introCheckFence(tx, memberKeys, checked.requestId, checked.routeId)
+        : reasonTranslationFence(tx, memberKeys, checked.requestId);
+  if (logicalKey === null) return false;
+  return logicalKey.startsWith("direct:") ? localModelFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("ai2:")
+    ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
+      ? textProfileFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("bg:")
+        ? cliKeyFence(tx, logicalKey, checked.routeId, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId);
+}
+
+/**
+ * 순위 넘김(2026-11-12 검수 F1). 순위대로의 글 작업은 1순위 장비가 가득이면 그 요청이 대기 행으로 줄에 서고(capacity), runRanked 가 같은 일을 2순위로
+ * 넘긴다. 그런데 그 대기 행이 같은 일의 fence 라 2순위가 비어 있어도 2순위 요청이 막혔다(work_busy 로 항목 미룸). 모델·경로 상한 거절은 자기 대기 행을
+ * 거두므로 장비 총포화일 때만 생기던 일이다.
+ *
+ * 막은 행이 모두 「이 프로세스(같은 owner·boot)가 같은 경로·같은 일로 다른 모델에 세운, 한 번도 보내지 않은 대기 행」일 때만 넘긴다:
+ * savepoint 안에서 그 행들을 거두고(wait_cancelled) fence 를 다시 본 뒤 이 요청을 평소처럼 입장시킨다. 이 요청이 그 자리에서 예약을 받으면 커밋하고,
+ * 못 받으면(포화·상한·다른 막음) savepoint 를 되감아 앞 순위의 대기 행과 줄 자리를 그대로 둔다 — 이 모델은 지금 빈 칸이 없다는 답만 돌려준다
+ * (queuedAtOtherRank: 같은 일이 다른 순위로 줄에 서 있다 — capacityRefusalReason 이 이 일을 work_busy 가 아니라 포화로 본다).
+ * 예약·보냄·미확인 행, 다른 주인의 행, 같은 모델·같은 작업 키의 행은 건드리지 않는다. control FOR UPDATE 아래라 그 사이 다른 TX 가 그 대기 행을
+ * 예약하거나 보낼 수 없고, 거둔 행은 다시 예약되지 않으므로 같은 일이 두 번 보내지지 않는다.
+ */
+async function handOverRankWaiting(tx: ProductTransaction, checked: ModelCapacityRequest, logicalKey: string, memberKeys: readonly string[] | null,
+  admit: (savepoint: ProductTransaction) => Promise<ModelSlotResult | null>): Promise<ModelSlotResult> {
+  const sameWork = memberKeys
+    ? sql`${modelCapacityRequests.logicalMemberKeys} = ARRAY[${sql.join(memberKeys.map(key => sql`${key}`), sql`, `)}]::text[]`
+    : sql`${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.logicalWorkKey} = ${logicalKey}`;
+  const twins = await tx.select().from(modelCapacityRequests).where(and(
+    sql`${modelCapacityRequests.requestId} <> ${checked.requestId}`,
+    eq(modelCapacityRequests.state, "waiting"),
+    eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId), eq(modelCapacityRequests.ownerBootId, checked.owner.bootId),
+    eq(modelCapacityRequests.routeId, checked.routeId), eq(modelCapacityRequests.class, checked.class), eq(modelCapacityRequests.pool, checked.pool),
+    sql`NOT (${modelCapacityRequests.provider} = ${checked.provider} AND ${modelCapacityRequests.model} = ${checked.model})`,
+    sql`${modelCapacityRequests.workKey} <> ${checked.workKey}`,
+    sql`${modelCapacityRequests.dispatchBinding} IS NULL AND ${modelCapacityRequests.dispatchBindingHash} IS NULL
+      AND ${modelCapacityRequests.dispatchedAt} IS NULL AND ${modelCapacityRequests.terminalEvidence} IS NULL AND ${modelCapacityRequests.settledAt} IS NULL`,
+    sameWork)).orderBy(asc(modelCapacityRequests.queueOrdinal)).for("update");
+  if (!twins.length) return { kind: "deferred", reason: "capacity" };
+  try {
+    return await tx.transaction(async savepoint => {
+      for (const twin of twins) {
+        const [withdrawn] = await savepoint.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+          .where(and(eq(modelCapacityRequests.requestId, twin.requestId), eq(modelCapacityRequests.state, "waiting"))).returning();
+        if (!withdrawn) throw new RankHandoverUndo({ kind: "deferred", reason: "capacity" });
+        await event(savepoint, withdrawn, "wait_cancelled", "waiting", "withdrawn");
+      }
+      // 다른 막음(다른 주인·보낸 행·같은 작업 키)이 남았다 — 예전처럼 이 일만의 막힘이다
+      const result = await admit(savepoint);
+      if (result === null) throw new RankHandoverUndo({ kind: "deferred", reason: "capacity" });
+      if (result.kind === "granted") return result;
+      throw new RankHandoverUndo(result.reason === "capacity" ? { kind: "deferred", reason: "capacity", queuedAtOtherRank: true } : result);
+    });
+  } catch (error) {
+    if (error instanceof RankHandoverUndo) return error.result;
+    throw error;
+  }
+}
+
+/** fence 를 지난 요청의 입장 — 예전 requestSlot 의 뒷부분 그대로(대기 행 → 장비별 grant). memberCap 은 새 대기 행에만 센다(F2). */
+async function admitRequest(tx: ProductTransaction, state: Control, checked: ModelCapacityRequest, logicalKey: string | null,
+  memberKeys: string[] | undefined, memberCap: ModelSlotMemberCap | null): Promise<ModelSlotResult> {
+  const [existing] = await tx.select({ ...getTableColumns(modelCapacityRequests),
+    live: sql<boolean>`${modelCapacityRequests.reservedUntil} > clock_timestamp()` }).from(modelCapacityRequests)
+    .where(eq(modelCapacityRequests.requestId, checked.requestId));
+  if (existing) {
+    sameIdentity(existing, checked);
+    if (existing.state === "reserved" && existing.live) return { kind: "granted", reservation: reservation(existing) };
+    if (existing.state === "reserved" && await expireReservation(tx, existing)) return { kind: "deferred", reason: "withdrawn" };
+    if (existing.state !== "waiting") return { kind: "deferred", reason: existing.state === "withdrawn" ? "withdrawn" : "dispatched" };
+  }
+  if (state.mode !== "open") return { kind: "deferred", reason: state.mode };
+  if (!state.policy) return fail("model_capacity_policy_missing");
+  const route = state.policy.routes.find(route => route.routeId === checked.routeId
+    && route.provider === checked.provider && route.model === checked.model);
+  if (!route) return { kind: "deferred", reason: "unmapped" };
+  if (!await deviceConfigured(tx, state.policy, route.groupId)) return { kind: "deferred", reason: "device_unconfigured" };
+  // 결과 미확정 점유(2026-11-10): 유지 시간을 control 잠금 아래에서 한 번 읽어 이 TX 의 모든 칸 판정(도우미·경로 몫·모델 상한·grantOne)에 쓴다.
+  // 저장 즉시 다음 입장부터 바뀐다(30초 스냅숏을 거치지 않는다). 정책 변경(옛 세대) 판정과 작업 키 fence 는 이 값을 쓰지 않는다(10-30 그대로).
+  const unknownHoldMs = await readModelCapacityUnknownHoldMs(tx);
+  // 도우미 경로(PR 2a): 닫혀 있거나(신호 없음·만료·다른 epoch·판·계정, 감시자 꺼짐, 정지·mode·판정) 배정 점유가 찼으면 대기 행·event 없이 미룬다.
+  // 도우미가 아닌 경로는 0 줄이라 이 검사를 지나간다 — 우선 역할 일은 도우미 상태로 막히지 않는다.
+  const helperGates = await helperRouteGates(tx, route.groupId, checked, unknownHoldMs);
+  if (helperGates.some(gate => !gate.ok || gate.active >= gate.maxSlots)) return { kind: "deferred", reason: "helper_ineligible" };
+  // 경로 몫(step 2): 이 장비에서 이 route 가 상한에 닿았으면 줄에 서지 않고 바로 미룬다(route_quota, 모델 범위) — 호출자는 다음 순위로 넘긴다.
+  // 이미 줄에 서 있던 이 요청이면(상한이 그 사이 찼다) 그 대기 행을 같은 TX 에서 거둔다(도우미 grant-or-nothing 과 같은 wait_cancelled):
+  // 남은 대기 행은 같은 작업의 다음 순위 요청을 fence 로 막고, 나중에 예약되면 쓸 사람 없이 칸을 쥔다. 몫이 없으면 0 행이라 지나간다.
+  const ownWaiting = existing?.state === "waiting" ? existing.requestId : null;
+  if (await routeQuotaCapped(tx, state, route.groupId, checked.routeId, ownWaiting, unknownHoldMs)) {
+    await withdrawOwnWaiting(tx, existing);
+    return { kind: "deferred", reason: "route_quota" };
+  }
+  // 모델 상한(0170): 이 장비에서 이 model(장부 문자열, 공급자 무관)이 상한에 닿았으면 같은 방식으로 줄에 서지 않고 미룬다(model_quota, 모델 범위).
+  // 상한 줄이 없으면 0 행이라 지나간다 — 경로 몫이 보장한 경로라도 모델 상한은 넘지 못한다(절대 상한).
+  if (await modelQuotaCapped(tx, state, route.groupId, checked.model, ownWaiting, unknownHoldMs)) {
+    await withdrawOwnWaiting(tx, existing);
+    return { kind: "deferred", reason: "model_quota" };
+  }
+  // 1차 「동시에」 구성원 칸 수(F2): 새 의도만 센다 — 이미 줄에 선(또는 예약을 받은) 자기 요청은 칸 안에서 들어온 것이라 그대로 잇는다.
+  // control FOR UPDATE 아래에서 세고 같은 TX 에서 대기 행을 쓰므로 두 claim 이 함께 세어 둘 다 지나가지 못한다.
+  if (!existing && memberCap && await memberCap.load(tx) >= memberCap.maxSlots) return { kind: "deferred", reason: "model_quota" };
+  const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
+    policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
+    .where(sql`${occupyingStateSql(modelCapacityRequests.state)} AND (
+      ${modelCapacityRequests.epoch} <> ${state.epoch} OR ${modelCapacityRequests.revision} <> ${state.revision}
+      OR ${modelCapacityRequests.policyHash} <> ${state.policyHash})`);
+  if (oldActive.some(row => !compatibleModelCapacityGeneration(state.policy!, row, state)))
+    return { kind: "deferred", reason: "policy_changed" };
+  if (!existing) {
+    const [duplicateWork] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests)
+      .where(and(eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
+        eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
+        sql`${liveStateSql(modelCapacityRequests.state)}`)).limit(1);
+    if (duplicateWork) return { kind: "deferred", reason: "capacity" };
+    const [queue] = await tx.select({ count: sql<number>`count(*)::integer` }).from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.state, "waiting"));
+    if (queue.count >= state.policy.maxWaiting) return { kind: "deferred", reason: "queue_full" };
+    const [waiting] = await tx.insert(modelCapacityRequests).values({ requestId: checked.requestId,
+      workKey: checked.workKey, ownerInstanceId: checked.owner.instanceId, ownerBootId: checked.owner.bootId,
+      class: checked.class, pool: checked.pool, routeId: checked.routeId, provider: checked.provider,
+      model: checked.model, providerBudgetId: route.providerBudgetId, groupId: route.groupId,
+      epoch: state.epoch, revision: state.revision, policyHash: state.policyHash!, state: "waiting",
+      logicalWorkKey: logicalKey, ...(memberKeys ? { logicalMemberKeys: memberKeys } : {}),
+      queueUntil: sql`clock_timestamp() + ${state.policy.queueTtlMs} * interval '1 millisecond'` }).returning();
+    await event(tx, waiting, "queued", null, "waiting");
+  }
+  await grantOne(tx, state, unknownHoldMs);
+  const [own] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
+  sameIdentity(own, checked);
+  if (own.state === "reserved") return { kind: "granted", reservation: reservation(own) };
+  // 도우미 요청은 grant-or-nothing: 이 pass 에서 예약되지 않으면 같은 TX 에서 대기 행을 거둔다. 1칸 장비에 남은 대기 행이 나중에 예약되면
+  // 쓸 사람 없이 우선 역할의 칸을 예약 TTL 동안 쥐기 때문이다(pr2-plan §2.3).
+  if (helperGates.length && own.state === "waiting") {
+    const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+      .where(and(eq(modelCapacityRequests.requestId, own.requestId), eq(modelCapacityRequests.state, "waiting"))).returning();
+    if (withdrawn) await event(tx, withdrawn, "wait_cancelled", "waiting", "withdrawn");
+  }
+  return { kind: "deferred", reason: "capacity" };
 }
 
 export async function beginModelDispatch(value: ModelCapacityReservation): Promise<
@@ -1374,7 +1463,7 @@ async function textProfileFence(tx: ProductTransaction, logicalKey: string, ownI
 export async function requestTextProfileModelSlot(value: ModelCapacityRequest, productId: number): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value);
-  return requestSlot(checked, fixedTextProfileIdentity(checked, productId));
+  return requestSlot(checked, fixedTextProfileIdentity(checked, productId), undefined, undefined, undefined, { handover: true });
 }
 
 declare const textProfileLockBrand: unique symbol;
@@ -1486,7 +1575,7 @@ export async function requestReasonTranslationModelSlot(value: ModelCapacityRequ
   members: readonly ReasonTranslationMember[]): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value), snapshot = reasonTranslationInputSchema.shape.members.parse(members);
-  return requestSlot(checked, fixedReasonTranslationIdentity(checked, snapshot), reasonTranslationMemberKeys(snapshot));
+  return requestSlot(checked, fixedReasonTranslationIdentity(checked, snapshot), reasonTranslationMemberKeys(snapshot), undefined, undefined, { handover: true });
 }
 
 declare const reasonTranslationLockBrand: unique symbol;
@@ -1601,7 +1690,7 @@ export async function requestProductTranslationModelSlot(value: ModelCapacityReq
   members: readonly ProductTranslationMember[]): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value), snapshot = productTranslationInputSchema.shape.members.parse(members);
-  return requestSlot(checked, fixedProductTranslationIdentity(checked, snapshot), productTranslationMemberKeys(snapshot));
+  return requestSlot(checked, fixedProductTranslationIdentity(checked, snapshot), productTranslationMemberKeys(snapshot), undefined, undefined, { handover: true });
 }
 
 declare const productTranslationLockBrand: unique symbol;
@@ -1716,7 +1805,7 @@ export async function requestProductTaglineKoModelSlot(value: ModelCapacityReque
   members: readonly ProductTaglineKoMember[]): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value), snapshot = productTaglineKoInputSchema.shape.members.parse(members);
-  return requestSlot(checked, fixedProductTaglineKoIdentity(checked, snapshot), productTaglineKoMemberKeys(snapshot));
+  return requestSlot(checked, fixedProductTaglineKoIdentity(checked, snapshot), productTaglineKoMemberKeys(snapshot), undefined, undefined, { handover: true });
 }
 
 declare const productTaglineKoLockBrand: unique symbol;
@@ -1894,7 +1983,9 @@ function assertCrawlTaglineParent(input: CrawlTaglineInput, parent: RequestRow |
 export async function requestCrawlTaglineModelSlot(value: ModelCapacityRequest, input: CrawlTaglineInput): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value), snapshot = crawlTaglineInputSchema.parse(input);
-  return requestSlot(checked, fixedCrawlTaglineIdentity(checked, snapshot), crawlTaglineMemberKeys(snapshot.member), snapshot);
+  // 첫 물음(부모 없음)만 순위 넘김을 받는다 — 둘째 물음은 첫 물음의 모델에 묶인다
+  return requestSlot(checked, fixedCrawlTaglineIdentity(checked, snapshot), crawlTaglineMemberKeys(snapshot.member), snapshot, undefined,
+    { handover: snapshot.askOrdinal === 1 && snapshot.parent === null });
 }
 /** Control/request/parent UPDATE prefix precedes batch/role/stage/domain/job locks. */
 export async function lockCrawlTaglineModelCapacityDispatch(tx: ProductTransaction, value: {
@@ -2068,7 +2159,9 @@ async function lockSearchVerifyRequests(tx: ProductTransaction, ownId: string, i
 export async function requestSearchVerifyModelSlot(value: ModelCapacityRequest, input: SearchVerifyInput): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value), snapshot = searchVerifyInputSchema.parse(input);
-  return requestSlot(checked, fixedSearchVerifyIdentity(checked, snapshot), searchVerifyMemberKeys(snapshot.member));
+  // 실행의 첫 단계(부모 없음)만 순위 넘김을 받는다 — 이어지는 단계는 그 실행의 모델에 묶인다
+  return requestSlot(checked, fixedSearchVerifyIdentity(checked, snapshot), searchVerifyMemberKeys(snapshot.member), undefined, undefined,
+    { handover: snapshot.parent === null });
 }
 /** Control/request/parent UPDATE prefix precedes batch/role/product/profile/job locks. No nested TX. */
 export async function lockSearchVerifyModelCapacityDispatch(tx: ProductTransaction, value: {
@@ -2524,10 +2617,13 @@ function cliFence(tx: ProductTransaction, fixed: FixedCli, ownId: string): Promi
       ? introCheckFence(tx, fixed.memberKeys!, ownId, CLI_FIXED[fixed.target.kind].routeId) : cliKeyFence(tx, fixed.logical, CLI_FIXED[fixed.target.kind].routeId, ownId);
 }
 /** The fixed CLI target is in the very first waiting INSERT; AI1/AI2 share the gateway key so either transport fences the other. */
-export async function requestCliModelSlot(value: ModelCapacityRequest, target: CliTarget): Promise<ModelSlotResult> {
+/** memberCap: 1차 CLI 심사자도 「동시에」 구성원의 칸 수를 이 입장 TX 에서 원자적으로 지킨다(2026-11-12 검수 F2) — 1차(ai1) 대상만 받는다. */
+export async function requestCliModelSlot(value: ModelCapacityRequest, target: CliTarget,
+  options: Readonly<{ memberCap?: ModelSlotMemberCap | null }> = {}): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value), fixed = fixedCliIdentity(checked, target);
-  return requestSlot(checked, fixed.logical, fixed.memberKeys ?? undefined);
+  if (options.memberCap && target.kind !== "ai1") fail("model_capacity_member_cap_ai1_only");
+  return requestSlot(checked, fixed.logical, fixed.memberKeys ?? undefined, undefined, undefined, { memberCap: options.memberCap ?? null });
 }
 declare const cliLockBrand: unique symbol;
 export type CliCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>; readonly [cliLockBrand]: true }>;
@@ -3029,7 +3125,8 @@ export async function readTextTargetPoolAffinities(target: TextTargetPoolInput, 
   owner: ModelCapacityRequestIdentity['owner']): Promise<Readonly<{ model: string; provider: GatewayDispatchProvider }>[]> {
   const checkedModels = [...new Set(models)];
   if (!checkedModels.length) return [];
-  if (checkedModels.length > 8) throw new Error('invalid_text_pool_affinity_models');
+  // 구성원 4 + 예비 순위 3(0179), 묶지 못한 후보는 이름 둘(모델·연결 별칭)까지 — 14. 예전 상한 8은 예비가 생긴 뒤 넘쳐 틱마다 오류로 멈췄다
+  if (checkedModels.length > 16) throw new Error('invalid_text_pool_affinity_models');
   const first = checkedModels.map(model => {
     if (target.routeId === 'crawl-tagline') {
       const input = crawlTaglineInputSchema.parse({ member: target.member, model, askOrdinal: 1, parent: null });

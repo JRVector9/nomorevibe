@@ -522,7 +522,7 @@ export function StationRuntime({ station, controls, desk }: { station: Station; 
       <div><dt>잡 제어·실행</dt><dd>{observation.status}<small>{observation.rows.map((row) => `${row.job}: ${row.state?.execution === "locked" ? "실행 중(잠금 관측)" : row.state?.execution === "stale" ? "잠금 오래됨·회수 대기" : row.state?.runtimeLabel ?? "미확인"}`).join(" · ")}</small></dd></div>
       <div><dt>최근 잡 성공</dt><dd>{observationTime(observation.lastSuccessAt)}<small>잡 성공과 단계의 업무 완료·모델 호출 종료는 별도 관측</small></dd></div>
       <div><dt>최근 잡 관측</dt><dd>시작 {observationTime(observation.lastRunAt)}<small>워커 관측 {observationTime(observation.workerSeenAt)}{controls.measuredAt ? ` · 조회 ${kstShort(controls.measuredAt)}` : " · 조회 시각 미확인"}</small></dd></div>
-      <div><dt>모델 실행 중</dt><dd>이 집계에서는 확인하지 않음 <Link href="/admin/models" prefetch={false}>실제 호출·점유 보기 →</Link></dd></div>
+      <div><dt>모델 실행 중</dt><dd>이 집계에서는 확인하지 않음 <Link href="/admin/models/dashboard" prefetch={false}>실제 호출·점유 보기 →</Link></dd></div>
     </dl>
   </div>;
 }

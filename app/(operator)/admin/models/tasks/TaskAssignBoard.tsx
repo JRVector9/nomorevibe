@@ -7,7 +7,8 @@ import { ledgerModelText, type TaskAssignChoice, type TaskAssignRow, type TaskAs
 import { RankDrawer } from "../../flow/RankDrawer";
 import { ClearRecordsButton } from "./ConnectionButtons";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
-import { modelPickerConnectionLabel, modelPickerModelLabel, modelPickerVisibleText } from "../model-picker-display";
+import { aiModelChoiceName, aiModelDisplayName } from "@/lib/operations/admin-ai-tasks";
+import { modelPickerVisibleText } from "../model-picker-display";
 
 const fmt = (value: number) => value.toLocaleString("ko-KR");
 const RANKS = [1, 2, 3] as const;
@@ -29,14 +30,19 @@ function useOpenHash() {
   }, []);
 }
 
+/**
+ * 고른 모델 하나 — 사용자가 정한 이름 하나(운영 콘솔 통합). 서로 다른 모델을 여럿 내놓는 연결만 서버 이름을 덧붙여 가르고,
+ * 지워진 연결은 기록된 연결·모델 이름 그대로 둔다(무엇이 사라졌는지 알아야 고친다).
+ */
 function Choice({ choice, editor, prefix }: { choice: TaskAssignChoice; editor: FlowRankEditor; prefix?: string }) {
   const connection = choice.connectionId ? editor.connections.find(row => row.id === choice.connectionId) : undefined;
-  const name = connection ? modelPickerConnectionLabel(connection) : modelPickerVisibleText(choice.connection, editor.connections);
-  const model = connection ? modelPickerModelLabel(connection, choice.model) : choice.model;
+  const name = connection ? aiModelDisplayName(connection) : modelPickerVisibleText(choice.connection, editor.connections);
+  const short = connection ? aiModelChoiceName(connection, choice.model, { short: true }) : choice.model;
+  const model = connection && short === name ? null : short;
   return <span className="tk-choice" data-off={choice.off ? "true" : undefined}>
     {prefix && <span className="tk-pos">{prefix}</span>}
     <span className="tk-conn">{name}</span>
-    <code className="tk-model">{model}</code>
+    {model && <code className="tk-model">{model}</code>}
     {choice.effort && <span className="tk-effort">추론 {choice.effort}</span>}
     {choice.off && <span className="tk-off"><span aria-hidden="true">‖ </span>{choice.off}</span>}
   </span>;
@@ -50,7 +56,7 @@ function SettingCells({ row, editor }: { row: TaskAssignRow; editor: FlowRankEdi
     {row.source && <span className="tk-source">출처: {modelPickerVisibleText(row.source, editor.connections)}</span>}
     {row.archived.length > 0 && <span className="tk-source" data-archived="true">보관된 대체 순위(지금은 쓰지 않음): {row.archived.map(choice => {
       const connection = choice.connectionId ? editor.connections.find(entry => entry.id === choice.connectionId) : undefined;
-      return `${choice.position}순위 ${connection ? modelPickerConnectionLabel(connection) : choice.connection} · ${connection ? modelPickerModelLabel(connection, choice.model) : choice.model}`;
+      return `${choice.position}순위 ${connection ? aiModelChoiceName(connection, choice.model) : `${choice.connection} · ${choice.model}`}`;
     }).join(" → ")}</span>}
   </td>;
   return <>{RANKS.map(rank => {
@@ -68,7 +74,7 @@ function ActualCell({ row, editor }: { row: TaskAssignRow; editor: FlowRankEdito
       // 순위를 막 바꿨으면 설정 밖 호출은 그 전 순위의 것일 수 있다 — 경고 표시(▲)를 하지 않는다
       return <li key={call.key} data-position={call.position ?? (!actual.compared ? "unknown" : actual.mixed ? "earlier" : "none")} data-zero={call.settled === 0 ? "true" : undefined}>
         <span className="tk-pos">{label(call.position)}</span>
-        <code className="tk-model">{connection ? modelPickerModelLabel(connection, call.model) : ledgerModelText(call.model)}</code>
+        <code className="tk-model">{connection ? aiModelChoiceName(connection, call.model) : ledgerModelText(call.model)}</code>
         <b className="llm-num">{fmt(call.settled)}</b>{call.failed > 0 && <span className="tk-fail">실패 {fmt(call.failed)}</span>}
       </li>;
     })}</ul>}

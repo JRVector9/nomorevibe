@@ -85,7 +85,8 @@ async function releasePage(key: string, token: string) {
   });
 }
 
-export type DiscoveryEntry = { repo: string; signal: string; builder?: string | null; priority?: number };
+export type DiscoveryEntry = { repo: string; signal: string; builder?: string | null; priority?: number;
+  discoverySource?: import('@/lib/db/crawl-schema').DiscoverySource };
 export type DiscoveryLimits = { maxNewPerHour: number; maxReviewBacklog: number };
 
 /** Both producers commit through the same admission lock. Re-read capacity after
@@ -124,7 +125,7 @@ export async function enqueueDiscoveryBatch(entries: DiscoveryEntry[], limits: D
       processed++;
     }
     const inserted = accepted.length ? await tx.insert(crawlFrontier).values(accepted.map(e => ({
-      repo: e.repo, signal: e.signal, builder: e.builder ?? null, priority: e.priority ?? 0,
+      repo: e.repo, signal: e.signal, builder: e.builder ?? null, priority: e.priority ?? 0, discoverySource: e.discoverySource ?? null,
     }))).onConflictDoNothing({ target: crawlFrontier.repo }).returning({ id: crawlFrontier.id }) : [];
     if (lease) await assertJobLease(tx, lease);
     const remainingNew = Math.max(0, admission.remainingNew - inserted.length);

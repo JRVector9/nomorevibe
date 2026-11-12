@@ -3,13 +3,13 @@ import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 const mocks = vi.hoisted(() => ({dequeue:vi.fn(),defer:vi.fn(),repo:vi.fn(),save:vi.fn(),mark:vi.fn(),failed:vi.fn(),request:vi.fn()}));
 vi.mock("@/lib/crawl/repository", () => ({recoverAbandonedFrontier:async()=>0,handOffFailedSourceRefreshes:async()=>0,dequeueWithAdmission: async (...args: unknown[]) => ({kind:"ready",entries:await mocks.dequeue(...args)}),deferFrontier:mocks.defer,saveFetchedDocument:mocks.save,markFrontier:mocks.mark,markFailed:mocks.failed}));
-vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => ({enabled:true,judge:{docsGenerators:[]},discover:{queries:[],showHn:{enabled:true,priority:120}}})}));
+vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => ({enabled:true,judge:{docsGenerators:[]},discover:{queries:[],showGn: { enabled: true, priority: 120 }, showHn:{enabled:true,priority:120}}})}));
 vi.mock("@/lib/crawl/github", () => ({getRepo:mocks.repo}));
 vi.mock("@/lib/jobs/control", () => ({requestJob:mocks.request}));
 const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
 const entries: FetchClaim[] = ["acme/one", "acme/two"].map((repo, index) => ({
   id: index + 1, repo, signal: "test", builder: null, priority: 0, state: "fetching", attempts: 1,
-  nextAttemptAt: new Date(0), lastError: null, aliasOf: null, discoveredAt: new Date(0), updatedAt: new Date(0),
+  nextAttemptAt: new Date(0), lastError: null, discoverySource: null, aliasOf: null, discoveredAt: new Date(0), updatedAt: new Date(0),
   ownership: { kind: "legacy", stageEpoch: 1, job },
 }));
 beforeEach(() => {

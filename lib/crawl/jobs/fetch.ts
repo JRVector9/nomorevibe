@@ -12,7 +12,7 @@ import { PROBE_COMMITS, probeAiEvidence } from "@/lib/crawl/ai-evidence-gate";
 import { probePackageManifests } from "@/lib/crawl/package-probe";
 import { PACKAGE_PROOF_KEY } from "@/lib/crawl/package-proof";
 import { INSTALLABLE_MIN_STARS, PACKAGE_MIN_STARS, lacksDeployment } from "@/lib/domain/products/access";
-import { SHOW_HN_SIGNAL } from "@/lib/crawl/settings-schema";
+import { SHOW_GN_SIGNAL, SHOW_HN_SIGNAL } from "@/lib/crawl/settings-schema";
 import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
 import { extractGithubLinks } from "@/lib/crawl/github-links";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -67,6 +67,9 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   /** 흔적이 있어야 들여보내는 신호(settings-schema requireEvidence) — 프론티어의 signal 이 그 라벨이다 */
   const evidenceRequired = new Set(settings.discover.queries.filter((q) => q.requireEvidence).map((q) => q.label));
   if (settings.discover.showHn.requireEvidence) evidenceRequired.add(SHOW_HN_SIGNAL);
+  if (settings.discover.showGn.requireEvidence) evidenceRequired.add(SHOW_GN_SIGNAL);
+  // 화면에서 더한 글 목록 수집원(discover.feeds)도 수집원마다 — 신호 이름이 수집원 이름이다
+  for (const feed of settings.discover.feeds ?? []) if (feed.requireEvidence) evidenceRequired.add(feed.name);
   // Oracle language routing never establishes AI authorship.
   evidenceRequired.add('Oracle Korean');
   if (ctx.lease && ctx.hasBudget()) {

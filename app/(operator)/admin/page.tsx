@@ -93,7 +93,7 @@ export default async function AdminPage() {
   const enqueuedWindows = sumWindows(yields.map((row) => row.enqueuedWindows));
   const gatedWindows = sumWindows(yields.map((row) => row.gatedWindows));
   const usage = searchUsage(settings.discover.pagesPerTick);
-  const signalsOn = settings.discover.queries.filter((q) => q.enabled).length + (settings.discover.showHn.enabled ? 1 : 0);
+  const signalsOn = settings.discover.queries.filter((q) => q.enabled).length + (settings.discover.showHn.enabled ? 1 : 0) + (settings.discover.showGn.enabled ? 1 : 0);
   const listsDrifted = LIST_KEYS.filter((key) => missingDefaults(key, settings.judge[key]).length > 0).length;
 
   const sections: { href: string; label: string; badge?: React.ReactNode }[] = [

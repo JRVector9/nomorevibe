@@ -2,10 +2,9 @@ import { z } from "zod";
 import { cliModelDispatchSchema } from "@/lib/llm/capacity";
 import { cliTransportSchema } from "@/lib/llm/cli-serving-contract";
 import { reviewOutcomeSchema, type ReviewInput, type ReviewSnapshot, type ReviewSource } from "@/lib/crawl/agent-review-contract";
+import { cliHostHandleSchema, cliHostNotStartedResponseSchema } from "./cli-rpc-common";
 
-/** Public HMAC context, not an authentication credential. */
-export const CLI_HOST_RPC_DOMAIN = "nmv-cli-host-rpc-v1";
-export const CLI_HOST_BODY_LIMIT = 384 * 1024;
+export { CLI_HOST_RPC_DOMAIN, CLI_HOST_BODY_LIMIT, cliHostHandleSchema, cliHostNotStartedResponseSchema } from "./cli-rpc-common";
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/);
 const text = z.string().min(1).max(160).refine(value => !/[\p{Cc}]/u.test(value));
@@ -14,7 +13,6 @@ export const cliHostModelSchema = z.object({ id: model, label: z.string().min(1)
 export const cliHostCatalogSchema = z.object({ version: z.literal(1), bootId: z.uuid(), cliVersion: z.string().min(1).max(80),
   observedAt: z.iso.datetime(), models: z.array(cliHostModelSchema).max(512) }).strict();
 export type CliHostCatalog = z.infer<typeof cliHostCatalogSchema>;
-export const cliHostHandleSchema = z.object({ bootId: z.uuid(), callId: z.uuid(), connectionId: z.uuid() }).strict();
 export type CliHostHandle = z.infer<typeof cliHostHandleSchema>;
 const object = (value: unknown): boolean => !!value && typeof value === "object" && !Array.isArray(value);
 export const cliHostInputSchema = z.object({ snapshot: z.custom<ReviewSnapshot>(object), source: z.custom<ReviewSource>(object),
@@ -50,9 +48,6 @@ export const cliHostReviewResultSchema = z.discriminatedUnion("ok", [
 const unknownResult = z.object({ ...identity, kind: z.literal("indeterminate"), reason: z.enum(["process_exit", "transport_unknown"]) }).strict();
 export const cliHostRunResponseSchema = z.discriminatedUnion("kind", [
   z.object({ ...identity, kind: z.literal("settled"), terminalEvidenceHash: sha, result: cliHostReviewResultSchema }).strict(), unknownResult,
-]);
-export const cliHostNotStartedResponseSchema = z.discriminatedUnion("kind", [
-  z.object({ ...identity, kind: z.literal("settled"), terminalEvidenceHash: sha }).strict(), unknownResult,
 ]);
 export type CliHostSettlement = z.infer<typeof cliHostNotStartedResponseSchema> & { kind: "settled" };
 export const cliHostReleaseResponseSchema = z.object({ released: z.boolean() }).strict();

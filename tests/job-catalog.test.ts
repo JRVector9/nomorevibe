@@ -46,7 +46,7 @@ it('생존 확인은 maintenance 역할에서 1분마다 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'uptime-ping')).toEqual({
     name: 'uptime-ping', role: 'maintenance', intervalMs: 60_000,
   });
-  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-automated-action-audit', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan', 'github-integration-reconcile', 'email-outbox-send', 'email-weekly-digest', 'notification-delisted', 'notification-category-digest', 'notification-prune', 'model-capacity-reclaim']));
+  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-automated-action-audit', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan', 'github-integration-reconcile', 'email-outbox-send', 'email-weekly-digest', 'notification-delisted', 'notification-category-digest', 'notification-prune', 'model-capacity-reclaim', 'console-alerts']));
   expect(jobsForRole('crawler')).not.toContain('uptime-ping');
 });
 
@@ -201,4 +201,9 @@ describe('lanesForRole', () => {
       }
     }
   });
+});
+
+it('Show GN은 Show HN과 같은 crawler 줄에서 30분 주기로 등록된다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'gn-show-seed')).toEqual({ name: 'gn-show-seed', role: 'crawler', intervalMs: 30 * 60_000 });
+  expect(lanesForRole('crawler').find(lane => lane.includes('hn-show-seed'))).toContain('gn-show-seed');
 });

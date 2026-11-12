@@ -1,7 +1,7 @@
 import { modelRequestBudget, modelRouteTimeoutMs } from "@/lib/llm/model-registry";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingVerifications, recordVerificationResult, readSearchVerifyAffinityMember, restExpiredVerification } from "@/lib/domain/products/search-profiles";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
@@ -55,27 +55,33 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
     const remaining = tickRemaining(ctx, JOB, startedAt);
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
-    const concurrency = modelRequestBudget(JOB).concurrency, callMs = modelRouteTimeoutMs(JOB);
+    // 「동시에」(칸 수를 적은 묶음)면 칸 수의 합만큼 함께 돈다 — 그 밖은 예전처럼 단계 동시 수(TextTaskRanks.lanes)
+    const concurrency = ranks.lanes(modelRequestBudget(JOB).concurrency), callMs = modelRouteTimeoutMs(JOB);
     let verified = 0, removed = 0, failed = 0, blocked = "";
     /** 이 틱에 넘긴 제품(이 제품만의 미룸) — 다시 고르지 않는다. 같은 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다 */
     const passed = new Set<number>();
+    // Even a skipped snapshot or a declined result CAS can stay eligible in the DB.
+    const visited = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
-      const fetched = await pendingVerifications(batch), tasks = fetched.filter(task => !passed.has(task.product.id));
+      const fetched = await pendingVerifications(batch, [...visited]), tasks = fetched.filter(task => !visited.has(task.product.id));
       if (fetched.length === 0) {
-        ctx.log("search_verify.done", { verified, removed, failed, drained: true });
-        return { done: true };
+        const drained = passed.size === 0;
+        ctx.log("search_verify.done", { verified, removed, failed, passed: passed.size, drained });
+        return { done: drained };
       }
       if (tasks.length === 0) {
         ctx.log("search_verify.done", { verified, removed, failed, passed: passed.size, drained: false });
         return { done: false };
       }
       let next = 0;
+      const roundStart = verified + failed + passed.size;
       const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
             if (blocked || ranks.exhausted || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
+            visited.add(task.product.id);
             const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
             const chunked = ["invalid_output", "timeout"].includes(task.profile!.verifyError ?? "");
             let attempt: TextRankRun<Flow>;
@@ -89,7 +95,7 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
               }
               attempt = await ranks.run(async (binding): Promise<Flow> => {
                 const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked, minStepMs: minCallMs });
-                if (outcome.kind === "skipped") return "stop";
+                if (outcome.kind === "skipped") { passed.add(task.product.id); return "stop"; }
                 // The original shared deadline ended while waiting for a permit: no attempt or failure.
                 // The product rests instead of staying at the queue head; each tick would otherwise restart it from step one forever (prod 11-10).
                 if (outcome.kind === "expired") {
@@ -98,7 +104,9 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                   return "stop";
                 }
                 const result = outcome.result;
-                if (signal.aborted) return "stop";
+                // A tick-budget abort stops admission, but a completed success still reaches the
+                // fenced writer. External shutdown and incomplete/unknown outcomes keep stopping.
+                if (ctx.signal?.aborted || (signal.aborted && !result.ok)) return "stop";
                 if (!result.ok) {
                   // A shorter deadline comes from this tick's remaining time, not the product.
                   // Keep it eligible for the next tick instead of consuming a retry.
@@ -109,6 +117,7 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                   const failure = { kind: "failure" as const, error: result.error };
                   if (await (outcome.expectation ? recordVerificationResult(task, lease, failure, outcome.expectation)
                     : recordVerificationResult(task, lease, failure))) failed++;
+                  else passed.add(task.product.id);
                   // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 제품은 다음 순위로 간다
                   if (ranks.failed(binding, result.error)) ctx.log("search_verify.rank_down", binding.memberId
                     ? { memberId: binding.memberId, configRevision: binding.configRevision } : { rank: binding.rank });
@@ -117,21 +126,24 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                 ranks.answered(binding);
                 const success = { kind: "success" as const, removed: result.unsupported, model: textTaskModel(JOB) };
                 if (!await (outcome.expectation ? recordVerificationResult(task, lease, success, outcome.expectation)
-                  : recordVerificationResult(task, lease, success))) return "next";
+                  : recordVerificationResult(task, lease, success))) { passed.add(task.product.id); return "next"; }
                 verified++;
                 removed += result.unsupported.length;
                 return "next";
               }, { prefer });
             } catch (error) {
               // 이 제품만의 미룸이다 — 앞선 호출이 아직 보내진 중이거나(dispatched) 이 제품 한 세대의 장부가 사슬로 읽히지 않는다(ledger_mismatch).
+              // 「동시에」에서 고른 구성원만의 미룸도 같다(그 구성원은 이 틱 동안 쉬고 다음 제품은 남은 구성원이 받는다).
               // 제품 하나를 건너뛰고 틱을 계속 돈다(틱 전체를 접지 않는다, 2026-10-31).
-              if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(error.reason)) {
+              if (ranks.skipsWork(error)) {
                 passed.add(task.product.id);
                 ctx.log(error.reason === "dispatched" ? "search_verify.skipped_in_flight" : "search_verify.skipped", { productId: task.product.id, reason: error.reason });
                 continue;
               }
               throw error;
             }
+            // 「동시에」에서 이 줄에 빈 칸이 없다 — 이 제품을 놓고(다음 바퀴가 다시 집는다) 이 줄만 끝낸다
+            if (attempt.kind === "idle") { visited.delete(task.product.id); return; }
             // 모든 순위를 이 틱에 쓸 수 없다 — 이 제품은 그대로 두고(호출·시도 기록 없음) 틱을 접는다
             if (attempt.kind === "unusable" || attempt.value === "stop") return;
           }
@@ -148,6 +160,8 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
         if (failure.reason instanceof ModelCapacityDeferredError && processed >= 1) return deferredJob("model_capacity", processed);
         throw failure.reason;
       }
+      // 「동시에」: 장비에 빈 칸이 없다는 힌트로 모든 줄이 이 바퀴에 한 건도 못 했다 — 다음 바퀴로 대기열을 훑지 않고 포화로 미룬다
+      if (ranks.poolIdle() && verified + failed + passed.size === roundStart) return deferredJob("model_capacity", verified + failed);
       if (blocked === "deadline_expired") {
         ctx.log("search_verify.deadline_deferred", { verified, removed, failed });
         return { done: false };

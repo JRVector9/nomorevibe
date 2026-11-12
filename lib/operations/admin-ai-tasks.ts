@@ -12,7 +12,8 @@ import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_M
  */
 
 export type AiConnectionKind = "api" | "cli";
-export type AiServedModel = Readonly<{ id: string; maxModelLen: number | null }>;
+/** root = 서버 /models 가 알려 준 원래 모델(vLLM 의 served-model-name 별칭이면 같은 root) — 알려 줄 때만(2026-11-12 운영 콘솔 3a) */
+export type AiServedModel = Readonly<{ id: string; maxModelLen: number | null; root?: string | null }>;
 /** 화면·검증이 보는 연결(키는 없다 — 저장됐는지만). OpenCode의 hasKey는 호스트 RPC 인증 정보이며 provider API 키가 아니다. */
 export type AiConnectionView = Readonly<{
   id: string; label: string; kind: AiConnectionKind; baseUrl: string | null; host: string | null; hasKey: boolean;
@@ -38,6 +39,12 @@ export type AiConnectionView = Readonly<{
   /** 마지막으로 키를 넣은 시각(options.keySetAt, ISO)과 운영자가 적은 키 유효 기간(일, options.keyValidDays) — 만료 안내만 한다 */
   keySetAt?: string | null;
   keyValidDays?: number | null;
+  /**
+   * 운영 콘솔(2026-11-12 3a): 사용자가 정한 모델 이름(options.displayName)과 장비 묶음 이름(options.machine). 없으면 이름표(label)·장비 id 를 쓴다
+   * (aiModelDisplayName·aiModelMachine). 실행 쪽은 읽지 않는다 — 화면에 보이는 이름일 뿐이다.
+   */
+  displayName?: string | null;
+  machine?: string | null;
 }>;
 export type AiTaskRankRow = Readonly<{ task: string; slot: number; rank: number; connectionId: string; model: string;
   options: Readonly<Record<string, unknown>>; enabled: boolean;
@@ -148,6 +155,12 @@ export type AiConnectionInput = Readonly<{
   manualModels: string[]; reasoningTokenReserve: number | null; keyValidDays: number | null;
   /** 이 연결을 쓸 수 있는 작업(빈 목록 = 모든 작업) */
   allowedTasks: string[];
+  /**
+   * 운영 콘솔(2026-11-12 3a) 모델 이름·장비 묶음 이름. undefined = 폼에 그 칸이 없음(저장된 값 그대로), null = 지움(이름표·장비 id 로 돌아감).
+   * 옛 연결 폼(LLM 운영)은 이 칸을 보내지 않으므로 저장해도 지우지 않는다.
+   */
+  displayName?: string | null;
+  machine?: string | null;
 }>;
 type FormLike = { get(name: string): FormDataEntryValue | null };
 const text = (form: FormLike, name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
@@ -206,9 +219,19 @@ export function aiConnectionInputFromForm(form: FormLike): { input: AiConnection
   const reasoningTokenReserve = optionalInteger("reasoningTokenReserve", AI_REASONING_TOKEN_RESERVE_MAX);
   const keyValidDays = optionalInteger("keyValidDays", 3_650);
   const allowedTasks = AI_TASKS.filter(task => text(form, aiAllowedTaskField(task.id)) === "1").map(task => task.id);
+  // 운영 콘솔(3a) 모델 이름·장비 묶음 이름 — 칸이 있는 폼만(옛 폼은 보내지 않아 저장된 값을 지우지 않는다). 빈 값 = 지움
+  const optionalName = (name: "displayName" | "machine"): string | null | undefined => {
+    if (form.get(name) === null) return undefined;
+    const value = text(form, name);
+    if (!value) return null;
+    if (value.length > LABEL_MAX || CONTROL.test(value)) { issues.push(`ai_connection_invalid:${name}`); return null; }
+    return value;
+  };
+  const displayName = optionalName("displayName"), machine = optionalName("machine");
   if (issues.length) return { input: null, issues };
   return { input: Object.freeze({ id, expectedVersion, label, kind, baseUrl, key, cliTool, cliModels, deviceId, capacitySlots, contextTokens, enabled, note, cliVersion,
-    manualModels, reasoningTokenReserve, keyValidDays, allowedTasks }), issues };
+    manualModels, reasoningTokenReserve, keyValidDays, allowedTasks,
+    ...(displayName !== undefined ? { displayName } : {}), ...(machine !== undefined ? { machine } : {}) }), issues };
 }
 
 /** 「작업 ↔ 모델」 한 줄의 폼 칸 이름(RankSelects slotNames). */
@@ -278,13 +301,75 @@ export const aiTaskConnectionModelIds = (task: AiTaskDef, connection: Pick<AiCon
   return aiConnectionModelIds(connection);
 };
 /** 연결의 보이는 이름 = 운영자가 붙인 이름 그대로(CLI 는 도구 이름을 덧붙인다). 장비 id·주소로 이름을 바꾸지 않는다(2026-11-09 — 이름은 연결 이름표가 정한다). */
+/**
+ * 관리자 전역에서 모델 하나를 부르는 이름(2026-11-12 운영 콘솔 3a 사용자 요구: 「내가 정한 이름 하나만」). 사용자가 정한 이름(options.displayName),
+ * 없으면 연결의 이름표(label) 그대로. 서버가 알려 준 모델 이름·엔진 경로는 붙이지 않는다(상세의 「연결 확인」 줄에서만 보인다).
+ * 홈 할 일·흐름·기록·작업 배정이 모델 이름을 적을 때 이 함수를 쓴다.
+ */
+export const aiModelDisplayName = (connection: Pick<AiConnectionView, "label"> & Partial<Pick<AiConnectionView, "displayName">>): string =>
+  connection.displayName?.trim() || connection.label;
+/** 모델이 도는 장비 묶음 이름 — 사용자가 적은 이름(options.machine), 없으면 용량 장비 id. 용량 판정은 늘 장비 id 로 한다 */
+export const aiModelMachine = (connection: Pick<AiConnectionView, "deviceId"> & Partial<Pick<AiConnectionView, "machine">>): string =>
+  connection.machine?.trim() || connection.deviceId;
+/**
+ * 연결이 내놓는 서로 다른 모델 묶음 수 — 서버가 같은 root 로 알려 준 이름(별칭)은 한 묶음(모델 목록 3a 의 servedModelGroups 와 같은 기준).
+ * extra 는 목록 밖에서 부르는 이름(저장된 순위·구성원).
+ */
+export function aiConnectionModelGroupCount(connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog" | "manualModels">>,
+  extra: readonly string[] = []): number {
+  return new Set([...aiConnectionModelIds(connection), ...extra].map(id => aiConnectionModelGroupKey(connection, id))).size;
+}
+/**
+ * 한 연결 안에서 같은 모델(별칭)이면 같은 열쇠 — 화면이 모델 이름 하나로 묶는 기준(2026-11-12 소유자 「모델 목록에 뜬 이름이 바로 떠야」).
+ * 1) 서버가 알려 준 root 가 같거나 다른 이름의 root 인 이름 — 한 묶음.
+ * 2) API 연결에서 운영자가 적은 이름(manualModels, 서버 목록에 없음)은, 서버 목록이 한 묶음뿐이면 그 묶음의 별칭이다 — 한 서버가 한 모델을 다른 이름으로도 받는 경우
+ *    (M1max: 서버 목록 「mlx-community/Qwen3.8-27B-4bit」 + 적은 이름 「Qwen3.8」). 서버 목록이 여러 묶음이면 어느 것의 별칭인지 모르므로 따로 둔다.
+ * 그 밖은 이름마다 따로. 표시만 — 저장된 순위·구성원의 모델 이름은 그대로다.
+ */
+export function aiConnectionModelGroupKey(connection: Pick<AiConnectionView, "kind" | "models"> & Partial<Pick<AiConnectionView, "manualModels">>, id: string): string {
+  const listed = connection.kind === "api" ? connection.models ?? [] : [];
+  const servedKey = (name: string) => {
+    const root = listed.find(model => model.id === name)?.root ?? null;
+    return root ?? (listed.some(model => model.root === name) ? name : `id:${name}`);
+  };
+  if (connection.kind === "api" && !listed.some(model => model.id === id) && (connection.manualModels ?? []).includes(id)) {
+    const served = new Set(listed.map(model => servedKey(model.id)));
+    if (served.size === 1) return [...served][0];
+  }
+  return servedKey(id);
+}
+/**
+ * 순위·「동시에」에서 고른 모델 하나를 부르는 말(운영 콘솔 통합 — 「내가 정한 이름 하나만」). 연결이 모델 하나(별칭 포함)만 내놓으면 사용자가 정한 이름뿐,
+ * 서로 다른 모델을 여럿 내놓는 연결(CLI 의 sonnet·opus, OpenCode 의 여러 모델)에서만 가를 수 있게 서버 이름을 덧붙인다.
+ * short 는 이름 칸(optgroup 이 이미 연결 이름을 보일 때)에 쓸 짧은 말 — 모델 하나면 사용자가 정한 이름, 여럿이면 서버 이름.
+ */
+export function aiModelChoiceName(connection: Pick<AiConnectionView, "label" | "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "displayName" | "cliTool" | "cliCatalog" | "manualModels">>,
+  model?: string | null, options: { short?: boolean } = {}): string {
+  const name = aiModelDisplayName(connection);
+  if (!model || aiConnectionModelGroupCount(connection, [model]) <= 1) return name;
+  return options.short ? model : `${name} · ${model}`;
+}
+/**
+ * 기록에 남은 서버 모델 이름(투표·장부의 model) → 사용자가 정한 이름. 그 이름을 내놓는 연결이 하나로 정해질 때만 바꾸고(장부의 `<모델>@<연결 앞 8자>` 꼴 포함),
+ * 정해지지 않으면(연결이 지워졌거나 여러 연결이 같은 이름을 냄) null — 화면은 기록 그대로 둔다.
+ */
+export function aiModelNameOfServed(connections: readonly (Pick<AiConnectionView, "id" | "label" | "kind" | "models" | "cliModels">
+  & Partial<Pick<AiConnectionView, "displayName" | "cliTool" | "cliCatalog" | "manualModels">>)[], model: string | null | undefined): string | null {
+  if (!model) return null;
+  const at = /^(.*)@([0-9a-f]{8})$/.exec(model);
+  const id = at ? at[1] : model;
+  const found = connections.filter(connection => (!at || connection.id.startsWith(at[2]))
+    && (aiConnectionModelIds(connection).includes(id) || connection.cliModels.includes(id)));
+  const names = [...new Set(found.map(connection => aiModelChoiceName(connection, id)))];
+  return names.length === 1 ? names[0] : null;
+}
 export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool">) => {
   return connection.kind === "cli" && connection.cliTool && !connection.label.toLowerCase().includes("cli")
     ? `${connection.label}(${AI_CLI_TOOL_LABELS[connection.cliTool]})` : connection.label;
 };
 
 /**
- * 한 작업의 선택지: 이 작업이 받는 켜진 연결마다 그 연결이 실제로 내놓는 모델 하나씩 — 「연결 이름 · 모델」. 지금 저장된 값이 목록에 없으면
+ * 한 작업의 선택지: 이 작업이 받는 켜진 연결마다 그 연결이 실제로 내놓는 모델 하나씩 — 사용자가 정한 이름(모델이 여럿인 연결만 「이름 · 모델」). 지금 저장된 값이 목록에 없으면
  * 「(저장된 값 · 지금 목록에 없음)」으로 남긴다(저장 누락으로 지우지 않는다). 순서: API 연결 먼저, 그다음 CLI, 같은 쪽은 이름순.
  */
 export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConnectionView[], saved: readonly Pick<AiTaskRankRow, "connectionId" | "model">[]): AiRankOption[] {
@@ -297,14 +382,17 @@ export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConne
       const key = `${connection.id}\u0000${model}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: aiConnectionLabel(connection), text: model, reasoningEfforts: aiRankReasoningEfforts(task.id, connection, model) });
+      // 운영 콘솔 통합: 보이는 이름은 사용자가 정한 이름 하나 — 서로 다른 모델을 여럿 내놓는 연결에서만 서버 이름으로 가른다(aiModelChoiceName)
+      options.push({ provider: connection.id, model, label: aiModelChoiceName(connection, model), group: aiModelDisplayName(connection),
+        text: aiModelChoiceName(connection, model, { short: true }), reasoningEfforts: aiRankReasoningEfforts(task.id, connection, model) });
     }
   }
   for (const row of saved) {
     const key = `${row.connectionId}\u0000${row.model}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const connection = connections.find(entry => entry.id === row.connectionId), group = connection ? aiConnectionLabel(connection) : "지워진 연결";
+    const connection = connections.find(entry => entry.id === row.connectionId), group = connection ? aiModelDisplayName(connection) : "지워진 연결";
+    // 지금 목록에 없는 저장된 값은 어느 이름이 사라졌는지 알아야 고칠 수 있다 — 서버 이름을 그대로 둔다
     options.push({ provider: row.connectionId, model: row.model, saved: true, group, text: `${row.model} (목록에 없음)`,
       label: `${group} · ${row.model} (저장된 값 · 지금 목록에 없음)`, reasoningEfforts: connection ? aiRankReasoningEfforts(task.id, connection, row.model) : [] });
   }
@@ -1002,7 +1090,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   deviceId: "장비 이름(공백 없이 120자까지)",
   capacitySlots: "칸 수(1~256)", contextTokens: "컨텍스트 상한(1~2097152 토큰)", note: "메모(400자까지)",
   manualModels: "목록 없는 서버의 모델 이름(16개까지, 영문·숫자·._:/@+- 200자까지)", reasoningTokenReserve: "추론 토큰 여유(1~32768)",
-  keyValidDays: "키 유효 기간(1~3650일)",
+  keyValidDays: "키 유효 기간(1~3650일)", displayName: "모델 이름(80자까지)", machine: "장비 이름(80자까지)",
   task: "작업", slot: "칸", revision: "화면 판", rank: "순위 칸",
 };
 const CODE_MESSAGES: Readonly<Record<string, string>> = {

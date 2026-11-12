@@ -1710,6 +1710,86 @@ class SwarmRollbackResumeTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseStopped, '^crawler-m3_swarm_rollback_unsettled$'):
                 release.await_rollback_settled(client, 'crawler-m3', self.target, timeout=1)
 
+    # ---- 2026-11-12: Swarm status for any kind and the start-race boundary of the fast path's single redeploy ----------
+    def run_swarm_status(self, fixture):
+        fake = ('import json,os,sys\n'
+                'f=json.loads(os.environ["FAKE_DOCKER"]);a=sys.argv[1:]\n'
+                'if a[:2]==["service","inspect"]: print(json.dumps(f["updateStatus"]))\n'
+                'elif a[:2]==["service","ps"]: print("\\n".join(json.dumps(t) for t in f["tasks"]))\n'
+                'else: raise SystemExit("unexpected docker call: "+" ".join(a))\n')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'docker'
+            path.write_text('#!' + sys.executable + '\n' + fake)
+            path.chmod(0o755)
+            out = subprocess.run([sys.executable, '-c', release.REMOTE_SWARM_STATUS, 'svc'], capture_output=True, text=True, check=True,
+                                 env={**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
+                                      'FAKE_DOCKER': json.dumps(fixture)})
+        return json.loads(out.stdout)
+
+    def test_swarm_status_reads_update_state_and_the_newest_task_errors_without_the_kind_indexed_probe(self):
+        tasks = [{'Name': 'svc.1', 'Error': ''},
+                 {'Name': 'svc.1', 'Error': '"No such container: svc.1.ie3yzoot3f934t0g73kqqavak"'},
+                 {'Name': 'svc.1', 'Error': 'secret=<value>\n' + 'x' * 300}]
+        result = self.run_swarm_status({'updateStatus': {'State': 'rollback_completed', 'Message': 'rollback completed'}, 'tasks': tasks})
+        self.assertEqual(result['updateStatusInspected'], True)
+        self.assertEqual((result['updateState'], result['updateMessage']), ('rollback_completed', 'rollback completed'))
+        self.assertEqual(result['taskErrors'][0], '?No such container: svc.1.ie3yzoot3f934t0g73kqqavak?')
+        self.assertTrue(result['taskErrors'][1].startswith('secret=?value??'))  # filtered and cut on the host
+        self.assertEqual(len(result['taskErrors'][1]), 160)
+        never_updated = self.run_swarm_status({'updateStatus': None, 'tasks': []})
+        self.assertEqual(never_updated, {'updateStatusInspected': True})
+        # Any registered kind, monitor included: only the host and the service name are used.
+        with patch.object(release, 'ssh_python', return_value=json.dumps(result)) as remote:
+            self.assertEqual(release.swarm_status('monitor-m3', {'appName': 'svc'}), result)
+        self.assertEqual(remote.call_args.args, (release.M3[1], release.REMOTE_SWARM_STATUS, 'svc'))
+        with patch.object(release, 'ssh_python', return_value=json.dumps(['not', 'a', 'dict'])):
+            self.assertEqual(release.swarm_status('monitor-m3', {'appName': 'svc'}), {})
+
+    def test_the_probe_still_reports_swarm_detail_after_sharing_the_reader(self):
+        rolled_back = {'serviceImage': self.previous['worker'], 'containerImage': self.previous['worker'], 'sha': self.previous['sha'],
+                       'updateStatus': {'State': 'rollback_started'},
+                       'tasks': [{'Name': 'svc.1', 'Error': '"No such container: svc.1.abc"'}]}
+        self.assertEqual({key: value for key, value in self.run_probe(rolled_back).items() if key.startswith(('update', 'task'))},
+                         {'updateStatusInspected': True, 'updateState': 'rollback_started', 'taskErrors': ['?No such container: svc.1.abc?']})
+
+    def test_only_the_newest_task_error_naming_this_services_own_task_is_the_start_race(self):
+        service = 'app-copy-primary-hard-drive-b5fhzd'
+        # The exact cleaned text recorded on 11-08, 11-10 and 11-12 (the quotes become '?').
+        race = '?No such container: app-copy-primary-hard-drive-b5fhzd.1.ie3yzoot3f934t0g73kqqavak?'
+        for evidence in ({'taskErrors': [race]}, {'taskErrors': [race[1:-1]]},
+                         {'updateState': 'rollback_completed', 'taskErrors': [race, 'task: non-zero exit (1)']}):
+            with self.subTest(evidence=evidence):
+                self.assertIs(release.swarm_start_race(service, evidence), True)
+        for evidence in (None, {}, {'taskErrors': []}, {'taskErrors': 'not a list'}, {'taskErrors': [None]},
+                         {'taskErrors': ['task: non-zero exit (1)', race]},
+                         {'taskErrors': ['?No such container: nomorevibe-reviewer-m3.1.ie3yzoot3f934t0g73kqqavak?']},
+                         {'taskErrors': ['?No such container: app-copy-primary-hard-drive-b5fhzdx.1.ie3yzoot3f934t0g73kqqavak?']},
+                         {'taskErrors': ['?No such container: 6f1c2e?']},
+                         {'taskErrors': ['starting container failed: ' + race]},
+                         {'taskErrors': [race + ' and more']},
+                         {'taskErrors': ['?No such image: app-copy-primary-hard-drive-b5fhzd.1.ie3yzoot3f934t0g73kqqavak?']}):
+            with self.subTest(evidence=evidence):
+                self.assertIs(release.swarm_start_race(service, evidence), False)
+        self.assertIs(release.swarm_start_race('', {'taskErrors': ['?No such container: .1.abc?']}), False)
+
+    def test_rollback_settle_wait_can_read_swarm_status_for_kinds_the_probe_does_not_know(self):
+        answers = [RuntimeError('command_failed:ssh:255'), json.JSONDecodeError('Expecting value', '', 0),
+                   {'updateState': 'rollback_started'}, {'updateState': 'rollback_completed', 'taskErrors': ['e']}]
+        def read():
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        client = FakeClient({})
+        with patch.object(release, 'probe', side_effect=AssertionError('probe does not know the monitor kind')), \
+             patch.object(release.time, 'sleep') as sleep:
+            settled = release.await_rollback_settled(client, 'monitor-m3', self.target, read=read)
+        self.assertEqual(settled, {'updateState': 'rollback_completed', 'taskErrors': ['e']})
+        self.assertEqual(sleep.call_count, 3)
+        with patch.object(release.time, 'sleep'):
+            with self.assertRaisesRegex(release.ReleaseStopped, '^monitor-m3_swarm_rollback_paused$'):
+                release.await_rollback_settled(client, 'monitor-m3', self.target, read=lambda: {'updateState': 'rollback_paused'})
+
     def test_stage_and_restore_go_through_the_rollback_aware_deploy(self):
         apps = self.test.apps()
         client = FakeClient(apps)

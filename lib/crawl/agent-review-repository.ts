@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { and, asc, desc, eq, gt, inArray, lte, ne, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
+import { qualifiedColumn } from "@/lib/db/qualified-column";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
   lockCliModelCapacityDispatch, finishCliModelCapacityDispatch, type CliCapacityDispatchLock } from "@/lib/llm/capacity-repository";
@@ -30,6 +31,7 @@ import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
+import { FIRST_REVIEW_SKIP_STREAK_LIMIT, firstReviewSkipReasonText } from "./first-review-skips";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
 import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql } from './held-qwen-retry-policy';
@@ -42,7 +44,8 @@ import type { FirstReviewer } from "./agent-review";
 import { ai1WithinLiveCallWindowSql } from "./ai1-live-call";
 import { firstReviewRankState, firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer,
   type FirstReviewPoolPosition } from "./first-reviewers";
-import { chooseReviewWorkloadMember, ensureReviewTaskRanks } from "./review-task-ranks";
+import { firstReviewLiveLedgerSql } from "./first-review-member-cap";
+import { chooseReviewWorkloadMember, ensureReviewTaskRanks, reviewPoolCappedKeys, reviewPoolSlotCaps } from "./review-task-ranks";
 import { logger } from "@/lib/observability/logger";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { candidateStarAutoApproval } from "./star-auto-approval";
@@ -63,9 +66,15 @@ type Executor = typeof db | ProductTransaction;
  * Selection is a hint; the existing candidate/item/capacity locks still grant all authority.
  * 1차 고르기는 늘 순위 고르기다(PR C1): 「작업 ↔ 모델」 1차 AI 검수 1·2·3순위(firstReviewers). TX 밖의 첫 고르기(executor = db)는 순위·계약 스냅숏을 새로 받고,
  * 지금 쓸 수 없는 순위(계약 닫힘·CLI 계약 없음 등, firstReviewRankState().unusable)도 비켜 간다. 잠금 아래 재확인은 부르는 쪽이 준 blocked 만 본다.
+ * 「동시에」 칸 수는 TX 밖 고르기와 잠금 아래 재확인(claim, executor = tx) 모두에서 센다 — 힌트 뒤에 다른 후보가 그 구성원의 칸을 채웠으면 재확인이
+ * 그 구성원을 다시 허락하지 않는다(2026-11-12 검수 F2). 이 후보의 살아 있는 의도(대기·예약·보냄)·살아 있는 시도가 있으면 세지 않고 그 모델을 잇는다.
+ * 두 claim 이 함께 세는 경합은 예약을 만드는 장부 TX(requestAi1ModelSlot·requestCliModelSlot 의 memberCap, control 잠금 아래)가 막는다.
  */
 export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db,
-  blocked: ReadonlySet<string> = new Set()): Promise<FirstReviewer | null> {
+  blocked: ReadonlySet<string> = new Set(),
+  /** poolBusy: 「동시에」 고르기가 쉬지 않은 구성원이 있는데도 줄에 설 구성원을 찾지 못해 null 을 돌려줬다(모델·장비 사정 — 후보 탓이 아니다).
+   * capped: 이번 고르기가 칸 수에 닿았다고 센 구성원 열쇠(firstReviewerKey) */
+  note?: { poolBusy?: boolean; capped?: ReadonlySet<string> }): Promise<FirstReviewer | null> {
   if (executor === db) await ensureReviewTaskRanks();
   const state = firstReviewRankState(context.settings);
   const pool = state.pool;
@@ -94,14 +103,45 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
         AND ${firstReviewIdentitySql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
   // New work only: retain every existing waiting/reserved/dispatched/live binding.
   // The locked recheck below still receives exactly one selected reviewer.
-  if (executor === db && state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
-    const chosen = await chooseReviewWorkloadMember(state.resolution, blocked);
-    if (!chosen) return null;
-    logger.info("ai_task.workload_hint_selected", { candidateId: context.candidate.id,
-      model: chosen.model, provider: chosen.provider, ...chosen.poolSelection });
-    return { provider: chosen.provider, model: chosen.model };
+  if (state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
+    // 칸 수(0179, 2026-11-12 1차도 따름): 그 모델의 살아 있는 1차 장부 행(대기·예약·보냄)이 칸 수 합에 닿은 구성원은 고르지 않는다 —
+    // 줄에 서는 것(queueWhenFull)도 칸이 남은 구성원 중에서만이다. 같은 엔진 두 자리는 한 열쇠로 함께 찬다. 잠금 아래 재확인도 같다(F2).
+    const capped = await firstReviewCappedKeys(state.resolution, executor);
+    if (note) note.capped = capped;
+    const avoid = capped.size ? new Set([...blocked, ...capped]) : blocked;
+    const chosen = await chooseReviewWorkloadMember(state.resolution, avoid);
+    if (chosen) {
+      logger.info("ai_task.workload_hint_selected", { candidateId: context.candidate.id,
+        model: chosen.model, provider: chosen.provider, ...chosen.poolSelection });
+      return { provider: chosen.provider, model: chosen.model };
+    }
+    // 예비(0179 reserve_ranks): 구성원이 모두 차거나 쉬거나 줄에 설 자리도 없으면 예비 순위가 받는다(순위 차례, 쉬거나 막힌 예비는 비켜 간다).
+    // 예비도 claim 이 장부 줄에 선다 — 차례가 오면 다음 틱이 그 의도(waiting)를 이어받는다. 구성원과 같은 엔진은 예비 목록에 없다(firstReviewRanks).
+    const reserve = state.reserve.find(reviewer => !avoid.has(firstReviewerKey(reviewer)));
+    if (reserve) {
+      logger.info("ai_task.workload_reserve_selected", { candidateId: context.candidate.id, model: reserve.model, provider: reserve.provider,
+        capped: capped.size });
+      return reserve;
+    }
+    // 쉬지도 막히지도 않은 구성원이 있는데 고르지 못했다 = 칸이 찼거나 줄에 설 자리도 없다(포화 쪽). 모두 쉬면 예전처럼 「모든 순위를 쓸 수 없음」이 가른다
+    const members = state.resolution.candidates.flatMap(candidate => candidate.binding && candidate.poolMember
+      ? [firstReviewerKey({ provider: candidate.binding.provider, model: candidate.binding.identity })] : []);
+    if (note && members.some(key => !blocked.has(key))) note.poolBusy = true;
+    return null;
   }
   return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked });
+}
+/**
+ * 칸 수 합에 닿은 1차 「동시에」 구성원 열쇠(firstReviewerKey). 그 모델의 살아 있는 1차 장부 행 — 기한 안의 대기·예약, 호출 기한 + 여유 안의 보냄(위 의도 질의와 같은
+ * 기준) — 을 모든 주인에 걸쳐 센다. 칸 수를 적지 않은 묶음이면 읽지 않는다(빈 집합).
+ */
+async function firstReviewCappedKeys(resolution: NonNullable<ReturnType<typeof firstReviewRankState>["resolution"]>, executor: Executor): Promise<Set<string>> {
+  const caps = reviewPoolSlotCaps("first-review", 1, resolution.execution, resolution.candidates);
+  if (!caps?.size || currentReplayDb()) return new Set();
+  const rows = await executor.execute<{ provider: string; model: string; n: number }>(sql`
+    SELECT provider, model, count(*)::integer AS n FROM model_capacity_requests
+    WHERE ${firstReviewLiveLedgerSql()} GROUP BY provider, model`);
+  return reviewPoolCappedKeys(caps, new Map(Array.from(rows, row => [firstReviewerKey(row), Number(row.n)])));
 }
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
@@ -573,6 +613,56 @@ export async function handOffExhaustedFirstReviews(
 }
 
 /**
+ * 같은 까닭으로 거듭 건너뛴 1차 후보를 사람 확인으로 넘긴다(first-review-skips.ts 의 상한) — handOffExhaustedFirstReviews 와 같은 꼴로,
+ * 사유는 ai_review_skip_exhausted, 멈춘 곳(stoppedAt)에 건너뛴 까닭을 사람 말로 남긴다. 잡의 커서 표는 어림이다 — 여기서 잠근 행으로 다시 잰다.
+ * 넘기지 않는 것(false):
+ *  - 지금 1차 대상이 아니게 된 후보(reviewCandidatePredicate — 그사이 유효한 심사가 붙었거나 원본이 낡았거나 상태가 바뀐 것). 1차가 그대로
+ *    다시 집어 또 건너뛸 후보만 넘긴다.
+ *  - 살아 있는 1차 항목, 또는 살아 있는 주인의 진행 중 시도가 있는 후보 — 그 시도가 끝나면 다시 1차 대상이다(주인 있는 시도는 건드리지 않는다).
+ *  - 이 후보가 처음 상한에 닿은 뒤(sinceMs 전) 다른 후보의 1차 자동 심사 성공이 하나도 없을 때 — 전역 장애가 후보마다 같은 까닭으로 보일 때
+ *    후보를 한꺼번에 사람에게 넘기지 않는다. 쪽에서 빼 두기는 계속된다.
+ * 잠금 순서는 handOffExhaustedFirstReviews 와 같다: stage → 후보 → (시도 읽기) → 1차 항목 → 잡.
+ */
+export async function handOffSkippedFirstReview(settings: CrawlSettings, lease: JobLease, input: {
+  candidateId: number; skipReason: string; strikes: number; sinceMs: number;
+}): Promise<boolean> {
+  if (!settings.enabled || settings.reviewMode !== "enforce") return false;
+  if (!Number.isSafeInteger(input.candidateId) || input.candidateId < 1) throw new Error("invalid_agent_review_candidate");
+  const detail = `같은 까닭으로 계속 건너뜀 — ${firstReviewSkipReasonText(input.skipReason)}(${input.skipReason}). `
+    + `연속 ${FIRST_REVIEW_SKIP_STREAK_LIMIT}회 건너뛰기가 ${input.strikes}번 거듭돼 자동 심사를 멈췄습니다. 사람이 확인해야 합니다.`;
+  return db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx);
+    await readItemStage(tx, stages.ai1);
+    const [candidate] = await tx.select().from(crawlCandidates).where(and(eq(crawlCandidates.id, input.candidateId),
+      reviewCandidatePredicate(settings))).for("update");
+    const refuse = async () => { await assertAgentReviewJob(tx, lease); return false; };
+    if (!candidate) return refuse();
+    const [liveAttempt] = await tx.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts).where(and(
+      eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.state, "running"),
+      sql`EXISTS (SELECT 1 FROM ${jobs} owner WHERE owner.lease_token = ${crawlReviewAttempts.leaseToken}
+        AND owner.locked_at >= clock_timestamp() - ${STALE_LOCK_MS} * interval '1 millisecond')`)).limit(1);
+    if (liveAttempt) return refuse();
+    const sinceAgeMs = Math.max(0, Math.trunc(Date.now() - input.sinceMs));
+    const [evidence] = await tx.execute<{ ok: boolean }>(sql`
+      SELECT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ok
+        WHERE ok.kind = 'automatic' AND ok.provider <> 'rules' AND ok.state = 'succeeded' AND ok.candidate_id <> ${candidate.id}
+          AND ok.completed_at > clock_timestamp() - ${sinceAgeMs} * interval '1 millisecond') AS ok`);
+    if (!evidence?.ok) return refuse();
+    if (await hasLiveAgentReviewItem(tx, candidate.id)) return refuse();
+    const updated = await tx.update(crawlCandidates).set({
+      state: "needs_review", reason: "ai_review_skip_exhausted", updatedAt: sql`clock_timestamp()`,
+      signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) ||
+        jsonb_build_object('firstReviewSkipExhausted', jsonb_build_object('previousState', ${crawlCandidates.state},
+          'previousReason', ${crawlCandidates.reason}, 'skipReason', ${input.skipReason}::text, 'strikes', ${input.strikes}::integer,
+          'streakLimit', ${FIRST_REVIEW_SKIP_STREAK_LIMIT}::integer),
+          'stoppedAt', jsonb_build_object('rule', 'AI 1차 심사', 'detail', ${detail}::text))`,
+    }).where(eq(crawlCandidates.id, candidate.id)).returning({ id: crawlCandidates.id });
+    await assertAgentReviewJob(tx, lease);
+    return updated.length === 1;
+  });
+}
+
+/**
  * 모델 장애로 소진된 1차 후보를 회복 증거가 있을 때만 자동 검사 대상으로 되돌린다.
  *
  * - `ai_review_exhausted` + `decided_by='auto'` + `signals.firstReviewExhausted` 만 본다(사람이 닫은 결정은 건드리지 않는다).
@@ -739,21 +829,47 @@ export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
   ).limit(Math.max(1, Math.min(100, limit)));
 }
 
-/** Bounded keyset page, retaining the existing unseen/oldest ordering and a fixed ID ceiling. */
-export async function listFirstReviewPoolCandidates(settings: CrawlSettings, limit: number, after: FirstReviewPoolPosition | null) {
-  const reviewed = sql<boolean>`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} seen
-    WHERE seen.candidate_id = ${crawlCandidates.id} AND seen.state = 'succeeded')`;
-  const rows = await db.select({ candidate: crawlCandidates, id: crawlCandidates.id, reviewed,
+/**
+ * Bounded keyset page, retaining the existing unseen/oldest ordering and a fixed ID ceiling.
+ * excludeCandidateIds — 같은 까닭으로 거듭 건너뛰어 잠시 쪽에서 뺀 후보(first-review-skips.ts). 커서·ceiling 은 그대로다.
+ */
+export async function listFirstReviewPoolCandidates(settings: CrawlSettings, limit: number, after: FirstReviewPoolPosition | null,
+  excludeCandidateIds: readonly number[] = []) {
+  const rows = await firstReviewPoolQuery(settings, limit, after, excludeCandidateIds);
+  return rows.map(({ candidate, ...position }) => ({ candidate, position }));
+}
+
+/**
+ * 「심사한 적 있음」 — 이 후보에 성공한 시도가 하나라도 있는가. 1차 쪽 커서(잡·consumer)의 첫 열쇠이고, select 목록·where·order by 가 이 한 식을 쓴다.
+ * 바깥 후보 id 는 표 이름을 붙여 적는다(qualifiedColumn) — 아래 firstReviewPoolQuery 의 설명.
+ */
+export function firstReviewSeenSql(): SQL<boolean> {
+  return sql<boolean>`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} seen
+    WHERE seen.candidate_id = ${qualifiedColumn(crawlCandidates.id)} AND seen.state = 'succeeded')`;
+}
+
+/**
+ * 쪽 쿼리(실행하지 않은 builder — 시험이 toSQL 로 SQL 글자를 본다).
+ *
+ * 「심사한 적 있음」(reviewed)은 select 목록·where(커서 뒤)·order by 가 같은 식이어야 한다. 바깥 후보 id 는 표 이름을 붙여 적는다
+ * (qualifiedColumn): drizzle 은 join 없는 select 의 select 목록에서 칸을 표 이름 없이("id") 그려, 안쪽 seen.id 로 묶여 늘 false 였다
+ * (where·order by 는 "crawl_candidates"."id" 로 그려 맞았다). 그래서 커서에 reviewed=false 가 저장돼 심사한 적 있는 후보가 매 틱 「커서 뒤」로
+ * 다시 뽑혔고, 그 후보를 처리할 수 없으면(주인 잃은 위임 시도가 running 으로 남은 것) 쪽이 비지 않아 ceiling 이 새로 잡히지 않고
+ * ceiling 보다 id 가 큰 새 후보가 영영 굶었다(2026-11-11 16:00Z~, 대기 1,030건).
+ */
+export function firstReviewPoolQuery(settings: CrawlSettings, limit: number, after: FirstReviewPoolPosition | null,
+  excludeCandidateIds: readonly number[] = []) {
+  const reviewed = firstReviewSeenSql();
+  return db.select({ candidate: crawlCandidates, id: crawlCandidates.id, reviewed,
     updatedAt: sql<string>`${crawlCandidates.updatedAt}::text`,
     ceiling: after ? sql<number>`${after.ceiling}::integer` : sql<number>`(SELECT coalesce(max(id), 0) FROM ${crawlCandidates})` })
-    .from(crawlCandidates).where(and(reviewCandidatePredicate(settings, { readyOnly: true }),
+    .from(crawlCandidates).where(and(reviewCandidatePredicate(settings, { readyOnly: true, excludeCandidateIds: [...excludeCandidateIds] }),
       after ? lte(crawlCandidates.id, after.ceiling) : undefined,
       after ? or(gt(reviewed, after.reviewed), and(eq(reviewed, after.reviewed), or(
         sql`${crawlCandidates.updatedAt} > (${after.updatedAt}::text)::timestamp`,
         and(sql`${crawlCandidates.updatedAt} = (${after.updatedAt}::text)::timestamp`, gt(crawlCandidates.id, after.id)),
       ))) : undefined)).orderBy(asc(reviewed), asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
     .limit(Math.max(1, Math.min(32, limit)));
-  return rows.map(({ candidate, ...position }) => ({ candidate, position }));
 }
 
 export type PendingFirstReviewCandidate = {
@@ -1049,8 +1165,14 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       // Under the candidate lock: pinned work must keep its model; a never-sent candidate may keep the
       // reviewer it was rerouted to (every other pool model is treated as "avoid" for this re-check only).
       const others = new Set(configuredPool.filter(row => row.provider !== input.provider || row.model !== input.model).map(firstReviewerKey));
-      const selected = await chooseFirstReviewForCandidate(locked, tx, others);
-      if (!selected || selected.provider !== input.provider || selected.model !== input.model) return { kind: "skipped", reason: "input_changed" };
+      const note: { capped?: ReadonlySet<string> } = {};
+      const selected = await chooseFirstReviewForCandidate(locked, tx, others, note);
+      if (!selected || selected.provider !== input.provider || selected.model !== input.model) {
+        // 고른 뒤 다른 후보가 그 구성원의 칸을 채웠다(2026-11-12 검수 F2) — 후보 탓이 아니라 그 모델의 일이다: 모델 범위 미룸으로 돌려 그 구성원을 이 틱에 쉬게 하고
+        // (잡·소비자는 다음 후보를 남은 구성원·예비로 고른다) 이 후보의 건너뜀으로 세지 않는다. TX 는 되감긴다.
+        if (note.capped?.has(firstReviewerKey({ provider: input.provider, model: input.model }))) throw new ModelCapacityDeferredError("model_quota");
+        return { kind: "skipped", reason: "input_changed" };
+      }
     }
     const binding = agentReviewBinding(locked.candidate.id, current, { provider: input.provider, model: input.model });
     const rows = await tx.select().from(crawlReviewAttempts).where(and(

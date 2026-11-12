@@ -3,18 +3,19 @@ import { checkProductTranslation, packProductTranslationBatch, productTranslatio
   productTranslationTaskKey, translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult, type ProductTranslationTask } from "@/lib/domain/products/translations";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
-import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { productTranslationClientTimeoutMs } from "@/lib/llm/deadline-ladder";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
 import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 import { modelRequestBudget } from "@/lib/llm/model-registry";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { PRODUCT_TRANSLATION_SELECTION_ROUNDS } from "./translation-rounds";
 
 const JOB = "product-translate";
 
-/** 한 틱에 호출 없이 넘길 수 있는 묶음 수 상한 — 고르기·장부 요청이 틱마다 끝없이 돌지 않게 한다. */
-const MAX_SELECTION_ROUNDS = 8;
+/** 한 틱에 호출 없이 넘길 수 있는 묶음 수 상한 — 고르기·장부 요청이 틱마다 끝없이 돌지 않게 한다(관리 화면 설명과 같은 값). */
+const MAX_SELECTION_ROUNDS = PRODUCT_TRANSLATION_SELECTION_ROUNDS;
 
 /**
  * One demanded batch per lane/tick, bounded by the route concurrency (default 1). Each call still contains at most four fields.
@@ -52,14 +53,17 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
     const pendingRequestIds = new Set<string>();
     const control = await readModelCapacityCallerControl();
     if (control.mode !== "disabled" && control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-    const concurrency = control.mode === "disabled" ? 1 : Math.min(modelRequestBudget(JOB).concurrency, MAX_SELECTION_ROUNDS);
+    // 「동시에」(칸 수를 적은 묶음)면 칸 수의 합만큼 함께 돈다 — 그 밖은 예전처럼 단계 동시 수(TextTaskRanks.lanes)
+    const base = Math.min(modelRequestBudget(JOB).concurrency, MAX_SELECTION_ROUNDS);
+    const concurrency = control.mode === "disabled" ? 1 : ranks.lanes(base);
+    const maxRounds = concurrency > base ? Math.max(MAX_SELECTION_ROUNDS, concurrency * 2) : MAX_SELECTION_ROUNDS;
     let recorded = 0, rounds = 0, stopClaims = false;
     let selection: Promise<void> = Promise.resolve();
     // Queue selection is serial even when HTTP is parallel. Reserve these task keys
     // locally before releasing the next lane; durable admission remains in the existing capacity adapter.
     const takeBatch = (lane: symbol): Promise<ProductTranslationTask[] | null> => {
       const next = selection.then(async () => {
-        while (!stopClaims && rounds++ < MAX_SELECTION_ROUNDS && ctx.hasBudget() && !signal.aborted && !ranks.exhausted) {
+        while (!stopClaims && rounds++ < maxRounds && ctx.hasBudget() && !signal.aborted && !ranks.exhausted) {
           const tasks = (await pendingProductTranslations(policy.batchMax, { exclude: [...passed, ...scheduled.keys()] }))
             .filter(task => !passed.has(productTranslationTaskKey(task)) && !scheduled.has(productTranslationTaskKey(task)));
           if (!tasks.length || !ctx.hasBudget() || signal.aborted || stopClaims) return null;
@@ -120,7 +124,8 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
             return { kind: "recorded", stored };
           }, { prefer });
         } catch (error) {
-          if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) {
+          // 이 묶음만의 미룸, 또는 「동시에」에서 고른 구성원만의 미룸(그 구성원은 이 틱 동안 쉬고 다음 묶음은 남은 구성원이 받는다)
+          if (!ranks.skipsWork(error)) {
             stopClaims = true;
             throw error;
           }
@@ -131,6 +136,11 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
         }
         if (attempt.kind === "unusable") {
           stopClaims = true;
+          return;
+        }
+        // 「동시에」: 이 줄에 내줄 빈 칸이 없다 — 집은 묶음을 놓고(다른 줄이 집는다) 이 줄만 끝낸다
+        if (attempt.kind === "idle") {
+          for (const task of batch) if (scheduled.get(productTranslationTaskKey(task)) === lane) scheduled.delete(productTranslationTaskKey(task));
           return;
         }
         if (attempt.value.kind === "skipped") {
@@ -155,6 +165,7 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
       throw failure.reason;
     }
     if (signal.aborted || !ctx.hasBudget()) return { done: false };
+    if (!recorded && ranks.poolIdle() && !ranks.exhausted) return deferredJob("model_capacity", 0);
     if (ranks.exhausted) {
       ctx.log("product_translation.all_ranks_unusable", { recorded, passed: passed.size });
       if (ranks.saturated()) return deferredJob("model_capacity", recorded);

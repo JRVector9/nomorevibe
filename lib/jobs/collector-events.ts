@@ -23,6 +23,8 @@ export const COLLECTOR_EVENTS: Record<string, CollectorEventDefinition> = {
   // 한도·인증 대기로 끝난 회차는 crawl.fetched 대신 이것만 남기고, 그때까지 확보한 수(fetched)를 싣는다(lib/crawl/jobs/fetch.ts)
   "crawl.fetch_rate_limited": { label: "원본 공급자 한도 대기", fields: ["fetched"], waiting: true, foldInto: { event: "crawl.fetched", fields: ["fetched"] } },
   "crawl.fetch_auth_unavailable": { label: "원본 수집 인증 확인 필요", fields: ["fetched"], error: true, foldInto: { event: "crawl.fetched", fields: ["fetched"] } },
+  "crawl.show_gn_seeded": { label: "Show GN 수집 결과", fields: ["discovered", "existing", "examined", "skippedNoRepo", "failed", "requests", "pending", "drained"], noSum: ["pending"] },
+  "crawl.show_gn_failed": { label: "Show GN 항목 오류", fields: [], error: true },
   "crawl.show_hn_seeded": { label: "Show HN 수집 결과", fields: ["discovered", "examined", "backlogPages", "drained"] },
   "crawl.show_hn_failed": { label: "Show HN 항목 오류", fields: ["page"], error: true },
   // found·observed·unlinked·skipped 는 30분마다 최근 72시간 창을 다시 센 수다 — 누적에 더하지 않는다

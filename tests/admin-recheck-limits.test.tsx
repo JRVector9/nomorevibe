@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * 공개분 변경 재판정 한도를 /admin/audit?tab=recheck 에서 바로 고치기(2026-11-09 운영자 요청) — 화면 모형(단위·스키마 범위·덮어씀)·server action
- * (실시간 한도와 같은 saveRuntimeSettings, group jobs·expectedRevision CAS, 다섯 칸 밖 거절)·그리기(읽기 전용)와, 실시간 한도 화면의 잡별 묶음 폼에서
- * 재판정 칸만 바꿔도 저장되는지(빈 기본 칸 거절 버그)를 DB 없이 본다. 저장 본문(saveRuntimeSettings)은 가짜다.
+ * (실시간 한도와 같은 saveRuntimeSettings, group jobs·expectedRevision CAS, 다섯 칸 밖 거절)·그리기(읽기 전용)를 DB 없이 본다. 저장 본문(saveRuntimeSettings)은 가짜다.
+ * 2026-11-11 실시간 한도 개편으로 재판정 다섯 칸은 이 화면에만 있다(실시간 한도 화면에서 뺐다 — tests/admin-limits-view.test.tsx 가 그 화면의 왕복을 본다).
  */
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), save: vi.fn(), revalidate: vi.fn() }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
@@ -15,12 +15,9 @@ vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidate }));
 
 import { saveRecheckLimits } from "@/app/(operator)/admin/audit/actions";
 import { RecheckLimitsForm } from "@/app/(operator)/admin/audit/RecheckLimitsForm";
-import { TranslationForm } from "@/app/(operator)/admin/models/limits/TranslationForm";
-import { buildRecheckLimitsControl, buildRuntimeSettingsAdminView, jobKnobRange, runtimeSettingsIssueMessage, runtimeSettingsPatchFromForm }
-  from "@/lib/operations/admin-runtime-settings";
+import { buildRecheckLimitsControl, jobKnobRange, runtimeSettingsIssueMessage } from "@/lib/operations/admin-runtime-settings";
 import { recheckLimits } from "@/lib/crawl/published-recheck";
 
-const NOW = new Date("2026-11-09T12:00:00.000Z");
 /** 운영의 지금 행(2026-11-09 revision 6) — 다섯 값이 모두 저장돼 있고 yieldHours 만 기본값(6)과 다르다 */
 const ROW = { values: { version: 1, jobs: { "published-recheck": { scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 60, yieldHours: 1 } } },
   revision: 6, updatedBy: "jr", updatedAt: "2026-11-09T11:50:00.000Z" };
@@ -109,23 +106,5 @@ describe("그리기", () => {
     expect(valueInputs(locked).filter(tag => tag.includes('disabled=""'))).toHaveLength(5);
     expect(locked.match(/<button[^>]*disabled=""/g)).toHaveLength(5);
     expect(locked).toContain("읽기 전용 미리보기라 저장하지 않습니다.");
-  });
-});
-
-describe("실시간 한도 화면의 잡별 묶음 폼(#877 이 더한 재판정 칸) — 빈 기본 칸 거절 버그에 걸리는가", () => {
-  it("그려진 폼 그대로 재판정 칸 하나만 바꿔도 그 칸만 저장된다 — 다른 잡의 칸·빈 칸 때문에 거절되지 않는다", () => {
-    const model = buildRuntimeSettingsAdminView({ row: ROW, observations: [], now: NOW, audit: [] });
-    const html = renderToStaticMarkup(createElement(TranslationForm, { translation: model.translation, jobKnobs: model.jobKnobs, revision: 6 }));
-    // 두 번째 폼(group jobs)의 칸을 브라우저가 보내는 그대로 모은다
-    const jobsForm = html.split("<form").find(part => part.includes('name="group" value="jobs"'))!;
-    const data = new FormData();
-    for (const match of jobsForm.matchAll(/<input([^>]*)>/g)) {
-      const name = /name="([^"]+)"/.exec(match[1])?.[1], value = /value="([^"]*)"/.exec(match[1])?.[1] ?? "";
-      if (name && !/type="checkbox"/.test(match[1])) data.append(name, value.replace(/&amp;/g, "&"));
-    }
-    expect(data.get(`value:${P}.yieldHours`)).toBe("1");
-    expect(runtimeSettingsPatchFromForm("jobs", data)).toEqual({ patch: {}, changed: [], issues: [] });
-    data.set(`value:${P}.yieldHours`, "2");
-    expect(runtimeSettingsPatchFromForm("jobs", data)).toEqual({ patch: { jobs: { "published-recheck": { yieldHours: 2 } } }, changed: [`${P}.yieldHours`], issues: [] });
   });
 });

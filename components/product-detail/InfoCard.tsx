@@ -7,6 +7,7 @@ import type { Translator } from "@/lib/i18n/messages";
 import type { ReactNode } from "react";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { repositoryOperator } from "@/lib/domain/products/github-owner";
+import type { DetailClientProduct, DetailFreshness } from "./client-data";
 import { safeExternalUrl } from "./format";
 
 const LINK = "text-accent-ink hover:underline";
@@ -24,7 +25,7 @@ function Row({ label, children, sub }: { label: string; children: ReactNode; sub
 }
 
 /** 공개 정보를 어디서 읽었는지 — 저장소는 GitHub, 공식 사이트 지문은 공개 페이지, 그 밖의 출처는 공개 링크 */
-function checkedFrom(freshness: ProductDetailView["freshness"], t: Translator<"detail">): string | undefined {
+function checkedFrom(freshness: DetailFreshness[], t: Translator<"detail">): string | undefined {
   const names = freshness.filter((item) => item.lastSuccessAt !== null)
     .map((item) => item.provider === "github" ? "GitHub" : item.provider === "product_site" ? t("source.publicPage") : t("source.publicLink"));
   return [...new Set(names)].join(" · ") || undefined;
@@ -38,9 +39,10 @@ function checkedFrom(freshness: ProductDetailView["freshness"], t: Translator<"d
  * '정보 갱신'은 GitHub·공개 페이지에서 사실을 읽은 때다 — AI 흔적 검사('무엇으로 만들었나')와는 다른 일이다(UX-16).
  */
 export function InfoCard({ product, repository, freshness, unclaimed }: {
-  product: ProductDetailView["product"];
+  product: DetailClientProduct;
   repository: ProductDetailView["repository"];
-  freshness: ProductDetailView["freshness"];
+  /** 출처마다 어디서·언제 읽었는지만(client-data.ts detailFreshness) — 원본 수집 값은 넘기지 않는다 */
+  freshness: DetailFreshness[];
   unclaimed: boolean;
 }) {
   const t = useTranslations("detail");

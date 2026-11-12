@@ -1,0 +1,212 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
+/* 기록(운영 콘솔 개편 조각 4b, 시안 「화면 6 기록」) — 표는 열 폭 고정, 때는 tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만(prototype.css 토큰). */
+.admin-prototype .lg-page {
+  display: grid;
+  gap: calc(12px / .8);
+  min-width: 0;
+}
+/* 격자 칸이 표의 최소 폭(900px)만큼 늘어나 좁은 화면 전체가 옆으로 밀리지 않게 — 표는 자기 칸 안에서 옆으로 넘긴다 */
+.admin-prototype .lg-page > * {
+  min-width: 0;
+}
+.admin-prototype .lg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(4px / .8) calc(12px / .8);
+  padding-bottom: calc(10px / .8);
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .lg-head h1 {
+  font-size: calc(20px + var(--admin-font-delta, 0px));
+  font-weight: 800;
+}
+.admin-prototype .lg-note,
+.admin-prototype .lg-foot {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .lg-raw {
+  margin-left: auto;
+}
+.admin-prototype .lg-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(8px / .8);
+}
+.admin-prototype .lg-find label {
+  display: flex;
+  flex: 1 1 260px;
+  align-items: center;
+  gap: calc(8px / .8);
+  min-width: 0;
+  font-weight: 600;
+}
+.admin-prototype .lg-find input {
+  flex: 1;
+  min-width: 0;
+  padding: calc(6px / .8) calc(10px / .8);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.admin-prototype .lg-empty {
+  padding: calc(28px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+}
+.admin-prototype .lg-scroll {
+  /* 숨긴 글자(admin-vh, position: absolute)가 이 칸을 기준으로 잡혀 옆 넘김 안에 머문다 */
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .lg-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12.5px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .lg-table th,
+.admin-prototype .lg-table td {
+  padding: calc(9px / .8) calc(12px / .8);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .lg-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .lg-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-prototype .lg-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .lg-when {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: var(--f-mono);
+}
+.admin-prototype .lg-title small {
+  color: var(--muted);
+  font-weight: 500;
+}
+.admin-prototype .lg-rawline {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  font-weight: 400;
+}
+.admin-prototype .lg-rawline:hover {
+  color: var(--blue);
+}
+.admin-prototype .lg-failed {
+  display: flex;
+  align-items: center;
+  gap: calc(6px / .8);
+  margin-top: 2px;
+  color: var(--red);
+  font-weight: 500;
+}
+.admin-prototype .lg-failed > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+}
+.admin-prototype .lg-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-prototype .lg-none {
+  color: var(--muted);
+}
+.admin-prototype .lg-after {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.admin-prototype .lg-after-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .lg-act {
+  text-align: right;
+}
+/* 되돌리기 안내 — popover(화면 위 층)라 표의 옆 넘김에 잘리지 않는다 */
+.admin-prototype .lg-undo-pop {
+  width: min(380px, calc(100vw - 32px));
+  margin: auto;
+  padding: calc(16px / .8) calc(18px / .8);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  text-align: left;
+  font-weight: 400;
+}
+.admin-prototype .lg-undo-pop:popover-open {
+  display: grid;
+  gap: calc(10px / .8);
+}
+.admin-prototype .lg-undo-pop::backdrop {
+  background: #1a231d33;
+}
+.admin-prototype .lg-undo-pop h3 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .lg-pop-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(8px / .8);
+}
+.admin-prototype .lg-diff {
+  display: grid;
+  gap: calc(4px / .8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .lg-diff li {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: calc(8px / .8);
+}
+.admin-prototype .lg-diff li > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .lg-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: calc(6px / .8) calc(16px / .8);
+}
+.admin-prototype .lg-pages {
+  display: flex;
+  gap: calc(12px / .8);
+}

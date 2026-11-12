@@ -11,6 +11,7 @@ import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 const mocks = vi.hoisted(() => ({
   dequeue: vi.fn(), defer: vi.fn(), save: vi.fn(), mark: vi.fn(), failed: vi.fn(), judge: vi.fn(),
   repo: vi.fn(), page: vi.fn(), request: vi.fn(), probe: vi.fn(), candidate: vi.fn(),
+  showGn: { enabled: true, priority: 120, requireEvidence: false },
   showHn: { enabled: true, priority: 120, requireEvidence: false },
 }));
 vi.mock("@/lib/crawl/repository", () => ({
@@ -24,7 +25,7 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({
   discover: { queries: [
     { label: "한국어 README", requireEvidence: true, enabled: true },
     { label: "Claude 커밋 트레일러", requireEvidence: false, enabled: true },
-  ], showHn: mocks.showHn },
+  ], showHn: mocks.showHn, showGn: mocks.showGn },
 }) }));
 vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/crawl/ai-evidence-gate", () => ({ PROBE_COMMITS: 30, probeAiEvidence: mocks.probe }));
@@ -35,13 +36,14 @@ const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
 
 const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
 const entry = (repo: string, signal: string): FetchClaim => ({ id: 1, repo, signal, builder: null,
-  priority: 0, state: "fetching", attempts: 1, nextAttemptAt: new Date(0), lastError: null, aliasOf: null,
+  priority: 0, state: "fetching", attempts: 1, nextAttemptAt: new Date(0), lastError: null, discoverySource: null, aliasOf: null,
   discoveredAt: new Date(0), updatedAt: new Date(0), ownership: { kind: "legacy", stageEpoch: 1, job } });
 const context = () => ({ cursor: null, lease: job, hasBudget: () => true, save: vi.fn(), log: vi.fn() });
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.showHn.requireEvidence = false;
+  mocks.showGn.requireEvidence = false;
   mocks.repo.mockResolvedValue({ ok: true, value: { id: 7, homepage: "https://app.test" } });
   mocks.page.mockImplementation(async (url: string) => ({ status: 200, finalUrl: url, html: "<title>App</title>" }));
   mocks.save.mockImplementation(async (_claim, _doc, initialEvidenceGate) => initialEvidenceGate
@@ -146,4 +148,19 @@ it("Show HN 은 설정으로 켰을 때만 더듬는다", async () => {
   expect(mocks.probe).toHaveBeenCalledWith("hn/app");
   expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "hn/app" }),
     expect.objectContaining({ signals: { evidenceGate: { signal: "Show HN", recentCommits: 30, found: [] } } }));
+});
+
+// Show GN 은 검색 신호가 아니라 따로 켠다(settings.discover.showGn.requireEvidence) — 게시물에는 AI 조건이 없다
+it("Show GN 은 설정으로 켰을 때만 더듬는다", async () => {
+  mocks.dequeue.mockResolvedValueOnce([entry("gn/app", "Show GN")]).mockResolvedValue([]);
+  await fetchCrawlDocuments(context());
+  expect(mocks.probe).not.toHaveBeenCalled();
+
+  mocks.showGn.requireEvidence = true;
+  mocks.dequeue.mockResolvedValueOnce([entry("gn/app", "Show GN")]).mockResolvedValue([]);
+  mocks.probe.mockResolvedValue({ ok: true, found: [] });
+  await fetchCrawlDocuments(context());
+  expect(mocks.probe).toHaveBeenCalledWith("gn/app");
+  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "gn/app" }),
+    expect.objectContaining({ signals: { evidenceGate: { signal: "Show GN", recentCommits: 30, found: [] } } }));
 });

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { aiTask, aiTaskSlotLabel } from "@/lib/llm/ai-tasks";
-import { aiTaskExecutionInputSchema } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskExecutionInputSchema, aiTaskPoolCappedLanes } from "@/lib/llm/ai-task-execution-config";
 import { aiTaskIssueMessage } from "@/lib/operations/admin-ai-tasks";
 import { saveAiTaskExecutionConfig } from "@/lib/operations/admin-ai-task-execution";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
@@ -26,6 +26,10 @@ const ISSUE_TEXT: Readonly<Record<string, string>> = {
   ai_task_pool_catalog_unavailable: "서버의 현재 모델 목록을 확인하지 못했습니다. 연결 상태를 확인하세요.",
   ai_task_pool_member_identity_mismatch: "저장된 분산 모델 구성이 바뀌었습니다. 새로고침 후 다시 확인하세요.",
   ai_task_pool_cli_connection_ambiguous: "같은 CLI 모델을 여러 연결로 중복 등록할 수 없습니다.",
+  ai_task_pool_slot_caps_unsupported: "이 작업은 아직 모델별 칸 수를 따르지 않습니다. 칸 수를 비우고 저장하세요.",
+  ai_task_pool_slot_caps_partial: "칸 수는 모든 모델에 적거나 모두 비워 주세요.",
+  ai_task_pool_reserve_unsupported: "이 작업은 아직 예비 순위를 따르지 않습니다.",
+  ai_task_fallback_uses_existing_ranks: "순위대로는 저장된 1·2·3순위를 씁니다. 함께 쓸 모델·예비는 「동시에」에서만 저장합니다.",
 };
 const issueText = (issue: string) => ISSUE_TEXT[issue] ?? aiTaskIssueMessage(issue);
 const field = (form: FormData, name: string) => { const value = form.get(name); return typeof value === "string" ? value : ""; };
@@ -39,15 +43,18 @@ export const saveTaskExecutionAction = webWriteAction(async function saveTaskExe
   let members: unknown;
   try { members = JSON.parse(encoded); } catch { return { issues: [ISSUE_TEXT.ai_task_execution_invalid_input] }; }
   const revision = field(form, "expectedRevision");
+  const reserve = field(form, "reserveRanks");
   const parsed = aiTaskExecutionInputSchema.safeParse({ task: field(form, "task"), slot: Number(field(form, "slot")),
-    expectedRevision: revision === "" ? null : Number(revision), mode: field(form, "mode"), members });
-  if (!parsed.success) return { issues: [ISSUE_TEXT.ai_task_execution_invalid_input] };
+    expectedRevision: revision === "" ? null : Number(revision), mode: field(form, "mode"), members,
+    ...(reserve === "1" ? { reserveRanks: true } : {}) });
+  if (!parsed.success) return { issues: [...new Set(parsed.error.issues.map(issue => ISSUE_TEXT[issue.message] ?? ISSUE_TEXT.ai_task_execution_invalid_input))] };
   const saved = await saveAiTaskExecutionConfig(parsed.data, admin.login);
   if (!saved.ok) return { issues: saved.issues.map(issueText) };
   for (const path of ["/admin/models/tasks", "/admin/models", "/admin/flow"]) revalidatePath(path);
   const task = aiTask(parsed.data.task)!;
   return { ok: true, warnings: saved.warnings,
     message: `${aiTaskSlotLabel(task, parsed.data.slot)}: ${parsed.data.mode === "workload_pool"
-      ? `모델 ${parsed.data.members.length}개의 작업 분산 설정을 저장했습니다.`
+      ? `모델 ${parsed.data.members.length}개를 「동시에」로 저장했습니다${parsed.data.members.every(member => member.maxSlots !== undefined)
+        ? ` — 함께 최대 ${aiTaskPoolCappedLanes({ task: task.id, slot: parsed.data.slot, mode: "workload_pool", members: parsed.data.members })}건` : ""}${parsed.data.reserveRanks ? ", 예비 순위 사용" : ""}.`
       : task.id === "publish-classify" ? "기존 CLI 분류 설정으로 전환했습니다." : "기존 실행 방식으로 전환했습니다. 보관된 대체 순위를 사용합니다."} 진행 중인 호출은 유지되고 새 업무부터 반영됩니다.` };
 });

@@ -1,5 +1,6 @@
 import type { AmbiguityCause } from "@/lib/crawl/rules";
 import type { HumanOnlyReason } from "@/lib/crawl/admin-review";
+import { FIRST_REVIEW_SKIP_STREAK_LIMIT, FIRST_REVIEW_SKIP_STRIKE_LIMIT } from "@/lib/crawl/first-review-skips";
 
 
 /**
@@ -110,6 +111,17 @@ export const CAUSE_GUIDE: Record<CauseKey, {
     short: "1차 재시도 소진",
     recommend: null,
     summary: "모델 호출이 반복 실패해 자동 심사를 끝낼 수 없습니다. 실패 기록을 확인하고 직접 판단합니다.",
+    question: "저장된 원본과 개발 근거로 승인 또는 거부할 수 있습니까?",
+    hints: [
+      { decision: "승인", when: "원본과 근거가 충분하고 현재도 유효하다" },
+      { decision: "거부", when: "제품이나 개발 근거가 기준에 맞지 않는다" },
+    ],
+  },
+  ai_review_skip_exhausted: {
+    label: "1차 AI 심사가 같은 까닭으로 계속 건너뜀",
+    short: "1차 계속 건너뜀",
+    recommend: null,
+    summary: `1차 AI 심사가 이 후보를 같은 까닭으로 거듭 건너뛰어(연속 ${FIRST_REVIEW_SKIP_STREAK_LIMIT}회씩 ${FIRST_REVIEW_SKIP_STRIKE_LIMIT}번) 자동 심사를 멈췄습니다. 건너뛴 까닭은 「멈춘 곳」에 적혀 있습니다. 모델 장애가 아니라 이 후보에 묶인 일(다른 검수가 보는 중으로 남은 시도 등)입니다.`,
     question: "저장된 원본과 개발 근거로 승인 또는 거부할 수 있습니까?",
     hints: [
       { decision: "승인", when: "원본과 근거가 충분하고 현재도 유효하다" },

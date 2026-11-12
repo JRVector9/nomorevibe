@@ -20,11 +20,12 @@ beforeEach(()=>{vi.clearAllMocks();fake.admin.mockResolvedValue({login:"operator
 describe("prototype collection form preserves the existing action contract",()=>{
   it("sends the expected form version and all untouched hidden settings through the existing parser",async()=>{
     const original=settings();original.judge.blockedHomepageDomains=["blocked.example"];original.judge.excludeOrganizations=true;original.discover.queries[0].priority=87;
+    original.discover.showGn={enabled:false,priority:137,requireEvidence:true};
     const fields=prototypeCollectionFields(original);fields.windowDays="21";
     await saveCrawlSettings(null,payload(fields));
     const [patch,actor,version]=fake.save.mock.calls[0];
     expect(actor).toBe("operator");expect(version).toEqual({expectedFormVersion:"original-form-version"});
-    expect(patch.discover.windowDays).toBe(21);expect(patch.discover.queries).toEqual(original.discover.queries.map(query=>({...query,requireEvidence:query.requireEvidence??false})));
+    expect(patch.discover.showGn).toEqual(original.discover.showGn);expect(patch.discover.windowDays).toBe(21);expect(patch.discover.queries).toEqual(original.discover.queries.map(query=>({...query,requireEvidence:query.requireEvidence??false})));
     expect(patch.judge).toEqual(Object.fromEntries(Object.keys(patch.judge).map(key=>[key,original.judge[key as keyof typeof original.judge]])));expect(patch.judge).not.toHaveProperty("docsGenerators");expect(patch).not.toHaveProperty("qwenAuto");expect(patch.secondReview).toEqual({enabled:original.secondReview.enabled,includeAiHeld:original.secondReview.includeAiHeld,sampleRate:original.secondReview.sampleRate,agreeAt:original.secondReview.agreeAt});
     expect(patch.agentEvidence).toEqual({enabled:original.agentEvidence.enabled,enforceEligibility:original.agentEvidence.enforceEligibility});expect(patch.reviewConcurrency).toBe(original.reviewConcurrency);expect(patch.rising).toEqual(original.rising);
     expect(patch).not.toHaveProperty("enabled");expect(patch).not.toHaveProperty("firstReview");

@@ -15,6 +15,7 @@ import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
+import { timelineSummary } from "@/components/product-detail/client-data";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL, SITE_REPO_RELATION_LABEL, UNCLAIMED_HINT } from "@/lib/copy/terms";
 import { AI_LEVEL_LABELS } from "@/lib/domain/evidence/ai-level-labels";
@@ -763,7 +764,8 @@ describe("evidence product detail components", () => {
         makerEditedAt: null,
       },
     ];
-    const html = renderToStaticMarkup(<UpdateTimeline updates={older} now={new Date()} />);
+    const now = new Date();
+    const html = renderToStaticMarkup(<UpdateTimeline summary={timelineSummary(older, now)} now={now} />);
     expect(html).not.toContain('role="tab');
     expect(html).toContain(">전체</span>");
     expect(html).toContain("표가 포함된 문서의 텍스트 추출을 개선했습니다");
@@ -791,7 +793,13 @@ describe("evidence product detail components", () => {
       makerEditedAt: null,
     }));
     const old = { ...recent[0], id: 99, title: "v1.0.0", publishedAt: new Date(Date.now() - 60 * 86_400_000) };
-    const html = renderToStaticMarkup(<UpdateTimeline updates={[...recent, old]} now={new Date()} />);
+    const now = new Date();
+    const summary = timelineSummary([...recent, old], now);
+    // 브라우저로는 그릴 세 줄만 — 건수는 서버가 센다(client-data.ts)
+    expect(summary.rows.map((row) => row.title)).toEqual(["v2.0.0", "v2.1.0", "v2.2.0"]);
+    expect(summary).toMatchObject({ total: 11, recent: 10 });
+    expect(Object.keys(summary.rows[0]).sort()).toEqual(["canonicalUrl", "id", "observedAt", "publishedAt", "sourceKind", "title"]);
+    const html = renderToStaticMarkup(<UpdateTimeline summary={summary} now={now} />);
     expect(html).toContain("최근 30일 10건");
     expect(html.match(/<li/g)).toHaveLength(3);
     expect(html).toContain("v2.0.0");

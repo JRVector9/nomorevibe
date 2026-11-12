@@ -1,25 +1,41 @@
 /* Port of the approved HTML prototype at :8788/final/index.html. Layout and design tokens are preserved; data is supplied by server pages. */
 
 .admin-prototype {
-  --bg: #f3f5f1;
+  /* 2026-11-12 「1인 운영 콘솔 시안」의 토큰 — 색은 상태에만 쓰고, 단추는 먹색 하나(--primary).
+     옛 이름(--surface-2·--soft·--blue·--green·--amber·--red)은 화면 수백 곳이 쓰므로 이름은 두고 값만 시안 값으로 바꿨다:
+     --surface-2 = 시안 --sunken, --blue = --link, --green = --ok, --amber = --warn, --red = --bad. */
+  /* 2026-11-12 사용자 「시안에서 화이트 컬러 적용한 것처럼」: 시안의 콘솔 틀은 흰 바탕이다(#f2f3ef 는 시안 문서의 바깥 여백) — 페이지 바탕도 흰색 */
+  --bg: #fff;
   --surface: #fff;
-  --surface-2: #f7f9f5;
-  --ink: #253028;
-  --muted: #626e65;
-  --soft: #657161;
-  --line: #dfe5da;
-  --blue: #365bdb;
-  --blue-soft: #eef2ff;
-  --green: #25734c;
-  --green-soft: #edf5e9;
-  --amber: #946017;
-  --amber-soft: #fff4df;
-  --red: #b63e3e;
-  --red-soft: #fff0ef;
-  --rail: #26372d;
-  --shadow: 0 12px 38px #26372d0b;
-  --radius: 12px;
+  --surface-2: #f7f8f5;
+  --sunken: var(--surface-2);
+  --ink: #1c2420;
+  --muted: #5d6861;
+  /* 글자로도 쓰이는 회색(작은 글자 4.5:1) — 점·선 같은 표시만은 --faint */
+  --soft: #6b766e;
+  --faint: #8b948d;
+  --line: #e0e4db;
+  --primary: #1c2420;
+  --primary-ink: #fff;
+  --blue: #2a55c0;
+  --link: var(--blue);
+  --blue-soft: #eaeffa;
+  --green: #2c7a4b;
+  --ok: var(--green);
+  --green-soft: #e8f2eb;
+  --amber: #8f6400;
+  --warn: var(--amber);
+  --amber-soft: #faf2da;
+  --red: #b3392c;
+  --bad: var(--red);
+  --red-soft: #fbecea;
+  --rail: #1c2420;
+  --shadow: 0 10px 30px #1c24200a;
+  --radius: 10px;
   --admin-font-delta: 0px;
+  /* 글꼴 — 관리자 layout 이 next/font 로 실어 --font-console-* 를 준다(console-fonts.ts). 없으면 이름으로 찾고, 그다음 시스템 글꼴 */
+  --f-sans: var(--font-console-sans, "IBM Plex Sans KR"), -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --f-mono: var(--font-console-mono, "IBM Plex Mono"), ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .admin-prototype * {
   box-sizing: border-box;
@@ -32,7 +48,7 @@
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font-family: Inter,Pretendard,'Noto Sans KR',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-family: var(--f-sans);
   font-size: calc(13px + var(--admin-font-delta, 0px));
   line-height: 1.65;
   word-break: keep-all;
@@ -98,7 +114,7 @@
   font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mono,.admin-prototype code {
-  font-family: 'SFMono-Regular',Consolas,monospace;
+  font-family: var(--f-mono);
   font-variant-numeric: tabular-nums;
 }
 .admin-prototype .mono {
@@ -463,9 +479,9 @@
   white-space: nowrap;
 }
 .admin-prototype .button.primary {
-  background: var(--blue);
-  color: white;
-  border-color: var(--blue);
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
 }
 .admin-prototype .button.danger {
   color: var(--red);
@@ -1772,34 +1788,38 @@
   display: none;
 }
 html[data-admin-theme="dark"] .admin-prototype {
-  --bg: #1f2822;
-  --surface: #29342c;
-  --surface-2: #303c32;
-  --ink: #e0e9da;
-  --muted: #acbca3;
-  --soft: #8b9f82;
-  --line: #43523d;
-  --blue: #a4b8ff;
-  --blue-soft: #374467;
-  --green: #a1c88d;
-  --green-soft: #354b31;
-  --amber: #e0bf7c;
-  --amber-soft: #51452e;
-  --red: #eeaaaa;
-  --red-soft: #513735;
-  --rail: #1a241d;
+  --bg: #171d19;
+  --surface: #212923;
+  --surface-2: #1c231e;
+  --ink: #e3eadf;
+  --muted: #a7b3a6;
+  --soft: #95a196;
+  --faint: #7f8b80;
+  --line: #364037;
+  --primary: #e3eadf;
+  --primary-ink: #171d19;
+  --blue: #a9bcff;
+  --blue-soft: #27304a;
+  --green: #7fd19b;
+  --green-soft: #1f3527;
+  --amber: #e6c26a;
+  --amber-soft: #3e3418;
+  --red: #ff9d8f;
+  --red-soft: #43261f;
+  --rail: #171d19;
   --shadow: none;
+  color-scheme: dark;
 }
 html[data-admin-theme="dark"] .admin-prototype .button.primary {
-  background: #5777e6;
-  color: white;
-  border-color: #5777e6;
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
 }
 html[data-admin-theme="dark"] .admin-prototype td {
-  border-color: #3d4c38;
+  border-color: var(--line);
 }
 html[data-admin-theme="dark"] .admin-prototype input,html[data-admin-theme="dark"] .admin-prototype select,html[data-admin-theme="dark"] .admin-prototype textarea {
-  border-color: #4d6044;
+  border-color: #4a564b;
 }
 html[data-admin-theme="dark"] .admin-prototype .source-preview {
   background: #33442d;
@@ -2605,34 +2625,38 @@ html[data-admin-theme="dark"] .admin-prototype .callout p {
 }
 @media (prefers-color-scheme: dark) {
 html:not([data-admin-theme="light"]) .admin-prototype {
-  --bg: #1f2822;
-  --surface: #29342c;
-  --surface-2: #303c32;
-  --ink: #e0e9da;
-  --muted: #acbca3;
-  --soft: #8b9f82;
-  --line: #43523d;
-  --blue: #a4b8ff;
-  --blue-soft: #374467;
-  --green: #a1c88d;
-  --green-soft: #354b31;
-  --amber: #e0bf7c;
-  --amber-soft: #51452e;
-  --red: #eeaaaa;
-  --red-soft: #513735;
-  --rail: #1a241d;
+  --bg: #171d19;
+  --surface: #212923;
+  --surface-2: #1c231e;
+  --ink: #e3eadf;
+  --muted: #a7b3a6;
+  --soft: #95a196;
+  --faint: #7f8b80;
+  --line: #364037;
+  --primary: #e3eadf;
+  --primary-ink: #171d19;
+  --blue: #a9bcff;
+  --blue-soft: #27304a;
+  --green: #7fd19b;
+  --green-soft: #1f3527;
+  --amber: #e6c26a;
+  --amber-soft: #3e3418;
+  --red: #ff9d8f;
+  --red-soft: #43261f;
+  --rail: #171d19;
   --shadow: none;
+  color-scheme: dark;
 }
 html:not([data-admin-theme="light"]) .admin-prototype .button.primary {
-  background: #5777e6;
-  color: white;
-  border-color: #5777e6;
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
 }
 html:not([data-admin-theme="light"]) .admin-prototype td {
-  border-color: #3d4c38;
+  border-color: var(--line);
 }
 html:not([data-admin-theme="light"]) .admin-prototype input,html:not([data-admin-theme="light"]) .admin-prototype select,html:not([data-admin-theme="light"]) .admin-prototype textarea {
-  border-color: #4d6044;
+  border-color: #4a564b;
 }
 html:not([data-admin-theme="light"]) .admin-prototype .source-preview {
   background: #33442d;

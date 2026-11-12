@@ -47,7 +47,7 @@ export const JOB_LABELS: Record<string, string> = {
   'email-outbox-send': '알림 메일 보내기', 'email-weekly-digest': '주간 요약 메일 묶기',
   'human-deepseek-review': 'DeepSeek 사람 검토', 'held-qwen-retry': '보류 Qwen 재심사', 'split-confirm': '갈림 DeepSeek 확인',
   'split-tiebreak': '2차 갈림 판가름', 'audit-qwen': 'Qwen 직접 감사', 'audit-second-opinion': '감사 두 번째 의견', 'published-recheck': '변경 재판정 견주기',
-  heartbeat: '스케줄러 관측', 'crawl-seed': '수집 대상 탐색', 'hn-show-seed': 'Show HN 수집', 'hn-talk': 'HN 화제 수집', 'bluesky-talk': 'Bluesky 화제 수집', 'crawl-fetch': '프로젝트 원본 수집',
+  heartbeat: '스케줄러 관측', 'crawl-seed': '수집 대상 탐색', 'hn-show-seed': 'Show HN 수집', 'gn-show-seed': 'Show GN 수집', 'hn-talk': 'HN 화제 수집', 'bluesky-talk': 'Bluesky 화제 수집', 'crawl-fetch': '프로젝트 원본 수집',
   'crawl-judge': '규칙 심사', 'crawl-agent-review': 'AI 후보 심사', 'second-review': '2차 심사', 'reason-translate': '사유 번역', 'crawl-publish': '제품 분류·발행',
   'uptime-ping': '서비스 응답 점검', 'click-rollup': '유효 방문 집계', 'ranking-refresh': '랭킹 갱신',
   'product-evidence-refresh': '제품 근거 갱신', 'agent-evidence-refresh': '개발 AI 근거 갱신', 'news-refresh': 'AI 소식 수집',
@@ -66,6 +66,7 @@ export const JOB_LABELS: Record<string, string> = {
   'product-site-evidence-refresh': '공식 사이트 근거 갱신',
   'maker-recheck': '운영자 확인 재확인',
   'notification-delisted': '팔로 프로젝트 내려감 알림', 'notification-category-digest': '팔로 분야 주간 알림', 'notification-prune': '지난 알림 지우기', 'model-capacity-reclaim': '미확인 모델 요청 자동 해제',
+  'console-alerts': '운영 홈 휴대폰 알림',
 };
 export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비스', db: '데이터베이스', scheduler: '작업 일정 관리', crawler: '프로젝트 수집', reviewer: '후보 심사', publisher: '제품 발행', text: '소개·사유 번역', maintenance: '생존 확인·지표 집계', 'connect-agent': 'AI 연결·분류 실행',
   // 분리 역할(batch versioned) — 기존 역할의 잡을 떼어 Oracle 등 다른 host 에서 돈다

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-category";
 import { underlyingReviewModel } from "./review-model-identity";
+import { feedSourcesSchema } from "./feed-source-schema";
 
 /**
  * 크롤 기준.
@@ -24,6 +25,7 @@ export const searchSortSchema = z.enum(["relevance", "recent"]).describe(
 
 /** Show HN 게시물로 넣은 프론티어 항목의 signal 라벨 — 수집 잡(jobs/hn-show.ts)과 흔적 게이트(jobs/fetch.ts)가 같이 쓴다 */
 export const SHOW_HN_SIGNAL = "Show HN";
+export const SHOW_GN_SIGNAL = "Show GN";
 
 const discoverSchema = z.object({
   sourceBuffer: z.object({ enabled: z.boolean() }).strict().default({ enabled: false }),
@@ -82,6 +84,19 @@ const discoverSchema = z.object({
     /** 검색 신호의 requireEvidence 와 같다 — Show HN 게시물에는 AI 조건이 없어 흔적으로 거른다(발행분 트레일러 0.8%) */
     requireEvidence: z.boolean().optional(),
   }).strict().default({ enabled: true, priority: 120 }),
+  /** GeekNews 자작 프로젝트 소개 — 저장소만 기존 심사 경로로 보낸다 */
+  showGn: z.object({
+    enabled: z.boolean(),
+    /** 스스로 내놓은 것이라 커밋 트레일러로 주운 것보다 먼저 본다 */
+    priority: z.number().int().min(0).max(1000),
+    /** 검색 신호의 requireEvidence 와 같다 — Show GN 게시물 자체는 AI 제작 근거가 아니다 */
+    requireEvidence: z.boolean().optional(),
+  }).strict().default({ enabled: true, priority: 120 }),
+  /**
+   * 화면에서 더한 글 목록(RSS·Atom) 수집원(2026-11-12 운영 콘솔 조각 4a) — Show GN 과 같은 잡(gn-show-seed)이 차례로 읽는다(lib/crawl/feed-sources.ts).
+   * 저장은 수집원 화면만 한다(lib/crawl/feed-source-store.ts — 이 칸만 바꾸고 검색 신호·주기는 건드리지 않는다). 없으면 빈 목록.
+   */
+  feeds: feedSourcesSchema.default([]),
 });
 
 const judgeSchema = z.object({
@@ -677,6 +692,8 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     maxNewPerHour: 3000,
     maxReviewBacklog: 1_000_000,
     showHn: { enabled: true, priority: 120 },
+    showGn: { enabled: true, priority: 120 },
+    feeds: [],
   },
   judge: {
     autoApproveMinStars: 500,

@@ -142,16 +142,17 @@ describe("연결 입력", () => {
 
 describe("선택지와 검증", () => {
   const context = (rows: AiTaskRankRow[] = []) => ({ connections: CONNECTIONS, rows });
+  // 운영 콘솔 통합: 모델 하나만 내놓는 연결(Grok CLI)은 사용자가 정한 이름 하나만, 서로 다른 모델을 여럿 내놓는 연결만 「이름 · 모델」
   it("선택지는 이 작업이 받는 켜진 연결의 실제 모델 — 「연결 · 모델」, API 먼저; 목록에 없는 저장 값은 남긴다", () => {
     const options = aiTaskRankOptions(aiTask("first-review")!, CONNECTIONS, [row("first-review", 1, 1, SUPA, "old-model")]);
     expect(options.map(option => option.label)).toEqual(["gpu3090 · qwen3.8-flash-next", "gpu3090 · qwen-vision", "supa · Inferact/Qwen3.8-27B-NVFP4",
-      "supa · qwen3.8-flash-next", "검색 서버 · bge-m3", "검색 서버 · bge-m3-q8", "Claude CLI · sonnet", "Claude CLI · opus", "Grok CLI · grok-4.7",
+      "supa · qwen3.8-flash-next", "검색 서버 · bge-m3", "검색 서버 · bge-m3-q8", "Claude CLI · sonnet", "Claude CLI · opus", "Grok CLI",
       "supa · old-model (저장된 값 · 지금 목록에 없음)"]);
     expect(aiTaskRankOptions(aiTask("product-intro-check")!, CONNECTIONS, []).map(option => option.label)).toEqual(["Claude CLI · sonnet", "Claude CLI · opus"]);
     // 드롭다운은 서버(연결)마다 묶고 그 안에 모델 이름만 보인다(2026-11-02 화면 단순화) — 목록에 없는 저장 값도 그 서버 묶음에 「지금 목록에 없음」으로 남는다
     expect(options.map(option => [option.group, option.text])).toEqual([["gpu3090", "qwen3.8-flash-next"], ["gpu3090", "qwen-vision"],
       ["supa", "Inferact/Qwen3.8-27B-NVFP4"], ["supa", "qwen3.8-flash-next"], ["검색 서버", "bge-m3"], ["검색 서버", "bge-m3-q8"], ["Claude CLI", "sonnet"],
-      ["Claude CLI", "opus"], ["Grok CLI", "grok-4.7"], ["supa", "old-model (목록에 없음)"]]);
+      ["Claude CLI", "opus"], ["Grok CLI", "Grok CLI"], ["supa", "old-model (목록에 없음)"]]);
     const gone = aiTaskRankOptions(aiTask("crawl-tagline")!, CONNECTIONS, [row("crawl-tagline", 1, 1, "66666666-6666-4666-8666-666666666666", "x")]);
     expect(gone.at(-1)).toMatchObject({ group: "지워진 연결", text: "x (목록에 없음)", saved: true });
   });
@@ -688,15 +689,16 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     const html = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
       value: [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], connections: CONNECTIONS, slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false,
       validate: slots => validateAiTaskRanks("crawl-tagline", 1, slots, { connections: CONNECTIONS, rows: [] }), note: createElement("p", null, "안내") }));
-    // 연결·전송별로 묶고, 모델 이름 옆에 실시간 관측 상태를 표시한다.
+    // 2026-11-12 소유자 「모델 목록의 이름이 바로 떠야」 — 묶음 머리 없이 모델마다 한 줄. 서로 다른 모델을 여럿 내는 연결만 「이름 · 서버 모델 이름」
     // 고른 선택지는 이름만(관측은 상자 밑 줄), 나머지는 「이름 — 관측」
-    expect(html).toContain(`<optgroup label="gpu3090 · API"><option value="${GPU}/qwen3.8-flash-next" selected="">qwen3.8-flash-next</option>`);
-    expect(html).toContain('<optgroup label="검색 서버 · API"><option value="55555555-5555-4555-8555-555555555555/bge-m3">bge-m3 — ');
+    expect(html).not.toContain("<optgroup");
+    expect(html).toContain(`<option value="${GPU}/qwen3.8-flash-next" selected="">gpu3090 · qwen3.8-flash-next</option>`);
+    expect(html).toContain('<option value="55555555-5555-4555-8555-555555555555/bge-m3">검색 서버 · bge-m3 — ');
     expect(html).toContain(`aria-describedby="crawl-tagline-1-rank-1-activity"`);
     expect(html).toContain('<span id="crawl-tagline-1-rank-1-activity" class="flex flex-wrap gap-1" data-model-activity="true">');
-    expect(html).not.toContain("gpu3090 · qwen3.8-flash-next");
-    // 모델 이름이 같아도 연결·전송과 숨은 원래 모델 바인딩을 구분한다.
-    expect(html.match(/data-rank-server="true">([^<]*)</g)).toEqual(['data-rank-server="true">gpu3090 · API<', 'data-rank-server="true">supa · API<']);
+    // 모델 이름이 같아도 연결(이름)과 숨은 원래 모델 바인딩으로 가른다 — 상자 밑 서버 줄은 이제 없다(이름에 이미 연결이 있다)
+    expect(html).toContain(`<option value="${SUPA}/qwen3.8-flash-next" selected="">supa · qwen3.8-flash-next</option>`);
+    expect(html).not.toContain('data-rank-server="true"');
     expect(html).not.toContain("(abcllm)");
     expect(html).toContain(`name="rank1Connection" value="${GPU}"`);
     expect(html).toContain('name="rank3Model" value="qwen3.8-flash-next"');

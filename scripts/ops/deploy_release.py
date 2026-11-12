@@ -3,6 +3,8 @@
 
 Plans and rollback originals are private files outside the checkout. A run is
 once-only; failed or ambiguous mutations require readback and a new reviewed plan.
+The single exception is one same-config redeploy of an app after a proven Swarm
+start-race rollback (redeploy_after_start_race); every other stop is final.
 This tool never migrates a database, changes capacity, or requeues model work.
 """
 import argparse
@@ -14,6 +16,7 @@ import os
 import re
 import stat
 import sys
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -525,6 +528,9 @@ print(json.dumps(json.loads(r.stdout)))
 '''
 
 
+MODEL_DRAIN_REFUSED = 'model_replacement_requires_explicit_drain_and_zero_active_calls'
+
+
 def model_replacement_gate(client, selected):
     """Observe an explicit operator drain before replacing a model request owner.
 
@@ -541,8 +547,134 @@ def model_replacement_gate(client, selected):
     if (not isinstance(observation, dict) or observation.get('replica') is not False or
             observation.get('mode') != 'draining' or type(observation.get('active')) is not int or
             observation['active'] != 0):
-        raise ValueError('model_replacement_requires_explicit_drain_and_zero_active_calls')
+        raise ValueError(MODEL_DRAIN_REFUSED)
     return {'required': True, 'mode': 'draining', 'active': 0, 'owners': sorted(owners), 'observedAt': now()}
+
+
+# Swarm start race (2026-09-14·10-22·11-08·11-10·11-12): Dokploy reported the deployment done, the new task failed with
+# "No such container: <service>.<slot>.<task>" and Swarm rolled the service back to the previous spec. Each time a human
+# redeployed only that app with the same saved config and it worked, while model intake stayed DRAINING 10-15 minutes
+# longer. The run does that one redeploy itself, only when everything below is proven; anything else stops as before.
+SWARM_START_RACE_REDEPLOYS = 1
+SWARM_EVIDENCE_KEYS = ('updateState', 'updateMessage', 'taskErrors')
+SWARM_ROLLBACK_CHECKS = ('swarmRolledBack', 'startRace', 'deploymentDone', 'rollbackSettled', 'runtimeIsOriginal',
+                         'savedConfigIsTarget', 'modelDrain')
+# The drain probe execs into crawler-m3, which may itself be mid-update in the same batch: an unreadable probe is read
+# again for at most this long. A readable answer that admission is not drained stops at once.
+REDEPLOY_DRAIN_ATTEMPTS, REDEPLOY_DRAIN_PAUSE_SECONDS = 6, 5
+
+
+def _swarm_evidence(evidence):
+    """Only what Swarm reported, already filtered and cut to 160 characters on the host: no env or secret values."""
+    return {key: evidence[key] for key in SWARM_EVIDENCE_KEYS if isinstance(evidence, dict) and key in evidence}
+
+
+def _rollback_evidence(short, expected, rollback):
+    """The rollback's Swarm evidence; the monitor verifier sees no task errors, so they are read once (unread is empty)."""
+    evidence = _swarm_evidence(rollback.evidence)
+    if 'taskErrors' in evidence:
+        return evidence
+    try:
+        status = shared.swarm_status(short, expected)
+    except Exception:
+        status = {}
+    return {**_swarm_evidence(status), 'updateState': rollback.state}
+
+
+def _redeploy_drain(client, short):
+    """model_replacement_gate before the redeploy; only a read failure is retried, never a refusal."""
+    for attempt in range(REDEPLOY_DRAIN_ATTEMPTS):
+        try:
+            return model_replacement_gate(client, [short])
+        except ValueError as error:
+            if str(error) == MODEL_DRAIN_REFUSED or attempt + 1 == REDEPLOY_DRAIN_ATTEMPTS:
+                raise
+        except Exception:
+            if attempt + 1 == REDEPLOY_DRAIN_ATTEMPTS:
+                raise
+        time.sleep(REDEPLOY_DRAIN_PAUSE_SECONDS)
+    raise AssertionError('unreachable')
+
+
+def redeploy_after_start_race(client, plan, short, directory, rollback, expected, old_id):
+    """Request the same saved deployment once more after a proven Swarm start race.
+
+    Returns the rolled-back deployment id that the next verification must replace, or None when the rollback does not
+    qualify; the caller then re-raises the rollback, so the run stops exactly as before. Every condition must hold:
+    Swarm rolled back (not paused); the newest task error is the start race for this service's own task; Dokploy
+    reported this deployment done; the rollback settled at rollback_completed with the same error; the runtime is the
+    plan's exact original release again; no other deployment happened and the saved Dokploy config is still exactly the
+    target; model admission is still drained. The decision, the checks and the evidence are written to
+    <app>.swarm-rollback.safe.json before the request; the request itself has its own redeploy receipts.
+    """
+    service = expected['appName']
+    checks = dict.fromkeys(SWARM_ROLLBACK_CHECKS, False)
+    record = {'app': short, 'maxRedeploys': SWARM_START_RACE_REDEPLOYS, 'checks': checks}
+
+    def decide(decision, reason):
+        write_private(directory / (short + '.swarm-rollback.safe.json'),
+                      {**record, 'decision': decision, 'reason': reason, 'at': now()})
+
+    if rollback.state not in shared.SWARM_ROLLBACK_STATES:
+        record['detected'] = _swarm_evidence(rollback.evidence)
+        decide('stop', 'swarm_update_paused' if rollback.state in shared.SWARM_STOP_STATES else 'swarm_state_not_rollback')
+        return None
+    checks['swarmRolledBack'] = True
+    record['detected'] = _rollback_evidence(short, expected, rollback)
+    if not shared.swarm_start_race(service, record['detected']):
+        decide('stop', 'task_error_not_start_race')
+        return None
+    checks['startRace'] = True
+    rolled_back = client.latest(short)
+    rolled_back_id = record['rolledBackDeploymentId'] = rolled_back.get('deploymentId')
+    if rolled_back.get('status') != 'done' or not rolled_back_id or rolled_back_id == old_id:
+        decide('stop', 'deployment_not_done')
+        return None
+    checks['deploymentDone'] = True
+    try:
+        # A redeploy while Swarm is still rolling back would overlap two updates.
+        settled = shared.await_rollback_settled(client, short, plan['target'],
+                                                read=lambda: shared.swarm_status(short, expected))
+    except shared.ReleaseStopped as error:
+        record['settleStop'] = str(error).split(':', 1)[0]
+        decide('stop', 'rollback_not_settled')
+        return None
+    checks['rollbackSettled'] = True
+    record['settled'] = _swarm_evidence(settled)
+    if not shared.swarm_start_race(service, settled):
+        checks['startRace'] = False
+        decide('stop', 'task_error_not_start_race')
+        return None
+    if not fleet.rolled_back_to_original(plan['snapshot'], short, ROOT):
+        decide('stop', 'runtime_not_original_release')
+        return None
+    checks['runtimeIsOriginal'] = True
+    app, latest = client.app(short), client.latest(short)
+    if latest.get('status') != 'done' or latest.get('deploymentId') != rolled_back_id:
+        decide('stop', 'deployment_changed_during_rollback')
+        return None
+    if app.get('applicationStatus') != 'done' or git.stable_config(app) != git.stable_config(expected):
+        decide('stop', 'saved_configuration_not_target')
+        return None
+    checks['savedConfigIsTarget'] = True
+    try:
+        # Re-read model admission like before every replacement batch; reopened admission is never replaced under.
+        drain = _redeploy_drain(client, short)
+    except Exception:
+        decide('stop', 'model_drain_not_proven')
+        return None
+    write_private(directory / (short + '.redeploy-model-drain.safe.json'), drain)
+    checks['modelDrain'] = True
+    decide('redeploy_once', 'swarm_start_race')
+    action(client, directory, short, 'redeploy', 'application.deploy', {'applicationId': shared.app_metadata(short)[0]})
+    return rolled_back_id
+
+
+def swarm_redeploys(directory):
+    """Start-race redeploys this run requested, from their durable receipts (write_private allows one per app)."""
+    suffix = '.redeploy.attempted.json'
+    apps = sorted(path.name[:-len(suffix)] for path in Path(directory).glob('*' + suffix))
+    return {'count': len(apps), 'apps': apps}
 
 
 def deploy_one(client, plan, short, directory):
@@ -566,22 +698,45 @@ def deploy_one(client, plan, short, directory):
         raise ValueError(short + '_saved_provider_drift')
     old_id = snapshot['latest'][short]['deploymentId']
     action(client, directory, short, 'deploy', 'application.deploy', {'applicationId': app_id})
-    evidence = {}
-    if short in shared.APPS or short in shared.CONSUMER_APPS:
-        shared.check_app_deployed(client, short, target, old_id)
-    else:
+    monitor = manifest = None
+    if short not in shared.APPS and short not in shared.CONSUMER_APPS:
         monitor = load('release_monitor', 'release_monitor.py')
-        evidence = monitor.check_monitor_deployed(client, short, target, original, old_id,
-                           git.source_manifest(target['sha'], stage='monitor', repo=ROOT),
-                           expected_runtime=snapshot['runtime'][short], **_retired_kwargs(retired))
-        if evidence.get('verification') == HUMAN_REVIEW_VERIFICATION:
-            # The deployment is proven; only the push proof is missing. Leave the operator a safe record now,
-            # before the final fleet verification, so it survives any later stop.
-            write_private(directory / (short + '.human-review.safe.json'), monitor.human_review_record(client, evidence))
+        manifest = git.source_manifest(target['sha'], stage='monitor', repo=ROOT)
+
+    def verify(previous_id):
+        if monitor is None:
+            shared.check_app_deployed(client, short, target, previous_id)
+            return {}
+        return monitor.check_monitor_deployed(client, short, target, original, previous_id, manifest,
+                                              expected_runtime=snapshot['runtime'][short], **_retired_kwargs(retired))
+
+    # The monitor verifier raises the SwarmRollback class of its own module copy.
+    rollbacks = (shared.SwarmRollback,) + ((monitor.git.shared.SwarmRollback,) if monitor is not None else ())
+    redeploys, rolled_back_id = 0, None
+    try:
+        evidence = verify(old_id)
+    except rollbacks as rollback:
+        rolled_back_id = redeploy_after_start_race(client, plan, short, directory, rollback, expected, old_id)
+        if rolled_back_id is None:
+            raise  # not the proven start race: stop exactly as before
+        redeploys = 1
+        try:
+            evidence = verify(rolled_back_id)
+        except rollbacks as again:
+            # Never a second redeploy: record what Swarm reported and stop.
+            repeated = _rollback_evidence(short, expected, again)
+            write_private(directory / (short + '.swarm-rollback-repeated.safe.json'), {
+                'app': short, 'detected': repeated, 'redeploys': redeploys, 'decision': 'stop',
+                'reason': 'swarm_rollback_repeated', 'at': now()})
+            raise shared.ReleaseStopped(shared.swarm_detail(short + '_swarm_rollback_repeated', repeated)) from again
+    if monitor is not None and evidence.get('verification') == HUMAN_REVIEW_VERIFICATION:
+        # The deployment is proven; only the push proof is missing. Leave the operator a safe record now,
+        # before the final fleet verification, so it survives any later stop.
+        write_private(directory / (short + '.human-review.safe.json'), monitor.human_review_record(client, evidence))
     latest = client.latest(short)
-    if latest.get('status') != 'done' or latest.get('deploymentId') == old_id:
+    if latest.get('status') != 'done' or latest.get('deploymentId') in (old_id, rolled_back_id):
         raise ValueError(short + '_new_deployment_receipt_missing')
-    return {**evidence, 'app': short, 'deploymentId': latest['deploymentId'], 'at': now()}
+    return {**evidence, 'app': short, 'deploymentId': latest['deploymentId'], 'swarmRedeploys': redeploys, 'at': now()}
 
 
 def human_review_summary(receipts, directory):
@@ -704,6 +859,7 @@ def run_release(plan, execution_dir, *, observe=True):
                   'retainedApps': sorted(set(fleet.registered_apps()) - set(deployed)),
                   'retiredSettings': list(retired), 'states': states, 'existingGuard': guard,
                   'finalSnapshot': str(final_path), 'finalSnapshotSha256': digest, 'completedAt': now(),
+                  'swarmRedeploys': swarm_redeploys(directory),
                   **({'humanReview': human_review} if human_review else {})}
         # Deployment completion is durable before the independent scheduler starts.
         write_private(directory / 'result.safe.json', result)
@@ -719,7 +875,7 @@ def run_release(plan, execution_dir, *, observe=True):
         write_private(directory / 'failure.private.json', {'errorClass': type(error).__name__,
                       'message': str(error), 'traceback': traceback.format_exc(), 'at': now()})
         write_private(directory / 'stopped.safe.json', {'status': 'stopped-readback-required', 'at': now(),
-            'errorClass': type(error).__name__, 'completedApps': sorted(receipts),
+            'errorClass': type(error).__name__, 'completedApps': sorted(receipts), 'swarmRedeploys': swarm_redeploys(directory),
             'scope': 'do not rerun markers or resubmit ambiguous actions; inspect private originals and receipts'})
         raise
 
