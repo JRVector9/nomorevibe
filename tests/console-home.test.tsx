@@ -45,9 +45,9 @@ describe("console home", () => {
     expect(html).toContain('href="/admin/review/batches#threshold">문턱 보기</a>');
     // 감사 거절은 묶음 화면이 없다 — 사람 확인 화면의 「요청과 감사」와 같은 목록을 바로 연다(운영 콘솔 통합)
     expect(html).toContain('href="/admin/audit?tab=audit">거절 목록 보기</a>');
-    // 「쉬게 하기」·「단계에 붙이기」는 모델 화면(3a)의 상세와 추가 ③으로
+    // 「쉬게 하기」는 모델 상세로, 「단계에 붙이기」는 모델 상세의 바로 붙이기 칸(#model-attach)으로
     expect(html).toContain('href="/admin/models?model=conn-lg-exaone#model-detail">쉬게 하기</a>');
-    expect(html).toContain('href="/admin/models/new?id=conn-m1max&amp;step=3">단계에 붙이기</a>');
+    expect(html).toContain('href="/admin/models?model=conn-m1max#model-attach">단계에 붙이기</a>');
   });
 
   it("offers 「사유 남기고 유지」 and 「그대로 두기」 with a required reason, only where a person can write", () => {

@@ -1,10 +1,11 @@
-import { aiConnectionLabel, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
+import { aiConnectionLabel, aiConnectionModelGroupKey, aiConnectionModelIds, aiModelDisplayName, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 import { deviceDisplayMap, GEMMA_DISPLAY, GEMMA_MODEL as GEMMA, GEMMA_MODEL_NAMES as GEMMA_NAMES, SUPA_MODEL as SUPA } from "@/lib/operations/llm-display";
 
 /** Presentation only. Execution identities, connection records and form bindings are never rewritten here. */
-export type PickerConnection = Pick<AiConnectionView, "id" | "kind" | "cliTool"> & Partial<Pick<AiConnectionView, "label" | "baseUrl" | "deviceId" | "models" | "enabled">>;
+export type PickerConnection = Pick<AiConnectionView, "id" | "kind" | "cliTool"> & Partial<Pick<AiConnectionView, "label" | "baseUrl" | "deviceId" | "models" | "enabled"
+  | "displayName" | "cliModels" | "cliCatalog" | "manualModels">>;
 type Choice = { provider: string; model: string };
-type Option = Choice & { label: string; group?: string; text?: string };
+type Option = Choice & { label: string; group?: string; text?: string; saved?: boolean; off?: boolean };
 /** M1 Studio 의 mlx_lm.server(Gemma 만 고를 수 있게 둔다)·Supa vLLM(supa 별칭) — 주소로 가린다. 보이는 이름은 늘 연결 이름표다(2026-11-09). */
 const m1 = (connection: PickerConnection) => connection.kind === "api" && connection.baseUrl === "https://m1-studio.tail02799e.ts.net/v1";
 const supa = (connection: PickerConnection) => connection.kind === "api" && connection.baseUrl === "http://100.78.219.124:8000/v1";
@@ -59,77 +60,73 @@ export function modelPickerModelGroups(connection: PickerConnection, ids: readon
   return [...groups].map(([label, members]) => ({ label, ids: members }));
 }
 
-/** The proven aliases share one engine. Picker display identity only; domain voting identities are unchanged. */
+/**
+ * 같은 모델(별칭)이면 같은 열쇠 — 증명된 별칭(주소로 가린 M1 Gemma 의 옛·새 이름 · Supa 의 supa·Inferact 이름)과 일반 규칙
+ * (서버가 알려 준 root · 서버 목록이 한 묶음인 연결의 적은 이름 — aiConnectionModelGroupKey). Picker display identity only; domain voting identities are unchanged.
+ */
 export function modelPickerChoiceKey(choice: Choice, connections: readonly PickerConnection[]): string {
   const connection = connections.find(entry => entry.id === choice.provider);
-  const model = connection && supa(connection) && choice.model === "supa" ? SUPA
-    : connection && m1(connection) && GEMMA_NAMES.has(choice.model) ? GEMMA : choice.model;
-  return JSON.stringify([choice.provider, model]);
+  if (!connection) return JSON.stringify([choice.provider, choice.model]);
+  if (supa(connection) && (choice.model === "supa" || choice.model === SUPA)) return JSON.stringify([choice.provider, SUPA]);
+  if (m1(connection) && GEMMA_NAMES.has(choice.model)) return JSON.stringify([choice.provider, GEMMA]);
+  return JSON.stringify([choice.provider, aiConnectionModelGroupKey({ kind: connection.kind, models: connection.models ?? null, manualModels: connection.manualModels },
+    choice.model)]);
+}
+/** 새로 고를 때 그 묶음에서 실을 이름 — 실행 쪽이 이미 쓰는 이름(Supa 는 Inferact 이름, 그 밖은 서버 목록의 첫 이름). 저장된 값은 바꾸지 않는다 */
+function canonicalModel(connection: PickerConnection, ids: readonly string[]): string {
+  if (supa(connection) && ids.includes(SUPA)) return SUPA;
+  const listed = (connection.models ?? []).map(model => model.id);
+  return ids.find(id => listed.includes(id)) ?? ids[0];
+}
+/** 연결이 내놓는 서로 다른 모델 수(별칭은 하나) — 1 이면 모델 이름 하나만, 여럿이면 「이름 · 구분」 */
+export function modelPickerModelCount(connection: PickerConnection, extra: readonly string[] = []): number {
+  const ids = [...aiConnectionModelIds({ kind: connection.kind, models: modelPickerConnectionModels(connection), cliModels: connection.cliModels ?? [],
+    cliTool: connection.cliTool, cliCatalog: connection.cliCatalog, manualModels: connection.manualModels }), ...extra];
+  return new Set(ids.map(id => modelPickerChoiceKey({ provider: connection.id, model: id }, [connection]))).size;
+}
+/** 고르는 상자에 보이는 이름 — 모델 목록과 같은 이름 하나(aiModelDisplayName). 한 연결이 서로 다른 모델을 여럿 내놓을 때만 「이름 · 서버 모델 이름」 */
+export function modelPickerOptionName(connection: PickerConnection, model: string, extra: readonly string[] = []): string {
+  const name = aiModelDisplayName({ label: connection.label ?? "", displayName: connection.displayName });
+  return modelPickerModelCount(connection, [model, ...extra]) <= 1 ? name : `${name} · ${model}`;
 }
 
-function pickerGroupName(connection: PickerConnection): string {
-  return modelPickerConnectionLabel(connection) || modelPickerConnectionDevice(connection) || connection.cliTool || "";
-}
-
-/** Group headers identify only the connection and transport; live slot/status stays on the option itself. */
-function pickerGroupLabel(connection: PickerConnection, connections: readonly PickerConnection[]): string {
-  const name = pickerGroupName(connection);
-  if (!name) return "";
-  const classification = connection.kind === "api" ? "API" : "CLI";
-  const device = modelPickerConnectionDevice(connection);
-  const needsDevice = connections.some(entry => entry.id !== connection.id
-    && entry.kind === connection.kind
-    && pickerGroupName(entry) === name);
-  const usefulDevice = needsDevice && device !== "" && device !== name ? device : "";
-  return [name, usefulDevice, classification].filter(Boolean).join(" · ");
-}
-
-function withPickerGroup<T extends Option>(option: T, connection: PickerConnection, connections: readonly PickerConnection[], force = false): T {
-  if (!force && !option.group) return option;
-  const group = pickerGroupLabel(connection, connections);
-  return group ? { ...option, group } : option;
-}
-
-/** 선택지의 보이는 글자가 서버 이름이 아니라 사용자가 정한 이름인가(운영 콘솔 통합 — aiModelChoiceName 이 만든 선택지) */
-const named = (option: Option) => !!option.text && option.text !== option.model && !option.text.startsWith(`${option.model} (`);
-
+/**
+ * 고르는 상자의 선택지(2026-11-12 소유자 「모델 목록에 모델이 떠 있으면 여기에 바로 그 이름이 떠야」) — 모델 하나에 줄 하나, 보이는 글자는 모델 목록과 같은 이름.
+ * - 같은 모델의 별칭(증명된 별칭 · root · 적은 이름)은 한 줄로 묶는다. 그 줄의 값은: 이 칸에 저장된 이름이 그 묶음이면 그 이름 그대로(저장 값을 바꾸지 않는다),
+ *   아니면 실행 쪽이 쓰는 이름(canonicalModel).
+ * - 한 연결이 서로 다른 모델을 여럿 내놓으면(CLI 의 여러 모델 · OpenCode) 「이름 · 서버 모델 이름」.
+ * - OpenCode 는 DeepSeek 만(지금 이 칸 값은 남긴다), M1 Studio 는 Gemma 만 — 전과 같다.
+ * - 지금 목록에 없는 저장된 값은 「이름 · 서버 모델 이름 (목록에 없음)」으로 남는다. 꺼진 연결은 「(꺼짐)」.
+ * 묶음 머리(optgroup)는 두지 않는다 — 줄마다 이름이 이미 모델이다. 순서는 받은 선택지 차례(API 먼저, 이름순).
+ */
 export function presentPickerOptions<T extends Option>(options: readonly T[], connections: readonly PickerConnection[], current: Choice | null): T[] {
-  const result: T[] = [], seen = new Set<string>();
-  for (const option of options) {
-    const connection = connections.find(entry => entry.id === option.provider);
-    if (!connection) { result.push(option); continue; }
-    if (connection.kind === "cli" && connection.cliTool === "opencode"
-      && !/^deepseek(?:[-_.:]|$)/i.test(option.model.slice(option.model.lastIndexOf("/") + 1))
-      && !(current?.provider === option.provider && current.model === option.model)) continue;
-    if (m1(connection)) {
-      if (!GEMMA_NAMES.has(option.model)) continue;
-      // Gemma 의 두 이름은 한 줄로 — 고른 값이 있으면 그 이름(폼 값 그대로), 없으면 지금 서버 목록에 있는 이름
-      const wanted = current?.provider === option.provider && GEMMA_NAMES.has(current.model) ? current.model : null;
-      const selected = (wanted ? options.find(entry => entry.provider === option.provider && entry.model === wanted) : undefined)
-        ?? options.find(entry => entry.provider === option.provider && GEMMA_NAMES.has(entry.model) && !("saved" in entry && entry.saved))
-        ?? option;
-      const key = modelPickerChoiceKey(selected, connections);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const grouped = withPickerGroup(selected, connection, connections, true);
-      // 선택지가 이미 사용자가 정한 이름이면(aiTaskRankOptions — 모델 하나인 연결) 그 이름을 둔다. 서버 이름이면 Gemma 이름으로
-      result.push(named(selected) ? grouped : { ...grouped, text: GEMMA_DISPLAY, label: `${modelPickerConnectionLabel(connection)} · ${GEMMA_DISPLAY}` });
-      continue;
-    }
-    if (supa(connection) && (option.model === "supa" || option.model === SUPA)) {
-      // Retain a selected legacy wire alias in this select, while rendering exactly one canonical model label.
-      const wanted = current?.provider === option.provider && (current.model === "supa" || current.model === SUPA) ? current.model : SUPA;
-      const selected = options.find(entry => entry.provider === option.provider && entry.model === wanted)
-        ?? options.find(entry => entry.provider === option.provider && entry.model === SUPA)
-        ?? option;
-      const key = modelPickerChoiceKey(selected, connections);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const grouped = withPickerGroup(selected, connection, connections, Boolean(option.group));
-      result.push(named(selected) ? grouped : { ...grouped, text: SUPA, label: `${modelPickerConnectionLabel(connection)} · ${SUPA}` });
-      continue;
-    }
-    result.push(withPickerGroup(option, connection, connections));
+  const groups = new Map<string, { connection: PickerConnection | null; members: T[] }>();
+  const order: string[] = [];
+  const shown = options.flatMap(option => {
+    const connection = connections.find(entry => entry.id === option.provider) ?? null;
+    const mine = current?.provider === option.provider && current.model === option.model;
+    if (connection?.kind === "cli" && connection.cliTool === "opencode"
+      && !/^deepseek(?:[-_.:]|$)/i.test(option.model.slice(option.model.lastIndexOf("/") + 1)) && !mine) return [];
+    if (connection && m1(connection) && !GEMMA_NAMES.has(option.model) && !mine) return [];
+    return [{ option, connection, key: connection ? modelPickerChoiceKey(option, connections) : null }];
+  });
+  // 저장된 값이 지금 목록의 어느 모델의 별칭이면 그 줄에 든다(같은 모델). 아니면 따로 — 어느 이름이 사라졌는지 보여야 고칠 수 있다
+  const listedKeys = new Set(shown.flatMap(entry => entry.key && !entry.option.saved ? [entry.key] : []));
+  for (const { option, connection, key: choiceKey } of shown) {
+    const key = choiceKey && (!option.saved || listedKeys.has(choiceKey)) ? choiceKey : JSON.stringify(["raw", option.provider, option.model]);
+    const group = groups.get(key);
+    if (group) group.members.push(option); else { groups.set(key, { connection, members: [option] }); order.push(key); }
   }
-  return result;
+  return order.map(key => {
+    const { connection, members } = groups.get(key)!;
+    if (!connection) return members[0];
+    const ids = members.map(member => member.model);
+    const wanted = current?.provider === members[0].provider && ids.includes(current.model) ? current.model : null;
+    const model = wanted ?? canonicalModel(connection, members.filter(member => !member.saved).map(member => member.model).concat(ids));
+    const picked = members.find(member => member.model === model) ?? members[0];
+    const base = aiModelDisplayName({ label: connection.label ?? "", displayName: connection.displayName });
+    const missing = members.every(member => member.saved);
+    const name = missing ? `${base} · ${picked.model} (목록에 없음)` : `${modelPickerOptionName(connection, picked.model)}${picked.off ? " (꺼짐)" : ""}`;
+    return { ...picked, label: name, text: name, group: undefined };
+  });
 }

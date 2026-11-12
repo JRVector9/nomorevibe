@@ -93,7 +93,7 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
     expect(board.marks).toEqual({ stopped: ["first"], piling: ["reason-translate", "keyword-verify", "product-translate"] });
     // 정리: 쓰는 단계 없는 모델은 모델 추가 ③(쓸 단계)·상세로, 순위에 같은 모델이 두 번이면 그 단계 패널의 모델 구역으로(운영 콘솔 통합)
     expect(all.find(task => task.id === "tidy:unused:conn-m1max")!.actions).toEqual([
-      { kind: "link", label: "단계에 붙이기", href: "/admin/models/new?id=conn-m1max&step=3" },
+      { kind: "link", label: "단계에 붙이기", href: "/admin/models?model=conn-m1max#model-attach" },
       { kind: "link", label: "모델 상세", href: "/admin/models?model=conn-m1max#model-detail" }]);
     expect(all.find(task => task.id === "tidy:duplicate-ranks")!.actions[0]).toMatchObject({ label: "순위 고치기", href: expect.stringMatching(/^\/admin\/flow\?stage=[a-z-]+#sp-models$/) });
     expect(all.find(task => task.id === "pile:audit")!.actions[0]).toMatchObject({ label: "거절 목록 보기", href: "/admin/audit?tab=audit" });

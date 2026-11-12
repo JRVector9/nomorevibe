@@ -80,7 +80,10 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
         // 고른 선택지는 이름만(관측은 상자 밑 줄), 나머지는 「이름 — 관측」 — 목록을 열면 다른 모델의 여유를 견줄 수 있다
         const item = (option: (typeof options)[number]) => {
           const off = !!blocked?.(option, index, slots);
-          const name = option.group !== undefined ? option.text ?? option.model : `${option.label}${!showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`;
+          // 연결을 아는 선택지(presentPickerOptions)는 모델 이름 하나 그대로 — 제공자 id 를 덧붙이지 않는다
+          const known = connections.some(connection => connection.id === option.provider);
+          const name = option.group !== undefined ? option.text ?? option.model
+            : `${option.label}${known || !showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`;
           const status = [rankOptionKey(option) === key ? "" : activityText(option), off ? "이 투표자/모델 조건에서 선택 불가" : ""].filter(Boolean).join(" · ");
           return <option key={rankOptionKey(option)} value={rankOptionKey(option)} disabled={off}>{status ? `${name} — ${status}` : name}</option>;
         };
@@ -151,7 +154,10 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
     </div>
     <span className="text-[13px] text-fg-2" data-rank-observed="true">{availability.value && <>관측 {new Date(availability.value.observedAt).toLocaleTimeString("ko-KR", { hour12: false, timeZone: "Asia/Seoul" })} KST
       {availability.failed && " (다시 읽기 실패 — 마지막 관측)"} · </>}
-      슬롯은 장비 전체의 공유 여유입니다. 반복 선택해도 한도는 늘지 않으며 실행 시 다시 확인합니다.</span>
+      {/* #925 도움말과 같은 말 — 같은 모델 두 줄은 동시 처리 수를 늘리지 않는다 */}
+      {selectionKind === "pool"
+        ? "공유 여유는 그 모델이 지금 더 받을 수 있는 수입니다(실행할 때 다시 확인합니다). 같은 모델은 한 줄만 넣으세요 — 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다."
+        : "공유 여유는 그 모델이 지금 더 받을 수 있는 수입니다(실행할 때 다시 확인합니다). 같은 모델을 여러 순위에 넣어도 동시 처리 수는 늘지 않습니다."}</span>
     {issues.length > 0 && <ul role="alert" className="text-[13px] text-down">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     {note === undefined
       ? <p className="text-[13px] text-fg-2">{selectionKind === "pool"

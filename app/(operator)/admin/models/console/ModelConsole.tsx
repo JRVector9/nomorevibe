@@ -7,6 +7,9 @@ import type { ModelConsoleRead } from "@/lib/operations/model-console-read";
 import { SAMPLE_COMPARE_SUPPORTED } from "@/lib/operations/model-sample-compare";
 import { MODELS_DASHBOARD_HREF } from "../../workspace-navigation";
 import { ModelSettingsForm } from "./ModelSettingsForm";
+import { ModelAttachForm } from "./ModelAttachForm";
+import type { FlowRankEditor } from "@/lib/operations/flow-rank-editor";
+import type { PoolHelpContext } from "@/lib/operations/pool-help";
 import { ModelAddFlow } from "../new/ModelAddFlow";
 import { aiModelDisplayName } from "@/lib/operations/admin-ai-tasks";
 import "./model-console.css";
@@ -16,7 +19,10 @@ import "./model-console.css";
  * 줄의 이름을 누르면(?model=<연결 id>) 아래에 상세가 열린다 — 설정 · 쓰는 단계 · 문제 · 조치. 서버가 알려 준 모델 이름·엔진 경로는 상세의 「연결 확인」에만.
  * 이 화면이 쓰는 저장은 기존 연결 저장(saveAiConnectionAction)과 장비 한 줄 저장(saveDeviceRowAction) — 저장 전 확인을 거친다(ModelSettingsForm).
  */
-export function ModelConsole({ data, selected, readOnly }: { data: ModelConsoleRead; selected: string | null; readOnly: boolean }) {
+/** 모델 상세에서 바로 붙이기에 쓰는 읽기 — 작업 배정 편집기(순위·실행 방식·판)와 「동시에」 도움말의 한도. 상세를 열 때만 읽는다 */
+export type ModelAttachData = { editor: FlowRankEditor | null; poolHelp: PoolHelpContext | null };
+
+export function ModelConsole({ data, selected, readOnly, attach = null }: { data: ModelConsoleRead; selected: string | null; readOnly: boolean; attach?: ModelAttachData | null }) {
   const { view } = data;
   const row = selected ? view.rows.find(entry => entry.id === selected) ?? null : null;
   const admission = data.admission;
@@ -62,6 +68,8 @@ export function ModelConsole({ data, selected, readOnly }: { data: ModelConsoleR
       옛 화면(대시보드·LLM 운영·장비 한도·계약)은 「고급 설정」에서 엽니다.</p>
     {selected && !row && <p role="alert" className="mc-notice">고른 모델을 찾지 못했습니다(지워졌거나 목록을 읽지 못함).</p>}
     {row && <ModelDetail row={row} device={data.devices?.find(device => device.deviceId === row.deviceId) ?? null} secretBox={data.secretBox} readOnly={readOnly}
+      attach={attach ? <ModelAttachForm connectionId={row.id} editor={attach.editor} poolHelp={attach.poolHelp} readOnly={readOnly}
+        devices={data.devices?.map(entry => ({ deviceId: entry.deviceId, active: entry.active, limitSlots: entry.limitSlots })) ?? null} /> : undefined}
       now={view.checkedAt} siblings={view.rows.filter(entry => entry.id !== row.id && entry.deviceId === row.deviceId).map(entry => ({ name: entry.name, models: entry.models }))} />}
     {/* 시안 화면 3 — 목록 아래 「모델 추가」 세 단계. 첫 단계는 여기서 넣고, 넣으면 모델 추가 화면(둘째 단계)으로 간다. 모델 상세를 연 동안은 접어 둔다 */}
     {!selected && !readOnly && <ModelAddFlow step={1} row={null} missing={false} recommendations={[]} secretBox={data.secretBox} readOnly={readOnly} embedded
@@ -72,7 +80,9 @@ export function ModelConsole({ data, selected, readOnly }: { data: ModelConsoleR
 const LIMIT_SOURCE: Record<ModelConsoleRow["limitSource"], string> = { model: "장비의 모델별 한도", device: "장비 한도", connection: "연결 칸 수(장비 행 없음)" };
 
 /** 상세 — 머리(이름·상태·숫자) · 설정 · 쓰는 단계 · 문제 · 연결 확인. 설정·조치는 저장 전 확인을 거치는 폼(ModelSettingsForm) */
-export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = [] }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
+export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = [], attach }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
+  /** 「쓰는 단계」의 바로 붙이기(ModelAttachForm) — 없으면 전체 작업 배정 링크만 */
+  attach?: React.ReactNode;
   now: string; siblings?: readonly { name: string; models: readonly string[] }[] }) {
   const { connection } = row;
   const keyText = modelKeyText(connection, now);
@@ -109,8 +119,10 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
       {row.stages.length ? <ul className="mc-cause">{row.stages.map(stage => <li key={`${stage.task}#${stage.slot}`}><span>{stage.place}</span>
         <span><Link prefetch={false} href={stage.href}>{stage.label}</Link>{stage.paused ? <span className="mc-muted"> · 사람이 멈춤</span> : null}</span></li>)}</ul>
         : <p className="mc-muted">쓰는 단계가 없습니다.</p>}
+      {/* 바로 붙이기 — 단계를 고르고 순위대로 N순위 · 함께(동시에)로(작업 배정과 같은 저장). 전체 작업 배정은 둘째 길로 둔다 */}
+      {attach}
       <div className="mc-acts">
-        <Link prefetch={false} className="button small" href="/admin/models/tasks">작업 배정</Link>
+        {!attach && <Link prefetch={false} className="button small" href="/admin/models/tasks">전체 작업 배정 보기</Link>}
         {connection.enabled && <Link prefetch={false} className="button small" href={modelCompareHref(compareTask, row.id, row.models[0] ?? null)}>표본 비교</Link>}
       </div>
     </section>

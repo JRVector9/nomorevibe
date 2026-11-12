@@ -4,6 +4,8 @@ import { listModelSampleComparisons } from "@/lib/operations/model-sample-compar
 import { recommendStages } from "@/lib/operations/model-console";
 import { SAMPLE_COMPARE_SUPPORTED } from "@/lib/operations/model-sample-compare";
 import { ModelConsole } from "./ModelConsole";
+import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
+import { readPoolHelpContext } from "@/lib/operations/pool-help-read";
 import { ModelAddFlow, type ModelAddStep } from "../new/ModelAddFlow";
 import { SampleCompare } from "../compare/SampleCompare";
 
@@ -12,7 +14,10 @@ import { SampleCompare } from "../compare/SampleCompare";
  * 시험은 이 함수를 그대로 기다려 그린다(저장소 모듈만 바꿔 끼운다).
  */
 export async function ModelConsoleSlot({ selected, readOnly }: { selected: string | null; readOnly: boolean }) {
-  return <ModelConsole data={await readModelConsole()} selected={selected} readOnly={readOnly} />;
+  // 상세를 열면 바로 붙이기에 쓸 작업 배정 편집기와 「동시에」 도움말의 한도를 함께 읽는다(읽기만 — 못 읽으면 붙이기 칸이 그렇게 적는다)
+  const [data, editor, poolHelp] = await Promise.all([readModelConsole(), selected ? readFlowRankEditor() : Promise.resolve(null),
+    selected ? readPoolHelpContext().catch(() => null) : Promise.resolve(null)]);
+  return <ModelConsole data={data} selected={selected} readOnly={readOnly} attach={selected ? { editor, poolHelp } : null} />;
 }
 
 export async function ModelAddSlot({ id, step, readOnly }: { id: string | null; step: ModelAddStep; readOnly: boolean }) {
