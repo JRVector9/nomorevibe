@@ -1,0 +1,1748 @@
+{
+ "_source": "admin-final-20261112/probe.json (2026-11-11T23:59Z 실측) 축소 — scripts 없이 시험 fixture 로만 쓴다",
+ "at": "2026-11-11T23:59:32.820Z",
+ "conveyor": {
+  "measuredAt": "2026-11-11T23:59:34.980Z",
+  "hours": [
+   "2026-11-11T00:00:00.000Z",
+   "2026-11-11T01:00:00.000Z",
+   "2026-11-11T02:00:00.000Z",
+   "2026-11-11T03:00:00.000Z",
+   "2026-11-11T04:00:00.000Z",
+   "2026-11-11T05:00:00.000Z",
+   "2026-11-11T06:00:00.000Z",
+   "2026-11-11T07:00:00.000Z",
+   "2026-11-11T08:00:00.000Z",
+   "2026-11-11T09:00:00.000Z",
+   "2026-11-11T10:00:00.000Z",
+   "2026-11-11T11:00:00.000Z",
+   "2026-11-11T12:00:00.000Z",
+   "2026-11-11T13:00:00.000Z",
+   "2026-11-11T14:00:00.000Z",
+   "2026-11-11T15:00:00.000Z",
+   "2026-11-11T16:00:00.000Z",
+   "2026-11-11T17:00:00.000Z",
+   "2026-11-11T18:00:00.000Z",
+   "2026-11-11T19:00:00.000Z",
+   "2026-11-11T20:00:00.000Z",
+   "2026-11-11T21:00:00.000Z",
+   "2026-11-11T22:00:00.000Z",
+   "2026-11-11T23:00:00.000Z"
+  ],
+  "stations": [
+   {
+    "key": "discover",
+    "phase": "explore",
+    "label": "탐색",
+    "what": "",
+    "waiting": null,
+    "oldestMinutes": null,
+    "done5m": null,
+    "doneHour": 541,
+    "done24h": 13251,
+    "unit": "건",
+    "spark": [
+     595,
+     672,
+     468,
+     559,
+     688,
+     638,
+     672,
+     587,
+     546,
+     579,
+     478,
+     499,
+     444,
+     509,
+     556,
+     478,
+     423,
+     579,
+     566,
+     463,
+     553,
+     588,
+     570,
+     541
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "fetch",
+    "phase": "explore",
+    "label": "원본 수집",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 20,
+    "doneHour": null,
+    "done24h": 13983,
+    "unit": "건",
+    "spark": null,
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "judge",
+    "phase": "review",
+    "label": "규칙 심사",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 20,
+    "doneHour": 544,
+    "done24h": 13415,
+    "unit": "건",
+    "spark": [
+     579,
+     660,
+     481,
+     544,
+     683,
+     627,
+     681,
+     565,
+     556,
+     596,
+     522,
+     506,
+     493,
+     529,
+     576,
+     495,
+     457,
+     606,
+     565,
+     455,
+     545,
+     595,
+     563,
+     536
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "first",
+    "phase": "review",
+    "label": "AI 1차",
+    "what": "",
+    "waiting": 857,
+    "oldestMinutes": 482.1139,
+    "done5m": 0,
+    "doneHour": 3,
+    "done24h": 2479,
+    "unit": "건",
+    "spark": [
+     91,
+     150,
+     139,
+     140,
+     171,
+     161,
+     147,
+     134,
+     154,
+     169,
+     133,
+     150,
+     117,
+     147,
+     155,
+     130,
+     35,
+     39,
+     15,
+     3,
+     10,
+     0,
+     86,
+     3
+    ],
+    "tone": "jam",
+    "status": "막힘",
+    "reason": "대기가 있는데 처리가 없습니다",
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "second",
+    "phase": "review",
+    "label": "AI 2차",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 0,
+    "doneHour": 1,
+    "done24h": 1618,
+    "unit": "표",
+    "spark": [
+     49,
+     82,
+     62,
+     74,
+     95,
+     88,
+     77,
+     73,
+     88,
+     133,
+     102,
+     93,
+     100,
+     111,
+     101,
+     96,
+     81,
+     70,
+     20,
+     4,
+     15,
+     0,
+     3,
+     1
+    ],
+    "tone": "slow",
+    "status": "갈림 보류 늘어남",
+    "reason": "2차 갈림 보류가 24시간 동안 101건 늘었습니다(누적 4,283)",
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "profile",
+    "phase": "profile",
+    "label": "프로필 준비",
+    "what": "",
+    "waiting": 133,
+    "oldestMinutes": null,
+    "done5m": null,
+    "doneHour": 0,
+    "done24h": 230,
+    "unit": "건",
+    "spark": [
+     2,
+     3,
+     2,
+     1,
+     2,
+     5,
+     4,
+     0,
+     2,
+     3,
+     7,
+     4,
+     3,
+     0,
+     0,
+     126,
+     64,
+     2,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "publish",
+    "phase": "publish",
+    "label": "발행",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 0,
+    "doneHour": 6,
+    "done24h": 1374,
+    "unit": "건",
+    "spark": [
+     42,
+     55,
+     45,
+     43,
+     67,
+     58,
+     50,
+     49,
+     64,
+     97,
+     86,
+     77,
+     86,
+     88,
+     80,
+     171,
+     100,
+     65,
+     19,
+     5,
+     14,
+     2,
+     5,
+     6
+    ],
+    "tone": "idle",
+    "status": "일감 없음",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "keywords",
+    "phase": "keywords",
+    "label": "키워드 등록",
+    "what": "",
+    "waiting": 36885,
+    "oldestMinutes": 6272.894783333333,
+    "done5m": null,
+    "doneHour": 136,
+    "done24h": 7160,
+    "unit": "건",
+    "spark": [
+     298,
+     385,
+     375,
+     370,
+     501,
+     389,
+     439,
+     441,
+     445,
+     558,
+     585,
+     405,
+     538,
+     210,
+     144,
+     149,
+     257,
+     123,
+     87,
+     71,
+     78,
+     81,
+     95,
+     136
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   }
+  ],
+  "human": {
+   "waiting": 4467,
+   "direct": 4440,
+   "agreed": 27,
+   "awaitingSecond": 87,
+   "awaitingAi": 238,
+   "decided24h": 0,
+   "oldestDays": 15,
+   "in24h": 101,
+   "tone": "slow",
+   "status": "쌓임",
+   "reason": "직접 판단 4,440건 — 500건을 넘었습니다",
+   "llm": null
+  },
+  "held": 4792,
+  "rejected": 671418,
+  "published": 78919,
+  "publishedHour": 6,
+  "bottleneck": "first",
+  "headline": {
+   "tone": "jam",
+   "title": "지금 가장 막힌 곳: AI 1차 — 막힘",
+   "detail": "대기가 있는데 처리가 없습니다 · 최근 1시간 발행 6건"
+  },
+  "funnel": [],
+  "holdsByReason": [
+   {
+    "reason": "second_review_split",
+    "label": "2차 갈림",
+    "count": 4283,
+    "recent24h": 101,
+    "href": "/admin/review?cause=second_review_split#review-list",
+    "station": "second"
+   },
+   {
+    "reason": "ambiguous",
+    "label": "규칙으로 못 가름",
+    "count": 325,
+    "recent24h": 323,
+    "href": null,
+    "station": "judge"
+   },
+   {
+    "reason": "no_description",
+    "label": "소개 문구 없음",
+    "count": 133,
+    "recent24h": 2,
+    "href": "/admin/review?cause=no_description#review-list",
+    "station": "profile"
+   },
+   {
+    "reason": "repo_deleted",
+    "label": "저장소 삭제됨",
+    "count": 30,
+    "recent24h": 7,
+    "href": "/admin/review?cause=repo_deleted#review-list",
+    "station": "fetch"
+   },
+   {
+    "reason": "review_approval_changed",
+    "label": "승인 근거 바뀜",
+    "count": 8,
+    "recent24h": 8,
+    "href": "/admin/review?cause=review_approval_changed#review-list",
+    "station": "publish"
+   },
+   {
+    "reason": "source_refresh_failed",
+    "label": "원본 재수집 실패",
+    "count": 7,
+    "recent24h": 0,
+    "href": "/admin/review?cause=source_refresh_failed#review-list",
+    "station": "fetch"
+   },
+   {
+    "reason": "suspected_spam",
+    "label": "스팸·악성 의심",
+    "count": 5,
+    "recent24h": 0,
+    "href": "/admin/review?cause=suspected_spam#review-list",
+    "station": "judge"
+   },
+   {
+    "reason": "ai_review_exhausted",
+    "label": "1차 재시도 소진",
+    "count": 1,
+    "recent24h": 0,
+    "href": "/admin/review?cause=ai_review_exhausted#review-list",
+    "station": "first"
+   }
+  ],
+  "sinkLlm": null,
+  "supportLlm": null
+ },
+ "progress": {
+  "stages": [
+   {
+    "stage": "fetch",
+    "job": "crawl-fetch",
+    "reason": "manual_attention",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 20,
+    "skipBlock": null
+   },
+   {
+    "stage": "judge",
+    "job": "crawl-judge",
+    "reason": "no_work",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 20,
+    "skipBlock": null
+   },
+   {
+    "stage": "first",
+    "job": "crawl-agent-review",
+    "reason": "no_progress",
+    "alarm": true,
+    "waiting": 857,
+    "oldestMinutes": 482.15813333333335,
+    "completed5m": 0,
+    "skipBlock": {
+     "reason": "all_skipped",
+     "code": "agent_review_all_skipped",
+     "detail": "running=2"
+    }
+   },
+   {
+    "stage": "second",
+    "job": "second-review",
+    "reason": "no_work",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "publish",
+    "job": "crawl-publish",
+    "reason": "no_work",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "evidence",
+    "job": "product-evidence-refresh",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 2116,
+    "oldestMinutes": 14818.338768216667,
+    "completed5m": 96,
+    "skipBlock": null
+   },
+   {
+    "stage": "agent-evidence",
+    "job": "agent-evidence-refresh",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 5,
+    "oldestMinutes": 0.4849,
+    "completed5m": 35,
+    "skipBlock": null
+   },
+   {
+    "stage": "ai-level",
+    "job": "ai-level-refresh",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 25,
+    "oldestMinutes": 0.45405,
+    "completed5m": 49,
+    "skipBlock": null
+   },
+   {
+    "stage": "uptime",
+    "job": "uptime-ping",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 3234,
+    "oldestMinutes": 16.75994865,
+    "completed5m": 999,
+    "skipBlock": null
+   },
+   {
+    "stage": "reason-translate",
+    "job": "reason-translate",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 78863,
+    "oldestMinutes": 60896.23847855,
+    "completed5m": 21,
+    "skipBlock": null
+   },
+   {
+    "stage": "crawl-tagline",
+    "job": "crawl-tagline",
+    "reason": "manual_attention",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "keywords",
+    "job": "product-search-profile",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 17,
+    "skipBlock": null
+   },
+   {
+    "stage": "keyword-verify",
+    "job": "product-search-verify",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 36882,
+    "oldestMinutes": 6273.276360533333,
+    "completed5m": 24,
+    "skipBlock": null
+   },
+   {
+    "stage": "product-translate",
+    "job": "product-translate",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 187380,
+    "oldestMinutes": 22874.507983683332,
+    "completed5m": 17,
+    "skipBlock": null
+   },
+   {
+    "stage": "tagline-ko",
+    "job": "product-tagline-ko",
+    "reason": "upstream_stalled",
+    "alarm": true,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "intro-check",
+    "job": "product-intro-check",
+    "reason": "paused",
+    "alarm": false,
+    "waiting": 2143,
+    "oldestMinutes": 11877.401311233332,
+    "completed5m": 0,
+    "skipBlock": null
+   }
+  ],
+  "liveness": [
+   {
+    "role": "scheduler",
+    "reason": "present"
+   },
+   {
+    "role": "crawler",
+    "reason": "present"
+   },
+   {
+    "role": "reviewer",
+    "reason": "present"
+   },
+   {
+    "role": "publisher",
+    "reason": "present"
+   },
+   {
+    "role": "maintenance",
+    "reason": "present"
+   },
+   {
+    "role": "text",
+    "reason": "present"
+   }
+  ]
+ },
+ "jobs": [
+  {
+   "name": "agent-evidence-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:54.779Z",
+   "notBefore": null
+  },
+  {
+   "name": "ai-level-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:57.248Z",
+   "notBefore": null
+  },
+  {
+   "name": "audit-qwen",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:01.183Z",
+   "notBefore": null
+  },
+  {
+   "name": "audit-screen-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.712Z",
+   "notBefore": null
+  },
+  {
+   "name": "audit-second-opinion",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:00.590Z",
+   "notBefore": null
+  },
+  {
+   "name": "bluesky-talk",
+   "paused": false,
+   "lastRunAt": "2026-11-11T22:45:08.359Z",
+   "notBefore": null
+  },
+  {
+   "name": "cdn-purge",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:27.917Z",
+   "notBefore": null
+  },
+  {
+   "name": "click-rollup",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:38:50.262Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-agent-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.795Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-fetch",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:38.580Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-judge",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:39.328Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-ko-apply",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:33.504Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-publish",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:37.292Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-seed",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.720Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-tagline",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:38.278Z",
+   "notBefore": null
+  },
+  {
+   "name": "email-outbox-send",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:30.246Z",
+   "notBefore": null
+  },
+  {
+   "name": "email-weekly-digest",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.574Z",
+   "notBefore": null
+  },
+  {
+   "name": "github-feedback-delivery",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:12.782Z",
+   "notBefore": null
+  },
+  {
+   "name": "github-integration-reconcile",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:48:24.336Z",
+   "notBefore": null
+  },
+  {
+   "name": "gn-show-seed",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:39:09.250Z",
+   "notBefore": null
+  },
+  {
+   "name": "grok-session-check",
+   "paused": false,
+   "lastRunAt": "2026-11-11T22:12:11.725Z",
+   "notBefore": null
+  },
+  {
+   "name": "heartbeat",
+   "paused": false,
+   "lastRunAt": "2026-08-29T02:24:02.611Z",
+   "notBefore": null
+  },
+  {
+   "name": "held-qwen-retry",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:58.876Z",
+   "notBefore": null
+  },
+  {
+   "name": "hn-show-seed",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:38:48.644Z",
+   "notBefore": null
+  },
+  {
+   "name": "hn-talk",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:46:49.909Z",
+   "notBefore": null
+  },
+  {
+   "name": "human-deepseek-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:33.333Z",
+   "notBefore": null
+  },
+  {
+   "name": "maker-recheck",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:10:57.757Z",
+   "notBefore": null
+  },
+  {
+   "name": "model-capacity-reclaim",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:35.279Z",
+   "notBefore": null
+  },
+  {
+   "name": "news-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:54:15.093Z",
+   "notBefore": null
+  },
+  {
+   "name": "notification-category-digest",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.634Z",
+   "notBefore": null
+  },
+  {
+   "name": "notification-delisted",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.604Z",
+   "notBefore": null
+  },
+  {
+   "name": "notification-prune",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:11:25.238Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-audit",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:52.383Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-automated-action-audit",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:43:31.024Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-embedding",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:51.759Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-evidence-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:41.384Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-intro-check",
+   "paused": true,
+   "lastRunAt": "2026-11-03T17:02:32.166Z",
+   "notBefore": "2126-10-10T17:03:03.555Z"
+  },
+  {
+   "name": "product-llm-assist-audit-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:33.744Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-llm-assist-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:32.008Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-readme-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:40.982Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-repo-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:32.136Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-health",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:18.696Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-profile",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:19.845Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:10.793Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-verify",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:29.119Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-site-evidence-refresh",
+   "paused": false,
+   "lastRunAt": null,
+   "notBefore": null
+  },
+  {
+   "name": "product-spam-rescan",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.307Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-star-observation",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:11.859Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-stars-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:19.845Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-tagline-ko",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:14.362Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-thumbnail-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:08.682Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-translate",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.360Z",
+   "notBefore": null
+  },
+  {
+   "name": "published-recheck",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:55.513Z",
+   "notBefore": null
+  },
+  {
+   "name": "ranking-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:39:08.786Z",
+   "notBefore": null
+  },
+  {
+   "name": "reason-translate",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:58.106Z",
+   "notBefore": null
+  },
+  {
+   "name": "second-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:14.787Z",
+   "notBefore": "2026-11-08T16:36:37.207Z"
+  },
+  {
+   "name": "split-confirm",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:59.327Z",
+   "notBefore": null
+  },
+  {
+   "name": "split-tiebreak",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:02.967Z",
+   "notBefore": null
+  },
+  {
+   "name": "uptime-ping",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:40.583Z",
+   "notBefore": null
+  }
+ ],
+ "observation": {
+  "mode": "open",
+  "since": "2026-11-11T23:26:26.300000Z",
+  "devices": [
+   {
+    "deviceId": "Exaone",
+    "active": 0,
+    "models": []
+   },
+   {
+    "deviceId": "anthropic-cli",
+    "active": 0,
+    "models": []
+   },
+   {
+    "deviceId": "gpu3090-qwen",
+    "active": 0,
+    "models": []
+   },
+   {
+    "deviceId": "m1-qwen",
+    "active": 1,
+    "models": [
+     {
+      "model": "m1-gemma",
+      "active": 1
+     }
+    ]
+   },
+   {
+    "deviceId": "m1max",
+    "active": 0,
+    "models": []
+   },
+   {
+    "deviceId": "m3-mlx",
+    "active": 2,
+    "models": [
+     {
+      "model": "deepseek-v4.1-flash-1017",
+      "active": 1
+     },
+     {
+      "model": "gpt-oss-120b",
+      "active": 1
+     }
+    ]
+   },
+   {
+    "deviceId": "m3-opencode-host",
+    "active": 0,
+    "models": []
+   },
+   {
+    "deviceId": "openai-cli",
+    "active": 0,
+    "models": []
+   },
+   {
+    "deviceId": "supa-direct",
+    "active": 3,
+    "models": [
+     {
+      "model": "supa",
+      "active": 3
+     }
+    ]
+   }
+  ]
+ },
+ "takedown": {
+  "count": 0,
+  "overdue": 0
+ },
+ "agreed": {
+  "reject": 0,
+  "approve": 27
+ },
+ "audit": {
+  "open": 563,
+  "overdue": 553,
+  "oldestWaitDays": 27
+ },
+ "connections": [
+  {
+   "id": "conn-lg-exaone",
+   "label": "LG EXAONE",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "Exaone",
+   "capacitySlots": 1,
+   "enabled": true,
+   "models": [
+    "k-exaone_v2.5"
+   ],
+   "allowedTasks": [
+    "crawl-tagline",
+    "reason-translate",
+    "product-translate",
+    "product-tagline-ko"
+   ],
+   "keySetAt": "2026-11-10T21:48:29.724Z",
+   "keyValidDays": 30,
+   "updatedAt": "2026-11-11T22:06:46.952Z"
+  },
+  {
+   "id": "conn-m1max",
+   "label": "M1max",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m1max",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "mlx-community/Qwen3.8-27B-4bit",
+    "Qwen3.8"
+   ],
+   "allowedTasks": [],
+   "keySetAt": "2026-11-11T12:24:44.224Z",
+   "keyValidDays": null,
+   "updatedAt": "2026-11-11T22:07:21.824Z"
+  },
+  {
+   "id": "conn-gpu3090-qwen",
+   "label": "gpu3090-qwen",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "gpu3090-qwen",
+   "capacitySlots": 5,
+   "enabled": true,
+   "models": [
+    "qwen3.8-flash-next"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T13:19:13.044Z"
+  },
+  {
+   "id": "conn-m1-gemma",
+   "label": "m1-gemma",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m1-qwen",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "m1-gemma"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T14:38:21.742Z"
+  },
+  {
+   "id": "conn-m3-deepseek",
+   "label": "m3-deepseek",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m3-mlx",
+   "capacitySlots": 1,
+   "enabled": true,
+   "models": [
+    "deepseek-v4.1-flash-1017"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-09T02:05:48.493Z"
+  },
+  {
+   "id": "conn-m3-gpt-oss",
+   "label": "m3-gpt-oss",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m3-mlx",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "gpt-oss-120b"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-09T02:05:48.535Z"
+  },
+  {
+   "id": "conn-supa-direct",
+   "label": "supa-direct",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "supa-direct",
+   "capacitySlots": 3,
+   "enabled": true,
+   "models": [
+    "supa",
+    "Inferact/Qwen3.8-27B-NVFP4"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T14:47:30.771Z"
+  },
+  {
+   "id": "conn-claude-cli",
+   "label": "Claude CLI",
+   "kind": "cli",
+   "cliTool": "claude",
+   "deviceId": "anthropic-cli",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "sonnet"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T14:49:44.301Z"
+  },
+  {
+   "id": "conn-m3-opencode",
+   "label": "M3 OpenCode",
+   "kind": "cli",
+   "cliTool": "opencode",
+   "deviceId": "m3-opencode-host",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "opencode-go/deepseek-v4.1-flash"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-06T09:29:43.654Z"
+  }
+ ],
+ "ranks": [
+  {
+   "task": "assist-audit",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "assist-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "audit-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "audit-second-opinion",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "crawl-tagline",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "crawl-tagline",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "crawl-tagline",
+   "slot": 1,
+   "rank": 3,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "first-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-supa-direct",
+   "model": "Inferact/Qwen3.8-27B-NVFP4",
+   "enabled": true
+  },
+  {
+   "task": "first-review",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "held-review-retry",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "human-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "korean-translation-direct",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-audit",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "product-audit",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-opencode",
+   "model": "opencode-go/deepseek-v4.1-flash",
+   "enabled": true
+  },
+  {
+   "task": "product-audit",
+   "slot": 1,
+   "rank": 3,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "product-intro-check",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-claude-cli",
+   "model": "sonnet",
+   "enabled": true
+  },
+  {
+   "task": "product-search-profile",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-search-profile",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "product-search-verify",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-supa-direct",
+   "model": "supa",
+   "enabled": true
+  },
+  {
+   "task": "product-tagline-ko",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-tagline-ko",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-lg-exaone",
+   "model": "k-exaone_v2.5",
+   "enabled": true
+  },
+  {
+   "task": "product-translate",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-translate",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-translate",
+   "slot": 1,
+   "rank": 3,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "published-filter",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "reason-translate",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "screen-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "search-query-translate",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "second-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-supa-direct",
+   "model": "supa",
+   "enabled": true
+  },
+  {
+   "task": "second-review",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "split-confirm",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "split-tiebreak",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  }
+ ],
+ "pools": [
+  {
+   "task": "publish-classify",
+   "slot": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017"
+  },
+  {
+   "task": "publish-classify",
+   "slot": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next"
+  }
+ ],
+ "ledger": [
+  {
+   "routeId": "crawl-agent-review",
+   "groupId": "m3-opencode-host",
+   "model": "opencode-go/deepseek-v4.1-flash",
+   "calls": 2315,
+   "settled": 1991,
+   "avgSeconds": 15.3,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-agent-review",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 648,
+   "settled": 639,
+   "avgSeconds": 3.2,
+   "noResult": 4
+  },
+  {
+   "routeId": "crawl-agent-review",
+   "groupId": "supa-direct",
+   "model": "Inferact/Qwen3.8-27B-NVFP4",
+   "calls": 88,
+   "settled": 88,
+   "avgSeconds": 3.8,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-publish-classify",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 1090,
+   "settled": 1007,
+   "avgSeconds": 1.7,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-publish-classify",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 91,
+   "settled": 85,
+   "avgSeconds": 24.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-tagline",
+   "groupId": "m1-qwen",
+   "model": "m1-gemma",
+   "calls": 183,
+   "settled": 159,
+   "avgSeconds": 2.7,
+   "noResult": 1
+  },
+  {
+   "routeId": "crawl-tagline",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 89,
+   "settled": 89,
+   "avgSeconds": 4.8,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-audit",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 261,
+   "settled": 260,
+   "avgSeconds": 3.1,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-deepseek-confirm",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 13,
+   "settled": 13,
+   "avgSeconds": 7.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-held-qwen",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 145,
+   "settled": 143,
+   "avgSeconds": 3.0,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-human-deepseek",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 5230,
+   "settled": 5226,
+   "avgSeconds": 7.8,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-published-filter",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 10,
+   "settled": 10,
+   "avgSeconds": 3.1,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-qwen-tiebreak",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 85,
+   "settled": 82,
+   "avgSeconds": 2.9,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-screen",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 3,
+   "settled": 3,
+   "avgSeconds": 3.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-audit",
+   "groupId": "m3-opencode-host",
+   "model": "opencode-go/deepseek-v4.1-flash",
+   "calls": 285,
+   "settled": 2,
+   "avgSeconds": 13.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-search-profile",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 6690,
+   "settled": 6686,
+   "avgSeconds": 6.3,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-search-profile",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 553,
+   "settled": 553,
+   "avgSeconds": 6.4,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-search-verify",
+   "groupId": "supa-direct",
+   "model": "supa",
+   "calls": 6536,
+   "settled": 6451,
+   "avgSeconds": 18.6,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-tagline-ko",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 1027,
+   "settled": 1027,
+   "avgSeconds": 7.2,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-tagline-ko",
+   "groupId": "Exaone",
+   "model": "k-exaone_v2.5",
+   "calls": 135,
+   "settled": 61,
+   "avgSeconds": 2.2,
+   "noResult": 57
+  },
+  {
+   "routeId": "product-translate",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 1335,
+   "settled": 1332,
+   "avgSeconds": 11.6,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-translate",
+   "groupId": "m1-qwen",
+   "model": "m1-gemma",
+   "calls": 650,
+   "settled": 626,
+   "avgSeconds": 5.3,
+   "noResult": 0
+  },
+  {
+   "routeId": "reason-translate",
+   "groupId": "m1-qwen",
+   "model": "m1-gemma",
+   "calls": 2624,
+   "settled": 2619,
+   "avgSeconds": 8.6,
+   "noResult": 0
+  },
+  {
+   "routeId": "search-query-translate",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 1,
+   "settled": 1,
+   "avgSeconds": 1.2,
+   "noResult": 0
+  },
+  {
+   "routeId": "second-review",
+   "groupId": "supa-direct",
+   "model": "supa",
+   "calls": 1780,
+   "settled": 1655,
+   "avgSeconds": 4.0,
+   "noResult": 3
+  }
+ ]
+}

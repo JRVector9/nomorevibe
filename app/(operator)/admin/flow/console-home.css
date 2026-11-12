@@ -1,0 +1,261 @@
+/* 운영 홈(할 일 + 흐름) — 2026-11-12 최종 시안 「화면 1 홈」의 구조·정렬. 색·글꼴은 관리자 시안 토큰(prototype.css)을 그대로 쓴다.
+   표는 열 폭 고정, 숫자는 오른쪽 정렬·tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만. */
+.admin-prototype .console-home {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.admin-prototype .ch-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 28px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.admin-prototype .ch-strip b {
+  margin-left: 6px;
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* 넓은 화면은 둘로 나누고, 좁은 화면은 할 일 → 흐름 순서로 쌓는다 */
+.admin-prototype .ch-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (min-width: 1100px) {
+  .admin-prototype .ch-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.admin-prototype .ch-grid > section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.admin-prototype .ch-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.admin-prototype .ch-head h2 {
+  font-size: calc(15px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+}
+.admin-prototype .ch-count,
+.admin-prototype .ch-checked {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .ch-checked,
+.admin-prototype .ch-more {
+  margin-left: auto;
+}
+
+/* 할 일 */
+.admin-prototype .ch-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.admin-prototype .ch-list > li {
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .ch-list > li:last-child {
+  border-bottom: 0;
+}
+.admin-prototype .ch-grp {
+  display: flex;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .ch-grp span {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .ch-task {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 12px 14px;
+}
+.admin-prototype .ch-task > i {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--soft);
+}
+.admin-prototype .ch-task[data-tone="bad"] > i {
+  background: var(--red);
+}
+.admin-prototype .ch-task[data-tone="warn"] > i {
+  background: var(--amber);
+}
+.admin-prototype .ch-task > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.admin-prototype .ch-task h3 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .ch-fact {
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .ch-why {
+  color: var(--muted);
+}
+.admin-prototype .ch-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+}
+.admin-prototype .ch-job > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.admin-prototype .ch-job > summary::-webkit-details-marker {
+  display: none;
+}
+.admin-prototype .ch-job[open] {
+  flex-basis: 100%;
+}
+.admin-prototype .ch-unknown,
+.admin-prototype .ch-empty {
+  padding: 8px 14px;
+  color: var(--muted);
+}
+.admin-prototype .ch-empty {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+/* 흐름 표 */
+.admin-prototype .ch-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .ch-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .ch-table th,
+.admin-prototype .ch-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .ch-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .ch-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* 줄 머리(단계 이름)는 관리자 표의 열 머리 모양(작은 회색 글자·바탕)을 받지 않는다 */
+.admin-prototype .ch-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+  white-space: normal;
+}
+.admin-prototype .ch-table tbody th a {
+  color: inherit;
+}
+.admin-prototype .ch-table tbody th a:hover {
+  color: var(--blue);
+}
+.admin-prototype .ch-table .n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-prototype .ch-table .n small {
+  margin-left: 3px;
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .ch-table tbody .ch-grp-row th {
+  padding-block: 5px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+}
+.admin-prototype .ch-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.admin-prototype .ch-st > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--soft);
+}
+.admin-prototype .ch-st[data-tone="ok"] > i {
+  background: var(--green);
+}
+.admin-prototype .ch-st[data-tone="warn"] > i {
+  background: var(--amber);
+}
+.admin-prototype .ch-st[data-tone="bad"] {
+  color: var(--red);
+  font-weight: 600;
+}
+.admin-prototype .ch-st[data-tone="bad"] > i {
+  background: var(--red);
+}
+.admin-prototype .ch-st[data-tone="off"] {
+  color: var(--muted);
+}
+.admin-prototype .ch-spark {
+  display: block;
+  color: var(--soft);
+}
+.admin-prototype .ch-spark[data-tone="ok"] {
+  color: var(--green);
+}
+.admin-prototype .ch-spark[data-tone="warn"] {
+  color: var(--amber);
+}
+.admin-prototype .ch-spark[data-tone="bad"] {
+  color: var(--red);
+}
+.admin-prototype .ch-none {
+  color: var(--muted);
+}
