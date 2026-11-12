@@ -21,6 +21,7 @@ import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
  * - 메이커가 클레임·검증한 제품(verified 포함)
  * - 관리자가 차단을 해제한 적 있는 제품 — 사람이 "유지"라고 한 것을 다시 내리지 않는다
  */
+/** 한 틱에 보는 제품 수 — 그 제품들의 후보(별칭)는 수를 세지 않고 모두 읽는다 */
 export const RESCAN_BATCH = 1_000;
 /**
  * 하루에 자동으로 내리는 최대 수. 판정이 잘못 바뀌어 멀쩡한 제품을 한꺼번에 내리는 일을 막는다 —
@@ -47,8 +48,18 @@ export async function rescanPublishedSpam(ctx: JobContext<SpamRescanCursor>): Pr
   const current = ctx.cursor?.version === SPAM_DETECTOR_VERSION ? ctx.cursor : null;
   if (current?.idleUntil && current.idleUntil > now) return { done: true, cursor: current };
   const afterId = current?.afterId ?? 0;
+  const published = inArray(products.status, ["verified", "seeded"]);
 
-  const rows = await db.select({
+  // 쪽은 제품으로 나누고 그 제품들의 후보(별칭)는 모두 읽는다. 후보 줄에 LIMIT 을 걸면 쪽 끝 제품의 별칭 일부가 잘린 채
+  // 판정되고 커서가 그 제품을 지나가, 잘린 별칭의 면제 근거(사람 승인·별 자동 승인)를 못 보고 내렸다
+  const page = (await db.selectDistinct({ id: products.id }).from(products)
+    .innerJoin(crawlCandidates, eq(crawlCandidates.publishedSlug, products.slug))
+    .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
+    .where(and(published, gt(products.id, afterId)))
+    .orderBy(asc(products.id))
+    .limit(RESCAN_BATCH)).map((row) => row.id);
+
+  const rows = page.length === 0 ? [] : await db.select({
     id: products.id, slug: products.slug, status: products.status, claimedAt: products.claimedAt, verifiedAt: products.verifiedAt,
     decidedBy: crawlCandidates.decidedBy,
     starAutoApproved: sql<boolean>`coalesce(${crawlCandidates.signals}->'starAutoApproval' is not null
@@ -58,9 +69,8 @@ export async function rescanPublishedSpam(ctx: JobContext<SpamRescanCursor>): Pr
   }).from(products)
     .innerJoin(crawlCandidates, eq(crawlCandidates.publishedSlug, products.slug))
     .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
-    .where(and(inArray(products.status, ["verified", "seeded"]), gt(products.id, afterId)))
-    .orderBy(asc(products.id))
-    .limit(RESCAN_BATCH);
+    .where(and(published, inArray(products.id, page)))
+    .orderBy(asc(products.id), asc(crawlCandidates.id));
 
   // 한 제품에 후보가 여럿이면(별칭) 하나라도 사람이 승인했으면 뺀다
   const byProduct = new Map<number, typeof rows>();
@@ -69,8 +79,11 @@ export async function rescanPublishedSpam(ctx: JobContext<SpamRescanCursor>): Pr
   let bansLeft = Math.max(0, MAX_AUTO_BANS_PER_DAY - await autoBansLastDay());
   const banned: string[] = [], exempt: string[] = [], capped: string[] = [];
   let lastId = afterId;
-  for (const [id, group] of byProduct) {
+  for (const id of page) {
     if (!ctx.hasBudget() || ctx.signal?.aborted) break;
+    const group = byProduct.get(id);
+    // 두 읽기 사이에 공개에서 빠졌거나 후보가 풀렸다 — 볼 것이 없다
+    if (!group) { lastId = id; continue; }
     const row = group[0];
     const verdict = spamSignals({ repo: row.repo, repoMeta: row.repoMeta, productUrl: row.productUrl, pageMeta: row.pageMeta });
     if (verdict.flagged) {
@@ -94,7 +107,7 @@ export async function rescanPublishedSpam(ctx: JobContext<SpamRescanCursor>): Pr
     lastId = id;
   }
 
-  const finished = rows.length < RESCAN_BATCH && lastId === (rows.at(-1)?.id ?? afterId);
+  const finished = page.length < RESCAN_BATCH && lastId === (page.at(-1) ?? afterId);
   ctx.log("spam_rescan.checked", { detector: SPAM_DETECTOR_VERSION, afterId, checked: byProduct.size, banned, exempt, capped: capped.length });
   if (capped.length) ctx.log("spam_rescan.capped", { limit: MAX_AUTO_BANS_PER_DAY, slugs: capped.slice(0, 50) });
   return { done: true, cursor: finished
