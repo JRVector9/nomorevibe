@@ -73,10 +73,10 @@ function LegacyModelAttachForm({ connectionId, editor, devices, poolHelp, readOn
   const [ack, setAck] = useState(false);
   const [results, setResults] = useState<{ ok: boolean; text: string; issues: string[]; warnings: string[] }[]>([]);
 
-  if (!editor) return <p className="mc-muted">작업 배정을 읽지 못해 여기서 붙일 수 없습니다. <Link prefetch={false} href="/admin/models/tasks">전체 작업 배정 보기 →</Link></p>;
+  if (!editor) return <p className="mc-muted">작업 배정을 읽지 못해 여기서 붙일 수 없습니다. <Link prefetch={false} href="/admin/models#tasks">전체 작업 배정 보기 →</Link></p>;
   const connection = editor.connections.find(row => row.id === connectionId);
   if (!connection?.enabled) return <p className="mc-muted">꺼진 모델은 단계에 붙일 수 없습니다 — 먼저 켜세요.</p>;
-  if (!targets.length || !line || !target) return <p className="mc-muted">이 모델을 받을 수 있는 단계가 없습니다(모델 종류·쓸 단계 제한). <Link prefetch={false} href="/admin/models/tasks">전체 작업 배정 보기 →</Link></p>;
+  if (!targets.length || !line || !target) return <p className="mc-muted">이 모델을 받을 수 있는 단계가 없습니다(모델 종류·쓸 단계 제한). <Link prefetch={false} href="/admin/models#tasks">전체 작업 배정 보기 →</Link></p>;
 
   // 이 단계에서 이 모델의 선택지 — 고르는 상자와 같은 이름 하나(별칭은 한 줄). 서로 다른 모델을 여럿 내는 연결만 고른다
   const variants = presentPickerOptions(line.options.filter(option => option.provider === connectionId && !option.off && !option.saved), editor.connections, null);
@@ -159,7 +159,7 @@ function LegacyModelAttachForm({ connectionId, editor, devices, poolHelp, readOn
       {issues.length > 0 && <ul role="alert" className="mc-msg">{issues.map(text => <li key={text}>{text}</li>)}</ul>}
       {editing && <div className="mc-acts">
         <button type="button" className="button small primary" disabled={readOnly || same || issues.length > 0} onClick={() => { setAck(false); setStep("confirm"); }}>바뀌는 내용 확인</button>
-        <Link prefetch={false} className="text-button" href={`/admin/models/tasks#mode-${line.task}-${line.slot}`}>전체 작업 배정 보기</Link>
+        <Link prefetch={false} className="text-button" href={`/admin/models?task=${encodeURIComponent(line.key)}#tasks`}>전체 작업 배정 보기</Link>
       </div>}
       {same && editing && <p className="mc-hint">이 모델은 이미 그 자리에 있습니다 — 바뀌는 것이 없습니다.</p>}
     </div>

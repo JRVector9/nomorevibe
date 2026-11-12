@@ -10,7 +10,7 @@ vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnection
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveDeviceRowAction: vi.fn(), saveCapacityDevice: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTaskExecutionAction: vi.fn() }));
 
-import { ModelConsole } from "@/app/(operator)/admin/models/console/ModelConsole";
+import { ModelConsole, ModelDetail } from "@/app/(operator)/admin/models/console/ModelConsole";
 import { ModelAttachForm } from "@/app/(operator)/admin/models/console/ModelAttachForm";
 
 describe("unified model inventory", () => {
@@ -78,5 +78,17 @@ describe("unified model inventory", () => {
     expect(html).toContain("같은 모델 반복 —");
     expect(html).toContain("쓰는 작업 없는 모델 —");
     expect(html).not.toContain("쓰는 작업 없는 모델 9개");
+  });
+
+  it("keeps fallback links on the unified route when a shared editor callback is absent", () => {
+    const data = modelFixtureRead();
+    const html = renderToStaticMarkup(<ModelDetail row={data.view.rows[0]} device={null} secretBox={true} readOnly={false} now={data.view.checkedAt}
+      uses={[{ key: "assist-review#1", label: "LLM 보강", place: "1순위", href: "/admin/models/tasks#execution-assist-review-1" }]} />);
+    expect(html).toContain('href="/admin/models?task=assist-review%231#tasks"');
+    expect(html).toContain('href="/admin/models#tasks"');
+    expect(html).not.toContain('href="/admin/models/tasks');
+    const unavailable = renderToStaticMarkup(<ModelAttachForm connectionId="missing" editor={null} devices={null} poolHelp={null} readOnly={false} />);
+    expect(unavailable).toContain('href="/admin/models#tasks"');
+    expect(unavailable).not.toContain('href="/admin/models/tasks');
   });
 });

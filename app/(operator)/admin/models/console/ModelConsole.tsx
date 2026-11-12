@@ -65,7 +65,7 @@ export function ModelConsole({ data, selected, readOnly, attach = null, taskUses
       <strong className="mc-st" data-tone={duplicates ? "warn" : "off"}><i aria-hidden="true" />배정 확인</strong>
       {onReviewDuplicates ? <button type="button" className="text-button" onClick={onReviewDuplicates} disabled={duplicates === null}>
         같은 모델 반복 {duplicates === null ? "—" : `${formatCount(duplicates)}개`}</button>
-        : <Link prefetch={false} className="text-button" href="/admin/models/tasks#tasks">같은 모델 반복 {duplicates === null ? "—" : `${formatCount(duplicates)}개`}</Link>}
+        : <Link prefetch={false} className="text-button" href="/admin/models#tasks">같은 모델 반복 {duplicates === null ? "—" : `${formatCount(duplicates)}개`}</Link>}
       <span className="mc-divider" aria-hidden="true">·</span>
       <button type="button" className="text-button" disabled={!usesKnown} aria-pressed={unused} onClick={() => setUnused(true)}>
         쓰는 작업 없는 모델 {unusedCount === null ? "—" : `${formatCount(unusedCount)}개`}</button>
@@ -76,7 +76,7 @@ export function ModelConsole({ data, selected, readOnly, attach = null, taskUses
       <Link prefetch={false} href={`${MODELS_DASHBOARD_HREF}#admission`}>접수 바꾸기(대시보드)</Link></p>}
     {view.errors.map(error => <p key={error} role="alert" className="mc-notice">{error}</p>)}
     <div className="mc-list-head">
-      <span>모델 {formatCount(rows.length)}개</span><span>· 최근 24시간</span>
+      <span title={`마지막 확인 ${formatKst(view.checkedAt)} · 한도: 장비의 모델별 한도 → 장비 한도 → 연결 칸 수`}>모델 {formatCount(rows.length)}개</span><span>· 최근 24시간</span>
       <div className="mc-right">
         {unused && <button type="button" className="text-button" onClick={() => setUnused(false)}>전체 모델 보기</button>}
         <select className="mc-sort" aria-label="모델 정렬" value={sort} onChange={event => setSort(event.target.value as ModelSort)}>
@@ -119,7 +119,6 @@ export function ModelConsole({ data, selected, readOnly, attach = null, taskUses
       {onAdvancedOpen ? <button type="button" className="text-button" onClick={onAdvancedOpen}>연결·장비 고급 설정 ↗</button>
         : <Link prefetch={false} className="text-button" href={MODELS_DASHBOARD_HREF}>연결·장비 고급 설정 ↗</Link>}
     </div>
-    <p className="mc-checked">마지막 확인 {formatKst(view.checkedAt)} · 한도: 장비의 모델별 한도 → 장비 한도 → 연결 칸 수</p>
     {selected && !row && <p role="alert" className="mc-notice">고른 모델을 찾지 못했습니다(지워졌거나 목록을 읽지 못함).</p>}
     {row && !adding && <ModelDrawer title={row.name} eyebrow="모델 상세" titleId="model-detail-title" onClose={closeModel}>
       <ModelDetail key={row.id} row={row} device={data.devices?.find(device => device.deviceId === row.deviceId) ?? null}
@@ -175,11 +174,12 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
         <div className="mc-assignments">{assignments.length ? assignments.map(use => <div className="mc-assignment" key={use.key}>
           <span><b>{use.label}</b><small>{use.place === "함께" ? "동시에 사용" : use.place}{use.paused ? " · 사람이 멈춤" : ""}</small></span>
           {onTaskOpen ? <button type="button" className="text-button" onClick={() => onTaskOpen(use.key)}>배정 보기 →</button>
-            : <Link prefetch={false} className="text-button" href={use.href ?? "/admin/models/tasks"}>배정 보기 →</Link>}
+            : <Link prefetch={false} className="text-button" href={use.href?.startsWith("/admin/models/tasks")
+              ? `/admin/models?task=${encodeURIComponent(use.key)}#tasks` : use.href ?? "/admin/models#tasks"}>배정 보기 →</Link>}
         </div>) : <p className="mc-callout">아직 쓰는 작업이 없습니다. 아래에서 쓸 작업을 골라 붙이세요.</p>}</div>
         {attach}
         <div className="mc-acts">
-          {!attach && <Link prefetch={false} className="button small" href="/admin/models/tasks">전체 작업 배정 보기</Link>}
+          {!attach && <Link prefetch={false} className="button small" href="/admin/models#tasks">전체 작업 배정 보기</Link>}
           {connection.enabled && <Link prefetch={false} className="text-button" href={modelCompareHref(compareTask, row.id, row.models[0] ?? null)}>표본 비교 →</Link>}
         </div>
       </section>

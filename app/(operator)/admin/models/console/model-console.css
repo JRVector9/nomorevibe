@@ -52,7 +52,7 @@
   min-width: 1030px;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
   line-height: 1.55;
 }
 .admin-prototype .mc-table th,
@@ -71,7 +71,7 @@
   color: var(--muted);
   font-weight: 500;
   white-space: nowrap;
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-table tbody th {
   background: var(--surface);
@@ -107,7 +107,7 @@
   overflow-wrap: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-table td.top {
   vertical-align: top;
@@ -141,7 +141,7 @@
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   font-family: var(--f-mono);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-st {
   display: inline-flex;
@@ -437,7 +437,7 @@
   gap: calc(6px / .8);
 }
 
-/* Typography includes the 2px removed by site-density; spacing lands at prototype pixels. */
+/* #page supplies the 2px font delta removed by site-density; spacing lands at prototype pixels. */
 .admin-prototype .mc-inventory {
   gap: 0;
   scroll-margin-top: 120px;
@@ -456,7 +456,7 @@
   margin-bottom: calc(14px / .8);
 }
 .admin-prototype .mc-page-head h1 {
-  font-size: calc(22px + var(--admin-font-delta, 0px));
+  font-size: calc(20px + var(--admin-font-delta, 0px));
   font-weight: 700;
   line-height: 1.6;
   letter-spacing: -.6px;
@@ -464,7 +464,7 @@
 .admin-prototype .mc-page-head p {
   margin-top: calc(3px / .8);
   color: var(--muted);
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-inventory .mc-right {
   display: flex;
@@ -481,7 +481,7 @@
   min-height: 32px;
   padding: calc(5px / .8) calc(12px / .8);
   border-radius: 6px;
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
   font-weight: 600;
 }
 .admin-prototype .mc-inventory .text-button,
@@ -490,7 +490,7 @@
   padding: 0;
   background: none;
   color: var(--blue);
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
   font-weight: 400;
 }
 .admin-prototype .mc-inventory .text-button:hover,
@@ -504,7 +504,7 @@
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--surface-2);
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-review strong {
   font-weight: 600;
@@ -515,21 +515,24 @@
 .admin-prototype .mc-review-end {
   margin-left: auto;
   color: var(--muted);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-list-head {
   gap: calc(12px / .8);
   margin-bottom: calc(13px / .8);
   color: var(--muted);
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-sort {
+  height: 21px;
+  min-height: 0;
   border: 0;
   border-radius: 0;
   padding: calc(3px / .8) calc(18px / .8) calc(3px / .8) calc(5px / .8);
   background: none;
   color: var(--muted);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  line-height: normal;
 }
 .admin-prototype .mc-count-link {
   border: 0;
@@ -543,18 +546,13 @@
   gap: calc(14px / .8);
   padding-top: calc(9px / .8);
   color: var(--muted);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-table-note .text-button {
   font-size: inherit;
 }
 .admin-prototype .mc-mobile-note {
   display: none;
-}
-.admin-prototype .mc-checked {
-  margin-top: calc(5px / .8);
-  color: var(--muted);
-  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-inventory > .mc-notice {
   margin-bottom: calc(14px / .8);
@@ -581,7 +579,7 @@
   color: var(--ink);
   box-shadow: -8px 0 36px #0000000a;
   overflow-y: auto;
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
   line-height: 1.6;
 }
 .admin-prototype .mc-drawer::backdrop {
@@ -601,12 +599,12 @@
 }
 .admin-prototype .mc-drawer-head h2 {
   margin: calc(3px / .8) 0;
-  font-size: calc(20px + var(--admin-font-delta, 0px));
+  font-size: calc(18px + var(--admin-font-delta, 0px));
   line-height: 1.6;
 }
 .admin-prototype .mc-eyebrow {
   color: var(--muted);
-  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-size: calc(10px + var(--admin-font-delta, 0px));
   letter-spacing: .05em;
 }
 .admin-prototype .mc-close {
@@ -619,7 +617,7 @@
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
-  font-size: calc(20px + var(--admin-font-delta, 0px));
+  font-size: calc(18px + var(--admin-font-delta, 0px));
   font-weight: 400;
 }
 .admin-prototype .mc-drawer-content {
@@ -647,13 +645,13 @@
 }
 .admin-prototype .mc-drawer-stats > span {
   color: var(--muted);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-drawer-stats b {
   display: block;
   margin-top: calc(4px / .8);
   color: var(--ink);
-  font: calc(21px + var(--admin-font-delta, 0px)) var(--f-mono);
+  font: calc(19px + var(--admin-font-delta, 0px)) var(--f-mono);
   font-variant-numeric: tabular-nums;
 }
 .admin-prototype .mc-detail-tabs {
@@ -668,7 +666,7 @@
   padding: calc(9px / .8) 0;
   background: none;
   color: var(--muted);
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-detail-tabs > button[aria-selected="true"] {
   border-bottom-color: var(--ink);
@@ -686,12 +684,12 @@
   border-top: 1px solid var(--line);
 }
 .admin-prototype .mc-detail h3 {
-  font-size: calc(16px + var(--admin-font-delta, 0px));
+  font-size: calc(14px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-drawer-lead {
   margin: 0 0 calc(4px / .8);
   color: var(--muted);
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-assignment {
   display: flex;
@@ -707,7 +705,7 @@
 .admin-prototype .mc-assignment small {
   display: block;
   color: var(--muted);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-assignment .text-button {
   flex: none;
@@ -723,7 +721,7 @@
 }
 .admin-prototype .mc-attach-target > span {
   color: var(--muted);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-attach-target select {
   width: 100%;
@@ -732,7 +730,7 @@
   border-radius: 5px;
   padding: calc(8px / .8) calc(10px / .8);
   background: var(--surface);
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-editor-foot {
   display: flex;
@@ -747,7 +745,7 @@
 .admin-prototype .mc-editor-foot p {
   max-width: 290px;
   color: var(--muted);
-  font-size: calc(13px + var(--admin-font-delta, 0px));
+  font-size: calc(11px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-callout {
   padding: calc(12px / .8) calc(13px / .8);
@@ -770,22 +768,49 @@
 }
 .admin-prototype .mc-drawer .mc-muted,
 .admin-prototype .mc-drawer .mc-hint {
-  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 @media (max-width: 760px) {
+  .admin-prototype .mc-page-head h1 {
+    font-size: calc(19px + var(--admin-font-delta, 0px));
+  }
+  .admin-prototype .mc-page-head .mc-right {
+    gap: calc(6px / .8);
+  }
+  .admin-prototype .mc-page-head .button {
+    padding-left: calc(9px / .8);
+    padding-right: calc(9px / .8);
+  }
+  .admin-prototype .mc-review {
+    padding: calc(9px / .8) calc(10px / .8);
+    gap: calc(8px / .8) calc(12px / .8);
+  }
   .admin-prototype .mc-review-end {
-    width: 100%;
-    margin-left: 0;
+    display: none;
+  }
+  .admin-prototype .mc-table {
+    min-width: 970px;
+  }
+  .admin-prototype .mc-list-head {
+    font-size: calc(11px + var(--admin-font-delta, 0px));
   }
   .admin-prototype .mc-mobile-note {
     display: inline;
   }
   .admin-prototype .mc-drawer-content {
-    padding: calc(20px / .8) calc(18px / .8);
+    padding: calc(18px / .8) calc(17px / .8);
   }
   .admin-prototype .mc-drawer-head {
-    padding-left: calc(18px / .8);
-    padding-right: calc(18px / .8);
+    padding: calc(17px / .8) calc(17px / .8) calc(14px / .8);
+  }
+  .admin-prototype .mc-drawer-stats b {
+    font-size: calc(17px + var(--admin-font-delta, 0px));
+  }
+  .admin-prototype .mc-detail-tabs {
+    gap: calc(16px / .8);
+  }
+  .admin-prototype .mc-drawer .mc-dl {
+    grid-template-columns: 75px minmax(0, 1fr);
   }
   .admin-prototype .mc-drawer .mc-form label {
     grid-template-columns: minmax(0, 1fr);
