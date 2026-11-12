@@ -93,7 +93,7 @@ export function UnifiedAssistDrawer({ control, readOnly, onClose }: { control: A
         {irrevocable && <p className="mu-callout mu-warn">「확인 후 반영」으로 저장하면 관리자 확인 필수가 켜지고 다시 끌 수 없습니다(DB 규칙).</p>}
       </>}
       <Result state={result.state} />
-      {done ? <Footer><button type="button" className={primary} onClick={onClose}>확인</button></Footer> : step === "confirm" && <Footer layout="left">
+      {done ? <Footer><button type="button" className={primary} onClick={onClose}>확인</button></Footer> : step === "confirm" && <Footer layout="split">
         <button type="button" className={button} disabled={result.pending} onClick={() => setStep("edit")}>돌아가기</button>
         <button type="button" className={primary} disabled={readOnly || result.pending || result.uncertain} onClick={() => result.save(unifiedAssistForm(snapshot, draft))}>{result.pending ? "저장 중…" : "저장"}</button>
       </Footer>}
