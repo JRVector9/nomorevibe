@@ -73,16 +73,21 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
 
   it("marks notification, tone and the existing screens each button opens", () => {
     const first = all.find(task => task.id === "stop:stage:first")!;
-    expect(first).toMatchObject({ tone: "bad", notify: true, actions: [{ kind: "link", label: "단계 열기", href: "/admin/flow?tab=detail&stage=first#prototype-selected-stage" }] });
+    // 「단계 열기」는 단계 패널(조각 2a) — 주소로도 열린다
+    expect(first).toMatchObject({ tone: "bad", notify: true, actions: [{ kind: "link", label: "단계 열기", href: "/admin/flow?stage=first" }] });
     expect(all.find(task => task.id === "stop:job:product-intro-check")!.actions).toEqual([
       { kind: "job-resume", label: "재개", job: "product-intro-check", fallbackHref: "/admin/status?tab=jobs&job=product-intro-check" },
+      { kind: "keep", label: "사유 남기고 유지", taskId: "stop:job:product-intro-check" },
       { kind: "link", label: "작업 보기", href: "/admin/status?tab=jobs&job=product-intro-check" }]);
     expect(all.find(task => task.id === "odd:hold:ambiguous")).toMatchObject({ tone: "warn", notify: true });
     expect(all.find(task => task.id === "pile:stage:product-translate")).toMatchObject({ tone: "warn", notify: false,
-      actions: [{ label: "모델 붙이기", href: "/admin/models/tasks#execution-product-translate-1" }] });
+      actions: [{ label: "모델 붙이기", href: "/admin/flow?stage=product-translate#sp-models" }] });
+    // 키워드 검수(워커 진행 단계)는 키워드 등록 패널을 연다
+    expect(all.find(task => task.id === "pile:stage:keyword-verify")!.actions[0]).toMatchObject({ href: "/admin/flow?stage=keywords#sp-models" });
     expect(all.find(task => task.id === "pile:human")!.actions[0]).toMatchObject({ label: "묶음 보기", href: "/admin/review?tab=human&stage=agreed" });
     expect(all.find(task => task.id === "tidy:no-result:conn-lg-exaone")).toMatchObject({ tone: "off", notify: false,
-      actions: [{ label: "쉬게 하기", href: "/admin/models/llm?edit=conn-lg-exaone#conn-conn-lg-exaone" }] });
+      actions: [{ label: "쉬게 하기", href: "/admin/models/llm?edit=conn-lg-exaone#conn-conn-lg-exaone" },
+        { kind: "keep", label: "그대로 두기", taskId: "tidy:no-result:conn-lg-exaone" }] });
     expect(board.marks).toEqual({ stopped: ["first"], piling: ["reason-translate", "keyword-verify", "product-translate"] });
   });
 
@@ -174,15 +179,44 @@ describe("console tasks — rules and their limits", () => {
     expect(board.groups[1].tasks[0].actions[0]).toMatchObject({ href: "/admin/review?tab=all&stage=judge" });
   });
 
-  it("odd: a change followed by less throughput — input reserved for the change watch", () => {
-    const drop = { key: "28853", label: "AI 1차 순위 변경", changedAt: at(2 * HOUR), beforePerHour: 86, afterPerHour: 3, undoHref: "/admin/activity?id=28853" };
+  it("odd: a change followed by less throughput — judged once by the change watch, listed here as it comes", () => {
+    // 판정은 change-watch.ts judgeChange 가 한다 — 엔진은 그 결과(changeWatchTasks)를 다시 판정하지 않고 그대로 올린다
+    const watched = { key: "change-watch:28853", verdict: "fell_back" as const, title: "1차 AI 검수 처리가 바꾼 뒤 다시 줄었습니다",
+      fact: "1차 AI 검수 1순위를 supa로 · 07:10 · 시간당 17건 → 첫 1시간 86건 → 지금 3건", why: "바꾼 직후에는 늘었다가 지금은 바꾸기 전과 비슷하거나 낮습니다",
+      actions: [{ label: "되돌리러 가기", href: "/admin/models/tasks" }, { label: "기록 보기", href: "/admin/activity?target=first-review%231" }], notify: true };
     expect(titles(buildConsoleTasks(quiet()))).toEqual([]);
-    expect(titles(buildConsoleTasks(quiet({ changeDrops: [] })))).toEqual([]);
-    expect(titles(buildConsoleTasks(quiet({ changeDrops: [{ ...drop, afterPerHour: 86 }] })))).toEqual([]);
-    expect(buildConsoleTasks(quiet({ changeDrops: [drop] })).groups[1].tasks[0]).toMatchObject({
-      title: "AI 1차 순위 변경 뒤 처리가 줄었습니다", fact: "11-12 07:00 바꿈 · 바꾸기 전 시간당 86건 → 지금 3건", notify: true,
-      actions: [{ label: "되돌리기", href: "/admin/activity?id=28853" }, { label: "기록 보기", href: "/admin/activity" }] });
-    expect(unknowns(buildConsoleTasks(quiet({ changeDrops: null })))).toEqual(["바꾼 뒤 처리량"]);
+    expect(titles(buildConsoleTasks(quiet({ changeWatch: [] })))).toEqual([]);
+    expect(buildConsoleTasks(quiet({ changeWatch: [watched] })).groups[1].tasks[0]).toMatchObject({
+      id: "odd:change-watch:28853", rule: "change-drop", tone: "warn", notify: true, title: watched.title, fact: watched.fact, why: watched.why,
+      actions: [{ kind: "link", label: "되돌리러 가기", href: "/admin/models/tasks" }, { kind: "link", label: "기록 보기", href: "/admin/activity?target=first-review%231" }] });
+    // 못 읽었으면 0건이 아니라 「셀 수 없음」
+    expect(unknowns(buildConsoleTasks(quiet({ changeWatch: null })))).toEqual(["바꾼 뒤 처리량"]);
+    expect(unknowns(buildConsoleTasks(quiet()))).toEqual([]);
+  });
+
+  it("keeps a paused job or a refusing model off the list for a week after a person keeps it with a reason", () => {
+    const paused = (controlVersion?: number) => ({ jobs: [{ name: "product-intro-check", paused: true, lastRunAt: at(8 * DAY), ...(controlVersion !== undefined ? { controlVersion } : {}) }],
+      progress: { stages: [{ stage: "intro-check", job: "product-intro-check", reason: "paused", waiting: 12 }] } });
+    const keep = { taskId: "stop:job:product-intro-check", at: at(HOUR), until: new Date(Date.parse(NOW) + 6 * DAY).toISOString(), actor: "JR", reason: "소개 검수는 이번 주 끈다", ref: "41" };
+    expect(CONSOLE_TASK_LIMITS.keepMs).toBe(7 * DAY);
+    const kept = buildConsoleTasks(quiet({ ...paused(41), kept: [keep] }));
+    expect(titles(kept)).toEqual([]);
+    expect(kept.kept.map(row => [row.task.title, row.keep.reason])).toEqual([["소개 검수가 8일째 멈춰 있습니다", "소개 검수는 이번 주 끈다"]]);
+    // 기간이 지났거나, 그 사이 재개했다가 다시 멈춰 판이 바뀌었으면 다시 올라온다
+    expect(titles(buildConsoleTasks(quiet({ ...paused(41), kept: [{ ...keep, until: at(1) }] })))).toEqual(["소개 검수가 8일째 멈춰 있습니다"]);
+    expect(titles(buildConsoleTasks(quiet({ ...paused(52), kept: [keep] })))).toEqual(["소개 검수가 8일째 멈춰 있습니다"]);
+    // 받는 규칙만 — 다른 할 일 열쇠의 표시는 무시한다
+    const stalled = quiet({ conveyor: conveyor({ stations: [station("first", { label: "AI 1차", waiting: 100, doneHour: 0 })] }),
+      kept: [{ ...keep, taskId: "stop:stage:first" }] });
+    expect(titles(buildConsoleTasks(stalled))).toEqual(["AI 1차가 멈췄습니다"]);
+    // 표시를 못 읽으면 모두 보인다
+    const unread = buildConsoleTasks(quiet({ ...paused(41), kept: null }));
+    expect([titles(unread), unread.keptUnknown]).toEqual([["소개 검수가 8일째 멈춰 있습니다"], true]);
+    // 자주 거절하는 모델의 「그대로 두기」
+    const refusing = quiet({ connections: [connection("exa")], ranks: [{ task: "reason-translate", slot: 1, rank: 1, connectionId: "exa", model: "exa-model", enabled: true }],
+      ledger: [{ routeId: "reason-translate", groupId: "exa", model: "exa-model", calls: 40, settled: 30, avgSeconds: 2, noResult: 12 }],
+      kept: [{ taskId: "tidy:no-result:exa", at: at(HOUR), until: new Date(Date.parse(NOW) + DAY).toISOString(), actor: "JR", reason: "약관상 번역에만 씀" }] });
+    expect(titles(buildConsoleTasks(refusing), "tidy")).toEqual([]);
   });
 
   it("pile: stages that need more than three days at the last 24 hours' pace, longest first", () => {

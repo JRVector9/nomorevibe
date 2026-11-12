@@ -66,7 +66,8 @@ export function buildConsoleFlow(conveyor: Conveyor | null, progress: ConsolePro
   const post: ConsoleFlowRow[] = POST_PUBLISH.map(key => {
     const stage = progress?.stages.find(row => row.stage === key) ?? null;
     const label = CONSOLE_STAGE_LABELS[key];
-    const href = stage?.job ? `/admin/status?tab=jobs&job=${encodeURIComponent(stage.job)}` : null;
+    // 줄을 누르면 단계 패널(조각 2a) — 진행 단계를 못 읽어도 패널은 열린다(패널이 「셀 수 없음」을 적는다)
+    const href = consoleStageHref(key);
     if (!stage) return { key, label, href, tone: "off", status: "미확인", waiting: null, rate: null, spark: null };
     const waiting = stage.waiting ?? null;
     const [tone, status]: [ConsoleTone, string] = stage.reason === "paused" ? ["bad", "멈춤"]

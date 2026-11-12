@@ -18,7 +18,14 @@ import { logger } from "@/lib/observability/logger";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { OPS_FRESH_COOKIE } from "../status/fresh";
 import { jobControlCsrf } from "../status/job-control-csrf";
-import { readConsoleHome } from "@/lib/operations/console-home-read";
+import { readConsoleHome, type ConsoleHomeRead } from "@/lib/operations/console-home-read";
+import { buildConsoleTasks } from "@/lib/operations/console-tasks";
+import { stagePanel, type StagePanelDef } from "@/lib/operations/stage-panel-catalog";
+import { buildStagePanel, previewContext, stageChanges } from "@/lib/operations/stage-panel-model";
+import { readStagePanelExtra } from "@/lib/operations/stage-panel-read";
+import { homeTab } from "../workspace-navigation";
+import { ChangeWatch } from "./ChangeWatch";
+import { StagePanel, StagePanelLoading } from "./StagePanel";
 import { readOperatorAway, readOperatorChanges, readOperatorDeskShared, readOperatorDiagnostics } from "./desk";
 import { ConsoleHome } from "./ConsoleHome";
 import type { FlowControls } from "./FlowBoard";
@@ -56,7 +63,8 @@ async function readControls(admin: { login: string; exp: number }): Promise<Flow
 }
 
 /**
- * 운영 홈 — 기본 탭(home)은 「지금 할 일」(네 묶음) + 「흐름」 표(운영 콘솔 개편 조각 1b, ConsoleHome).
+ * 운영 홈 — 기본 탭(home)은 「지금 할 일」(네 묶음) + 「흐름」 표(조각 1b, ConsoleHome) + 「바꾼 것 지켜보기」(조각 1c, ChangeWatch).
+ * ?stage=<단계> 면 그 단계의 패널(조각 2a, StagePanel)이 오른쪽에 열린다 — 새로고침·공유해도 같은 패널이다. 탭 해석은 메뉴와 같은 homeTab.
  * 「흐름 상세」(tab=detail, 옛 주소 tab=flow 도 같다)는 지금까지의 전체 흐름이다 — 탐색 → 검수 → 프로필 준비 → 발행 → 공개. 검색·번역은 공개 후 별도 분기로 보인다.
  * 기존 공용 집계와 잡·역할 관측의 시각·단위를 함께 표시한다. 추가 모델 호출을 하지 않는다(홈의 24시간 장부 집계는 공유 캐시로 나눠 쓴다).
  * 그 자리의 장애 대응, 그리고 1인 관리자 필수 칸(할 일 — 경보·사람 판단·자리 비운 사이·모두 보기, 최근 바뀐 설정·장비·점검 창).
@@ -67,27 +75,49 @@ export default async function AdminFlowPage({ searchParams }: { searchParams?: P
   if (!admin) redirect("/admin/login");
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   const params = await searchParams;
-  const tab = typeof params?.tab === "string" ? params.tab : "home";
+  const tab = homeTab(typeof params?.tab === "string" ? params.tab : null);
   const advanced = params?.advanced === "1";
   const stage = typeof params?.stage === "string" ? params.stage : null;
   return (
     <main className="stack pb-10 pt-4"><PageStamp />
       <h1 className="admin-vh">운영 홈 · 실시간 전체 흐름</h1>
       <Suspense fallback={<p className="notice" aria-busy="true">운영 흐름을 읽는 중…</p>}>
-        {tab === "home" ? <HomeWorkspace admin={admin} fresh={fresh} />
+        {tab === "home" ? <HomeWorkspace admin={admin} fresh={fresh} stage={stage} />
           : <FlowWorkspace admin={admin} fresh={fresh} tab={tab} advanced={advanced} stage={stage} />}
       </Suspense>
     </main>
   );
 }
 
-/** 운영 홈 — 할 일 규칙의 입력을 한 번 읽어(읽기마다 따로 실패) 할 일·흐름 표를 그린다 */
-async function HomeWorkspace({ admin, fresh }: { admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean }) {
+/** 운영 홈 — 할 일 규칙의 입력을 한 번 읽어(읽기마다 따로 실패) 할 일·흐름 표를 그리고, 단계가 열려 있으면 그 패널을 붙인다 */
+async function HomeWorkspace({ admin, fresh, stage }: { admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean; stage: string | null }) {
+  const def = stagePanel(stage);
+  // 패널의 덧읽기는 홈 읽기와 함께 시작한다 — 패널은 따로 기다린다(Suspense), 홈을 막지 않는다
+  const extraRead = def ? readStagePanelExtra(def, fresh) : null;
   const data = await readConsoleHome(fresh);
   const secret = authSecret();
-  const csrf = secret && !adminWorkspaceReadOnly() ? { token: jobControlCsrf(admin, secret), expiresAt: admin.exp } : null;
-  // 「바꾼 것 지켜보기」(조각 1c)는 ConsoleHome 의 changeWatch 자리에 그 서버 구성 요소를 넘겨 끼운다
-  return <ConsoleHome data={data} csrf={csrf} />;
+  const readOnly = adminWorkspaceReadOnly();
+  const csrf = secret && !readOnly ? { token: jobControlCsrf(admin, secret), expiresAt: admin.exp } : null;
+  // 「바꾼 것 지켜보기」(조각 1c)는 스스로 읽고 스스로 기다린다(웹들이 나눠 쓰는 캐시)
+  return <ConsoleHome data={data} csrf={csrf} changeWatch={<ChangeWatch fresh={fresh} />}
+    panel={def && extraRead ? <Suspense key={def.key} fallback={<StagePanelLoading label={def.label} />}>
+      <StagePanelLoaded def={def} data={data} extraRead={extraRead} csrf={csrf} readOnly={readOnly} />
+    </Suspense> : undefined} />;
+}
+
+/** 단계 패널 — 홈 읽기(진행·잡·연결·순위·장비·장부)에 패널 덧읽기(멈춘 기록·degraded·순위 사정·순위 편집기·한도·바뀐 것)를 더한다 */
+async function StagePanelLoaded({ def, data, extraRead, csrf, readOnly }: { def: StagePanelDef; data: ConsoleHomeRead;
+  extraRead: ReturnType<typeof readStagePanelExtra>; csrf: { token: string; expiresAt: number } | null; readOnly: boolean }) {
+  const extra = await extraRead;
+  const board = buildConsoleTasks(data.inputs);
+  const panel = buildStagePanel({ key: def.key, now: data.checkedAt, conveyor: data.conveyor, inputs: data.inputs, board, jobStates: data.jobStates,
+    pauses: extra.pauses, degraded: extra.degraded, runtime: extra.runtime, executions: data.executions });
+  if (!panel) return null;
+  const lockReason = readOnly ? "읽기 전용 미리보기 — 여기서는 저장할 수 없습니다."
+    : !data.executions ? "실행 방식을 읽지 못했습니다 — 확인할 때까지 배정을 저장할 수 없습니다." : null;
+  return <StagePanel panel={panel} editor={extra.editor} context={previewContext(data.inputs)} limits={extra.limits} limitRows={extra.limitRows}
+    limitImpact={extra.limitImpact} changes={extra.changes ? stageChanges(extra.changes.rows, panel) : []} changesRead={!!extra.changes}
+    csrf={csrf} jobVersions={data.jobVersions} readOnly={readOnly} lockReason={lockReason} now={new Date(data.checkedAt)} />;
 }
 
 type DeskRead = Promise<OperatorDesk | null>;

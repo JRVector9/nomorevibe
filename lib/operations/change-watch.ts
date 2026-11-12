@@ -117,6 +117,8 @@ export type ChangeMeasure = Readonly<{
 export type ChangeWatchRow = Readonly<{
   key: string; ids: readonly number[]; at: string; until: string | null; actor: string; action: string; target: string;
   title: string; stage: string | null; kind: WatchChange["kind"];
+  /** 영향받는 장부 route(정확히)와 route 머리 — 단계 패널이 「이 단계에 닿은 변경」을 거른다 */
+  routes: readonly string[]; prefixes: readonly string[];
   measure: ChangeMeasure | null;
   verdict: ChangeVerdict;
   /** 판정의 까닭(마우스를 올리면 보인다) */
@@ -438,7 +440,8 @@ export function buildChangeWatch(changes: readonly WatchChange[], buckets: reado
     }
     return {
       key: change.key, ids: change.ids, at: change.at, until: change.until, actor: change.actor, action: change.action, target: change.target,
-      title: change.title, stage: change.stage, kind: change.kind, measure, ...judged, ...watchTexts(measure, judged.verdict, change.noStage), notes,
+      title: change.title, stage: change.stage, kind: change.kind, routes: change.routes, prefixes: change.prefixes,
+      measure, ...judged, ...watchTexts(measure, judged.verdict, change.noStage), notes,
       undo: CHANGE_UNDO[change.action]?.(change.target) ?? null,
       recordHref: `/admin/activity?target=${encodeURIComponent(change.target)}`,
     };
@@ -548,7 +551,8 @@ async function loadChangeWatch(): Promise<ChangeWatchSnapshot> {
   }, { accessMode: "read only" }));
 }
 
-const shared = sharedLoader<ChangeWatchSnapshot>({ namespace: "admin:change-watch:v1", ttlMs: 60_000, staleMs: 15 * 60_000, store: sharedStore });
+// v2: 줄마다 route 를 싣는다(단계 패널의 「최근 바뀐 것」)
+const shared = sharedLoader<ChangeWatchSnapshot>({ namespace: "admin:change-watch:v2", ttlMs: 60_000, staleMs: 15 * 60_000, store: sharedStore });
 
 /** 바꾼 것 지켜보기 — 웹들이 1분 나눠 쓰고, 15분 안의 값이면 기다리지 않는다. 실패는 던진다(부르는 쪽이 「읽지 못함」으로 그린다) */
 export function readChangeWatch(fresh = false): Promise<ChangeWatchSnapshot> {

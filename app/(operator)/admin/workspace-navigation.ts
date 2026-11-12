@@ -78,7 +78,8 @@ export function modelsLegacyTabHref(search: Search): string | null {
 
 /**
  * 메뉴 여섯과 그 탭. 탭 이름은 옛 메뉴의 것을 그대로 쓴다(새로 생긴 탭은 그 화면이 이미 쓰는 이름 — 운영센터의 「작업 흐름」·「크롤러 활동」).
- * - 홈: 탭은 지금 그대로(실시간 전체 흐름·시스템 진단·할 일·변경 기록). 오늘 할 일은 「할 일·변경 기록」의 2차 메뉴.
+ * - 홈: 운영 홈(할 일·흐름·바꾼 것 지켜보기, 단계 패널 ?stage=)과 흐름 상세(지금까지의 실시간 전체 흐름 — 옛 ?tab=flow 도 이 탭)·시스템 진단·할 일·변경 기록.
+ *   오늘 할 일은 「할 일·변경 기록」의 2차 메뉴.
  * - 사람 확인: 옛 「검수 및 발행」·「요청함」과 품질관리·사람 위임 모델. 앞의 셋은 옛 탭을 2차 메뉴로 둔다.
  * - 모델: 옛 「LLM 운영」에서 기록을 뺀 것. 고급 편집기는 「고급 설정」의 2차 메뉴.
  * - 수집·작업: 옛 설정의 수집·판정·분류·근거·외부 연동과 운영센터(/admin/status)의 작업 흐름·크롤러 활동.
@@ -87,7 +88,8 @@ export function modelsLegacyTabHref(search: Search): string | null {
  */
 export const WORKSPACES: readonly Workspace[] = [
   { id: "home", label: "홈", href: "/admin/flow", icon: "flow", tabs: [
-    { id: "flow", label: "실시간 전체 흐름", href: "/admin/flow" },
+    { id: "home", label: "운영 홈", href: "/admin/flow" },
+    { id: "detail", label: "흐름 상세", href: "/admin/flow?tab=detail" },
     { id: "diagnostics", label: "시스템 진단", href: "/admin/flow?tab=diagnostics" },
     { id: "changes", label: "할 일·변경 기록", href: "/admin/flow?tab=changes" },
   ] },
@@ -188,6 +190,16 @@ export const WORKSPACE_LEGACY_SCREENS = [
   "/admin/news", "/admin/github-accounts", "/admin/activity", "/admin/login",
 ] as const;
 
+/**
+ * 운영 홈(/admin/flow)의 ?tab= → 탭. 비었거나 모르는 값은 운영 홈(할 일 + 흐름)이고, 옛 「실시간 전체 흐름」(?tab=flow)은 흐름 상세다.
+ * 화면(flow/page.tsx)도 같은 함수로 무엇을 그릴지 정한다 — 메뉴와 화면이 다른 탭을 켜지 않게.
+ */
+export type HomeTab = "home" | "detail" | "diagnostics" | "changes";
+export function homeTab(tab: string | null | undefined): HomeTab {
+  if (tab === "detail" || tab === "flow") return "detail";
+  return tab === "diagnostics" || tab === "changes" ? tab : "home";
+}
+
 /** 설정 화면(/admin/settings)이 그리는 탭 — 운영 기록(history)만 기록 메뉴다 */
 const SETTINGS_SOURCE_TABS: readonly string[] = ["collection", "evidence", "integrations"];
 /** 콘텐츠 운영 화면(/admin/content)이 그리는 탭 */
@@ -201,7 +213,7 @@ type Place = { id: WorkspaceId; tab: string; secondary?: readonly WorkspaceLink[
 function place(pathname: string, search: Search): Place {
   const tab = search.get("tab");
   switch (pathname) {
-    case "/admin/flow": return { id: "home", tab: pick(ids(menu("home").tabs), tab, "flow") };
+    case "/admin/flow": return { id: "home", tab: homeTab(tab) };
     case "/admin/inbox": return { id: "home", tab: "changes", secondary: WORKSPACE_SECONDARY.homeChanges, secondaryTab: "inbox" };
     case "/admin/activity":
       // 홈의 「할 일·변경 기록」에서 연 변경 기록(?workspace=home)은 홈에 남는다. 나머지(LLM 기록에서 연 것 포함)는 기록 메뉴
@@ -255,7 +267,7 @@ function place(pathname: string, search: Search): Place {
   if (MODELS_ADVANCED_PATHS.includes(pathname)) return { id: "models", tab: "advanced", secondary: WORKSPACE_SECONDARY.modelsAdvanced };
   if (pathname.startsWith("/admin/models/")) return { id: "models", tab: "dashboard" };
   if (pathname.startsWith("/admin/products/")) return { id: "content", tab: "products" };
-  return { id: "home", tab: "flow" };
+  return { id: "home", tab: "home" };
 }
 
 /** Query-aware ownership keeps old bookmarked screens in their new menu without moving any mutations. */

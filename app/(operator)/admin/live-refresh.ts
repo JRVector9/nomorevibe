@@ -23,6 +23,8 @@ export function refreshPolicy(pathname: string, search: Pick<URLSearchParams, "g
     ? { intervalMs: 15_000, idleMs: 15_000 } : { intervalMs: 60_000, idleMs: 15_000 };
   // 운영센터 — 워커 관측 15초에 맞춘 지금 그대로(10초). 조작 중에도 읽는다(전과 같다)
   if (under("/admin/status")) return { intervalMs: 10_000, idleMs: 0 };
+  // 단계 패널(?stage=) — 한도·순위 편집기를 함께 읽고 고치는 칸이 있다. 30초마다, 손을 뗀 지 15초 지나야(고치는 중은 data-dirty 가 따로 막는다)
+  if (pathname === "/admin/flow" && search.get("stage") && (tab === null || tab === "home")) return { intervalMs: 30_000, idleMs: 15_000 };
   // 전체 흐름 — 보는 화면이다(바꾸는 칸이 없다). 읽기는 웹들이 15초 나눠 쓰므로 15초마다, 조작 중에도 읽는다
   if (under("/admin/flow")) return { intervalMs: 15_000, idleMs: 0 };
   // 심사 큐 — 갈래 셈이 보류 후보를 모두 다시 판정해 무겁고, 결정하는 화면이다. 손을 뗀 지 1분 지나야 다시 읽는다

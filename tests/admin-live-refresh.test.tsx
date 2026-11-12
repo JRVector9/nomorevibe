@@ -28,7 +28,8 @@ describe("화면마다 다시 읽는 규칙", () => {
   });
 
   it.each([
-    ['/admin/flow', '', 15_000, 0], ['/admin/flow', 'tab=diagnostics', 15_000, 0],
+    ['/admin/flow', '', 15_000, 0], ['/admin/flow', 'tab=diagnostics', 15_000, 0], ['/admin/flow', 'stage=first', 30_000, 15_000],
+    ['/admin/flow', 'tab=detail&stage=first', 15_000, 0],
     ['/admin/flow', 'tab=changes', 60_000, 15_000], ['/admin/models', '', 15_000, 15_000],
     ['/admin/models', 'tab=live', 15_000, 15_000], ['/admin/models', 'tab=capacity', 15_000, 15_000],
     ['/admin/models', 'tab=unknown', 15_000, 15_000], ['/admin/models', 'tab=history', 60_000, 15_000],

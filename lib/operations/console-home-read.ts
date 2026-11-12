@@ -9,11 +9,14 @@ import { listJobStates } from "@/lib/jobs/runner";
 import { isPausedJob } from "@/lib/jobs/status";
 import { logger } from "@/lib/observability/logger";
 import { listAiConnections, listAiTaskRows } from "./admin-ai-tasks-repository";
-import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
+import { readAiTaskExecutionAdminViews, type AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import { adminJobControlVersions } from "./admin-job-control";
 import { readAdminModelsObservation } from "./admin-models-repository";
+import { changeWatchTasks } from "./change-watch";
+import { readConsoleKept } from "./console-task-keep";
 import { readConveyor } from "./conveyor";
 import type { Conveyor } from "./conveyor-model";
+import type { StageJobState } from "./stage-panel-model";
 import type { ConsoleConnection, ConsoleDevice, ConsoleJob, ConsoleLedgerRow, ConsolePoolMember, ConsoleProgress, ConsoleRank, ConsoleTaskInputs } from "./console-tasks";
 import { sharedInbox } from "./inbox";
 import { sharedLoader } from "./shared-cache";
@@ -27,12 +30,15 @@ import { readWorkerProgress } from "./worker-progress-query";
  * 읽기마다 따로 실패한다 — 하나가 실패하면 그 값만 null 이고, 할 일 규칙(console-tasks.ts)이 그 규칙만 「셀 수 없음」으로 남긴다.
  * 무거운 집계(워커 진행 · 24시간 장부 · 장비 점유 · 감사 적체)는 전체 흐름(conveyor.ts)과 같은 공유 캐시(sharedLoader, Valkey)로 웹 여러 대가 나눠 쓰고,
  * 담긴 값이 조금 지났으면 화면을 기다리게 하지 않고 그 값을 주며 뒤에서 다시 센다(staleMs) — 화면의 「마지막 확인」 시각이 함께 보인다.
+ * 「바꾼 뒤 처리량 하락」은 바꾼 것 지켜보기(change-watch.ts)가 판정한 할 일을 받고, 「그대로 둔」 표시는 작업 로그(console-task-keep.ts)에서 읽는다.
+ * 단계 패널(조각 2a)도 이 읽기를 그대로 쓴다 — 잡 상태·실행 설정은 패널이 다시 읽지 않게 여기 함께 싣는다.
  */
 
 const progressCache = sharedLoader<ConsoleProgress>({ namespace: "admin:console:progress", ttlMs: 30_000, staleMs: 300_000, store: sharedStore });
 const ledgerCache = sharedLoader<ConsoleLedgerRow[]>({ namespace: "admin:console:ledger24h", ttlMs: 60_000, staleMs: 600_000, store: sharedStore });
 type Capacity = { admission: ConsoleTaskInputs["admission"]; devices: ConsoleDevice[] | null };
 const capacityCache = sharedLoader<Capacity>({ namespace: "admin:console:capacity", ttlMs: 15_000, staleMs: 120_000, store: sharedStore });
+// v2: 장비마다 한도와 경로별 점유(routes)를 함께 싣는다(단계 패널 「그 칸을 쓰는 다른 단계」)
 const auditCache = sharedLoader<NonNullable<ConsoleTaskInputs["audit"]>>({ namespace: "admin:console:audit-backlog", ttlMs: 60_000, staleMs: 600_000, store: sharedStore });
 
 const quiet = (event: string) => (error: unknown) => {
@@ -82,12 +88,15 @@ async function loadCapacity(): Promise<Capacity> {
   if (observation.error || !observation.mode) throw new Error("console_capacity_unavailable");
   return {
     admission: { mode: observation.mode, since: observation.controlUpdatedAt },
-    devices: observation.devicesRead ? observation.devices.map(device => ({ deviceId: device.deviceId, active: device.active,
-      models: (device.models ?? []).map(model => ({ model: model.model, active: model.active })) })) : null,
+    devices: observation.devicesRead ? observation.devices.map(device => ({ deviceId: device.deviceId, active: device.active, limit: device.limitSlots,
+      models: (device.models ?? []).map(model => ({ model: model.model, active: model.active })),
+      routes: (device.routes ?? []).map(route => ({ routeId: route.routeId, active: route.active })) })) : null,
   };
 }
 
 export type ConsoleJobControl = { paused: boolean; notBefore: string | null; version: number };
+/** 잡 행 그대로(단계 패널의 마지막 실행·성공·오류) */
+export type ConsoleJobState = StageJobState;
 
 export type ConsoleHomeRead = {
   /** 이 읽기를 시작한 시각 — 할 일의 「마지막 확인」 */
@@ -96,15 +105,21 @@ export type ConsoleHomeRead = {
   conveyor: Conveyor | null;
   /** 할 일의 「재개」가 쓰는 작업 제어 상태 — 기존 JobControl 과 같은 값(멈춘 작업만) */
   jobControls: Record<string, ConsoleJobControl>;
+  /** 단계 패널이 쓰는 잡 행(못 읽었으면 null) */
+  jobStates: ConsoleJobState[] | null;
+  /** 단계 패널이 쓰는 실행 설정(순위대로·작업 분산과 구성원) — 못 읽었으면 null */
+  executions: AiTaskExecutionAdminView[] | null;
+  /** 작업 제어 판(모든 잡) — 단계 패널의 「잠시 멈춤」·「재개」 폼. 못 읽었으면 null(그 자리 조작을 내지 않는다) */
+  jobVersions: Record<string, number> | null;
 };
 
 export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
   const checkedAt = new Date();
-  const [conveyor, progress, ledger, capacity, audit, jobRows, versions, connections, ranks, executions, inbox, agreed] = await Promise.all([
+  const [conveyor, progress, ledger, capacity, audit, jobRows, versions, connections, ranks, executions, inbox, agreed, watch, kept] = await Promise.all([
     readConveyor(fresh).catch(quiet("console.conveyor_unavailable")),
     progressCache("v1", loadProgress, fresh).catch(quiet("console.progress_unavailable")),
     ledgerCache("v1", loadLedger24h, fresh).catch(quiet("console.ledger_unavailable")),
-    capacityCache("v1", loadCapacity, fresh).catch(quiet("console.capacity_unavailable")),
+    capacityCache("v2", loadCapacity, fresh).catch(quiet("console.capacity_unavailable")),
     auditCache("v1", async () => {
       const stats = await openBacklogStats();
       return { open: stats.open, overdue: stats.overdue, oldestWaitDays: stats.oldestWaitDays };
@@ -117,10 +132,13 @@ export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
     sharedInbox(fresh).catch(quiet("console.inbox_unavailable")),
     getSettings().then(settings => sharedHumanQueueOverview(settings, fresh)).then(overview => overview.agreed)
       .catch(quiet("console.human_overview_unavailable")),
+    // 못 읽으면 null — 할 일은 「셀 수 없음 · 바꾼 뒤 처리량」으로 적는다(0건이 아니다)
+    changeWatchTasks(fresh),
+    readConsoleKept(checkedAt).catch(quiet("console.kept_unavailable")),
   ]);
   const now = checkedAt.getTime();
   const jobs: ConsoleJob[] | null = jobRows?.map(job => ({ name: job.name, paused: isPausedJob(job, now), lastRunAt: job.lastRunAt?.toISOString() ?? null,
-    notBefore: job.notBefore?.toISOString() ?? null })) ?? null;
+    notBefore: job.notBefore?.toISOString() ?? null, ...(versions ? { controlVersion: versions[job.name] ?? 0 } : {}) })) ?? null;
   const takedown = inbox?.results.takedown;
   return {
     checkedAt: checkedAt.toISOString(), conveyor,
@@ -140,9 +158,16 @@ export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
         .flatMap(row => row.members.map((member): ConsolePoolMember => ({ task: row.task, slot: row.slot, connectionId: member.connectionId, model: member.model }))) ?? null,
       devices: capacity?.devices ?? null,
       ledger,
+      changeWatch: watch,
+      kept,
     },
     // 제어 판(작업 로그 id)을 못 읽으면 그 자리 조작을 내지 않는다 — 단추는 작업 상세로 보낸다
     jobControls: !versions ? {} : Object.fromEntries((jobs ?? []).filter(job => job.paused)
       .map(job => [job.name, { paused: true, notBefore: job.notBefore ?? null, version: versions[job.name] ?? 0 }])),
+    jobStates: jobRows?.map(job => ({ name: job.name, paused: isPausedJob(job, now), lastRunAt: job.lastRunAt?.toISOString() ?? null,
+      lastSuccessAt: job.lastSuccessAt?.toISOString() ?? null, lastError: job.lastError ? job.lastError.slice(0, 300) : null,
+      notBefore: job.notBefore?.toISOString() ?? null })) ?? null,
+    executions: executions ? [...executions] : null,
+    jobVersions: versions,
   };
 }

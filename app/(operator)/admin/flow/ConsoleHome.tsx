@@ -2,17 +2,21 @@ import Link from "next/link";
 import { Fragment, type ReactNode } from "react";
 import { buildConsoleFlow, buildConsoleStrip, type ConsoleFlowRow } from "@/lib/operations/console-home-model";
 import type { ConsoleHomeRead, ConsoleJobControl } from "@/lib/operations/console-home-read";
-import { buildConsoleTasks, formatCount, formatKst, type ConsoleAction, type ConsoleTask } from "@/lib/operations/console-tasks";
+import { buildConsoleTasks, CONSOLE_TASK_LIMITS, formatCount, formatKst, type ConsoleAction, type ConsoleTask, type ConsoleTaskBoard } from "@/lib/operations/console-tasks";
 import { JobControl } from "../status/JobControl";
+import { TaskKeep } from "./TaskKeep";
 import "./console-home.css";
+
+const KEEP_DAYS = Math.round(CONSOLE_TASK_LIMITS.keepMs / 86_400_000);
 
 /**
  * 운영 홈(2026-11-12 최종 시안 「화면 1 홈」) — 머리줄 한 줄, 왼쪽 「지금 할 일」 네 묶음, 오른쪽 「흐름」 표.
  * 좁은 화면에서는 할 일이 먼저 온다(같은 순서로 한 줄씩 쌓인다). 할 일은 console-tasks.ts 의 규칙에서만 나온다.
- * 이 화면이 직접 바꾸는 것은 멈춘 작업의 재개 하나다 — 기존 작업 멈춤·재개 서버 동작(사유 필수, 작업 로그)을 그대로 쓴다.
- * 나머지 단추는 지금 있는 화면으로 보낸다(단계 패널·모델 화면은 뒤 조각이 만든다).
+ * 이 화면이 직접 바꾸는 것은 둘이다 — 멈춘 작업의 재개(기존 작업 멈춤·재개 서버 동작, 사유 필수, 작업 로그)와
+ * 「사유 남기고 유지」·「그대로 두기」(할 일을 확인했고 그대로 둔다는 표시, 사유 필수, 작업 로그 console-task-keep — 정한 기간 동안 목록에서 내린다).
+ * 「단계 열기」와 흐름 표의 줄은 단계 패널(?stage=, 조각 2a)을 연다. 나머지 단추는 지금 있는 화면으로 보낸다.
  */
-export function ConsoleHome({ data, csrf, changeWatch }: {
+export function ConsoleHome({ data, csrf, changeWatch, panel }: {
   data: ConsoleHomeRead;
   /** 작업 재개 폼의 CSRF — 없으면(읽기 전용 미리 보기 등) 재개 단추는 작업 상세로 보낸다 */
   csrf: { token: string; expiresAt: number } | null;
@@ -21,6 +25,8 @@ export function ConsoleHome({ data, csrf, changeWatch }: {
    * 그 조각이 바꾼 뒤 처리량이 떨어진 것을 찾으면 할 일 입력(changeDrops)으로도 넣는다.
    */
   changeWatch?: ReactNode;
+  /** 단계 패널(?stage=, 조각 2a) — page.tsx 가 열린 단계의 서버 구성 요소를 넘긴다 */
+  panel?: ReactNode;
 }) {
   const board = buildConsoleTasks(data.inputs);
   const strip = buildConsoleStrip({ conveyor: data.conveyor, admission: data.inputs.admission, progress: data.inputs.progress });
@@ -39,9 +45,10 @@ export function ConsoleHome({ data, csrf, changeWatch }: {
           {group.tasks.map(task => <TaskRow key={task.id} task={task} csrf={csrf} controls={data.jobControls} />)}
           {group.unknown.length > 0 && <li className="ch-unknown">셀 수 없음 · {group.unknown.join(" · ")}</li>}
         </Fragment>)}</ul>}
+        <KeptList board={board} />
       </section>
       <section className="ch-flow" aria-labelledby="ch-flow-title">
-        <div className="ch-head"><h2 id="ch-flow-title">흐름</h2><span className="ch-count">단계를 누르면 상세</span>
+        <div className="ch-head"><h2 id="ch-flow-title">흐름</h2><span className="ch-count">단계를 누르면 패널</span>
           <Link prefetch={false} className="text-button ch-more" href="/admin/flow?tab=detail">흐름 상세 →</Link></div>
         <div className="ch-scroll" role="region" aria-label="단계별 흐름 표" tabIndex={0}>
           <table className="ch-table">
@@ -59,6 +66,7 @@ export function ConsoleHome({ data, csrf, changeWatch }: {
         {changeWatch}
       </section>
     </div>
+    {panel}
   </div>;
 }
 
@@ -69,20 +77,34 @@ function TaskRow({ task, csrf, controls }: { task: ConsoleTask; csrf: { token: s
       <h3>{task.title}</h3>
       <p className="ch-fact">{task.fact}</p>
       {task.why && <p className="ch-why">{task.why}</p>}
-      <div className="ch-acts">{task.actions.map((action, index) => <Action key={`${action.kind}:${action.label}`} action={action} primary={index === 0} csrf={csrf} controls={controls} />)}</div>
+      <div className="ch-acts">{task.actions.map((action, index) => <Action key={`${action.kind}:${action.label}`} action={action} primary={index === 0} csrf={csrf} controls={controls}
+        task={task} />)}</div>
     </div>
   </li>;
 }
 
-function Action({ action, primary, csrf, controls }: { action: ConsoleAction; primary: boolean; csrf: { token: string; expiresAt: number } | null;
-  controls: Record<string, ConsoleJobControl> }) {
+function Action({ action, primary, csrf, controls, task }: { action: ConsoleAction; primary: boolean; csrf: { token: string; expiresAt: number } | null;
+  controls: Record<string, ConsoleJobControl>; task: ConsoleTask }) {
   const className = `button small${primary ? " primary" : ""}`;
   if (action.kind === "link") return <Link prefetch={false} className={className} href={action.href}>{action.label}</Link>;
+  // 「사유 남기고 유지」·「그대로 두기」 — 새 쓰기라 CSRF 가 없으면(읽기 전용 미리 보기) 단추를 내지 않는다
+  if (action.kind === "keep") return csrf ? <details className="ch-job"><summary className={className}>{action.label}</summary>
+    <TaskKeep taskId={action.taskId} keepRef={task.keepRef ?? null} title={task.title} label={action.label} days={KEEP_DAYS} csrf={csrf} /></details> : null;
   // 재개 — 운영센터·흐름 상세와 같은 작업 제어 폼(사유 필수, 다른 사람이 먼저 바꿨으면 거절)
   const control = controls[action.job];
   if (!csrf || !control) return <Link prefetch={false} className={className} href={action.fallbackHref}>{action.label}</Link>;
   return <details className="ch-job"><summary className={className}>{action.label}</summary>
     <JobControl name={action.job} paused={control.paused} notBefore={control.notBefore} version={control.version} csrf={csrf} /></details>;
+}
+
+/** 그대로 둔 할 일 — 누가·언제까지·사유. 목록에서 내렸어도 보이게 접어 둔다 */
+function KeptList({ board }: { board: ConsoleTaskBoard }) {
+  if (board.keptUnknown) return <p className="ch-kept-note">그대로 둔 표시를 읽지 못해 모든 할 일을 그대로 보입니다.</p>;
+  if (!board.kept.length) return null;
+  return <details className="ch-kept"><summary>그대로 둔 것 {formatCount(board.kept.length)}건</summary>
+    <ul>{board.kept.map(({ task, keep }) => <li key={task.id}><b>{task.title}</b>
+      <span>{keep.actor} · {formatKst(keep.at)} · {formatKst(keep.until)}까지 · {keep.reason}</span></li>)}</ul>
+  </details>;
 }
 
 function FlowRow({ row }: { row: ConsoleFlowRow }) {

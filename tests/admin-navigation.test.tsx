@@ -21,11 +21,16 @@ const expectActiveLink = (html: string, href: string) => expect(activeLinks(html
  * 옛 메뉴(작업 공간 7개·탭 28개·고급 편집기 8개·2차 메뉴)의 모든 주소와 관리자 화면 전부가 이 표에 있는지 본다.
  */
 const ADDRESSES: readonly (readonly [url: string, menu: WorkspaceId, tab: string, secondaryTab: string | null])[] = [
-  // 홈 — 운영 홈의 탭 셋(그대로), 오늘 할 일, 운영센터의 나머지 탭
-  ['/admin/flow', 'home', 'flow', null],
+  // 홈 — 운영 홈(할 일 + 흐름, 단계 패널 ?stage=)과 흐름 상세(옛 ?tab=flow 포함)·시스템 진단·할 일·변경 기록, 오늘 할 일, 운영센터의 나머지 탭
+  ['/admin/flow', 'home', 'home', null],
+  ['/admin/flow?tab=home', 'home', 'home', null],
+  ['/admin/flow?stage=first', 'home', 'home', null],
+  ['/admin/flow?tab=detail', 'home', 'detail', null],
+  ['/admin/flow?tab=detail&stage=first', 'home', 'detail', null],
+  ['/admin/flow?tab=flow', 'home', 'detail', null],
   ['/admin/flow?tab=diagnostics', 'home', 'diagnostics', null],
   ['/admin/flow?tab=changes', 'home', 'changes', null],
-  ['/admin/flow?tab=unknown', 'home', 'flow', null],
+  ['/admin/flow?tab=unknown', 'home', 'home', null],
   ['/admin/inbox', 'home', 'changes', 'inbox'],
   ['/admin/activity?workspace=home&group=settings', 'home', 'changes', 'changes'],
   ['/admin/activity?workspace=home', 'home', 'changes', 'changes'],
@@ -178,8 +183,9 @@ describe('메뉴 여섯', () => {
     for (const page of WORKSPACES) expect(html).toContain(`<span>${page.label}</span>`);
   });
 
-  it('홈 탭은 지금 탭 그대로 두고, 오늘 할 일은 그 2차 메뉴에 둔다', () => {
-    expect(WORKSPACES[0].tabs.map(tab => tab.label)).toEqual(['실시간 전체 흐름', '시스템 진단', '할 일·변경 기록']);
+  it('홈 탭은 운영 홈(기본)·흐름 상세·시스템 진단·할 일·변경 기록이고, 오늘 할 일은 그 2차 메뉴에 둔다', () => {
+    expect(WORKSPACES[0].tabs.map(tab => [tab.label, tab.href])).toEqual([['운영 홈', '/admin/flow'], ['흐름 상세', '/admin/flow?tab=detail'],
+      ['시스템 진단', '/admin/flow?tab=diagnostics'], ['할 일·변경 기록', '/admin/flow?tab=changes']]);
     expect(WORKSPACE_SECONDARY.homeChanges.map(link => link.href)).toEqual(['/admin/inbox', '/admin/activity?workspace=home&group=settings']);
   });
 

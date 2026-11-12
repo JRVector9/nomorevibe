@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const read = vi.hoisted(() => ({
   conveyor: vi.fn(), progress: vi.fn(), observation: vi.fn(), audit: vi.fn(), jobs: vi.fn(), versions: vi.fn(), connections: vi.fn(), ranks: vi.fn(),
-  executions: vi.fn(), inbox: vi.fn(), overview: vi.fn(), adminView: vi.fn(), sql: [] as string[], ledger: vi.fn(), warn: vi.fn(),
+  executions: vi.fn(), inbox: vi.fn(), overview: vi.fn(), adminView: vi.fn(), sql: [] as string[], ledger: vi.fn(), warn: vi.fn(), watch: vi.fn(), kept: vi.fn(),
 }));
 vi.mock("@/lib/cache/shared", () => ({ sharedStore: null }));
 vi.mock("@/lib/db/pool", () => ({ withDbDeadline: (_deadline: number, load: () => Promise<unknown>) => load() }));
@@ -29,6 +29,9 @@ vi.mock("@/lib/operations/conveyor", () => ({ readConveyor: read.conveyor }));
 vi.mock("@/lib/operations/inbox", () => ({ sharedInbox: read.inbox }));
 vi.mock("@/lib/operations/shared-reads", () => ({ sharedHumanQueueOverview: read.overview }));
 vi.mock("@/lib/operations/worker-progress-query", () => ({ readWorkerProgress: read.progress }));
+// 바꾼 것 지켜보기(조각 1c)의 할 일 — 못 읽으면 null 을 준다(changeWatchTasks 가 스스로 잡는다)
+vi.mock("@/lib/operations/change-watch", () => ({ changeWatchTasks: read.watch }));
+vi.mock("@/lib/operations/console-task-keep", () => ({ readConsoleKept: read.kept }));
 
 const conveyor = { measuredAt: "2026-11-12T00:00:00.000Z", stations: [], human: null, holdsByReason: [] };
 const paused = new Date(Date.now() + 100 * 365 * 86_400_000);
@@ -56,6 +59,8 @@ beforeEach(() => {
   read.inbox.mockResolvedValue({ fetchedAt: "x", results: { takedown: { ok: true, data: { count: 2, overdue: 1, items: [] } } } });
   read.overview.mockResolvedValue({ agreed: { approve: 3, reject: 1 } });
   read.ledger.mockResolvedValue([{ routeId: "reason-translate", groupId: "d1", model: "m1", calls: 7, settled: "6", avgSeconds: "2.5", noResult: 1 }]);
+  read.watch.mockResolvedValue([{ key: "change-watch:9", verdict: "worse", title: "t", fact: "f", actions: [], notify: true }]);
+  read.kept.mockResolvedValue([{ taskId: "stop:job:product-intro-check", at: "x", until: "y", actor: "JR", reason: "r" }]);
 });
 
 describe("console home read", () => {
@@ -79,6 +84,16 @@ describe("console home read", () => {
     });
     expect(data.inputs.connections![0]).not.toHaveProperty("baseUrl");
     expect(data.jobControls).toEqual({ "product-intro-check": { paused: true, notBefore: paused.toISOString(), version: 41 } });
+    // 바꾼 것 지켜보기가 판정한 할 일과 그대로 둔 표시, 「사유 남기고 유지」가 붙는 작업 제어 판
+    expect(read.watch).toHaveBeenCalledWith(false);
+    expect(data.inputs.changeWatch).toEqual([{ key: "change-watch:9", verdict: "worse", title: "t", fact: "f", actions: [], notify: true }]);
+    expect(data.inputs.kept).toEqual([{ taskId: "stop:job:product-intro-check", at: "x", until: "y", actor: "JR", reason: "r" }]);
+    expect(data.inputs.jobs![0]).toMatchObject({ name: "product-intro-check", controlVersion: 41 });
+    // 단계 패널이 다시 읽지 않게 — 잡 행·실행 설정·작업 제어 판·장비 한도
+    expect(data.jobStates![0]).toMatchObject({ name: "product-intro-check", paused: true, lastError: null });
+    expect(data.executions).toHaveLength(2);
+    expect(data.jobVersions).toEqual({ "product-intro-check": 41 });
+    expect(data.inputs.devices![0]).toMatchObject({ limit: 2, routes: [] });
     // 24시간 장부 — 읽기 전용 거래, 3초 상한, 색인이 있는 시각 창
     expect(read.sql[0]).toContain('"accessMode":"read only"');
     expect(read.sql[1]).toContain("statement_timeout = '3s'");
@@ -91,16 +106,20 @@ describe("console home read", () => {
     read.ledger.mockRejectedValue(new Error("timeout"));
     read.connections.mockRejectedValue(new Error("down"));
     read.versions.mockRejectedValue(new Error("down"));
+    read.watch.mockResolvedValue(null);
+    read.kept.mockRejectedValue(new Error("down"));
     read.observation.mockResolvedValue({ error: "운영 DB 실측을 읽지 못했습니다.", mode: null, devices: [], devicesRead: false });
     const { readConsoleHome } = await import("@/lib/operations/console-home-read");
     const data = await readConsoleHome();
     expect(data.inputs).toMatchObject({ progress: null, ledger: null, connections: null, admission: null, devices: null,
       takedown: { count: 2, overdue: 1 }, audit: { open: 5, overdue: 2, oldestWaitDays: 9 } });
     expect(data.inputs.ranks).toHaveLength(1);
+    // 못 읽은 지켜보기·표시는 null(0건이 아니다)
+    expect([data.inputs.changeWatch, data.inputs.kept, data.jobVersions]).toEqual([null, null, null]);
     // 제어 판을 못 읽으면 그 자리 재개를 내지 않는다
     expect(data.jobControls).toEqual({});
     expect(read.warn.mock.calls.map(([event]) => event).sort()).toEqual(["console.capacity_unavailable", "console.connections_unavailable",
-      "console.job_versions_unavailable", "console.ledger_unavailable", "console.progress_unavailable"]);
+      "console.job_versions_unavailable", "console.kept_unavailable", "console.ledger_unavailable", "console.progress_unavailable"]);
   });
 
   it("shares the heavy counts through the cache instead of recounting per render", async () => {

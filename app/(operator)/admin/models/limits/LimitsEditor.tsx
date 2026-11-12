@@ -10,7 +10,10 @@ import { saveRuntimeLimits, type LimitsSaveState } from "./actions";
  * 화면 전체가 한 폼이고, 바뀐 칸만 한 번에 저장한다(saveRuntimeLimits → saveRuntimeSettings 한 TX).
  * 칸 이름 규약(value:·initial:·stored:·reset:·auto:·initialAuto:)은 lib/operations/admin-runtime-settings.ts runtimeSettingsPatchFromForm 과 짝이다.
  * 「권장값 넣기」는 칸만 채운다 — 저장은 운영자가 누른다. 고친 값이 있는 동안 자동 새로고침이 멈춘다(data-dirty).
+ * scope 가 있으면(운영 홈의 단계 패널, 조각 2a) 그 단계의 작업 줄만 그리고, 저장 전 확인에 「영향을 받는 단계」(바뀐 칸을 쓰는 단계)를 덧붙인다.
+ * 저장 동작·칸 이름·검사는 화면 전체와 같다 — 그리지 않은 줄의 칸은 보내지 않으므로 바뀌지 않는다.
  */
+export type LimitsScope = { rowIds: readonly string[]; impact: Readonly<Record<string, readonly string[]>> };
 
 type Draft = { values: Record<string, string>; autos: Record<string, boolean>; resets: Record<string, boolean> };
 type AnyField = LimitsField | LimitsBudgetField;
@@ -264,7 +267,7 @@ function TodoPanel({ todos, applied, onFill, readOnly, measureError }: { todos: 
   </section>;
 }
 
-export function LimitsEditor({ view }: { view: LimitsView }) {
+export function LimitsEditor({ view, scope }: { view: LimitsView; scope?: LimitsScope }) {
   const fields = useMemo(() => collectFields(view), [view]);
   const [state, action, pending] = useActionState<LimitsSaveState, FormData>(saveRuntimeLimits, null);
   const [draft, setDraftState] = useState<Draft>(() => initialDraft(fields));
@@ -281,6 +284,10 @@ export function LimitsEditor({ view }: { view: LimitsView }) {
     before: isBudget(field) && field.auto ? `자동(${field.initial}초)` : `${field.initial}${field.unit}`,
     after: draft.resets[field.path] ? `기본값(${field.defaultInput}${field.unit})` : isBudget(field) && draft.autos[field.path]
       ? `자동(${secondsText(liveAutoBudget(field, draft, fields, marginPath))})` : `${draft.values[field.path]}${field.unit}` }));
+  // 단계 패널: 그 단계의 줄만(빈 묶음은 뺀다), 바뀐 칸을 쓰는 단계
+  const groups = scope ? view.groups.map(group => ({ ...group, rows: group.rows.filter(row => scope.rowIds.includes(row.id)) })).filter(group => group.rows.length) : view.groups;
+  const todos = scope ? view.todos.filter(todo => scope.rowIds.includes(todo.rowId)) : view.todos;
+  const affected = scope ? [...new Set(changedFields.flatMap(field => scope.impact[field.path] ?? []))] : [];
   const fill = (todo: LimitsTodo) => {
     setDraftState(d => {
       const next = { values: { ...d.values }, autos: { ...d.autos }, resets: { ...d.resets } };
@@ -295,28 +302,28 @@ export function LimitsEditor({ view }: { view: LimitsView }) {
   const marginField = view.margin;
   return <form action={action} className="lim-form" data-dirty={changedFields.length > 0 || undefined}>
     <input type="hidden" name="expectedRevision" value={view.revision ?? ""} />
-    {view.groups.flatMap(group => group.rows).some(row => row.cap.kind === "field" && row.cap.field.path === `routes.deadlines.review-gateway.clientMs`) && <>
+    {groups.flatMap(group => group.rows).some(row => row.cap.kind === "field" && row.cap.field.path === `routes.deadlines.review-gateway.clientMs`) && <>
       <input type="hidden" name="current:routes.deadlines.review-gateway.gatewayMs" value={view.ladder.gatewayMs} />
       <input type="hidden" name="current:routes.deadlines.review-gateway.engineMs" value={view.ladder.engineMs} />
       <input type="hidden" name="current:routes.deadlines.review-gateway.relayMs" value={view.ladder.relayMs} />
     </>}
-    <TodoPanel todos={view.todos} applied={applied} onFill={fill} readOnly={readOnly} measureError={view.measureError} />
+    {(!scope || todos.length > 0) && <TodoPanel todos={todos} applied={applied} onFill={fill} readOnly={readOnly} measureError={view.measureError} />}
     <section className="lim-panel" aria-labelledby="tasks-title" id="tasks">
       <span id="routes" className="lim-anchor" />
       <div className="lim-panel-head"><h2 id="tasks-title">작업별 한도</h2>
         <span className="lim-muted lim-legend">막대: 0초부터 호출 상한까지 · 진한 색 = 보통(p50) · 연한 색 = 느린 1%(p99) · 세로선 = 24시간 최대</span></div>
-      <div className="lim-margin">
+      {!scope && <div className="lim-margin">
         <span>「자동」 틱 시간 = 호출 상한 +</span>
         <NumberInput field={marginField} draft={draft} setDraft={setDraft} readOnly={readOnly} compact />
         <span className="lim-muted">(모든 자동 틱이 함께 씁니다)</span>
-      </div>
+      </div>}
       <div className="lim-thead" aria-hidden="true"><span>작업 · 지금 모델</span><span>한 번 호출 상한</span><span>한 틱 시간</span><span>동시 호출</span><span>24시간</span><span>상태</span></div>
-      {view.groups.map(group => <div key={group.id} role="group" aria-label={group.label}>
+      {groups.map(group => <div key={group.id} role="group" aria-label={group.label}>
         <div className="lim-group-title">{group.label}</div>
         {group.rows.map(row => <Row key={row.id} row={row} draft={draft} setDraft={setDraft} readOnly={readOnly} fields={fields} marginPath={marginPath} highlighted={highlight === row.id} />)}
       </div>)}
     </section>
-    <details className="lim-panel lim-fold" id="budgets">
+    {!scope && <details className="lim-panel lim-fold" id="budgets">
       <summary>AI 밖 작업의 틱 시간 <span className="lim-muted">수집·발행·생존 확인 등 {view.advanced.reduce((sum, group) => sum + group.rows.length, 0)}개 · 고급</span></summary>
       <div className="lim-scroll"><table className="lim-table">
         <thead><tr><th>작업</th><th>한 틱 시간</th><th>지금</th><th>감독 하한</th></tr></thead>
@@ -328,14 +335,14 @@ export function LimitsEditor({ view }: { view: LimitsView }) {
             <td className="lim-muted">{secondsText(row.supervisorFloorMs)}</td></tr>)}
         </tbody>)}
       </table></div>
-    </details>
+    </details>}
     <div className="lim-savebar">
       <div className="lim-savebar-in">
         <span className="lim-save-note" role="status">{readOnly ? "읽기 전용입니다 — 저장할 수 없습니다." : changedFields.length ? `바꾼 값 ${changedFields.length}개 — 저장하면 30초 안에 반영됩니다.` : "바꾼 값이 없습니다."}</span>
         <span className="lim-save-actions">
           {!readOnly && <button type="button" className="lim-btn" onClick={reset} disabled={!changedFields.length || pending}>되돌리기</button>}
           <ConfirmSubmit label="저장" pending={pending} disabled={readOnly || view.revision === null || !changedFields.length} savedKey={view.revision} changes={changes}
-            className="lim-btn lim-btn-primary" summary="저장하면 배포 없이 각 워커가 30초 안에 다음 틱부터 씁니다." />
+            className="lim-btn lim-btn-primary" summary={<>{scope && <>영향을 받는 단계: {affected.length ? affected.join(" · ") : "이 단계"}. </>}저장하면 배포 없이 각 워커가 30초 안에 다음 틱부터 씁니다.</>} />
         </span>
       </div>
       {state?.ok && <p role="status" className="lim-save-ok">{state.message}</p>}

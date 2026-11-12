@@ -259,3 +259,59 @@
 .admin-prototype .ch-none {
   color: var(--muted);
 }
+
+/* 「사유 남기고 유지」·「그대로 두기」 폼과 그대로 둔 것 */
+.admin-prototype .ch-keep-form {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.admin-prototype .ch-keep-form .button {
+  justify-self: start;
+}
+.admin-prototype .ch-keep-note,
+.admin-prototype .ch-kept-note {
+  color: var(--muted);
+}
+.admin-prototype .ch-keep-label {
+  display: grid;
+  gap: 4px;
+}
+.admin-prototype .ch-keep-label input {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.admin-prototype .ch-kept {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .ch-kept > summary {
+  padding: 8px 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.admin-prototype .ch-kept ul {
+  margin: 0;
+  padding: 0 14px 10px;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.admin-prototype .ch-kept li {
+  display: grid;
+  gap: 2px;
+}
+.admin-prototype .ch-kept li span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

@@ -1,6 +1,8 @@
 import { HUMAN_BACKLOG_LIMIT } from "@/lib/crawl/human-queue";
 import { AI_TASKS, aiTaskAccepts, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import type { ChangeWatchTask } from "./change-watch";
 import type { Conveyor } from "./conveyor-model";
+import { stagePanelHref } from "./stage-panel-catalog";
 
 /**
  * 운영 콘솔 홈의 「지금 할 일」 규칙(2026-11-12 최종 시안 「할 일이 생기는 조건」 11줄).
@@ -9,6 +11,8 @@ import type { Conveyor } from "./conveyor-model";
  * 출력은 네 묶음(멈춤 · 평소와 다름 · 쌓임 · 정리)의 할 일이다. 할 일은 사람이 적지 않는다 — 이 규칙에서만 나온다.
  * 판단은 사람이 한다: 접수를 열거나 멈춘 작업을 다시 켜는 것은 단추가 보내는 기존 화면·서버 동작이 하고, 여기서는 고르지 않는다.
  * 읽기 하나를 못 읽으면 그 읽기에 기대는 규칙만 「셀 수 없음」으로 남기고 나머지 할 일은 그대로 낸다.
+ * 「바꾼 뒤 처리량 하락」은 판정하지 않는다 — 바꾼 것 지켜보기(change-watch.ts judgeChange)가 판정한 할 일을 받아 그대로 올린다(판정은 한 곳).
+ * 사람이 「확인했고 그대로 둔다」로 표시한 할 일(console-task-keep.ts, 작업 로그)은 정한 기간 동안 목록에서 내리고 「그대로 둔 것」에 적는다.
  */
 
 const MINUTE = 60_000;
@@ -41,7 +45,16 @@ export const CONSOLE_TASK_LIMITS = Object.freeze({
   keyExpiryDays: 7,
   /** 남는 모델: 24시간 사용률(호출 시간 합 ÷ (86,400초 × 동시 한도))이 이 값(5%) 미만 */
   idleUtilization: 0.05,
+  /** 「사유 남기고 유지」·「그대로 두기」로 내린 할 일이 다시 올라오기까지(7일) */
+  keepMs: 7 * DAY,
 });
+
+/** 「확인했고 그대로 둔다」를 받는 규칙 — 사람이 멈춘 작업(사유 남기고 유지)과 자주 거절하는 모델(그대로 두기). 시안 「할 일이 생기는 조건」의 단추 */
+export const CONSOLE_KEEP_RULES: readonly ConsoleRuleKey[] = Object.freeze(["job-paused", "no-result"]);
+/** 「그대로 둔다」 사유 글자 상한 — 작업 멈춤·재개 사유와 같다 */
+export const CONSOLE_KEEP_REASON_MAX = 500;
+/** 그대로 둘 수 있는 할 일 열쇠 — 서버 동작이 받는 모양(작업 이름·연결 id) */
+export const CONSOLE_KEEP_ID = /^(stop:job:[a-z0-9][a-z0-9-]{0,59}|tidy:no-result:[A-Za-z0-9][A-Za-z0-9_-]{0,79})$/;
 
 export type ConsoleGroupKey = "stop" | "odd" | "pile" | "tidy";
 /** 묶음 순서와 알림 — 휴대폰 알림(조각 ④)은 멈춤과 평소와 다름만 보낸다 */
@@ -58,10 +71,19 @@ export type ConsoleRuleKey =
   | "backlog-eta" | "human-or-audit"
   | "no-result" | "unused-or-duplicate" | "key-expiry";
 
-/** 끝내는 단추 — 링크(기존 화면) 또는 기존 작업 멈춤·재개 서버 동작(사유 필수, 작업 로그 job-pause·job-resume) */
+/**
+ * 끝내는 단추 — 링크(기존 화면), 기존 작업 멈춤·재개 서버 동작(사유 필수, 작업 로그 job-pause·job-resume),
+ * 또는 「확인했고 그대로 둔다」(사유 필수, 작업 로그 console-task-keep — keepMs 동안 목록에서 내린다)
+ */
 export type ConsoleAction =
   | { kind: "link"; label: string; href: string }
-  | { kind: "job-resume"; label: string; job: string; fallbackHref: string };
+  | { kind: "job-resume"; label: string; job: string; fallbackHref: string }
+  | { kind: "keep"; label: string; taskId: string };
+
+/** 사람이 「그대로 둔다」로 표시한 할 일(작업 로그 console-task-keep 의 최근 줄) — until 이 지나면 다시 올라온다 */
+export type ConsoleKept = { taskId: string; at: string; until: string; actor: string; reason: string;
+  /** 표시할 때의 대상 판(사람이 멈춘 작업 = 작업 제어 판). 지금 판과 다르면(그 사이 재개·다시 멈춤) 표시가 맞지 않아 다시 올라온다 */
+  ref?: string };
 
 export type ConsoleTask = {
   /** 같은 할 일이 다음 읽기에도 같은 열쇠를 갖는다(알림·지켜보기가 이어 붙인다) */
@@ -80,6 +102,8 @@ export type ConsoleTask = {
   notify: boolean;
   /** 쌓임 정렬 — 지금 속도로 며칠(못 줄면 Infinity) */
   days?: number;
+  /** 「그대로 둔다」 표시가 맞는 판(사람이 멈춘 작업의 작업 제어 판) */
+  keepRef?: string;
 };
 
 export type ConsoleTaskGroup = { key: ConsoleGroupKey; label: string; notify: boolean; tasks: ConsoleTask[];
@@ -91,6 +115,10 @@ export type ConsoleTaskBoard = {
   checkedAt: string;
   groups: ConsoleTaskGroup[];
   total: number;
+  /** 사람이 그대로 두기로 해 목록에서 내린 할 일과 그 표시 */
+  kept: { task: ConsoleTask; keep: ConsoleKept }[];
+  /** 그대로 둔 표시를 읽지 못했다 — 모든 할 일을 그대로 보인다 */
+  keptUnknown: boolean;
   /** 흐름 표가 같은 판정을 쓰게 — 멈춤으로 올린 칸(StationKey)과 쌓임으로 올린 공개 뒤 단계(진행 단계 열쇠) */
   marks: { stopped: string[]; piling: string[] };
 };
@@ -106,7 +134,9 @@ export type ConsoleProgressStage = {
 };
 export type ConsoleProgress = { stages: readonly ConsoleProgressStage[]; liveness?: readonly { role: string; reason: string }[] };
 /** listJobStates — 사람이 멈췄는가(isPausedJob)와 마지막 실행 */
-export type ConsoleJob = { name: string; paused: boolean; lastRunAt: string | null; notBefore?: string | null };
+export type ConsoleJob = { name: string; paused: boolean; lastRunAt: string | null; notBefore?: string | null;
+  /** 작업 제어 판(마지막 job-pause·job-resume 작업 로그 id) — 「사유 남기고 유지」가 이 판에 붙는다. 모르면 없음 */
+  controlVersion?: number };
 /** listAiConnections 의 쓰는 칸 — models 는 서버 목록·직접 적은 모델·CLI 모델을 합친 것 */
 export type ConsoleConnection = {
   id: string; label: string; kind: "api" | "cli"; cliTool: string | null; deviceId: string; capacitySlots: number; enabled: boolean;
@@ -116,14 +146,13 @@ export type ConsoleRank = { task: string; slot: number; rank: number; connection
 /** 작업 분산(workload_pool)으로 묶은 구성원 */
 export type ConsolePoolMember = { task: string; slot: number; connectionId: string; model: string };
 /** 장비 점유(readAdminModelsObservation devices) */
-export type ConsoleDevice = { deviceId: string; active: number; models: readonly { model: string; active: number }[] };
+export type ConsoleDevice = { deviceId: string; active: number; models: readonly { model: string; active: number }[];
+  /** 장비 한도(칸) — 옛 담긴 값에는 없다 */
+  limit?: number;
+  /** 경로(장부 route)마다 지금 쥔 칸 — 그 칸을 쓰는 단계. 옛 담긴 값에는 없다 */
+  routes?: readonly { routeId: string; active: number }[] };
 /** 24시간 장부(model_capacity_requests) — route·장비·모델로 묶은 것 */
 export type ConsoleLedgerRow = { routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null; noResult: number };
-/**
- * 조각 1c(바꾼 것 지켜보기)가 넣는 입력 자리 — 바꾼 것 하나와 그 앞뒤의 시간당 처리.
- * 규칙(바꾼 뒤 처리량이 바꾸기 전보다 떨어짐)은 여기서 판정한다.
- */
-export type ConsoleChangeDrop = { key: string; label: string; changedAt: string; beforePerHour: number; afterPerHour: number; undoHref?: string | null };
 
 export type ConsoleTaskInputs = {
   now: string;
@@ -143,8 +172,13 @@ export type ConsoleTaskInputs = {
   pools: readonly ConsolePoolMember[] | null;
   devices: readonly ConsoleDevice[] | null;
   ledger: readonly ConsoleLedgerRow[] | null;
-  /** 조각 1c 가 채운다. 넣지 않으면(undefined) 이 규칙을 보지 않고, null 이면 「셀 수 없음」 */
-  changeDrops?: readonly ConsoleChangeDrop[] | null;
+  /**
+   * 바꾼 것 지켜보기(change-watch.ts changeWatchTasks)가 판정해 내준 「다시 떨어짐」·「나빠짐」 — 여기서는 다시 판정하지 않는다.
+   * 넣지 않으면(undefined) 이 규칙을 보지 않고, null 이면 「셀 수 없음」(0건이 아니다)
+   */
+  changeWatch?: readonly ChangeWatchTask[] | null;
+  /** 그대로 둔 할 일(console-task-keep.ts readConsoleKept). 넣지 않으면 없음, null 이면 읽지 못함(모든 할 일을 보인다) */
+  kept?: readonly ConsoleKept[] | null;
   /** 시험용 — 기본은 AI_TASKS */
   tasks?: readonly AiTaskDef[];
 };
@@ -213,8 +247,8 @@ export const CONSOLE_STAGE_LABELS: Readonly<Record<string, string>> = Object.fre
   "product-translate": "공개 번역", "reason-translate": "사유 번역", "tagline-ko": "한국어 소개", "intro-check": "소개 검수",
 });
 
-/** 「단계 열기」가 여는 지금의 단계 상세(흐름 상세 탭의 선택한 단계·모델 순위 서랍). 단계 패널(조각 ②)이 생기면 바꾼다 */
-export const consoleStageHref = (station: string) => `/admin/flow?tab=detail&stage=${encodeURIComponent(station)}#prototype-selected-stage`;
+/** 「단계 열기」가 여는 단계 패널(운영 홈 ?stage=, 조각 2a) — 흐름 칸 열쇠나 워커 진행 단계 열쇠를 받는다 */
+export const consoleStageHref = (stage: string) => stagePanelHref(stage);
 const jobHref = (job: string) => `/admin/status?tab=jobs&job=${encodeURIComponent(job)}`;
 const connectionHref = (id: string) => `/admin/models/llm?edit=${encodeURIComponent(id)}#conn-${encodeURIComponent(id)}`;
 const taskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
@@ -231,7 +265,7 @@ const QUEUE_STATIONS = new Set(["fetch", "judge", "first", "second", "publish"])
 
 /** 워커가 틱마다 건너뛴 까닭(agent_review_all_skipped 의 detail 「running=2」) — 알려진 열쇠만 쉬운 말로 */
 const SKIP_LABELS: Readonly<Record<string, string>> = { running: "「이미 처리 중」으로" };
-function skipSentence(skip: NonNullable<ConsoleProgressStage["skipBlock"]>): string {
+export function skipSentence(skip: NonNullable<ConsoleProgressStage["skipBlock"]>): string {
   if (skip.reason === "key_missing") return "모든 순위의 연결에 키가 없어 워커가 틱마다 건너뜁니다.";
   const pairs = [...(skip.detail ?? "").matchAll(/([a-z_]+)=(\d+)/g)];
   if (!pairs.length) return `워커가 틱마다 후보를 모두 건너뛰고 끝납니다(${skip.code}).`;
@@ -241,7 +275,7 @@ function skipSentence(skip: NonNullable<ConsoleProgressStage["skipBlock"]>): str
 
 // ── 모델 계산 ──────────────────────────────────────────────────────────────────────────────────────────
 
-type ModelStat = {
+export type ModelStat = {
   connection: ConsoleConnection;
   /** 24시간 장부 — 못 읽었으면 null */
   calls: number | null; settled: number | null; noResult: number | null;
@@ -253,7 +287,7 @@ type ModelStat = {
   tasks: Set<string>;
 };
 
-function modelStats(inputs: ConsoleTaskInputs): Map<string, ModelStat> {
+export function modelStats(inputs: Pick<ConsoleTaskInputs, "connections" | "ranks" | "pools" | "ledger" | "devices">): Map<string, ModelStat> {
   const stats = new Map<string, ModelStat>();
   for (const connection of inputs.connections ?? []) {
     const used = [...(inputs.ranks ?? []).filter(row => row.connectionId === connection.id && row.enabled),
@@ -276,6 +310,26 @@ function modelStats(inputs: ConsoleTaskInputs): Map<string, ModelStat> {
   return stats;
 }
 
+/**
+ * 남는 모델 — 24시간 사용률 5% 미만, 자주 거절하지 않고, 쓰는 단계가 모두 멈춰 비어 있는 것도 아닌 켜진 모델.
+ * 그 작업이 받는 것만, 이미 그 작업에 있는 것은 뺀다. 칸이 많은 것 → 덜 쓰는 것 → 이름 순. 홈 「쌓임」과 단계 패널의 「모델 붙이기」가 같이 쓴다.
+ */
+export function idleModels(inputs: Pick<ConsoleTaskInputs, "connections" | "ranks" | "pools" | "ledger" | "devices" | "jobs" | "tasks">, taskId: string,
+  stats: ReadonlyMap<string, ModelStat> = modelStats(inputs)): ModelStat[] {
+  const tasks = inputs.tasks ?? AI_TASKS;
+  const pausedJobs = new Set((inputs.jobs ?? []).filter(job => job.paused).map(job => job.name));
+  const taskPaused = (id: string) => { const def = tasks.find(task => task.id === id); return !!def && def.jobs.length > 0 && def.jobs.every(job => pausedJobs.has(job)); };
+  const def = tasks.find(task => task.id === taskId) ?? null;
+  return [...stats.values()].filter(stat => stat.connection.enabled && stat.utilization !== null && stat.utilization < CONSOLE_TASK_LIMITS.idleUtilization
+    && (stat.noResult ?? 0) < CONSOLE_TASK_LIMITS.noResultPerDay && !(stat.tasks.size > 0 && [...stat.tasks].every(taskPaused))
+    && !stat.tasks.has(taskId) && (!def || aiTaskAccepts(def, stat.connection)))
+    .sort((a, b) => b.connection.capacitySlots - a.connection.capacitySlots || a.utilization! - b.utilization! || a.connection.label.localeCompare(b.connection.label));
+}
+/** 「남는 모델: gpu3090-qwen(1%) · M1max(0%)」 — 없으면 null */
+export function idleModelsText(idle: readonly ModelStat[]): string | null {
+  return idle.length ? `남는 모델: ${idle.map(stat => `${stat.connection.label}(${formatShare(stat.utilization!, stat.calls ?? 0)})`).join(" · ")}` : null;
+}
+
 // ── 규칙 ───────────────────────────────────────────────────────────────────────────────────────────────
 
 export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
@@ -293,22 +347,9 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
   const taskDef = (id: string) => tasks.find(task => task.id === id) ?? null;
   /** 진행 단계의 잡을 맡는 AI 작업(장부 route 가 있는 첫 작업) */
   const taskForJob = (job: string | null | undefined) => job ? tasks.find(task => task.routeId && task.jobs.includes(job)) ?? null : null;
-  const taskPaused = (id: string) => { const def = taskDef(id); return !!def && def.jobs.length > 0 && def.jobs.every(job => pausedJobs.has(job)); };
   const progressOf = (stage: string) => inputs.progress?.stages.find(row => row.stage === stage) ?? null;
   const name = (stat: ModelStat) => stat.connection.label;
-
-  /** 남는 모델 — 24시간 사용률 5% 미만, 자주 거절하지 않고, 쓰는 단계가 모두 멈춰 비어 있는 것도 아닌 켜진 모델. 그 작업이 받는 것만, 이미 그 작업에 있는 것은 뺀다 */
-  const idleFor = (taskId: string) => {
-    const def = taskDef(taskId);
-    return [...stats.values()].filter(stat => stat.connection.enabled && stat.utilization !== null && stat.utilization < limits.idleUtilization
-      && (stat.noResult ?? 0) < limits.noResultPerDay && !(stat.tasks.size > 0 && [...stat.tasks].every(taskPaused))
-      && !stat.tasks.has(taskId) && (!def || aiTaskAccepts(def, stat.connection)))
-      .sort((a, b) => b.connection.capacitySlots - a.connection.capacitySlots || a.utilization! - b.utilization! || name(a).localeCompare(name(b)));
-  };
-  const idleText = (taskId: string) => {
-    const idle = idleFor(taskId);
-    return idle.length ? `남는 모델: ${idle.map(stat => `${name(stat)}(${formatShare(stat.utilization!, stat.calls ?? 0)})`).join(" · ")}` : null;
-  };
+  const idleText = (taskId: string) => idleModelsText(idleModels(inputs, taskId, stats));
   const rankStats = (taskId: string) => {
     const seen = new Set<string>();
     return (inputs.ranks ?? []).filter(row => row.task === taskId && row.enabled).sort((a, b) => a.slot - b.slot || a.rank - b.rank)
@@ -356,8 +397,9 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
       id: `stop:job:${job.name}`, rule: "job-paused",
       title: since === null ? `${josa(label, "이/가")} 멈춰 있습니다` : `${josa(label, "이/가")} ${Math.floor((now - since) / DAY)}일째 멈춰 있습니다`,
       fact: [typeof waiting === "number" ? `대기 ${formatCount(waiting)}건` : null, "사람이 멈춤", since === null ? "마지막 실행 기록 없음" : null].filter(Boolean).join(" · "),
-      why: null,
-      actions: [{ kind: "job-resume", label: "재개", job: job.name, fallbackHref: jobHref(job.name) }, link("작업 보기", jobHref(job.name))],
+      why: null, ...(job.controlVersion !== undefined ? { keepRef: String(job.controlVersion) } : {}),
+      actions: [{ kind: "job-resume", label: "재개", job: job.name, fallbackHref: jobHref(job.name) },
+        { kind: "keep", label: "사유 남기고 유지", taskId: `stop:job:${job.name}` }, link("작업 보기", jobHref(job.name))],
     });
   }
 
@@ -396,16 +438,12 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     });
   }
 
-  // ── 평소와 다름 2: 바꾼 뒤 처리량이 바꾸기 전보다 떨어짐 — 입력은 조각 1c(바꾼 것 지켜보기)가 넣는다
-  if (inputs.changeDrops === null) unknown("odd", "바꾼 뒤 처리량");
-  for (const drop of inputs.changeDrops ?? []) {
-    if (!(drop.afterPerHour < drop.beforePerHour)) continue;
-    add("odd", {
-      id: `odd:change:${drop.key}`, rule: "change-drop", title: `${drop.label} 뒤 처리가 줄었습니다`,
-      fact: `${formatKst(drop.changedAt)} 바꿈 · 바꾸기 전 시간당 ${formatCount(drop.beforePerHour)}건 → 지금 ${formatCount(drop.afterPerHour)}건`, why: null,
-      actions: [...(drop.undoHref ? [link("되돌리기", drop.undoHref)] : []), link("기록 보기", "/admin/activity")],
-    });
-  }
+  // ── 평소와 다름 2: 바꾼 뒤 처리량이 바꾸기 전보다 떨어짐 — 판정은 바꾼 것 지켜보기(judgeChange)가 하고, 여기서는 그 할 일을 그대로 올린다
+  if (inputs.changeWatch === null) unknown("odd", "바꾼 뒤 처리량");
+  for (const row of inputs.changeWatch ?? []) add("odd", {
+    id: `odd:${row.key}`, rule: "change-drop", title: row.title, fact: row.fact, why: row.why ?? null,
+    actions: row.actions.map(action => link(action.label, action.href)),
+  });
 
   // ── 쌓임 1: 지금 속도(24시간 정산 수)로 3일 넘게 걸리는 단계 — 오래 걸리는 순
   const piling: string[] = [];
@@ -430,7 +468,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
         title: `${josa(label, "이/가")} 쌓입니다`,
         fact: settled > 0 ? `대기 ${formatCount(waiting)}건 · 하루 ${formatCount(settled)}건 처리 · 지금 속도로 ${formatDays(days)}`
           : `대기 ${formatCount(waiting)}건 · 24시간 처리 0건 · 지금 속도로는 줄지 않음`,
-        why: why || null, actions: [link("모델 붙이기", taskHref(def.id))],
+        why: why || null, actions: [link("모델 붙이기", stagePanelHref(stage.stage, "models"))],
       });
     }
     groups.pile.tasks.push(...eta.sort((a, b) => b.days - a.days));
@@ -468,7 +506,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     add("tidy", {
       id: `tidy:no-result:${stat.connection.id}`, rule: "no-result", title: `${josa(name(stat), "이/가")} 자주 거절합니다`,
       fact: `24시간 ${formatCount(stat.calls ?? 0)}건 중 ${formatCount(stat.noResult)}건이 결과 없이 끝남`, why: null,
-      actions: [link("쉬게 하기", connectionHref(stat.connection.id))],
+      actions: [link("쉬게 하기", connectionHref(stat.connection.id)), { kind: "keep", label: "그대로 두기", taskId: `tidy:no-result:${stat.connection.id}` }],
     });
   }
 
@@ -515,6 +553,18 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     });
   }
 
+  // ── 그대로 둔 것: 사람이 「확인했고 그대로 둔다」로 표시한 할 일은 그 기간 동안 목록에서 내린다(받는 규칙만, 기간이 지나면 다시 올라온다)
+  const keeps = new Map((inputs.kept ?? []).filter(row => Date.parse(row.until) > now).map(row => [row.taskId, row]));
+  const kept: ConsoleTaskBoard["kept"] = [];
+  for (const group of Object.values(groups)) group.tasks = group.tasks.filter(task => {
+    const found = CONSOLE_KEEP_RULES.includes(task.rule) ? keeps.get(task.id) : undefined;
+    // 표시한 뒤 대상이 바뀌었으면(멈춘 작업을 재개했다가 다시 멈춤) 그 표시는 지금 할 일에 맞지 않는다
+    const keep = found && (!found.ref || !task.keepRef || found.ref === task.keepRef) ? found : undefined;
+    if (keep) kept.push({ task, keep });
+    return !keep;
+  });
+
   const list = CONSOLE_GROUPS.map(group => groups[group.key]);
-  return { checkedAt: inputs.now, groups: list, total: list.reduce((total, group) => total + group.tasks.length, 0), marks: { stopped, piling } };
+  return { checkedAt: inputs.now, groups: list, total: list.reduce((total, group) => total + group.tasks.length, 0), marks: { stopped, piling },
+    kept, keptUnknown: inputs.kept === null };
 }

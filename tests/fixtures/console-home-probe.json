@@ -1,5 +1,5 @@
 {
- "_source": "admin-final-20261112/probe.json (2026-11-11T23:59Z 실측) 축소 — scripts 없이 시험 fixture 로만 쓴다",
+ "_source": "admin-final-20261112/probe.json (2026-11-11T23:59Z 실측) 축소 — scripts 없이 시험 fixture 로만 쓴다 · 2a: 장비 한도·경로 점유, 잡 행, 실행 쪽 순위 사정, 실행 설정, 실시간 한도 4줄을 같은 실측에서 덧붙임",
  "at": "2026-11-11T23:59:32.820Z",
  "conveyor": {
   "measuredAt": "2026-11-11T23:59:34.980Z",
@@ -1017,17 +1017,23 @@
    {
     "deviceId": "Exaone",
     "active": 0,
-    "models": []
+    "models": [],
+    "limit": 1,
+    "routes": []
    },
    {
     "deviceId": "anthropic-cli",
     "active": 0,
-    "models": []
+    "models": [],
+    "limit": 2,
+    "routes": []
    },
    {
     "deviceId": "gpu3090-qwen",
     "active": 0,
-    "models": []
+    "models": [],
+    "limit": 5,
+    "routes": []
    },
    {
     "deviceId": "m1-qwen",
@@ -1037,12 +1043,21 @@
       "model": "m1-gemma",
       "active": 1
      }
+    ],
+    "limit": 2,
+    "routes": [
+     {
+      "routeId": "reason-translate",
+      "active": 1
+     }
     ]
    },
    {
     "deviceId": "m1max",
     "active": 0,
-    "models": []
+    "models": [],
+    "limit": 2,
+    "routes": []
    },
    {
     "deviceId": "m3-mlx",
@@ -1056,17 +1071,32 @@
       "model": "gpt-oss-120b",
       "active": 1
      }
+    ],
+    "limit": 3,
+    "routes": [
+     {
+      "routeId": "local-human-deepseek",
+      "active": 1
+     },
+     {
+      "routeId": "product-translate",
+      "active": 1
+     }
     ]
    },
    {
     "deviceId": "m3-opencode-host",
     "active": 0,
-    "models": []
+    "models": [],
+    "limit": 2,
+    "routes": []
    },
    {
     "deviceId": "openai-cli",
     "active": 0,
-    "models": []
+    "models": [],
+    "limit": 4,
+    "routes": []
    },
    {
     "deviceId": "supa-direct",
@@ -1074,6 +1104,13 @@
     "models": [
      {
       "model": "supa",
+      "active": 3
+     }
+    ],
+    "limit": 3,
+    "routes": [
+     {
+      "routeId": "product-search-verify",
       "active": 3
      }
     ]
@@ -1744,5 +1781,927 @@
    "avgSeconds": 4.0,
    "noResult": 3
   }
- ]
+ ],
+ "jobStates": [
+  {
+   "name": "agent-evidence-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:10.231Z",
+   "lastError": null
+  },
+  {
+   "name": "ai-level-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:01.804Z",
+   "lastError": null
+  },
+  {
+   "name": "audit-qwen",
+   "lastSuccessAt": "2026-11-11T23:59:09.810Z",
+   "lastError": null
+  },
+  {
+   "name": "audit-screen-review",
+   "lastSuccessAt": "2026-11-11T23:58:42.848Z",
+   "lastError": null
+  },
+  {
+   "name": "audit-second-opinion",
+   "lastSuccessAt": "2026-11-11T23:59:00.875Z",
+   "lastError": null
+  },
+  {
+   "name": "bluesky-talk",
+   "lastSuccessAt": "2026-11-11T22:45:17.712Z",
+   "lastError": null
+  },
+  {
+   "name": "cdn-purge",
+   "lastSuccessAt": "2026-11-11T23:59:27.948Z",
+   "lastError": null
+  },
+  {
+   "name": "click-rollup",
+   "lastSuccessAt": "2026-11-11T23:38:50.714Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-agent-review",
+   "lastSuccessAt": "2026-11-11T23:41:46.922Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-fetch",
+   "lastSuccessAt": "2026-11-11T23:58:38.703Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-judge",
+   "lastSuccessAt": "2026-11-11T23:57:40.025Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-ko-apply",
+   "lastSuccessAt": "2026-11-11T23:59:33.526Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-publish",
+   "lastSuccessAt": "2026-11-11T23:57:37.364Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-seed",
+   "lastSuccessAt": "2026-11-11T23:58:48.258Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-tagline",
+   "lastSuccessAt": "2026-11-11T23:58:38.319Z",
+   "lastError": null
+  },
+  {
+   "name": "email-outbox-send",
+   "lastSuccessAt": "2026-11-11T23:59:30.258Z",
+   "lastError": null
+  },
+  {
+   "name": "email-weekly-digest",
+   "lastSuccessAt": "2026-11-11T23:56:19.598Z",
+   "lastError": null
+  },
+  {
+   "name": "github-feedback-delivery",
+   "lastSuccessAt": "2026-11-11T23:59:12.845Z",
+   "lastError": null
+  },
+  {
+   "name": "github-integration-reconcile",
+   "lastSuccessAt": "2026-11-11T23:48:24.412Z",
+   "lastError": null
+  },
+  {
+   "name": "gn-show-seed",
+   "lastSuccessAt": "2026-11-11T23:39:09.820Z",
+   "lastError": null
+  },
+  {
+   "name": "grok-session-check",
+   "lastSuccessAt": "2026-11-11T22:12:11.739Z",
+   "lastError": null
+  },
+  {
+   "name": "heartbeat",
+   "lastSuccessAt": "2026-08-29T02:24:02.614Z",
+   "lastError": null
+  },
+  {
+   "name": "held-qwen-retry",
+   "lastSuccessAt": "2026-11-11T23:58:58.996Z",
+   "lastError": null
+  },
+  {
+   "name": "hn-show-seed",
+   "lastSuccessAt": "2026-11-11T23:38:49.186Z",
+   "lastError": null
+  },
+  {
+   "name": "hn-talk",
+   "lastSuccessAt": "2026-11-11T23:46:50.537Z",
+   "lastError": null
+  },
+  {
+   "name": "human-deepseek-review",
+   "lastSuccessAt": "2026-11-11T23:58:28.189Z",
+   "lastError": null
+  },
+  {
+   "name": "maker-recheck",
+   "lastSuccessAt": "2026-11-11T23:10:57.774Z",
+   "lastError": null
+  },
+  {
+   "name": "model-capacity-reclaim",
+   "lastSuccessAt": "2026-11-11T23:59:35.322Z",
+   "lastError": null
+  },
+  {
+   "name": "news-refresh",
+   "lastSuccessAt": "2026-11-11T23:54:17.504Z",
+   "lastError": null
+  },
+  {
+   "name": "notification-category-digest",
+   "lastSuccessAt": "2026-11-11T23:56:19.643Z",
+   "lastError": null
+  },
+  {
+   "name": "notification-delisted",
+   "lastSuccessAt": "2026-11-11T23:56:19.626Z",
+   "lastError": null
+  },
+  {
+   "name": "notification-prune",
+   "lastSuccessAt": "2026-11-11T23:11:25.255Z",
+   "lastError": null
+  },
+  {
+   "name": "product-audit",
+   "lastSuccessAt": "2026-11-11T23:58:52.581Z",
+   "lastError": null
+  },
+  {
+   "name": "product-automated-action-audit",
+   "lastSuccessAt": "2026-11-11T23:43:31.256Z",
+   "lastError": null
+  },
+  {
+   "name": "product-embedding",
+   "lastSuccessAt": "2026-11-11T23:58:53.589Z",
+   "lastError": null
+  },
+  {
+   "name": "product-evidence-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:36.389Z",
+   "lastError": null
+  },
+  {
+   "name": "product-intro-check",
+   "lastSuccessAt": "2026-11-03T17:02:32.828Z",
+   "lastError": null
+  },
+  {
+   "name": "product-llm-assist-audit-review",
+   "lastSuccessAt": "2026-11-11T23:59:33.769Z",
+   "lastError": null
+  },
+  {
+   "name": "product-llm-assist-review",
+   "lastSuccessAt": "2026-11-11T23:59:32.041Z",
+   "lastError": null
+  },
+  {
+   "name": "product-readme-refresh",
+   "lastSuccessAt": "2026-11-11T23:57:44.589Z",
+   "lastError": null
+  },
+  {
+   "name": "product-repo-review",
+   "lastSuccessAt": "2026-11-11T23:59:32.213Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-health",
+   "lastSuccessAt": "2026-11-11T23:59:30.238Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-profile",
+   "lastSuccessAt": "2026-11-11T23:59:31.375Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:18.687Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-verify",
+   "lastSuccessAt": "2026-11-11T23:59:24.068Z",
+   "lastError": null
+  },
+  {
+   "name": "product-site-evidence-refresh",
+   "lastSuccessAt": null,
+   "lastError": null
+  },
+  {
+   "name": "product-spam-rescan",
+   "lastSuccessAt": "2026-11-11T23:56:19.546Z",
+   "lastError": null
+  },
+  {
+   "name": "product-star-observation",
+   "lastSuccessAt": "2026-11-11T23:59:11.887Z",
+   "lastError": null
+  },
+  {
+   "name": "product-stars-refresh",
+   "lastSuccessAt": "2026-11-11T23:54:50.584Z",
+   "lastError": null
+  },
+  {
+   "name": "product-tagline-ko",
+   "lastSuccessAt": "2026-11-11T23:59:15.043Z",
+   "lastError": null
+  },
+  {
+   "name": "product-thumbnail-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:10.766Z",
+   "lastError": null
+  },
+  {
+   "name": "product-translate",
+   "lastSuccessAt": "2026-11-11T23:58:52.736Z",
+   "lastError": null
+  },
+  {
+   "name": "published-recheck",
+   "lastSuccessAt": "2026-11-11T23:58:55.777Z",
+   "lastError": null
+  },
+  {
+   "name": "ranking-refresh",
+   "lastSuccessAt": "2026-11-11T23:39:08.816Z",
+   "lastError": null
+  },
+  {
+   "name": "reason-translate",
+   "lastSuccessAt": "2026-11-11T23:58:59.832Z",
+   "lastError": null
+  },
+  {
+   "name": "second-review",
+   "lastSuccessAt": "2026-10-25T23:41:15.981Z",
+   "lastError": null
+  },
+  {
+   "name": "split-confirm",
+   "lastSuccessAt": "2026-11-11T23:58:59.352Z",
+   "lastError": null
+  },
+  {
+   "name": "split-tiebreak",
+   "lastSuccessAt": "2026-11-11T23:59:03.065Z",
+   "lastError": null
+  },
+  {
+   "name": "uptime-ping",
+   "lastSuccessAt": "2026-11-11T23:59:03.638Z",
+   "lastError": null
+  }
+ ],
+ "runtime": {
+  "first-review": {
+   "from": "job",
+   "at": "2026-11-11T23:58:44.293Z",
+   "degraded": {
+    "code": "agent_review_all_skipped",
+    "detail": "running=2"
+   },
+   "startedAt": "2026-11-11T23:58:42.777Z",
+   "served": [],
+   "unusable": []
+  },
+  "publish-classify": {
+   "from": "job",
+   "at": "2026-11-11T23:57:37.350Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:57:37.273Z",
+   "pool": {
+    "configRevision": 2,
+    "members": 2,
+    "served": {},
+    "unusable": []
+   },
+   "served": [],
+   "unusable": []
+  },
+  "crawl-tagline": {
+   "from": "job",
+   "at": "2026-11-11T23:59:38.594Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:59:38.545Z",
+   "served": [],
+   "unusable": []
+  },
+  "product-search-profile": {
+   "from": "job",
+   "at": "2026-11-11T23:59:31.364Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:59:19.827Z",
+   "served": [
+    {
+     "rank": 1,
+     "count": 3
+    }
+   ],
+   "unusable": []
+  },
+  "product-tagline-ko": {
+   "from": "job",
+   "at": "2026-11-11T23:59:15.028Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:59:14.344Z",
+   "served": [],
+   "unusable": []
+  },
+  "product-translate": {
+   "from": "job",
+   "at": "2026-11-11T23:58:52.723Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:58:42.341Z",
+   "served": [
+    {
+     "rank": 1,
+     "count": 1
+    }
+   ],
+   "unusable": []
+  },
+  "reason-translate": {
+   "from": "job",
+   "at": "2026-11-11T23:58:59.818Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:57:58.087Z",
+   "served": [
+    {
+     "rank": 1,
+     "count": 4
+    }
+   ],
+   "unusable": []
+  },
+  "second-review": {
+   "from": "job",
+   "at": "2026-11-02T10:46:15.978Z",
+   "degraded": {
+    "code": "no_task_models",
+    "detail": "2차 AI 검수: 작업 ↔ 모델(/admin/models/tasks)에 투표자 순위가 없습니다 — 옛 설정·기본 투표자로 대신 부르지 않습니다"
+   },
+   "startedAt": "2026-11-02T10:46:15.955Z",
+   "served": [],
+   "unusable": []
+  }
+ },
+ "executions": [
+  {
+   "task": "publish-classify",
+   "slot": 1,
+   "mode": "workload_pool",
+   "revision": 2,
+   "updatedAt": "2026-11-06T14:05:32.844Z",
+   "members": [
+    {
+     "memberId": "00000000-0000-4000-8000-000000000001",
+     "position": 1,
+     "connectionId": "conn-m3-deepseek",
+     "model": "deepseek-v4.1-flash-1017",
+     "options": {},
+     "deviceId": "m3-mlx"
+    },
+    {
+     "memberId": "00000000-0000-4000-8000-000000000002",
+     "position": 2,
+     "connectionId": "conn-gpu3090-qwen",
+     "model": "qwen3.8-flash-next",
+     "options": {},
+     "deviceId": "gpu3090-qwen"
+    }
+   ]
+  }
+ ],
+ "limits": {
+  "revision": 13,
+  "version": "c174ee490f153c3d",
+  "shortVersion": "vc174ee",
+  "updatedBy": "jr-claude",
+  "updatedAt": "2026-11-11T06:39:27.387Z",
+  "rowError": null,
+  "readOnly": false,
+  "issues": [],
+  "margin": {
+   "path": "translation.product.jobMarginMs",
+   "label": "자동 틱 여유",
+   "kind": "ms",
+   "unit": "초",
+   "initial": "15",
+   "defaultInput": "15",
+   "overridden": false,
+   "min": 5,
+   "max": 120,
+   "ceilingMs": null
+  },
+  "groups": [
+   {
+    "id": "text",
+    "label": "글 작업",
+    "rows": [
+     {
+      "id": "reason-translate",
+      "anchor": "row-reason-translate",
+      "group": "text",
+      "label": "사유 번역",
+      "sub": "심사 사유를 한국어로 옮깁니다",
+      "note": null,
+      "models": "1순위 m1-gemma",
+      "capMs": 45000,
+      "cap": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.reason-translate.timeoutMs",
+        "label": "사유 번역 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "45",
+        "defaultInput": "45",
+        "overridden": false,
+        "min": 1,
+        "max": 3600,
+        "ceilingMs": 300000
+       },
+       "note": null
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.reason-translate",
+        "label": "사유 번역 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "100",
+        "defaultInput": "55",
+        "overridden": true,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": false,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "routes.limits.reason-translate.timeoutMs",
+          "fixedMs": 45000,
+          "ceilingMs": 300000
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "text",
+       "text": "차례로 1건씩",
+       "href": null
+      },
+      "details": [
+       {
+        "path": "jobs.reason-translate.minCallMs",
+        "label": "새 호출을 시작할 최소 남은 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "45",
+        "defaultInput": "30",
+        "overridden": true,
+        "min": 1,
+        "max": 600,
+        "ceilingMs": null,
+        "note": "틱에 이만큼 남아 있어야 새 호출을 시작합니다. 호출 상한보다 짧으면 늦게 시작한 호출이 틱 끝에서 잘립니다"
+       },
+       {
+        "path": "jobs.reason-translate.batch",
+        "label": "한 번에 묶는 수",
+        "kind": "int",
+        "unit": "건",
+        "initial": "4",
+        "defaultInput": "4",
+        "overridden": false,
+        "min": 1,
+        "max": 64,
+        "ceilingMs": null
+       },
+       {
+        "path": "jobs.reason-translate.batchChars",
+        "label": "한 묶음 글자 수",
+        "kind": "int",
+        "unit": "자",
+        "initial": "1600",
+        "defaultInput": "1600",
+        "overridden": false,
+        "min": 100,
+        "max": 30000,
+        "ceilingMs": null
+       },
+       {
+        "path": "jobs.reason-translate.soloAttempts",
+        "label": "이만큼 실패하면 혼자 보냄",
+        "kind": "int",
+        "unit": "회",
+        "initial": "3",
+        "defaultInput": "3",
+        "overridden": false,
+        "min": 1,
+        "max": 10,
+        "ceilingMs": null
+       },
+       {
+        "path": "routes.limits.reason-translate.maxTokens",
+        "label": "응답 토큰 상한",
+        "kind": "int",
+        "unit": "토큰",
+        "initial": "6000",
+        "defaultInput": "6000",
+        "overridden": false,
+        "min": 1,
+        "max": 262144,
+        "ceilingMs": null
+       }
+      ],
+      "minCallPath": "jobs.reason-translate.minCallMs",
+      "measure": {
+       "calls": 2619,
+       "p50Ms": 8617,
+       "p99Ms": 12625.100000000026,
+       "maxMs": 44587,
+       "cutAtCap": 2,
+       "unknown": 2,
+       "tickCut": 1,
+       "tickCutMinMs": 20130,
+       "tickCutMaxMs": 20130,
+       "unknownAtCap": 1,
+       "cancelled": 2
+      },
+      "paused": false,
+      "slots": {
+       "deviceId": "m1-qwen",
+       "slots": 2
+      },
+      "status": {
+       "level": "ok",
+       "text": "정상",
+       "note": null
+      }
+     },
+     {
+      "id": "product-translate",
+      "anchor": "row-product-translate",
+      "group": "text",
+      "label": "공개 번역",
+      "sub": "공개 제품 글을 영어·중국어로 옮깁니다",
+      "note": "원문 글자 상한·묶음 글자·최대 시도는 공개 번역 화면에서 고칩니다.",
+      "models": "1순위 gpt-oss-120b · 2순위 gpt-oss-120b · 3순위 m1-gemma",
+      "capMs": 120000,
+      "cap": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.product-translate.timeoutMs",
+        "label": "공개 번역 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "120",
+        "defaultInput": "300",
+        "overridden": true,
+        "min": 1,
+        "max": 3600,
+        "ceilingMs": 300000
+       },
+       "note": null
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.product-translate",
+        "label": "공개 번역 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "135",
+        "defaultInput": "315",
+        "overridden": false,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": true,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "routes.limits.product-translate.timeoutMs",
+          "fixedMs": 120000,
+          "ceilingMs": 300000
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.product-translate.concurrency",
+        "label": "공개 번역 동시 호출",
+        "kind": "int",
+        "unit": "건",
+        "initial": "1",
+        "defaultInput": "1",
+        "overridden": true,
+        "min": 1,
+        "max": 64,
+        "ceilingMs": null
+       }
+      },
+      "details": [
+       {
+        "path": "routes.limits.product-translate.maxTokens",
+        "label": "응답 토큰 상한",
+        "kind": "int",
+        "unit": "토큰",
+        "initial": "30000",
+        "defaultInput": "30000",
+        "overridden": true,
+        "min": 1,
+        "max": 262144,
+        "ceilingMs": null
+       }
+      ],
+      "minCallPath": null,
+      "measure": {
+       "calls": 1959,
+       "p50Ms": 9022,
+       "p99Ms": 20744.5,
+       "maxMs": 34259,
+       "cutAtCap": 0,
+       "unknown": 0,
+       "tickCut": 0,
+       "tickCutMinMs": null,
+       "tickCutMaxMs": null,
+       "unknownAtCap": 0,
+       "cancelled": 26
+      },
+      "paused": false,
+      "slots": {
+       "deviceId": "m3-mlx",
+       "slots": 2
+      },
+      "status": {
+       "level": "ok",
+       "text": "정상",
+       "note": null
+      }
+     }
+    ]
+   },
+   {
+    "id": "review",
+    "label": "심사",
+    "rows": [
+     {
+      "id": "first-review",
+      "anchor": "row-first-review",
+      "group": "review",
+      "label": "1차 심사",
+      "sub": "수집한 후보를 처음 읽고 승인·거절·보류를 정합니다",
+      "note": null,
+      "models": "1순위 Inferact/Qwen3.8-27B-NVFP4 · 2순위 qwen3.8-flash-next",
+      "capMs": 60000,
+      "cap": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.review-cli.timeoutMs",
+        "label": "CLI 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "60",
+        "defaultInput": "20",
+        "overridden": true,
+        "min": 1,
+        "max": 3600,
+        "ceilingMs": null
+       },
+       "note": "Qwen 직접 호출은 2차 심사 상한을 함께 씁니다"
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.crawl-agent-review",
+        "label": "1차 심사 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "110",
+        "defaultInput": "110",
+        "overridden": false,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": false,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "routes.deadlines.review-gateway.clientMs",
+          "fixedMs": 60000,
+          "ceilingMs": null
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "text",
+       "text": "장비 한도가 정함",
+       "href": "/admin/models/devices"
+      },
+      "details": [],
+      "minCallPath": null,
+      "measure": {
+       "calls": 2718,
+       "p50Ms": 9447.5,
+       "p99Ms": 60715.13,
+       "maxMs": 62320,
+       "cutAtCap": 74,
+       "unknown": 0,
+       "tickCut": 0,
+       "tickCutMinMs": null,
+       "tickCutMaxMs": null,
+       "unknownAtCap": 0,
+       "cancelled": 333
+      },
+      "paused": false,
+      "slots": {
+       "deviceId": "gpu3090-qwen",
+       "slots": 5
+      },
+      "status": {
+       "level": "info",
+       "text": "상한에 닿음",
+       "note": null
+      }
+     }
+    ]
+   },
+   {
+    "id": "audit",
+    "label": "감사 · 쉬는 작업",
+    "rows": [
+     {
+      "id": "product-intro-check",
+      "anchor": "row-product-intro-check",
+      "group": "audit",
+      "label": "소개 검수",
+      "sub": "AI 소개를 근거와 대조해 고칩니다",
+      "note": null,
+      "models": "1순위 sonnet",
+      "capMs": 90000,
+      "cap": {
+       "kind": "field",
+       "note": null,
+       "field": {
+        "path": "jobs.product-intro-check.callMs",
+        "label": "소개 검수 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "90",
+        "defaultInput": "90",
+        "overridden": false,
+        "min": 5,
+        "max": 600,
+        "ceilingMs": null
+       }
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.product-intro-check",
+        "label": "소개 검수 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "110",
+        "defaultInput": "110",
+        "overridden": false,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": false,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "jobs.product-intro-check.callMs",
+          "fixedMs": 90000,
+          "ceilingMs": null
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "text",
+       "text": "장비 한도가 정함",
+       "href": "/admin/models/devices"
+      },
+      "details": [
+       {
+        "path": "jobs.product-intro-check.minCallMs",
+        "label": "새 호출을 시작할 최소 남은 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "40",
+        "defaultInput": "40",
+        "overridden": false,
+        "min": 1,
+        "max": 600,
+        "ceilingMs": null,
+        "note": "틱에 이만큼 남아 있어야 새 호출을 시작합니다. 호출 상한보다 짧으면 늦게 시작한 호출이 틱 끝에서 잘립니다"
+       },
+       {
+        "path": "routes.limits.product-intro-check.maxTokens",
+        "label": "응답 토큰 상한",
+        "kind": "int",
+        "unit": "토큰",
+        "initial": "8000",
+        "defaultInput": "8000",
+        "overridden": false,
+        "min": 1,
+        "max": 262144,
+        "ceilingMs": null
+       }
+      ],
+      "minCallPath": "jobs.product-intro-check.minCallMs",
+      "measure": {
+       "calls": 0,
+       "p50Ms": null,
+       "p99Ms": null,
+       "maxMs": null,
+       "cutAtCap": 0,
+       "unknown": 0,
+       "tickCut": 0,
+       "tickCutMinMs": null,
+       "tickCutMaxMs": null,
+       "unknownAtCap": 0,
+       "cancelled": 0
+      },
+      "paused": true,
+      "slots": {
+       "deviceId": "anthropic-cli",
+       "slots": 2
+      },
+      "status": {
+       "level": "off",
+       "text": "쉬는 중",
+       "note": "잡을 사람이 멈춰 두었습니다. 다시 돌 때 쓸 값을 그대로 고칠 수 있습니다"
+      }
+     }
+    ]
+   }
+  ],
+  "todos": [
+   {
+    "id": "first-review:cap-hit",
+    "level": "info",
+    "tag": "확인할 것",
+    "rowId": "first-review",
+    "task": "1차 심사",
+    "title": "호출의 2.7%가 상한 60초에서 끊깁니다",
+    "evidence": "24시간 2,718건 중 74건입니다. 지금 값은 유지해도 되지만 더 낮추면 끊기는 호출이 늘어납니다.",
+    "fills": []
+   }
+  ],
+  "advanced": [],
+  "ladder": {
+   "gatewayMs": "55",
+   "engineMs": "50",
+   "relayMs": ""
+  },
+  "measuredAt": "2026-11-11T23:59:36.689Z",
+  "measureError": null,
+  "unknownHoldSeconds": 600,
+  "apply": null,
+  "roles": [],
+  "audit": []
+ }
 }
