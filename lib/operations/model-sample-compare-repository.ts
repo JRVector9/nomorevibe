@@ -1,4 +1,4 @@
-import "server-only";
+// 워커(lib/jobs/registry → korean-tagline-sample)도 이 모듈을 부른다 — "server-only" 를 넣으면 워커가 뜨지 못한다(조각 4a 가 찾음).
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { modelSampleComparisons, operationsAudit } from "@/lib/db/schema";
