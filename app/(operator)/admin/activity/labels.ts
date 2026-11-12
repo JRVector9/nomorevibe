@@ -18,6 +18,10 @@ export const ACTION_LABELS: Record<string, string> = {
   "human-review-deepseek": "DeepSeek 사람 검토 전환",
   "candidate-reject": "후보 거부",
   "candidate-undo": "후보 결정 되돌리기",
+  "human-batch-sample": "묶음 표본 뽑기",
+  "human-batch-mark": "묶음 표본 판정",
+  "human-batch-run": "묶음 일괄 결정",
+  "human-batch-undo": "묶음째 되돌리기",
   "evidence-collect": "근거 더 모으기",
   "requeue-resolved": "보류 되돌리기",
   "review-mode": "발행 관문 모드",
@@ -178,6 +182,7 @@ export const TARGET_LABELS: Record<string, string> = {
 };
 const TARGET_PREFIXES: [RegExp, (rest: string) => string][] = [
   [/^campaign:(\d+)$/, (id) => `감사 #${id}`],
+  [/^batch:(\d+)$/, (id) => `사람 확인 묶음 #${id}`],
   [/^policy-run:(\d+)$/, (id) => `감사 정책 #${id}`],
   [/^news:(\d+)$/, (id) => `소식 #${id}`],
   [/^news:(\d+)건$/, (count) => `소식 ${count}건`],
@@ -202,7 +207,8 @@ export const ACTION_GROUPS = {
     "published-second-auto-keep",
     "audit-policy-apply", "audit-policy-undo",
     "product-ban", "product-auto-ban-uptime", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
-  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-deepseek-decision", "candidate-qwen-held-review", "candidate-split-tiebreak-reject", "candidate-undo", "evidence-collect", "requeue-resolved", "manual-category",
+  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-deepseek-decision", "candidate-qwen-held-review", "candidate-split-tiebreak-reject", "candidate-undo",
+    "human-batch-sample", "human-batch-mark", "human-batch-run", "human-batch-undo", "evidence-collect", "requeue-resolved", "manual-category",
     "requeue-evidence-gated", "requeue-rejected-under-new-policy", "requeue-rejected-under-held-rules", "reconsider-installable",
     "reconsider-star-auto", "reconsider-package", "reconcile-crawl-duplicate", "relabel-repo-deleted"] },
   settings: { label: "설정·연결", actions: ["settings-save", "human-review-deepseek", "held-qwen-retry-settings", "qwen-auto-settings", "split-tiebreak-settings", "collection-enabled", "source-buffer", "attention-ack", "attention-unack", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",

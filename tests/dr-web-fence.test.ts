@@ -399,7 +399,8 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-11 admin/models/tasks/assist-actions.ts: saveAssistControlAction(LLM 보강 제어 — 보강 일마다 단계·보내기·반영) 하나가 더해져 121.
   // 2026-11-11 실시간 한도 개편 admin/models/limits/actions.ts: saveRuntimeLimits(한 화면의 바뀐 칸을 그룹 여럿 한 TX 로 저장) 하나가 더해져 122.
   // 2026-11-12 운영 콘솔 조각 2a admin/flow/task-keep-actions.ts: 할 일 「사유 남기고 유지」·「그대로 두기」(keepConsoleTaskAction) 하나.
-  expect(wrapped).toBe(123);
+  // 2026-11-12 운영 콘솔 조각 3b admin/review/batches/actions.ts: 사람 확인 묶음의 표본 뽑기·표본 판정·일괄 결정·묶음째 되돌리기 넷이 더해져 127.
+  expect(wrapped).toBe(127);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

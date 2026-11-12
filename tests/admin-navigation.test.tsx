@@ -39,6 +39,8 @@ const ADDRESSES: readonly (readonly [url: string, menu: WorkspaceId, tab: string
   ['/admin/status?tab=ai', 'home', 'diagnostics', null],
   ['/admin/status?tab=diagnostics', 'home', 'diagnostics', null],
   ['/admin/status?tab=flow', 'home', 'diagnostics', null],
+  // 사람 확인 › 묶음(기본 화면, 조각 3b)
+  ['/admin/review/batches', 'people', 'batches', null],
   // 사람 확인 › 검수 및 발행
   ['/admin/review', 'people', 'review', 'human'],
   ['/admin/review?tab=human', 'people', 'review', 'human'],
@@ -191,7 +193,10 @@ describe('메뉴 여섯', () => {
 
   it('사람 확인은 옛 작업 공간을 탭으로, 옛 탭을 2차 메뉴로 묶는다', () => {
     const people = WORKSPACES.find(page => page.id === 'people')!;
-    expect(people.tabs.map(tab => tab.label)).toEqual(['검수 및 발행', '요청함', '품질관리', '사람 위임 모델']);
+    expect(people.tabs.map(tab => tab.label)).toEqual(['묶음', '검수 및 발행', '요청함', '품질관리', '사람 위임 모델']);
+    // 메뉴를 누르면 묶음 화면이 열리고, 옛 목록(검수 및 발행)은 하나씩 보기로 그대로 남는다
+    expect(people.href).toBe('/admin/review/batches');
+    expect(people.tabs.find(tab => tab.id === 'review')!.href).toBe('/admin/review');
     expect(WORKSPACE_SECONDARY.review.map(link => link.label)).toEqual(['사람 확인', '전체 단계', '발행 대기', '반려 기록']);
     expect(WORKSPACE_SECONDARY.requests.map(link => link.label)).toEqual(['처리 필요', '내림·수정', '문의', '글 검수', '등록·인증 현황', '처리 기록']);
     expect(WORKSPACE_SECONDARY.quality.map(link => link.label)).toEqual(['AI 감사·정책', '공개분 2차 확인', '규칙 재검수']);
@@ -348,7 +353,7 @@ describe('메뉴 배지', () => {
     expect(workspaceBadge('people', { '/admin/review': badge })).toEqual(badge);
     const html = renderToStaticMarkup(<AdminNav current="/admin/flow" badges={{ '/admin/review': badge }} />);
     expect(html).toContain('<span class="admin-vh">직접 판단 1,234건</span>');
-    expect(html).toMatch(/href="\/admin\/review"[^]*?data-tone="warn"[^>]*>/);
+    expect(html).toMatch(/href="\/admin\/review\/batches"[^]*?data-tone="warn"[^>]*>/);
   });
 
   it('홈에는 운영센터의 긴급 수를 붙인다', () => {

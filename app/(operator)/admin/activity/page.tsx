@@ -8,6 +8,7 @@ import { formatDetailTime, formatListTime } from "@/lib/format/time";
 import { ADMIN_LOG_PAGE_SIZE, adminLogFacets } from "@/lib/operations/admin-log";
 import { isWatchedAuditRow, readChangeWatch } from "@/lib/operations/change-watch";
 import { CHANGE_UNDO } from "@/lib/operations/operator-desk-model";
+import { humanBatchUndo } from "@/lib/crawl/human-batch-model";
 import { AdminIcon } from "../components/AdminIcon";
 import { ScrollTable } from "../components/ScrollTable";
 import { ChangeAfter, UndoLink } from "./ChangeAfter";
@@ -143,7 +144,8 @@ export default async function AdminActivityPage({ searchParams }: Props) {
                   const shown = targetLabel(row.target);
                   const lines = summaryLines(row);
                   const origin = [row.ip, row.userAgent].filter(Boolean).join(" · ");
-                  const undo = row.ok ? CHANGE_UNDO[row.action]?.(row.target) ?? null : null;
+                  // 사람 확인 묶음의 일괄 결정(조각 3b)은 일괄 결정 기록의 「묶음째 되돌리기」로 잇는다
+                  const undo = row.ok ? CHANGE_UNDO[row.action]?.(row.target) ?? humanBatchUndo(row.action, row.target) : null;
                   return (
                     <tr key={row.id} className="border-b border-line align-top last:border-0">
                       <td className="whitespace-nowrap px-3 py-2 tabular-nums text-fg-2" title={formatDetailTime(row.createdAt)}>{formatListTime(row.createdAt, now)}</td>
