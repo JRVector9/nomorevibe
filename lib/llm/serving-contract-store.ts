@@ -9,6 +9,7 @@ import { activeTextTaskRank } from "./ai-task-rank-scope";
 import { aiTaskModelRows, type AiTaskConnectionSnapshot } from "./ai-task-models-snapshot";
 import { aiTask } from "./ai-tasks";
 import { aiTaskExecutionReadState, readAiTaskExecutionConfig } from "./ai-task-execution-snapshot";
+import { aiTaskPoolFeatures } from "./ai-task-execution-config";
 // The assignment-table default reader (PR 3b-B) installs itself next to the registry overlays; it reads nothing unless the runtime_settings
 // toggle assignments.tableReads is on (or MODEL_ASSIGNMENT_TABLE=1 forces it — PR 3b-E, lib/llm/assignment-flag.ts).
 import "./stage-assignment-snapshot";
@@ -244,7 +245,10 @@ function reviewRankConnection(routeId: string, row: StoredServingContract | unde
       // AI2 retains the exact saved legacy bindings for already-existing votes.
       // This is credential lookup only: the domain claim requires an existing vote,
       // while new pool enqueue selects exclusively from config.members.
-      if (task !== 'second-review') candidates = candidates.filter(rank => rank.slot !== slot);
+      // 1차는 예비를 켰으면 저장된 순위가 예비로 살아 있다 — 고르기가 예비를 고를 수 있으니 그 연결의 키도 찾는다(2026-11-12 검수 F3).
+      // 예비를 끄면 예전처럼 구성원만 본다(예비를 임의로 켜지 않는다).
+      const reserveActive = config.reserveRanks === true && aiTaskPoolFeatures(task, slot).reserve;
+      if (task !== 'second-review' && !reserveActive) candidates = candidates.filter(rank => rank.slot !== slot);
       candidates.push(...config.members.map(member => ({ task, slot, rank: 1, model: member.model,
         enabled: true, options: member.options, connection: member.connection })));
     }

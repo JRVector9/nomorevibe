@@ -208,6 +208,15 @@ export function resolveReviewReserveRanks(task: AiReviewTaskId, slot = 1): reado
 }
 
 /**
+ * 1차의 지금 묶음 — 순위대로면 1·2·3순위, 「동시에」면 구성원과(예비를 켰을 때만) 예비 순위, 이 차례로. 고르기(firstReviewRanks)와 전송 준비
+ * (reviewRankFor 의 연결·추론 강도, OpenCode 호스트 관측)가 이 한 집합을 읽는다 — 2026-11-12 검수 F3: 예비를 고를 수 있는데 전송 준비가 구성원만 찾아
+ * 예비의 연결·옵션을 잃었다. 예비를 끄면 예비 순위는 들지 않는다(임의로 켜지 않는다).
+ */
+export function firstReviewRankCandidates(): readonly ReviewRankCandidate[] {
+  return [...resolveReviewTaskRanks("first-review", 1).candidates, ...resolveReviewReserveRanks("first-review", 1)];
+}
+
+/**
  * 칸 수(max_slots)를 적은 「동시에」 — 구성원 열쇠(JSON [provider, identity], firstReviewerKey 와 같은 꼴)마다 칸 수 합. 같은 엔진(같은 장부 이름)을 두 자리에 넣으면
  * 한 열쇠로 더한다(장부·표가 자리를 가르지 못한다 — 함께 차고 함께 빈다). 칸 수를 적지 않았거나 따르지 않는 작업이면 null(예전처럼 상한 없음).
  */
@@ -339,7 +348,8 @@ export function reviewRankFor(routeId: ReviewTaskRoute, provider: string, model:
   // Compatibility/replay callers have no DB rank options; admission has already ensured the live rank snapshot.
   if (settingsReviewersActive() || !aiTaskModelsReadState().loaded && !currentPin()) return null;
   if (routeId === "crawl-agent-review") {
-    return resolveReviewTaskRanks("first-review").candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model)?.rank ?? null;
+    // 구성원 먼저, 다음 예비(켰을 때만) — firstReviewRanks 의 중복 제거와 같은 차례라 같은 열쇠면 고르기가 본 것과 같은 순위다
+    return firstReviewRankCandidates().find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model)?.rank ?? null;
   }
   const ranks = secondReviewRanks(), slot = secondReviewSlotOf(model, ranks);
   if (!slot) {
