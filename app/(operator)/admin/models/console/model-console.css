@@ -441,6 +441,7 @@
 .admin-prototype .mc-inventory {
   gap: 0;
   scroll-margin-top: 120px;
+  line-height: 1.6;
 }
 .admin-prototype .mc-page-head,
 .admin-prototype .mc-list-head,
@@ -456,6 +457,8 @@
 }
 .admin-prototype .mc-page-head h1 {
   font-size: calc(22px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+  line-height: 1.6;
   letter-spacing: -.6px;
 }
 .admin-prototype .mc-page-head p {
@@ -579,6 +582,7 @@
   box-shadow: -8px 0 36px #0000000a;
   overflow-y: auto;
   font-size: calc(14px + var(--admin-font-delta, 0px));
+  line-height: 1.6;
 }
 .admin-prototype .mc-drawer::backdrop {
   background: #1c24204d;
@@ -598,6 +602,7 @@
 .admin-prototype .mc-drawer-head h2 {
   margin: calc(3px / .8) 0;
   font-size: calc(20px + var(--admin-font-delta, 0px));
+  line-height: 1.6;
 }
 .admin-prototype .mc-eyebrow {
   color: var(--muted);
@@ -648,7 +653,7 @@
   display: block;
   margin-top: calc(4px / .8);
   color: var(--ink);
-  font: calc(21px + var(--admin-font-delta, 0px))/1.6 var(--f-mono);
+  font: calc(21px + var(--admin-font-delta, 0px)) var(--f-mono);
   font-variant-numeric: tabular-nums;
 }
 .admin-prototype .mc-detail-tabs {
