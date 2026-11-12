@@ -1,7 +1,7 @@
 import { aiTask, aiTaskAccepts, aiTaskSlotLabel, AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import { AI_CONNECTION_CONTEXT_MAX, aiAllowedTaskField, aiConnectionBaseUrl, aiConnectionModelIds, aiDeviceSlug, aiModelDisplayName, aiModelMachine,
   type AiConnectionView } from "./admin-ai-tasks";
-import { CONSOLE_TASK_LIMITS, formatCount, formatDays, formatKst, formatShare, type ConsoleTask, type ConsoleTaskBoard } from "./console-tasks";
+import { CONSOLE_TASK_LIMITS, formatCount, formatDays, formatKst, formatShare, refusesOften, type ConsoleTask, type ConsoleTaskBoard } from "./console-tasks";
 import { stagePanelHref, stagePanelKeyOfTask } from "./stage-panel-catalog";
 
 /**
@@ -16,13 +16,15 @@ import { stagePanelHref, stagePanelKeyOfTask } from "./stage-panel-catalog";
  * - 장비 = 사용자가 적는 묶음 이름(aiModelMachine, 기본은 용량 장비 id). 용량 판정과 한도 검증은 늘 장비 id 로 한다.
  * - 한도 = 이 모델에 실제로 걸리는 동시 칸: 장비의 모델별 한도(0170) → 장비 행 한도 → 연결 칸 수 순서로 처음 있는 값.
  * - 24시간 사용률 = 24시간 호출 시간 합 ÷ (86,400초 × 한도) — 시안 build.py·홈 할 일(console-tasks)과 같은 식.
- * - 상태는 첫 문제 하나(시안 build.py 순서): 쉬는 중 → 결과 없이 끝남 N(하루 10건 이상) → 미확정 N(5건 이상) → 쓰는 단계 없음 → 쓰는 단계가 멈춤 → 여유 많음(5% 미만) → 정상.
+ * - 상태는 첫 문제 하나(시안 build.py 순서): 쉬는 중 → 거절 N(모델이 거절한 호출이 하루 10건 이상이고 호출의 10% 이상 — 홈 「정리」와 같은 기준) → 미확정 N(5건 이상)
+ *   → 쓰는 단계 없음 → 쓰는 단계가 멈춤 → 여유 많음(5% 미만) → 정상. 보내기 전에 끝난 호출(gateway_not_started)은 모델의 거절이 아니라 상태에 올리지 않는다.
  * 읽지 못한 값은 0 으로 꾸미지 않는다(null — 화면은 「—」).
  */
 
 export const MODEL_CONSOLE_LIMITS = Object.freeze({
-  /** 결과 없이 끝난 호출이 하루 이만큼 이상이면 상태에 올린다(홈 「정리」 규칙과 같은 값) */
-  noResultPerDay: CONSOLE_TASK_LIMITS.noResultPerDay,
+  /** 모델이 거절한 호출이 하루 이만큼 이상이고 호출의 rejectedShare 이상이면 상태에 올린다(홈 「정리」 규칙과 같은 값 — refusesOften) */
+  rejectedPerDay: CONSOLE_TASK_LIMITS.rejectedPerDay,
+  rejectedShare: CONSOLE_TASK_LIMITS.rejectedShare,
   /** 미확정이 24시간에 이만큼 이상이면 상태에 올린다(시안 build.py) */
   indeterminatePerDay: 5,
   /** 24시간 사용률이 이 값 미만이면 「여유 많음」(홈 「남는 모델」과 같은 값) */
@@ -37,9 +39,9 @@ export type ModelTone = "ok" | "warn" | "bad" | "off";
 
 // ── 입력 ───────────────────────────────────────────────────────────────────────────────────────────────
 
-/** 24시간 장부 한 묶음(route · 장비 · 모델) — 미확정을 함께 센다 */
+/** 24시간 장부 한 묶음(route · 장비 · 모델) — 모델이 거절한 것(rejected)·보내기 전에 끝난 것(notStarted)·미확정을 함께 센다 */
 export type ModelLedgerRow = Readonly<{ routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null;
-  noResult: number; indeterminate: number }>;
+  rejected: number; notStarted: number; indeterminate: number }>;
 /** 장비 점유·한도(readAdminModelsObservation devices) — 쓰는 칸만 */
 export type ModelDeviceState = Readonly<{ deviceId: string; source: "table" | "policy_fallback" | null; limitSlots: number | null; active: number;
   version: number | null; models: readonly Readonly<{ model: string; active: number; maxSlots: number | null; engineMax: number | null }>[] }>;
@@ -81,7 +83,9 @@ export type ModelConsoleRow = Readonly<{
   utilization: number | null; utilizationText: string;
   /** 막대 너비(%) — 0보다 크면 적어도 1 */
   bar: number;
-  calls: number | null; settled: number | null; avgSeconds: number | null; noResult: number | null; indeterminate: number | null;
+  calls: number | null; settled: number | null; avgSeconds: number | null; indeterminate: number | null;
+  /** 모델(공급자)이 처리 전에 거절한 호출 · 보내기 전에 끝난 호출(틱 기한·사전 예산 — 모델의 거절이 아니다) */
+  rejected: number | null; notStarted: number | null;
   stages: readonly ModelStageUse[]; stageCount: number;
   status: Readonly<{ tone: ModelTone; text: string }>;
   problems: readonly ModelProblem[];
@@ -144,7 +148,7 @@ export function modelKeyText(connection: Pick<AiConnectionView, "hasKey"> & Part
   return `${formatKst(set, true)} 넣음 · ${formatKst(expires, true)} 만료 · ${left < 0 ? "지남" : `${left}일 남음`}`;
 }
 
-const sum = (rows: readonly ModelLedgerRow[], key: "calls" | "settled" | "noResult" | "indeterminate") => rows.reduce((total, row) => total + row[key], 0);
+const sum = (rows: readonly ModelLedgerRow[], key: "calls" | "settled" | "rejected" | "notStarted" | "indeterminate") => rows.reduce((total, row) => total + row[key], 0);
 
 /** 이 연결의 모델이 장부·순위에서 쓰는 이름들 — 서버 목록 + 순위·분산이 부르는 이름 + 연결로 가른 장부 이름(`<모델>@<연결 id 앞 8자>`) */
 function ledgerNames(connection: AiConnectionView, uses: readonly { model: string }[]): Set<string> {
@@ -202,14 +206,17 @@ export function buildModelConsole(input: ModelConsoleInput): ModelConsoleView {
     const own = input.ledger?.filter(row => row.groupId === connection.deviceId && names.has(row.model)) ?? null;
     const seconds = own?.reduce((total, row) => total + (row.avgSeconds ?? 0) * row.settled, 0) ?? null;
     const settled = own ? sum(own, "settled") : null, calls = own ? sum(own, "calls") : null;
-    const noResult = own ? sum(own, "noResult") : null, indeterminate = own ? sum(own, "indeterminate") : null;
+    const rejected = own ? sum(own, "rejected") : null, notStarted = own ? sum(own, "notStarted") : null, indeterminate = own ? sum(own, "indeterminate") : null;
+    const refusing = rejected !== null && refusesOften({ calls, rejected });
     const utilization = seconds === null ? null : seconds / (86_400 * Math.max(1, limit));
     const avgSeconds = settled ? seconds! / settled : null;
 
     const name = aiModelDisplayName(connection);
     const problems: ModelProblem[] = [];
-    if (noResult) problems.push({ key: "no-result", tone: noResult >= MODEL_CONSOLE_LIMITS.noResultPerDay ? "warn" : "off", label: "거절",
-      text: `24시간 ${formatCount(calls ?? 0)}건 중 ${formatCount(noResult)}건이 결과 없이 끝났습니다(공급자가 처리 전에 거절했거나 보내지 못함).` });
+    if (rejected) problems.push({ key: "rejected", tone: refusing ? "warn" : "off", label: "거절",
+      text: `24시간 ${formatCount(calls ?? 0)}건 중 ${formatCount(rejected)}건을 모델이 처리 전에 거절했습니다(429·401·403 등).` });
+    if (notStarted) problems.push({ key: "not-started", tone: "off", label: "보내기 전",
+      text: `24시간 ${formatCount(notStarted)}건은 보내기 전에 끝났습니다(틱 기한·사전 예산 — 모델의 거절이 아닙니다).` });
     if (indeterminate) problems.push({ key: "indeterminate", tone: indeterminate >= MODEL_CONSOLE_LIMITS.indeterminatePerDay ? "warn" : "off", label: "미확정",
       text: `24시간 안에 결과를 모르는 호출이 ${formatCount(indeterminate)}건 있습니다.`, href: RETRY_HREF, action: "재실행 보기" });
     if ((input.ranks && input.pools) && !stageCount) problems.push({ key: "unused", tone: "off", label: "단계", text: "어느 단계에도 붙어 있지 않습니다." });
@@ -227,7 +234,7 @@ export function buildModelConsole(input: ModelConsoleInput): ModelConsoleView {
 
     // 상태 — 첫 문제 하나(시안 build.py 순서)
     const status: { tone: ModelTone; text: string } = !connection.enabled ? { tone: "off", text: "쉬는 중" }
-      : noResult !== null && noResult >= MODEL_CONSOLE_LIMITS.noResultPerDay ? { tone: "warn", text: `결과 없이 끝남 ${formatCount(noResult)}` }
+      : refusing ? { tone: "warn", text: `거절 ${formatCount(rejected!)}` }
       : indeterminate !== null && indeterminate >= MODEL_CONSOLE_LIMITS.indeterminatePerDay ? { tone: "warn", text: `미확정 ${formatCount(indeterminate)}` }
       : input.ranks && input.pools && !stageCount ? { tone: "off", text: "쓰는 단계 없음" }
       : stageCount && pausedStages.length === stages.length ? { tone: "off", text: "쓰는 단계가 멈춤" }
@@ -241,7 +248,7 @@ export function buildModelConsole(input: ModelConsoleInput): ModelConsoleView {
       limit, limitSource, active, utilization,
       utilizationText: utilization === null ? "—" : formatShare(utilization, calls ?? 0),
       bar: utilization === null || !calls ? 0 : Math.max(percent > 0 ? 1 : 0, Math.min(100, Math.round(percent))),
-      calls, settled, avgSeconds, noResult, indeterminate,
+      calls, settled, avgSeconds, rejected, notStarted, indeterminate,
       stages: Object.freeze(stages), stageCount, status: Object.freeze(status), problems: Object.freeze(problems),
       served: Object.freeze(servedModelGroups(connection, [...ranks, ...pools].map(use => use.model).filter(model => !aiConnectionModelIds(connection).includes(model)))),
       models: Object.freeze([...new Set([...aiConnectionModelIds(connection), ...ranks.map(row => row.model), ...pools.map(row => row.model)])]),

@@ -3,6 +3,7 @@ import type { ModelConsoleInput, ModelDeviceState } from "@/lib/operations/model
 import type { ModelConsoleRead } from "@/lib/operations/model-console-read";
 import { buildModelConsole } from "@/lib/operations/model-console";
 import probe from "./console-home-probe.json";
+import { splitLedgerRow } from "./console-home";
 
 /**
  * 운영 콘솔 「모델」 시험의 고정 자료 — 홈(조각 1b)이 쓰는 2026-11-12 08:59 KST 운영 읽기(console-home-probe.json)를 그대로 쓰고,
@@ -62,7 +63,7 @@ export function modelFixtureInput(overrides: Partial<ModelConsoleInput> = {}): M
   return {
     now: copy.at, connections: modelFixtureConnections(), devices: modelFixtureDevices(),
     ranks: copy.ranks, pools: copy.pools,
-    ledger: copy.ledger.map(row => ({ ...row, indeterminate: row.groupId === "supa-direct" && row.routeId === "product-search-verify" ? 19 : 0 })),
+    ledger: copy.ledger.map(row => ({ ...splitLedgerRow(row), indeterminate: row.groupId === "supa-direct" && row.routeId === "product-search-verify" ? 19 : 0 })),
     pausedJobs: copy.jobs.filter(job => job.paused).map(job => job.name),
     ...overrides,
   };

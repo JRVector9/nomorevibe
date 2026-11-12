@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { prerenderToNodeStream } from "react-dom/static";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildChangeWatch, collectChanges, type ChangeWatchRow, type ChangeWatchSnapshot } from "@/lib/operations/change-watch";
-import { WATCH_AUDIT, WATCH_CONTEXT, WATCH_LEDGER, WATCH_NOW } from "./fixtures/change-watch";
+import { backlogFromProgress, buildChangeWatch, collectChanges, collectOutages, type ChangeWatchRow, type ChangeWatchSnapshot } from "@/lib/operations/change-watch";
+import { WATCH_AUDIT, WATCH_BACKLOG, WATCH_CONTEXT, WATCH_LEDGER, WATCH_NOW } from "./fixtures/change-watch";
 
 const mocks = vi.hoisted(() => ({ watch: vi.fn(), admin: vi.fn(), log: vi.fn(), facets: vi.fn() }));
 vi.mock("@/lib/operations/change-watch", async (importOriginal) => ({
@@ -21,7 +21,8 @@ vi.mock("@/app/(operator)/admin/activity/query", async (importOriginal) => ({
 import { ChangeWatch, ChangeWatchTable, homeRows } from "@/app/(operator)/admin/flow/ChangeWatch";
 import AdminActivityPage from "@/app/(operator)/admin/activity/page";
 
-const snapshot = (): ChangeWatchSnapshot => buildChangeWatch(collectChanges(WATCH_AUDIT, WATCH_CONTEXT), WATCH_LEDGER, WATCH_NOW);
+const snapshot = (): ChangeWatchSnapshot => buildChangeWatch(collectChanges(WATCH_AUDIT, WATCH_CONTEXT), WATCH_LEDGER, WATCH_NOW,
+  { outages: collectOutages(WATCH_AUDIT, WATCH_NOW), backlog: backlogFromProgress(WATCH_BACKLOG) });
 async function prerender(node: ReactNode): Promise<string> {
   const { prelude } = await prerenderToNodeStream(node);
   let html = "";
@@ -51,7 +52,7 @@ describe("홈 · 바꾼 것 지켜보기 표", () => {
     expect(plain).toContain("아직 안 씀");
     expect(plain).toContain("접수 중단 → 다시 열림 (18분)");
     expect(plain).toContain("판정 못 함");
-    expect(plain).toContain("잰 구간에 접수 중단 9분이 겹칩니다");
+    expect(plain).toContain("잰 구간에서 접수 중단·작업 멈춤 15분을 빼고 시간당으로 견줬습니다");
     // 상태는 점 + 짧은 말, 바꾼 때는 오늘이면 「07:10」 아래에 「2시간 전」(좁은 때 칸 — 시안 열 폭 100px)
     expect(html).toMatch(/data-state="failed"/);
     expect(plain).toContain("07:10 2시간 전");

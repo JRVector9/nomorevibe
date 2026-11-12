@@ -42,8 +42,12 @@ export const CONSOLE_TASK_LIMITS = Object.freeze({
   humanWaiting: HUMAN_BACKLOG_LIMIT,
   /** 쌓임: 감사 거절이 이 날수(7일)를 넘게 기다림 — openBacklogStats 의 overdue(AUDIT_BACKLOG_OVERDUE_DAYS)가 센다. 화면 글자에만 쓴다 */
   auditOverdueDays: 7,
-  /** 정리: 결과 없이 끝난 호출이 하루 이만큼(10건) 이상인 모델 */
-  noResultPerDay: 10,
+  /**
+   * 정리: 모델이 처리 전에 거절한 호출(gateway_http_rejected — 429·401·403 등)이 하루 이만큼(10건) 이상이고 그 모델 호출의 이 비율(10%) 이상인 모델.
+   * 보내기 전에 끝난 호출(gateway_not_started — 틱 기한·사전 예산)은 모델의 거절이 아니라 세지 않는다(11-12 실측: gpu3090-qwen 244건이 전부 이것이었다)
+   */
+  rejectedPerDay: 10,
+  rejectedShare: 0.1,
   /** 정리: 키 만료 이 날수(7일) 전부터 */
   keyExpiryDays: 7,
   /** 남는 모델: 24시간 사용률(호출 시간 합 ÷ (86,400초 × 동시 한도))이 이 값(5%) 미만 */
@@ -171,8 +175,12 @@ export type ConsoleDevice = { deviceId: string; active: number; models: readonly
   limit?: number;
   /** 경로(장부 route)마다 지금 쥔 칸 — 그 칸을 쓰는 단계. 옛 담긴 값에는 없다 */
   routes?: readonly { routeId: string; active: number }[] };
-/** 24시간 장부(model_capacity_requests) — route·장비·모델로 묶은 것 */
-export type ConsoleLedgerRow = { routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null; noResult: number };
+/**
+ * 24시간 장부(model_capacity_requests) — route·장비·모델로 묶은 것. 결과 없이 끝난 정산은 모델이 거절한 것(rejected: gateway_http_rejected)과
+ * 보내기 전에 끝난 것(notStarted: gateway_not_started)으로 나눈다
+ */
+export type ConsoleLedgerRow = { routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null;
+  rejected: number; notStarted: number };
 
 export type ConsoleTaskInputs = {
   now: string;
@@ -310,8 +318,8 @@ export function skipSentence(skip: NonNullable<ConsoleProgressStage["skipBlock"]
 
 export type ModelStat = {
   connection: ConsoleConnection;
-  /** 24시간 장부 — 못 읽었으면 null */
-  calls: number | null; settled: number | null; noResult: number | null;
+  /** 24시간 장부 — 못 읽었으면 null. rejected = 모델이 거절, notStarted = 보내기 전에 끝남 */
+  calls: number | null; settled: number | null; rejected: number | null; notStarted: number | null;
   /** 24시간 사용률(0~1) — 호출 시간 합 ÷ (86,400초 × 동시 한도) */
   utilization: number | null;
   /** 지금 쓰는 칸 — 장비 관측을 못 읽었으면 null */
@@ -334,13 +342,20 @@ export function modelStats(inputs: Pick<ConsoleTaskInputs, "connections" | "rank
       connection,
       calls: rows ? rows.reduce((total, row) => total + row.calls, 0) : null,
       settled: rows ? rows.reduce((total, row) => total + row.settled, 0) : null,
-      noResult: rows ? rows.reduce((total, row) => total + row.noResult, 0) : null,
+      rejected: rows ? rows.reduce((total, row) => total + row.rejected, 0) : null,
+      notStarted: rows ? rows.reduce((total, row) => total + row.notStarted, 0) : null,
       utilization: seconds === null ? null : seconds / (86_400 * Math.max(1, connection.capacitySlots)),
       active: !inputs.devices ? null : !device ? 0 : perModel.length ? perModel.reduce((total, row) => total + row.active, 0) : device.models.length ? 0 : device.active,
       tasks: new Set(used.map(row => row.task)),
     });
   }
   return stats;
+}
+
+/** 자주 거절하는 모델 — 24시간 거절이 하루 10건 이상이고 호출의 10% 이상(보내기 전에 끝난 호출은 세지 않는다). 모델 화면의 상태와 같은 기준 */
+export function refusesOften(stat: { calls: number | null; rejected: number | null }): boolean {
+  const rejected = stat.rejected ?? 0;
+  return rejected >= CONSOLE_TASK_LIMITS.rejectedPerDay && rejected >= (stat.calls ?? 0) * CONSOLE_TASK_LIMITS.rejectedShare;
 }
 
 /**
@@ -354,7 +369,7 @@ export function idleModels(inputs: Pick<ConsoleTaskInputs, "connections" | "rank
   const taskPaused = (id: string) => { const def = tasks.find(task => task.id === id); return !!def && def.jobs.length > 0 && def.jobs.every(job => pausedJobs.has(job)); };
   const def = tasks.find(task => task.id === taskId) ?? null;
   return [...stats.values()].filter(stat => stat.connection.enabled && stat.utilization !== null && stat.utilization < CONSOLE_TASK_LIMITS.idleUtilization
-    && (stat.noResult ?? 0) < CONSOLE_TASK_LIMITS.noResultPerDay && !(stat.tasks.size > 0 && [...stat.tasks].every(taskPaused))
+    && !refusesOften(stat) && !(stat.tasks.size > 0 && [...stat.tasks].every(taskPaused))
     && !stat.tasks.has(taskId) && (!def || aiTaskAccepts(def, stat.connection)))
     .sort((a, b) => b.connection.capacitySlots - a.connection.capacitySlots || a.utilization! - b.utilization! || a.connection.label.localeCompare(b.connection.label));
 }
@@ -554,14 +569,16 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     why: null, actions: [link("거절 목록 보기", AUDIT_REJECTS_HREF)],
   });
 
-  // ── 정리 1: 결과 없이 끝난 호출이 하루 10건 이상인 모델
+  // ── 정리 1: 모델이 거절한 호출이 하루 10건 이상이고 호출의 10% 이상인 모델(보내기 전에 끝난 호출은 모델의 거절이 아니라 세지 않는다).
+  // 열쇠(tidy:no-result:)는 그대로 둔다 — 이미 남긴 「그대로 두기」 표시가 이어지게
   if (!inputs.connections) unknown("tidy", "모델 목록");
-  else if (!inputs.ledger) unknown("tidy", "결과 없이 끝난 호출(24시간 장부)");
+  else if (!inputs.ledger) unknown("tidy", "거절한 호출(24시간 장부)");
   for (const stat of stats.values()) {
-    if (!stat.connection.enabled || stat.noResult === null || stat.noResult < limits.noResultPerDay) continue;
+    if (!stat.connection.enabled || stat.rejected === null || !refusesOften(stat)) continue;
     add("tidy", {
       id: `tidy:no-result:${stat.connection.id}`, rule: "no-result", title: `${josa(name(stat), "이/가")} 자주 거절합니다`,
-      fact: `24시간 ${formatCount(stat.calls ?? 0)}건 중 ${formatCount(stat.noResult)}건이 결과 없이 끝남`, why: null,
+      fact: `24시간 ${formatCount(stat.calls ?? 0)}건 중 ${formatCount(stat.rejected)}건을 거절함(${formatShare(stat.rejected / Math.max(1, stat.calls ?? 0), stat.calls ?? 0)})`,
+      why: stat.notStarted ? `그 밖에 보내기 전에 끝난 ${formatCount(stat.notStarted)}건은 모델의 거절이 아니라 세지 않았습니다.` : null,
       actions: [link("쉬게 하기", modelDetailHref(stat.connection.id)), { kind: "keep", label: "그대로 두기", taskId: `tidy:no-result:${stat.connection.id}` }],
     });
   }

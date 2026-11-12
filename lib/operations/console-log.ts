@@ -6,7 +6,7 @@ import { CHANGE_UNDO, type DeskUndo } from "./operator-desk-model";
  * 기록 화면(운영 콘솔 개편 조각 4b, 2026-11-12 최종 시안 「화면 6 기록」) — 작업 로그(operations_audit) 줄을 「바꾼 것 한 줄씩」으로 묶는 순수 함수.
  *
  * - 사람이 바꾼 설정·조치는 바꾼 것 지켜보기(조각 1c)의 합치기 규칙(change-watch.ts collectChanges)을 그대로 쓴다:
- *   접수 중단 → 다시 열림은 한 줄(걸린 분), 같은 사람의 연결 저장(30분)·한도 저장(10분)은 한 줄.
+ *   접수 중단 → 다시 열림·잡 멈춤 → 재개는 한 줄(걸린 분), 같은 사람의 연결 저장(30분)·한도 저장(10분)은 한 줄.
  * - 그 밖에도 같은 사람이 같은 대상에 같은 일을 30분 안에 잇달아 한 줄은 한 줄로 합친다(「3번」).
  * - 실패한 줄은 합치지 않고 따로 둔다. 자동 처리자(모델·잡·system:)의 줄과 읽기·시험·내보내기 줄은 이 화면에 줄로 그리지 않고 수만 센다 —
  *   원시 줄은 「모두 보기」(/admin/activity)에서 그대로 보인다. 작업 로그를 숨기거나 지우지 않는다(DB 가 고치기·지우기를 거부한다).
@@ -111,7 +111,9 @@ export function buildLogLines(rows: readonly LogAuditRow[], labels: LogLabels): 
     const lastIds = change.ids;
     const first = byId.get(lastIds[0]);
     const last = byId.get(lastIds[lastIds.length - 1]);
-    if (prior && change.kind !== "capacity" && prior.action === change.action && prior.actor === change.actor && prior.target === change.target
+    // 접수 중단 → 열림·멈춤 → 재개처럼 짝을 지은 줄(until)은 그 한 줄로 끝난다 — 더 합치지 않는다
+    const paired = change.kind === "capacity" || change.until !== null;
+    if (prior && !paired && prior.until === null && prior.action === change.action && prior.actor === change.actor && prior.target === change.target
       && at - prior.lastAt <= CONSOLE_LOG_RULES.mergeMinutes * MINUTE) {
       prior.ids.push(...lastIds); prior.count += lastIds.length; prior.lastAt = Date.parse(last?.at ?? change.at);
       prior.rankUndo = rankUndoOf(change.action, byId.get(prior.ids[0])?.detail, last?.detail, labels.connectionLabels) ?? prior.rankUndo;
@@ -121,8 +123,8 @@ export function buildLogLines(rows: readonly LogAuditRow[], labels: LogLabels): 
     const plain = `${labels.action(change.action)} · ${change.target}`;
     const title = change.title === plain ? `${labels.action(change.action)} · ${labels.target(change.target)}` : change.title;
     merged.push({ key: `c${change.key}`, ids: [...lastIds], at: change.at, lastAt: Date.parse(last?.at ?? change.at), until: change.until, actor: change.actor,
-      action: change.action, target: change.target, title, count: change.kind === "capacity" ? 1 : lastIds.length, ok: true, error: null,
-      undo: change.kind === "capacity" ? null : undoOf(change.action, change.target),
+      action: change.action, target: change.target, title, count: paired ? 1 : lastIds.length, ok: true, error: null,
+      undo: paired ? null : undoOf(change.action, change.target),
       rankUndo: rankUndoOf(change.action, first?.detail, last?.detail, labels.connectionLabels) });
   }
 

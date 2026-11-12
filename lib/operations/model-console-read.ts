@@ -21,6 +21,7 @@ import { sharedLoader } from "./shared-cache";
  * 24시간 장부는 홈(console-home-read)과 같은 창·같은 묶음에 미확정 수를 더한 것이고, 웹 여러 대가 공유 캐시로 나눠 센다.
  */
 
+// v2: 결과 없이 끝난 호출을 모델의 거절(rejected)과 보내기 전에 끝남(notStarted)으로 나눠 싣는다
 const ledgerCache = sharedLoader<ModelLedgerRow[]>({ namespace: "admin:models:ledger24h", ttlMs: 60_000, staleMs: 600_000, store: sharedStore });
 
 const quiet = (event: string) => (error: unknown) => {
@@ -29,18 +30,20 @@ const quiet = (event: string) => (error: unknown) => {
 };
 
 /**
- * 24시간 장부 — route·장비·모델로 묶은 호출·정산·평균 응답·결과 없이 끝난 수·미확정 수. 창은 색인이 있는 시각으로 잡는다
+ * 24시간 장부 — route·장비·모델로 묶은 호출·정산·평균 응답·모델이 거절한 수(gateway_http_rejected)·보내기 전에 끝난 수(gateway_not_started)·미확정 수. 창은 색인이 있는 시각으로 잡는다
  * (정산 settled_at · 철회 updated_at · 미확정 보낸 시각) — 홈 할 일(console-home-read loadLedger24h)과 같은 식에 미확정 칸만 더했다.
  */
 async function loadModelLedger24h(): Promise<ModelLedgerRow[]> {
   return withDbDeadline(Date.now() + 4000, () => onPrimary(() => db.transaction(async tx => {
     await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
-    const rows = await tx.execute<{ routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null; noResult: number; indeterminate: number }>(sql`
+    const rows = await tx.execute<{ routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null; rejected: number;
+      notStarted: number; indeterminate: number }>(sql`
       SELECT route_id AS "routeId", group_id AS "groupId", model,
         count(*)::int AS calls,
         count(*) FILTER (WHERE state = 'settled')::int AS settled,
         (avg(extract(epoch FROM settled_at - dispatched_at)) FILTER (WHERE state = 'settled'))::float8 AS "avgSeconds",
-        count(*) FILTER (WHERE state = 'settled' AND terminal_evidence->>'kind' IN ('gateway_http_rejected', 'gateway_not_started'))::int AS "noResult",
+        count(*) FILTER (WHERE state = 'settled' AND terminal_evidence->>'kind' = 'gateway_http_rejected')::int AS rejected,
+        count(*) FILTER (WHERE state = 'settled' AND terminal_evidence->>'kind' = 'gateway_not_started')::int AS "notStarted",
         count(*) FILTER (WHERE state = 'indeterminate')::int AS indeterminate
       FROM model_capacity_requests
       WHERE (state = 'settled' AND settled_at >= transaction_timestamp() - interval '24 hours')
@@ -50,7 +53,8 @@ async function loadModelLedger24h(): Promise<ModelLedgerRow[]> {
     const list = Array.from(rows);
     if (list.length > 2000) throw new Error("model_ledger_truncated");
     return list.map(row => ({ routeId: row.routeId, groupId: row.groupId, model: row.model, calls: Number(row.calls), settled: Number(row.settled),
-      avgSeconds: row.avgSeconds === null ? null : Number(row.avgSeconds), noResult: Number(row.noResult), indeterminate: Number(row.indeterminate) }));
+      avgSeconds: row.avgSeconds === null ? null : Number(row.avgSeconds), rejected: Number(row.rejected), notStarted: Number(row.notStarted),
+      indeterminate: Number(row.indeterminate) }));
   }, { accessMode: "read only" })));
 }
 
@@ -64,7 +68,7 @@ export async function readModelConsole(fresh = false): Promise<ModelConsoleRead>
     listAiTaskRows().catch(quiet("models.ranks_unavailable")),
     readAiTaskExecutionAdminViews().catch(quiet("models.executions_unavailable")),
     readAdminModelsObservation({ throughput: false }).catch(quiet("models.observation_unavailable")),
-    ledgerCache("v1", loadModelLedger24h, fresh).catch(quiet("models.ledger_unavailable")),
+    ledgerCache("v2", loadModelLedger24h, fresh).catch(quiet("models.ledger_unavailable")),
     readJobPauses(now.getTime()),
   ]);
   const devices: ModelDeviceState[] | null = observation && !observation.error && observation.devicesRead

@@ -51,7 +51,7 @@ describe("사용률·상태(시안 build.py 와 같은 식·같은 순서)", () 
     ["M3 OpenCode", 2, 0, "18%", 2_600, "15.3", 1, "정상"],
     ["m1-gemma", 2, 1, "15%", 3_457, "7.7", 3, "정상"],
     ["gpu3090-qwen", 5, 0, "1%", 2_242, "2.5", 10, "여유 많음"],
-    ["LG EXAONE", 1, 0, "1% 미만", 135, "2.2", 1, "결과 없이 끝남 57"],
+    ["LG EXAONE", 1, 0, "1% 미만", 135, "2.2", 1, "거절 57"],
     ["M1max", 2, 0, "0%", 0, null, 0, "쓰는 단계 없음"],
     ["Claude CLI", 2, 0, "0%", 0, null, 1, "쓰는 단계가 멈춤"],
   ] as const)("%s — 한도 %i · 지금 %i · %s · 호출 %i", (label, limit, active, utilization, calls, avg, stages, status) => {
@@ -83,10 +83,21 @@ describe("사용률·상태(시안 build.py 와 같은 식·같은 순서)", () 
     expect(missing.errors).toEqual(expect.arrayContaining([expect.stringContaining("24시간 장부"), expect.stringContaining("장비 점유")]));
   });
 
-  it("문제는 읽은 사실만 — 결과 없이 끝남 · 키 만료 날짜", () => {
+  it("문제는 읽은 사실만 — 모델의 거절과 보내기 전에 끝난 것을 나눈다 · 키 만료 날짜", () => {
     const exaone = byLabel("LG EXAONE");
     expect(exaone.problems.map(problem => problem.label)).toEqual(["거절"]);
-    expect(exaone.problems[0].text).toBe("24시간 135건 중 57건이 결과 없이 끝났습니다(공급자가 처리 전에 거절했거나 보내지 못함).");
+    expect(exaone.problems[0]).toMatchObject({ tone: "warn", text: "24시간 135건 중 57건을 모델이 처리 전에 거절했습니다(429·401·403 등)." });
+    // 보내기 전에 끝난 호출(틱 기한·사전 예산)은 거절이 아니다 — 상태에 올리지 않고 문제 줄에만 적는다(11-12 실측: gpu3090-qwen 244건)
+    const ledger = modelFixtureInput().ledger!.map(row => row.groupId === "gpu3090-qwen" && row.routeId === "crawl-agent-review"
+      ? { ...row, calls: 3000, settled: 2756, rejected: 0, notStarted: 244 } : row);
+    const qwen = buildModelConsole(modelFixtureInput({ ledger })).rows.find(row => row.id === "conn-gpu3090-qwen")!;
+    expect([qwen.status.text, qwen.rejected, qwen.notStarted]).toEqual(["여유 많음", 0, 244]);
+    expect(qwen.problems.find(problem => problem.key === "not-started")).toMatchObject({ tone: "off", label: "보내기 전",
+      text: "24시간 244건은 보내기 전에 끝났습니다(틱 기한·사전 예산 — 모델의 거절이 아닙니다)." });
+    // 거절이 10건 넘어도 호출의 10%에 못 미치면 상태는 정상 쪽(문제 줄은 회색으로 남긴다)
+    const few = buildModelConsole(modelFixtureInput({ ledger: modelFixtureInput().ledger!.map(row => row.groupId === "gpu3090-qwen" && row.routeId === "crawl-agent-review"
+      ? { ...row, calls: 3000, rejected: 12, notStarted: 0 } : row) })).rows.find(row => row.id === "conn-gpu3090-qwen")!;
+    expect([few.status.text, few.problems.find(problem => problem.key === "rejected")?.tone]).toEqual(["여유 많음", "off"]);
     const near = buildModelConsole(modelFixtureInput({ now: "2026-12-07T00:00:00.000Z" })).rows.find(row => row.id === "conn-lg-exaone")!;
     expect(near.problems.find(problem => problem.key === "key")?.text).toBe("키가 4일 뒤(12-11) 만료됩니다.");
   });

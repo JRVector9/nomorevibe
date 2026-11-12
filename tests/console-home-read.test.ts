@@ -58,7 +58,7 @@ beforeEach(() => {
     { task: "first-review", slot: 1, mode: "fallback", members: [{ connectionId: "c1", model: "m1" }] }]);
   read.inbox.mockResolvedValue({ fetchedAt: "x", results: { takedown: { ok: true, data: { count: 2, overdue: 1, items: [] } } } });
   read.overview.mockResolvedValue({ agreed: { approve: 3, reject: 1 } });
-  read.ledger.mockResolvedValue([{ routeId: "reason-translate", groupId: "d1", model: "m1", calls: 7, settled: "6", avgSeconds: "2.5", noResult: 1 }]);
+  read.ledger.mockResolvedValue([{ routeId: "reason-translate", groupId: "d1", model: "m1", calls: 7, settled: "6", avgSeconds: "2.5", rejected: "1", notStarted: 2 }]);
   read.watch.mockResolvedValue([{ key: "change-watch:9", verdict: "worse", title: "t", fact: "f", actions: [], notify: true }]);
   read.kept.mockResolvedValue([{ taskId: "stop:job:product-intro-check", at: "x", until: "y", actor: "JR", reason: "r" }]);
 });
@@ -78,7 +78,7 @@ describe("console home read", () => {
       connections: [{ id: "c1", models: ["m1", "m2"], allowedTasks: ["reason-translate"], keySetAt: null }],
       ranks: [{ task: "reason-translate", slot: 1, rank: 1, connectionId: "c1", model: "m1", enabled: true }],
       pools: [{ task: "publish-classify", slot: 1, connectionId: "c1", model: "m1" }],
-      ledger: [{ routeId: "reason-translate", groupId: "d1", model: "m1", calls: 7, settled: 6, avgSeconds: 2.5, noResult: 1 }],
+      ledger: [{ routeId: "reason-translate", groupId: "d1", model: "m1", calls: 7, settled: 6, avgSeconds: 2.5, rejected: 1, notStarted: 2 }],
       progress: { stages: [{ stage: "intro-check", job: "product-intro-check", reason: "paused", waiting: 12,
         skipBlock: { reason: "all_skipped", code: "agent_review_all_skipped", detail: "running=2" } }], liveness: [{ role: "text", reason: "present" }] },
     });
@@ -98,7 +98,9 @@ describe("console home read", () => {
     expect(read.sql[0]).toContain('"accessMode":"read only"');
     expect(read.sql[1]).toContain("statement_timeout = '3s'");
     expect(read.sql[2]).toMatch(/state = 'settled' AND settled_at >= transaction_timestamp\(\) - interval '24 hours'/);
-    expect(read.sql[2]).toContain("'gateway_http_rejected', 'gateway_not_started'");
+    // 모델의 거절과 보내기 전에 끝난 것은 따로 센다
+    expect(read.sql[2]).toContain("terminal_evidence->>'kind' = 'gateway_http_rejected')::int AS rejected");
+    expect(read.sql[2]).toContain("terminal_evidence->>'kind' = 'gateway_not_started')::int AS \"notStarted\"");
   });
 
   it("keeps every other input when one read fails", async () => {

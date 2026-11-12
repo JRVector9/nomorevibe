@@ -49,7 +49,7 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
       ["pile", "키워드 검수가 쌓입니다", "대기 36,882건 · 하루 6,451건 처리 · 지금 속도로 5.7일"],
       ["pile", "사람 확인이 줄지 않습니다", "대기 4,467건 · 가장 오래된 것 15일 · 24시간 동안 사람이 끝낸 것 0건"],
       ["pile", "감사 거절이 쌓여 있습니다", "열린 거절 563건 · 7일 넘은 것 553건 · 가장 오래된 것 27일"],
-      ["tidy", "LG EXAONE이 자주 거절합니다", "24시간 135건 중 57건이 결과 없이 끝남"],
+      ["tidy", "LG EXAONE이 자주 거절합니다", "24시간 135건 중 57건을 거절함(42%)"],
       ["tidy", "M1max를 아직 안 씁니다", "11-12 07:07 저장 · 호출 0건 · 쓰는 단계 없음"],
     ]);
     expect(["stop", "odd", "pile", "tidy"].map(group => design.filter(task => task.group === group).length)).toEqual([2, 1, 5, 2]);
@@ -131,7 +131,7 @@ describe("console tasks — 한국어 소개 쌓임은 표본 비교로 먼저 �
 describe("console tasks — rules and their limits", () => {
   it("keeps the limits in one place", () => {
     expect(CONSOLE_TASK_LIMITS).toMatchObject({ stalledRatio: 0.1, pausedJobMs: DAY, admissionPausedMs: 30 * MIN, holdSurge: 50, holdNewShare: 0.5,
-      backlogDays: 3, humanWaiting: 500, auditOverdueDays: 7, noResultPerDay: 10, keyExpiryDays: 7, idleUtilization: 0.05 });
+      backlogDays: 3, humanWaiting: 500, auditOverdueDays: 7, rejectedPerDay: 10, rejectedShare: 0.1, keyExpiryDays: 7, idleUtilization: 0.05 });
     expect(Object.isFrozen(CONSOLE_TASK_LIMITS)).toBe(true);
   });
 
@@ -286,7 +286,7 @@ describe("console tasks — rules and their limits", () => {
     expect([titles(unread), unread.keptUnknown]).toEqual([["소개 검수가 8일째 멈춰 있습니다"], true]);
     // 자주 거절하는 모델의 「그대로 두기」
     const refusing = quiet({ connections: [connection("exa")], ranks: [{ task: "reason-translate", slot: 1, rank: 1, connectionId: "exa", model: "exa-model", enabled: true }],
-      ledger: [{ routeId: "reason-translate", groupId: "exa", model: "exa-model", calls: 40, settled: 30, avgSeconds: 2, noResult: 12 }],
+      ledger: [{ routeId: "reason-translate", groupId: "exa", model: "exa-model", calls: 40, settled: 30, avgSeconds: 2, rejected: 12, notStarted: 0 }],
       kept: [{ taskId: "tidy:no-result:exa", at: at(HOUR), until: new Date(Date.parse(NOW) + DAY).toISOString(), actor: "JR", reason: "약관상 번역에만 씀" }] });
     expect(titles(buildConsoleTasks(refusing), "tidy")).toEqual([]);
   });
@@ -294,7 +294,7 @@ describe("console tasks — rules and their limits", () => {
   it("pile: stages that need more than three days at the last 24 hours' pace, longest first", () => {
     const stages = (waiting: Record<string, number>, settled: Record<string, number>) => quiet({
       progress: { stages: Object.entries(waiting).map(([stage, value]) => ({ stage, job: stage === "keyword-verify" ? "product-search-verify" : stage, reason: "progressing", waiting: value })) },
-      ledger: Object.entries(settled).map(([routeId, value]) => ({ routeId, groupId: "g", model: "m", calls: value, settled: value, avgSeconds: 1, noResult: 0 })),
+      ledger: Object.entries(settled).map(([routeId, value]) => ({ routeId, groupId: "g", model: "m", calls: value, settled: value, avgSeconds: 1, rejected: 0, notStarted: 0 })),
     });
     expect(titles(buildConsoleTasks(stages({ "reason-translate": 300 }, { "reason-translate": 100 })))).toEqual([]);
     expect(buildConsoleTasks(stages({ "reason-translate": 301 }, { "reason-translate": 100 })).groups[2].tasks[0].fact).toBe("대기 301건 · 하루 100건 처리 · 지금 속도로 3.0일");
@@ -312,11 +312,29 @@ describe("console tasks — rules and their limits", () => {
     expect(titles(buildConsoleTasks(quiet({ audit: { open: 9, overdue: 1, oldestWaitDays: 8 } })))).toEqual(["감사 거절이 쌓여 있습니다"]);
   });
 
-  it("tidy: models ending ten calls a day without a result", () => {
-    const calls = (noResult: number) => quiet({ connections: [connection("exa")], ranks: [{ task: "reason-translate", slot: 1, rank: 1, connectionId: "exa", model: "exa-model", enabled: true }],
-      ledger: [{ routeId: "reason-translate", groupId: "exa", model: "exa-model", calls: 40, settled: 30, avgSeconds: 2, noResult }] });
+  it("tidy: models refusing ten calls a day and at least a tenth of their calls — calls ended before sending are not refusals", () => {
+    const calls = (rejected: number, notStarted = 0, total = 40) => quiet({ connections: [connection("exa")],
+      ranks: [{ task: "reason-translate", slot: 1, rank: 1, connectionId: "exa", model: "exa-model", enabled: true }],
+      ledger: [{ routeId: "reason-translate", groupId: "exa", model: "exa-model", calls: total, settled: total - rejected, avgSeconds: 2, rejected, notStarted }] });
     expect(titles(buildConsoleTasks(calls(9)), "tidy")).toEqual([]);
-    expect(buildConsoleTasks(calls(10)).groups[3].tasks.map(task => [task.title, task.fact])).toEqual([["exa가 자주 거절합니다", "24시간 40건 중 10건이 결과 없이 끝남"]]);
+    expect(buildConsoleTasks(calls(10)).groups[3].tasks.map(task => [task.title, task.fact, task.why])).toEqual([["exa가 자주 거절합니다", "24시간 40건 중 10건을 거절함(25%)", null]]);
+    // 거절 10건이어도 호출의 10%에 못 미치면 올리지 않는다(101건 중 10건)
+    expect(titles(buildConsoleTasks(calls(10, 0, 101)), "tidy")).toEqual([]);
+    expect(titles(buildConsoleTasks(calls(10, 0, 100)), "tidy")).toEqual(["exa가 자주 거절합니다"]);
+    // 보내기 전에 끝난 것(gateway_not_started — 틱 기한·사전 예산)은 거절이 아니다 — 11-12 실측 gpu3090-qwen 244건이 이것이었다
+    expect(titles(buildConsoleTasks(calls(0, 244, 3000)), "tidy")).toEqual([]);
+    expect(buildConsoleTasks(calls(12, 30)).groups[3].tasks[0].why).toBe("그 밖에 보내기 전에 끝난 30건은 모델의 거절이 아니라 세지 않았습니다.");
+  });
+
+  it("tidy: 11-12 실측 — LG EXAONE 58/135 거절은 올리고, gpu3090-qwen 의 보내기 전에 끝난 244건은 올리지 않는다", () => {
+    const inputs = consoleFixtureInputs();
+    const ledger = inputs.ledger!.map(row => row.groupId === "Exaone" ? { ...row, rejected: 58 }
+      : row.groupId === "gpu3090-qwen" && row.routeId === "crawl-agent-review" ? { ...row, calls: 3000, settled: 2756, rejected: 0, notStarted: 244 } : row);
+    const board = buildConsoleTasks({ ...inputs, ledger });
+    expect(board.groups[3].tasks.filter(task => task.rule === "no-result").map(task => [task.title, task.fact]))
+      .toEqual([["LG EXAONE이 자주 거절합니다", "24시간 135건 중 58건을 거절함(43%)"]]);
+    // 보내기 전에 끝난 호출이 많아도 남는 모델에서 빼지 않는다
+    expect(board.groups[2].tasks.find(task => task.id === "pile:stage:product-translate")!.why).toContain("gpu3090-qwen");
   });
 
   it("tidy: models no stage uses (pool members count) and the same model twice in one ranking", () => {
@@ -343,8 +361,8 @@ describe("console tasks — rules and their limits", () => {
       ranks: [{ task: "reason-translate", slot: 1, rank: 1, connectionId: "busy", model: "busy-model", enabled: true },
         { task: "second-review", slot: 1, rank: 1, connectionId: "spare", model: "spare-model", enabled: true },
         { task: "second-review", slot: 1, rank: 2, connectionId: "cli", model: "sonnet", enabled: true }],
-      ledger: [{ routeId: "reason-translate", groupId: "busy", model: "busy-model", calls: 100, settled: 100, avgSeconds: 1000, noResult: 0 },
-        { routeId: "second-review", groupId: "spare", model: "spare-model", calls: 10, settled: 10, avgSeconds: seconds / 10, noResult: 0 }],
+      ledger: [{ routeId: "reason-translate", groupId: "busy", model: "busy-model", calls: 100, settled: 100, avgSeconds: 1000, rejected: 0, notStarted: 0 },
+        { routeId: "second-review", groupId: "spare", model: "spare-model", calls: 10, settled: 10, avgSeconds: seconds / 10, rejected: 0, notStarted: 0 }],
     });
     // 86,400초 × 한도 1 의 5% = 4,320초 — 미만이면 남는다. CLI(claude)는 사유 번역이 받지 않는다
     expect(buildConsoleTasks(idle(4319)).groups[2].tasks[0].why).toBe("쓰는 모델이 busy 하나입니다. 남는 모델: spare(5%)");
