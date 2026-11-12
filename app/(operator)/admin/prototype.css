@@ -4,7 +4,8 @@
   /* 2026-11-12 「1인 운영 콘솔 시안」의 토큰 — 색은 상태에만 쓰고, 단추는 먹색 하나(--primary).
      옛 이름(--surface-2·--soft·--blue·--green·--amber·--red)은 화면 수백 곳이 쓰므로 이름은 두고 값만 시안 값으로 바꿨다:
      --surface-2 = 시안 --sunken, --blue = --link, --green = --ok, --amber = --warn, --red = --bad. */
-  --bg: #f2f3ef;
+  /* 2026-11-12 사용자 「시안에서 화이트 컬러 적용한 것처럼」: 시안의 콘솔 틀은 흰 바탕이다(#f2f3ef 는 시안 문서의 바깥 여백) — 페이지 바탕도 흰색 */
+  --bg: #fff;
   --surface: #fff;
   --surface-2: #f7f8f5;
   --sunken: var(--surface-2);

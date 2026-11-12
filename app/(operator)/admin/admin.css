@@ -20,7 +20,7 @@ body:has(.admin-login-area) > .nmb-footer { display: none; }
 body:has(.admin-area) {
   /* 2026-11-12 「1인 운영 콘솔 시안」 — Tailwind 로 그린 관리자 화면도 운영 콘솔(prototype.css)과 같은 색을 쓴다.
      --text-2 = 시안 --muted, --text-3 = 시안 --faint(큰 글자·표시만), 링크·선택은 시안 --link, 채운 단추(bg-accent-solid)는 먹색. */
-  --bg: #f2f3ef;
+  --bg: #ffffff; /* 시안의 콘솔 틀과 같은 흰 바탕(2026-11-12 사용자 「너무 칙칙해서 잘 안 보여」) */
   --bg-soft: #f7f8f5;
   --bg-card: #ffffff;
   --bg-hover: #eceee8;
@@ -278,7 +278,7 @@ html[data-admin-theme="dark"] body:has(.admin-area) {
 
 /* Seven operational workspaces — shared shell only; pages keep their authenticated reads and actions. */
 body:has(.admin-area) {
-  --bg: #f3f5f1;
+  --bg: #ffffff;
   --bg-soft: #f7f9f5;
   --bg-card: #ffffff;
   --bg-hover: #edf2e8;
