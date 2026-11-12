@@ -11,7 +11,7 @@ import { cliContractRouteId } from "@/lib/llm/cli-serving-contract";
 import { servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { aiTaskModelsReadState } from "@/lib/llm/ai-task-models-snapshot";
 import { taskModels } from "@/lib/llm/ai-task-resolver";
-import { AUDIT_DIRECT_ROUTE, aiTask } from "@/lib/llm/ai-tasks";
+import { AUDIT_DIRECT_ROUTE, aiConnectionTaskAllowed, aiTask } from "@/lib/llm/ai-tasks";
 import { verifiedLocalModelContract } from "@/lib/llm/local-model-capacity";
 import { cliEngineRevision, isCliEngineConnection } from "@/lib/llm/cli-engine-config";
 import { cliHostTargetFromConnection } from "@/lib/operations/cli-host-target";
@@ -311,6 +311,8 @@ async function enrollRecheck(input: { rolling: ProductAuditCampaign; productId: 
 export const RECHECK_TASK = "product-audit";
 /** 그 작업의 화면 이름(「발행분 감사 · 변경 재판정」) */
 export const RECHECK_TASK_LABEL = aiTask(RECHECK_TASK)?.label ?? RECHECK_TASK;
+/** 연결의 「쓸 수 있는 작업」에서 이 작업을 뺀 순위의 건너뛴 까닭(운영자 문장) */
+const RECHECK_TASK_NOT_ALLOWED_TEXT = `연결의 「쓸 수 있는 작업」에 「${RECHECK_TASK_LABEL}」이 없습니다`;
 /**
  * 재판정을 부르는 제공자 — 감사 경로(product-audit)의 장부 binding(product_audit_cli)이 받는 CLI 둘(OpenCode 원격 호스트·Claude 이 워커)과,
  * API 연결(local-direct — 감사 직접 경로 local-audit, binding direct:audit:<항목>:audit, 잡 audit-qwen, 2026-11-09). Codex·Grok 은 장부 규칙(CHECK 가지)·binding 이
@@ -334,6 +336,8 @@ export type RecheckReviewerPlan = Readonly<{ status: RecheckRankStatus; reviewer
  * CLI 는 감사 경로(product_audit_cli)로 간다 — 그 순위를 저장하면 만들어지는 감사 경로 CLI 계약·정책 route 로 열린다. API 는 감사 직접 경로(local-audit)로 간다 —
  * 그 순위를 저장하면 만들어지는(이미 있으면 그대로 쓰는) 로컬 계약·정책 route 로 열린다. 둘 다 새 장부 binding·CHECK 가지를 만들지 않는다.
  * 순위가 없거나 표를 못 읽었으면 status 로 말하고 부르지 않는다 — 코드 기본값·1차 순위·옛 설정으로 대신 부르지 않는다.
+ * 연결의 「쓸 수 있는 작업」에 이 작업이 없으면 그 순위는 부르지 않는다(공통 글·심사 묶기 bindApiTaskRank·bindReviewTaskRank 와 같은 규칙 — 2026-11-12 검수 F4:
+ * 순위를 저장한 뒤 연결을 좁혀도 옛 순위로 부르지 않는다). 건너뛴 까닭은 skipped 에 남는다.
  */
 export function recheckReviewerPlan(): RecheckReviewerPlan {
   const read = aiTaskModelsReadState();
@@ -346,6 +350,7 @@ export function recheckReviewerPlan(): RecheckReviewerPlan {
     const claude = rank.connection.kind === "cli" && rank.connection.cliTool === "claude";
     const api = rank.connection.kind === "api";
     const reason = !rank.enabled ? "순위 꺼짐" : !rank.connection.enabled ? "연결 꺼짐"
+      : !aiConnectionTaskAllowed(RECHECK_TASK, rank.connection) ? RECHECK_TASK_NOT_ALLOWED_TEXT
       : api ? !rank.connection.baseUrl ? "연결 주소가 없습니다" : rank.connection.keyUnreadable ? "연결에 저장한 키를 열 수 없습니다(암호 상자 키 확인)" : null
       : !claude && !isCliEngineConnection(rank.connection) ? "감사 경로는 OpenCode·Claude CLI·API 연결만 받습니다" : null;
     if (reason) { skipped.push({ ...base, reason }); continue; }
@@ -398,12 +403,36 @@ export function recheckRouteNote(reviewer: Pick<RecheckReviewer, "provider" | "m
     : { ready, text: `감사 경로(product-audit) CLI 계약 없음 — 「${RECHECK_TASK_LABEL}」 순위를 다시 저장하면 만들어집니다` };
 }
 
+/** 틱 처음에 세운 계획의 순위를 보내기 직전에 순위 스냅숏(30초)으로 다시 본다 — 그 순위가 그대로 부를 수 있으면 null, 아니면 까닭(코드) */
+function currentRecheckRank(reviewer: Pick<RecheckReviewer, "rank" | "connectionId" | "model">) {
+  const rank = taskModels(RECHECK_TASK, 1).find((row) => row.rank === reviewer.rank && row.connection.id === reviewer.connectionId && row.model === reviewer.model);
+  if (!rank) return { rank: null, refusal: "rank_changed" } as const;
+  if (!rank.enabled) return { rank: null, refusal: "rank_disabled" } as const;
+  if (!rank.connection.enabled) return { rank: null, refusal: "connection_disabled" } as const;
+  // 계획을 세운 뒤 연결의 「쓸 수 있는 작업」에서 이 작업을 뺐다(2026-11-12 검수 F4) — 이미 잡은 심사자라도 부르지 않는다
+  if (!aiConnectionTaskAllowed(RECHECK_TASK, rank.connection)) return { rank: null, refusal: "connection_task_not_allowed" } as const;
+  return { rank, refusal: null } as const;
+}
+
 /**
- * API 순위를 부를 주소·키 — 순위 스냅숏(30초)의 그 순위·연결에서 읽는다(키는 메모리 안에서만). 순위가 그 사이 바뀌었거나 키를 열 수 없으면 null
+ * 보내기 직전의 재확인(두 줄 공통) — 이 심사자를 지금 부를 수 없는 까닭(코드: rank_changed·rank_disabled·connection_disabled·connection_task_not_allowed·
+ * connection_unavailable), 부를 수 있으면 null. 감사 잡(CLI)·Qwen 직접 감사 잡(API)이 이 순위를 쉬게 할 때 이 까닭을 적는다.
+ */
+export function recheckReviewerRefusal(reviewer: Pick<RecheckReviewer, "rank" | "connectionId" | "model" | "provider">): string | null {
+  const { rank, refusal } = currentRecheckRank(reviewer);
+  if (refusal) return refusal;
+  if (reviewer.provider === "local-direct" && (rank.connection.kind !== "api" || !rank.connection.baseUrl || rank.connection.keyUnreadable))
+    return "connection_unavailable";
+  return null;
+}
+
+/**
+ * API 순위를 부를 주소·키 — 순위 스냅숏(30초)의 그 순위·연결에서 읽는다(키는 메모리 안에서만). 순위가 그 사이 바뀌었거나 키를 열 수 없거나
+ * 연결이 이 작업을 더 받지 않으면 null(까닭은 recheckReviewerRefusal)
  */
 export function recheckDirectEndpoint(reviewer: Pick<RecheckReviewer, "rank" | "connectionId" | "model">): { baseUrl: string; apiKey: string | null } | null {
-  const rank = taskModels(RECHECK_TASK, 1).find((row) => row.rank === reviewer.rank && row.connection.id === reviewer.connectionId && row.model === reviewer.model);
-  if (!rank || !rank.enabled || !rank.connection.enabled || rank.connection.kind !== "api" || !rank.connection.baseUrl || rank.connection.keyUnreadable) return null;
+  const { rank } = currentRecheckRank(reviewer);
+  if (!rank || rank.connection.kind !== "api" || !rank.connection.baseUrl || rank.connection.keyUnreadable) return null;
   return { baseUrl: rank.connection.baseUrl, apiKey: rank.connection.apiKey };
 }
 

@@ -14,12 +14,13 @@ import { JobLeaseLostError } from "@/lib/jobs/lease";
  * 이 시험은 DB 없이 그 갈래만 본다 — 실제 장부 길은 tests/integration/opencode-task-cli-ledger.test.ts 가 본다.
  */
 const mocks = vi.hoisted(() => ({ settings: vi.fn(), pending: vi.fn(), input: vi.fn(), record: vi.fn(), path: vi.fn(), remote: vi.fn(), agent: vi.fn(),
-  plan: vi.fn() }));
+  plan: vi.fn(), refusal: vi.fn() }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 vi.mock("@/lib/llm/ai-task-models-snapshot", () => ({ ensureAiTaskModels: async () => undefined }));
 vi.mock("@/lib/crawl/published-recheck", () => ({ rollingStream: async () => ({ id: 9 }), recheckYields: async () => false,
-  recheckLimits: () => ({ scanBatch: 200, dailyCap: 100, askBatch: 3, minSimilarity: 0.6, yieldHours: 6 }), recheckReviewerPlan: mocks.plan }));
+  recheckLimits: () => ({ scanBatch: 200, dailyCap: 100, askBatch: 3, minSimilarity: 0.6, yieldHours: 6 }), recheckReviewerPlan: mocks.plan,
+  recheckReviewerRefusal: mocks.refusal }));
 // 사람이 연 감사는 없다 — 이 시험은 재판정 갈래만 본다
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: async () => null, pendingAuditItems: mocks.pending, loadAuditInput: mocks.input,
   recordAuditResult: mocks.record, markAuditNoSource: vi.fn(), markAuditInputFailed: vi.fn(), finishAuditCampaign: vi.fn() }));
@@ -53,6 +54,7 @@ beforeEach(() => {
   resetRecheckLanes();
   mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewConcurrency: 1 });
   mocks.plan.mockReturnValue({ status: "ok", reviewers: [OPENCODE, CLAUDE], skipped: [] });
+  mocks.refusal.mockReturnValue(null);
   mocks.pending.mockResolvedValue([{ id: 1, slug: "first" }, { id: 2, slug: "second" }]);
   mocks.input.mockResolvedValue({ snapshot: {}, inputHash: "h", source: {} });
   mocks.path.mockImplementation(async (_route: string, _model: string, provider?: string) => provider === "opencode-cli" ? "remote" : "legacy");
@@ -133,6 +135,17 @@ it("with only the failing rank, the stream is not pinned on its first item: the 
   mocks.remote.mockResolvedValue({ kind: "result", result: verdict });
   await auditPublishedProducts(context());
   expect(mocks.remote.mock.calls.map(([request]) => request.item.id)).toEqual([1, 2, 1]);
+});
+
+it("a rank whose connection stopped accepting product-audit after the plan is paused before dispatch with its reason (2026-11-12 F4)", async () => {
+  mocks.refusal.mockImplementation((reviewer: { rank: number }) => reviewer.rank === 1 ? "connection_task_not_allowed" : null);
+  const ctx = context();
+  await auditPublishedProducts(ctx);
+  // 1순위는 부르지 않는다(장부·호스트에 닿기 전) — 같은 틱의 항목은 2순위가 묻는다
+  expect(mocks.remote).not.toHaveBeenCalled();
+  expect(mocks.record.mock.calls.map(([call]) => [call.itemId, call.provider, call.ok])).toEqual([[1, "claude-cli", true], [2, "claude-cli", true]]);
+  expect(logged(ctx, "published_recheck.asked")[0]).toMatchObject({ asked: 2, callFailed: 0, deferred: ["1:connection_task_not_allowed"] });
+  expect(recheckRankPaused(OPENCODE)).toBe(true);
 });
 
 it("a lost job lease from the call still ends the whole tick", async () => {
