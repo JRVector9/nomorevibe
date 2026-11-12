@@ -4,12 +4,15 @@ import { buildConsoleTasks } from "@/lib/operations/console-tasks";
 import { recommendStages } from "@/lib/operations/model-console";
 import { SAMPLE_COMPARE_SUPPORTED, type SampleComparison } from "@/lib/operations/model-sample-compare";
 import { consoleFixtureInputs } from "./fixtures/console-home";
-import { modelFixtureRead } from "./fixtures/model-console";
+import { modelFixtureInput, modelFixtureRead } from "./fixtures/model-console";
+import { buildTaskRankEditor } from "@/lib/operations/flow-rank-editor";
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), backlog: vi.fn(), records: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), backlog: vi.fn(), records: vi.fn(), editor: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), redirect: vi.fn() }));
 vi.mock("@/lib/operations/model-console-read", () => ({ readModelConsole: mocks.read, readModelBacklog: mocks.backlog }));
 vi.mock("@/lib/operations/model-sample-compare-repository", () => ({ listModelSampleComparisons: mocks.records }));
+vi.mock("@/lib/operations/flow-rank-editor-read", () => ({ readFlowRankEditor: mocks.editor }));
+vi.mock("@/lib/operations/pool-help-read", () => ({ readPoolHelpContext: vi.fn(async () => null) }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnectionAction: vi.fn(), readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn(),
   hideAiConnectionModelAction: vi.fn(), clearUnreadAiTaskRanksAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveDeviceRowAction: vi.fn(), saveCapacityDevice: vi.fn() }));
@@ -29,6 +32,8 @@ beforeEach(() => {
   mocks.read.mockResolvedValue(modelFixtureRead());
   mocks.backlog.mockResolvedValue(buildConsoleTasks(consoleFixtureInputs()));
   mocks.records.mockResolvedValue([]);
+  const input = modelFixtureInput();
+  mocks.editor.mockResolvedValue(buildTaskRankEditor(input.connections!, input.ranks!.map(row => ({ ...row, options: {} })), () => "revision"));
 });
 
 describe("모델 목록(시안 화면 4)", () => {
@@ -36,7 +41,7 @@ describe("모델 목록(시안 화면 4)", () => {
     const html = renderToStaticMarkup(await ModelConsoleSlot({ selected: null, readOnly: false }));
     const list = table(html);
     expect([...list.matchAll(/<th scope="col"[^>]*>([^<]+)<\/th>/g)].map(match => match[1]))
-      .toEqual(["이름", "장비", "한도", "지금", "24시간 사용률", "호출", "평균 응답", "단계", "상태"]);
+      .toEqual(["이름", "장비", "한도", "지금", "24시간 사용률", "호출", "평균 응답", "쓰는 작업", "상태"]);
     expect([...list.matchAll(/<th scope="row"><a[^>]*>([^<]+)<\/a>/g)].map(match => match[1])).toEqual(["m3-deepseek", "supa-direct", "m3-gpt-oss", "M3 OpenCode",
       "m1-gemma", "gpu3090-qwen", "LG EXAONE", "Claude CLI", "M1max"]);
     for (const served of ["Inferact/Qwen3.8-27B-NVFP4", "gpt-oss-120b", "qwen3.8-flash-next", "k-exaone_v2.5"]) expect(list).not.toContain(served);
@@ -44,7 +49,9 @@ describe("모델 목록(시안 화면 4)", () => {
     expect(text(supa)).toContain("supa-direct supa-direct 3 3 / 3 49% 8,404 15.5초 3 미확정 19");
     expect(text(list)).toContain("LG EXAONE Exaone 1 0 / 1 1% 미만 135 2.2초 1 거절 57");
     expect(list).toContain('href="/admin/models?model=conn-supa-direct#model-detail"');
-    expect(html).toContain('href="/admin/models/new"');
+    expect(html).toContain(">＋ 모델 추가</button>");
+    expect(html).not.toContain('id="model-add"');
+    expect(html).not.toContain("넣고 응답 확인");
     expect(html).not.toContain('id="model-detail"');
     expect(html).not.toContain('id="admission"');
   });
@@ -61,9 +68,11 @@ describe("모델 목록(시안 화면 4)", () => {
     const html = renderToStaticMarkup(await ModelConsoleSlot({ selected: "conn-supa-direct", readOnly: false }));
     const detail = html.match(/<article id="model-detail"[^]*?<\/article>/)![0];
     expect(table(html)).toContain('data-selected="true" data-model="conn-supa-direct"');
-    expect(text(detail)).toContain("24시간 호출 8,404 거절 0 보내기 전에 끝남 3 미확정 19");
+    expect(html).toContain('class="mc-drawer" aria-labelledby="model-detail-title"');
+    expect(text(detail)).toContain("24시간 호출 8,404 평균 응답 15.5초 동시 사용 3 / 3");
+    expect(text(detail)).toContain("거절 0 보내기 전에 끝남 3 미확정 19");
     expect(text(detail)).toContain("동시 한도 3 · 장비 한도");
-    expect(text(detail)).toContain("1순위 1차 AI 검수");
+    expect(text(detail)).toContain("1차 AI 검수 1순위 배정 보기");
     expect(text(detail)).toContain("미확정 24시간 안에 결과를 모르는 호출이 19건 있습니다.");
     expect(detail).toContain("<code>supa = Inferact/Qwen3.8-27B-NVFP4</code>");
     expect(text(detail)).toMatch(/서버가 알려 준 이름 ?: supa = Inferact\/Qwen3\.8-27B-NVFP4 \(최대 131,072\) · 11-12 07:00 읽음 · 장비 id supa-direct/);
@@ -77,7 +86,7 @@ describe("모델 목록(시안 화면 4)", () => {
     expect(text(cli)).toContain("방식 CLI · Claude");
     const readOnly = renderToStaticMarkup(await ModelConsoleSlot({ selected: "conn-lg-exaone", readOnly: true }));
     expect(readOnly).not.toContain(">쉬게 하기</button>");
-    expect(readOnly).not.toContain('href="/admin/models/new"');
+    expect(readOnly).not.toContain(">＋ 모델 추가</button>");
     expect(text(readOnly)).toContain("키 11-11 넣음 · 12-11 만료 · 28일 남음");
   });
 

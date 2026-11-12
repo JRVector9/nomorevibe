@@ -14,10 +14,10 @@ import { SampleCompare } from "../compare/SampleCompare";
  * 시험은 이 함수를 그대로 기다려 그린다(저장소 모듈만 바꿔 끼운다).
  */
 export async function ModelConsoleSlot({ selected, readOnly }: { selected: string | null; readOnly: boolean }) {
-  // 상세를 열면 바로 붙이기에 쓸 작업 배정 편집기와 「동시에」 도움말의 한도를 함께 읽는다(읽기만 — 못 읽으면 붙이기 칸이 그렇게 적는다)
-  const [data, editor, poolHelp] = await Promise.all([readModelConsole(), selected ? readFlowRankEditor() : Promise.resolve(null),
+  // 반복 배정 수는 실제 저장 순위를 읽어 계산한다. 상세를 열면 붙이기의 「동시에」 도움말도 함께 읽는다(읽기만).
+  const [data, editor, poolHelp] = await Promise.all([readModelConsole(), readFlowRankEditor(),
     selected ? readPoolHelpContext().catch(() => null) : Promise.resolve(null)]);
-  return <ModelConsole data={data} selected={selected} readOnly={readOnly} attach={selected ? { editor, poolHelp } : null} />;
+  return <ModelConsole data={data} selected={selected} readOnly={readOnly} attach={{ editor, poolHelp }} />;
 }
 
 export async function ModelAddSlot({ id, step, readOnly }: { id: string | null; step: ModelAddStep; readOnly: boolean }) {

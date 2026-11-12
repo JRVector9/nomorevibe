@@ -26,11 +26,38 @@ export type ModelAttachInitial = { key?: string; mode?: AttachMode; rank?: numbe
  * 저장은 작업 배정·단계 패널과 같은 서버 동작이다: 순위는 saveAiTaskRanksAction(rankForm — 같은 판 비교), 방식·구성원·칸 수·예비는 saveTaskExecutionAction
  * (poolExecutionForm — 같은 expectedRevision). 둘 다 웹 쓰기 관문·작업 로그를 그대로 거친다. 고르는 이름은 모델 목록과 같은 이름 하나다.
  */
-export function ModelAttachForm({ connectionId, editor, devices, poolHelp, readOnly, initial }: {
+type ModelAttachFormProps = {
   connectionId: string; editor: FlowRankEditor | null;
   devices: readonly { deviceId: string; active: number; limitSlots: number | null }[] | null;
   poolHelp: PoolHelpContext | null; readOnly: boolean; initial?: ModelAttachInitial;
+  /** Unified inventory and task rows open the same editor and use the same save actions. */
+  onTaskOpen?: (taskKey: string, attachConnectionId?: string) => void;
+};
+
+export function ModelAttachForm(props: ModelAttachFormProps) {
+  return props.onTaskOpen ? <ModelTaskAttachPicker {...props} onTaskOpen={props.onTaskOpen} /> : <LegacyModelAttachForm {...props} />;
+}
+
+function ModelTaskAttachPicker({ connectionId, editor, readOnly, onTaskOpen }: ModelAttachFormProps & {
+  onTaskOpen: (taskKey: string, attachConnectionId?: string) => void;
 }) {
+  const targets = editor ? attachTargets(editor, connectionId) : [];
+  const [picked, setPicked] = useState("");
+  const key = targets.some(target => target.key === picked) ? picked : targets.find(target => !target.using)?.key ?? targets[0]?.key ?? "";
+  const connection = editor?.connections.find(entry => entry.id === connectionId);
+  return <section id="model-attach" className="mc-task-attach" aria-label="작업에 붙이기">
+    <h3>작업에 붙이기</h3><p className="mc-drawer-lead">현재 모델과 작업에 맞는 자리를 고릅니다.</p>
+    {!editor ? <p className="mc-callout">작업 배정을 읽지 못해 여기서 붙일 수 없습니다.</p>
+      : !connection?.enabled ? <p className="mc-callout">꺼진 모델은 작업에 붙일 수 없습니다 — 먼저 켜세요.</p>
+        : !targets.length ? <p className="mc-callout">이 모델을 받을 수 있는 작업이 없습니다(모델 종류·쓸 작업 제한).</p>
+          : <><label className="mc-attach-target"><span>쓸 작업</span><select value={key} disabled={readOnly} onChange={event => setPicked(event.target.value)}>
+            {targets.map(target => <option key={target.key} value={target.key}>{target.label}{target.using ? " · 지금 쓰는 중" : ""}</option>)}</select></label>
+            <div className="mc-editor-foot"><p>작업 상세에서 전후 배정을 확인한 뒤 적용합니다.</p>
+              <button type="button" className="button primary" disabled={readOnly || !key} onClick={() => onTaskOpen(key, connectionId)}>자리 고르기 →</button></div></>}
+  </section>;
+}
+
+function LegacyModelAttachForm({ connectionId, editor, devices, poolHelp, readOnly, initial }: ModelAttachFormProps) {
   const router = useRouter();
   const targets = editor ? attachTargets(editor, connectionId) : [];
   const [key, setKey] = useState(initial?.key ?? targets.find(target => !target.using)?.key ?? targets[0]?.key ?? "");
