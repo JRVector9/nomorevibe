@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiTaskSupportsWorkloadPool } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskSupportsPool } from "@/lib/llm/ai-task-execution-config";
 import { buildChangeWatch, collectChanges } from "@/lib/operations/change-watch";
 import { buildConsoleTasks, type ConsoleTaskInputs } from "@/lib/operations/console-tasks";
 import { stagePanelHref, stagePanelKeyOf, STAGE_PANELS } from "@/lib/operations/stage-panel-catalog";
@@ -197,7 +197,7 @@ describe("save preview (저장 전 확인)", () => {
     expect(poolMemberIssues([{ provider: "gone", model: "x" }], connections, false)).toEqual(["꺼졌거나 없는 연결을 바꿔주세요."]);
     expect(poolMemberIssues([gpu, gpu], connections, false)).toEqual([]);
     for (const [task, slot] of [["first-review", 1], ["second-review", 2], ["product-intro-check", 1], ["product-translate", 1]] as const)
-      expect(stagePoolSupported(task, slot)).toBe(aiTaskSupportsWorkloadPool(task, slot));
+      expect(stagePoolSupported(task, slot)).toBe(aiTaskSupportsPool(task, slot));
     expect(CONN.supa).toBeTruthy();
   });
 });

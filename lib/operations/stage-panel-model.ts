@@ -1,5 +1,5 @@
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
-import { aiTaskSupportsWorkloadPool, aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskSupportsPool, aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 import { AI_TASKS, aiTask, aiTaskSlotLabel, AUDIT_DIRECT_ROUTE } from "@/lib/llm/ai-tasks";
 import type { AiRankChoice } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
@@ -116,7 +116,7 @@ export function routeStageLabel(routeId: string): string {
 }
 
 /** 「동시에」(작업 분산)를 이 작업·칸이 지금 받는가 — 지원 범위는 ai-task-execution-config 한 곳이 정한다(넓히면 패널도 따라 켜진다) */
-export const stagePoolSupported = (taskId: string, slot = 1): boolean => aiTaskSupportsWorkloadPool(taskId, slot);
+export const stagePoolSupported = (taskId: string, slot = 1): boolean => aiTaskSupportsPool(taskId, slot);
 
 const intervalText = (ms: number | null) => ms === null ? null : ms < 60 * MINUTE ? `${Math.round(ms / MINUTE)}분` : `${Math.round(ms / (60 * MINUTE))}시간`;
 
