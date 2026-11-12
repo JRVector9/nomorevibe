@@ -116,7 +116,8 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly }: { row: M
     </form>}
     {mode === "confirm" && plan && <SavePlanDialog title={`${row.name}${draft.enabled !== connection.enabled ? (draft.enabled ? "을(를) 다시 켭니다" : "을(를) 쉬게 합니다") : " 설정을 바꿉니다"}`}
       plan={plan} pending={pending} disabled={readOnly} onApply={apply} onCancel={cancel} />}
-    {mode === "view" && !readOnly && <div className="mc-acts" aria-label="조치">
+    {/* id — ⌘K 「쉬게 하기·다시 켜기」가 이 자리로 보낸다(조각 4b). 누르면 저장 전 확인이 열린다 */}
+    {mode === "view" && !readOnly && <div id="model-actions" className="mc-acts" aria-label="조치">
       <button type="button" className="button small" onClick={() => { setMessages([]); setMode("edit"); }}>고치기</button>
       {connection.enabled
         ? <button type="button" className="button small primary" onClick={() => { setMessages([]); review({ ...base, enabled: false }); }}>쉬게 하기</button>

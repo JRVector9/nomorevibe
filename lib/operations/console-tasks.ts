@@ -2,7 +2,7 @@ import { HUMAN_BACKLOG_LIMIT } from "@/lib/crawl/human-queue";
 import { AI_TASKS, aiTaskAccepts, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import type { ChangeWatchTask } from "./change-watch";
 import type { Conveyor } from "./conveyor-model";
-import { stagePanelHref } from "./stage-panel-catalog";
+import { stagePanel, stagePanelHref } from "./stage-panel-catalog";
 
 /**
  * 운영 콘솔 홈의 「지금 할 일」 규칙(2026-11-12 최종 시안 「할 일이 생기는 조건」 11줄).
@@ -13,6 +13,8 @@ import { stagePanelHref } from "./stage-panel-catalog";
  * 읽기 하나를 못 읽으면 그 읽기에 기대는 규칙만 「셀 수 없음」으로 남기고 나머지 할 일은 그대로 낸다.
  * 「바꾼 뒤 처리량 하락」은 판정하지 않는다 — 바꾼 것 지켜보기(change-watch.ts judgeChange)가 판정한 할 일을 받아 그대로 올린다(판정은 한 곳).
  * 사람이 「확인했고 그대로 둔다」로 표시한 할 일(console-task-keep.ts, 작업 로그)은 정한 기간 동안 목록에서 내리고 「그대로 둔 것」에 적는다.
+ * 접수 중단(DRAIN) 중에는 모델을 쓰는 단계의 「멈춤」(1시간 처리가 대기의 10분의 1 미만)을 「접수 중단 때문」 한 줄로 접는다(조각 4b, 시안 흐름 6) —
+ * 같은 까닭으로 줄이 여러 개 뜨지 않게. 그 한 줄은 중단이 30분을 넘기 전에는 알리지 않는다(배포 창의 짧은 DRAIN 이 휴대폰을 울리지 않게).
  */
 
 const MINUTE = 60_000;
@@ -48,6 +50,9 @@ export const CONSOLE_TASK_LIMITS = Object.freeze({
   /** 「사유 남기고 유지」·「그대로 두기」로 내린 할 일이 다시 올라오기까지(7일) */
   keepMs: 7 * DAY,
 });
+
+/** 접수 OPEN·DRAIN 을 바꾸는 곳 — 모델 › 고급 설정 › 대시보드의 접수 칸(AdmissionControl, 사유 필수·기존 운영 실행기·작업 로그). 머리줄의 접수 표시도 여기로 보낸다 */
+export const ADMISSION_HREF = "/admin/models/dashboard#admission";
 
 /** 「확인했고 그대로 둔다」를 받는 규칙 — 사람이 멈춘 작업(사유 남기고 유지)과 자주 거절하는 모델(그대로 두기). 시안 「할 일이 생기는 조건」의 단추 */
 export const CONSOLE_KEEP_RULES: readonly ConsoleRuleKey[] = Object.freeze(["job-paused", "no-result"]);
@@ -340,8 +345,9 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
   const limits = CONSOLE_TASK_LIMITS;
   const groups = Object.fromEntries(CONSOLE_GROUPS.map(group => [group.key, { ...group, tasks: [] as ConsoleTask[], unknown: [] as string[] }])) as
     Record<ConsoleGroupKey, ConsoleTaskGroup>;
-  const add = (group: ConsoleGroupKey, task: Omit<ConsoleTask, "group" | "notify" | "tone"> & { tone?: ConsoleTask["tone"] }) =>
-    groups[group].tasks.push({ tone: group === "stop" ? "bad" : group === "tidy" ? "off" : "warn", ...task, group, notify: groups[group].notify });
+  // notify 는 묶음의 것을 따른다 — 접수 중단으로 접은 줄만 30분 전까지 끈다
+  const add = (group: ConsoleGroupKey, task: Omit<ConsoleTask, "group" | "notify" | "tone"> & { tone?: ConsoleTask["tone"]; notify?: boolean }) =>
+    groups[group].tasks.push({ tone: group === "stop" ? "bad" : group === "tidy" ? "off" : "warn", ...task, group, notify: groups[group].notify && task.notify !== false });
   const unknown = (group: ConsoleGroupKey, what: string) => { if (!groups[group].unknown.includes(what)) groups[group].unknown.push(what); };
 
   const stats = modelStats(inputs);
@@ -360,6 +366,9 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
 
   // ── 멈춤 1: 대기가 있는데 1시간 처리가 대기의 1/10 미만인 단계
   const stopped: string[] = [];
+  // 접수 중단(DRAIN) 중에는 모델을 쓰는 단계(장부 경로가 있는 AI 작업이 맡거나 단계 패널에 배정 작업이 있는 칸)의 멈춤을 따로 모아 한 줄로 접는다
+  const draining = inputs.admission?.mode === "draining";
+  const held: { key: string; label: string }[] = [];
   if (!inputs.conveyor) unknown("stop", "단계 처리");
   for (const station of inputs.conveyor?.stations ?? []) {
     if (!QUEUE_STATIONS.has(station.key) || !station.waiting) continue;
@@ -370,6 +379,12 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     if (perHour === null) { unknown("stop", `${station.label} 처리 수`); continue; }
     if (perHour >= station.waiting * limits.stalledRatio) continue;
     const def = taskForJob(progress?.job);
+    if (draining && (def?.routeId || (stagePanel(station.key)?.tasks.length ?? 0) > 0)) {
+      // 흐름 표는 그대로 「멈춤」으로 그린다 — 할 일만 접는다
+      stopped.push(station.key);
+      held.push({ key: station.key, label: station.label });
+      continue;
+    }
     const free = def ? rankStats(def.id).filter(stat => stat.active === 0)
       .map(stat => `${josa(name(stat), "은/는")} ${stat.connection.capacitySlots}칸이 모두 비어 있습니다.`) : [];
     const why = [progress?.skipBlock ? skipSentence(progress.skipBlock) : null, ...free].filter(Boolean).join(" ");
@@ -405,15 +420,25 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     });
   }
 
-  // ── 멈춤 3: 접수 중단이 30분을 넘김(DRAIN). 다시 여는 것은 사람이 모델 화면의 접수 제어에서 한다
+  // ── 멈춤 3: 접수 중단이 30분을 넘김(DRAIN). 다시 여는 것은 사람이 모델 대시보드의 접수 칸에서 한다(자동으로 열지 않는다).
+  // 중단 중에 멈춘 모델 단계(held)는 이 한 줄에 접는다 — 30분 전에는 알리지 않는 같은 열쇠의 줄로, 30분이 지나면 접수 할 일의 까닭으로.
   if (!inputs.admission) unknown("stop", "접수 상태");
   else if (inputs.admission.mode === "draining") {
     const since = inputs.admission.since ? Date.parse(inputs.admission.since) : NaN;
+    const heldNames = held.map(row => row.label).join(" · ");
+    const heldWhy = held.length ? `접수 중단 때문에 모델 단계 ${held.length}개가 멈춰 있습니다: ${heldNames}.` : null;
     if (!Number.isFinite(since)) unknown("stop", "접수 중단 시각");
-    else if (now - since > limits.admissionPausedMs) add("stop", {
+    if (Number.isFinite(since) && now - since > limits.admissionPausedMs) add("stop", {
       id: "stop:admission", rule: "admission-paused",
       title: `접수가 ${formatDuration((now - since) / MINUTE)}째 멈춰 있습니다`,
-      fact: `모델 접수 중단 · ${formatKst(since)}부터`, why: null, actions: [link("접수 열기", "/admin/models")],
+      fact: `모델 접수 중단 · ${formatKst(since)}부터`, why: heldWhy, actions: [link("접수 열기", ADMISSION_HREF)],
+    });
+    else if (held.length) add("stop", {
+      id: "stop:admission", rule: "admission-paused", notify: false,
+      title: held.length === 1 ? `${josa(held[0].label, "이/가")} 접수 중단 때문에 멈춰 있습니다` : `모델 단계 ${held.length}개가 접수 중단 때문에 멈춰 있습니다`,
+      fact: [heldNames, Number.isFinite(since) ? `접수 중단 ${formatKst(since)}부터 · ${formatDuration((now - since) / MINUTE)}` : "접수 중단"].join(" · "),
+      why: `접수를 다시 열면 풀립니다. 중단이 ${Math.round(limits.admissionPausedMs / MINUTE)}분을 넘으면 알림을 보냅니다.`,
+      actions: [link("접수 열기", ADMISSION_HREF), link("단계 열기", consoleStageHref(held[0].key))],
     });
   }
 

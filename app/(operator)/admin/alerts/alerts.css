@@ -1,0 +1,247 @@
+/* 홈 › 알림(운영 콘솔 개편 조각 4b) — 표는 열 폭 고정, 때는 tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만(prototype.css 토큰). */
+.admin-prototype .al-page {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.admin-prototype .al-page > *,
+.admin-prototype .al-list > * {
+  min-width: 0;
+}
+.admin-prototype .al-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .al-head h1 {
+  font-size: calc(20px + var(--admin-font-delta, 0px));
+  font-weight: 800;
+}
+.admin-prototype .al-note,
+.admin-prototype .al-muted {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .al-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 28px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.admin-prototype .al-strip b {
+  margin-left: 6px;
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .al-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+@media (min-width: 1100px) {
+  .admin-prototype .al-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.admin-prototype .al-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.admin-prototype .al-card h2,
+.admin-prototype .al-list h2 {
+  font-size: calc(15px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+}
+.admin-prototype .al-form {
+  display: grid;
+  gap: 10px;
+}
+.admin-prototype .al-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.admin-prototype .al-quiet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.admin-prototype .al-quiet legend {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .al-quiet label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.admin-prototype .al-quiet input {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .al-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.admin-prototype .al-confirm {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.admin-prototype .al-confirm h3 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+}
+.admin-prototype .al-diff {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .al-diff li {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+}
+.admin-prototype .al-diff li > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .al-diff s {
+  margin-right: 6px;
+  color: var(--muted);
+}
+.admin-prototype .al-route {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+.admin-prototype .al-route b {
+  margin-right: 6px;
+}
+.admin-prototype .al-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.admin-prototype .al-list {
+  display: grid;
+  gap: 10px;
+}
+.admin-prototype .al-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.admin-prototype .al-empty {
+  padding: 24px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+}
+.admin-prototype .al-scroll {
+  /* 숨긴 글자(admin-vh, position: absolute)가 이 칸을 기준으로 잡혀 옆 넘김 안에 머문다 */
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .al-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12.5px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .al-table th,
+.admin-prototype .al-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .al-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .al-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-prototype .al-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .al-when {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-prototype .al-title,
+.admin-prototype .al-fact {
+  display: block;
+}
+.admin-prototype .al-fact {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .al-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.admin-prototype .al-st > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--soft);
+}
+.admin-prototype .al-st[data-tone="ok"] > i {
+  background: var(--green);
+}
+.admin-prototype .al-st[data-tone="warn"] > i {
+  background: var(--amber);
+}
+.admin-prototype .al-st[data-tone="off"] {
+  color: var(--muted);
+}

@@ -117,6 +117,43 @@ def valid_stage_failures(value):
             len({row['stage'] for row in value}) == len(value))
 
 
+# 2026-11-12 운영 콘솔 조각 4b: 휴대폰 알림 — 운영 홈 할 일(멈춤·평소와 다름)의 알림 줄(console_alerts). monitor 가 닫히지 않았고 내보낸 줄을
+# 자기 건강 파일에 적고, 이 게이트웨이가 모양을 검사해 넘기며, Oracle(incident_notifications)이 줄 id 마다 한 번 Telegram 으로 보낸다.
+# 관측일 뿐이다: 서비스 행의 ok/reason/recoverable 을 바꾸지 않는다. 칸이 없으면(옛 monitor·읽기 실패) Oracle 은 이미 보낸 기록을 지우지 않는다.
+# 상한은 lib/operations/console-alerts.ts CONSOLE_ALERT_RULES 와 같다(보고 전체가 32KB 를 넘지 않게).
+CONSOLE_ALERT_MAX = 8
+CONSOLE_ALERT_TITLE_MAX = 80
+CONSOLE_ALERT_FACT_MAX = 160
+CONSOLE_ALERT_HREF_MAX = 200
+# 주소는 관리자 화면 경로만 — 사이트 주소는 Oracle 설정(adminOrigin)이 붙인다(보고가 다른 사이트로 보내는 링크를 넣을 수 없게)
+CONSOLE_ALERT_HREF = re.compile(r'/admin[A-Za-z0-9/?=&%#._:~+-]*')
+
+
+def _alert_text(value, lowest, highest):
+    return (isinstance(value, str) and lowest <= len(value) <= highest and
+            not any(ord(c) < 32 or 127 <= ord(c) <= 159 or 0x202a <= ord(c) <= 0x202e or 0x2066 <= ord(c) <= 0x2069 for c in value))
+
+
+def valid_console_alerts(value):
+    return (isinstance(value, list) and len(value) <= CONSOLE_ALERT_MAX and
+            all(isinstance(row, dict) and set(row) == {'id', 'title', 'fact', 'href'} and
+                type(row['id']) is int and 0 < row['id'] < 10 ** 15 and
+                _alert_text(row['title'], 1, CONSOLE_ALERT_TITLE_MAX) and _alert_text(row['fact'], 0, CONSOLE_ALERT_FACT_MAX) and
+                isinstance(row['href'], str) and len(row['href']) <= CONSOLE_ALERT_HREF_MAX and
+                CONSOLE_ALERT_HREF.fullmatch(row['href']) is not None for row in value) and
+            len({row['id'] for row in value}) == len(value))
+
+
+def merge_console_alerts(values):
+    """Every fresh replica must report the same alert rows, else the list is unread (absent: Oracle keeps its sent marks)."""
+    if not values or not all(valid_console_alerts(value) for value in values):
+        return None
+    first = sorted(values[0], key=lambda row: row['id'])
+    if any(sorted(value, key=lambda row: row['id']) != first for value in values[1:]):
+        return None
+    return [{'id': row['id'], 'title': row['title'], 'fact': row['fact'], 'href': row['href']} for row in first]
+
+
 # 2026-10-31 (owner decision 2026-10-30): an unknown-outcome model call never stops work. 'review' (확인 못함 · 사람 검토)
 # is informational only. Only a summarized 'alarm' with an occupying dispatched row past its bound (dispatch_stuck) or an
 # unreadable ledger ('unknown') is an incident. Since 2026-11-10 an alarm of review backlog/stale reasons only (over the
@@ -253,6 +290,12 @@ return ((v.status==='review'||v.status==='alarm')===(rows.length>0||v.truncated)
 if(!n(v.count)||!n(v.stuckDispatched)||!(v.oldestAgeSeconds===null||n(v.oldestAgeSeconds))||!Array.isArray(v.alarmReasons)||v.alarmReasons.length>3
 ||!v.alarmReasons.every(k=>['dispatch_stuck','review_backlog','review_stale'].includes(k)))return unknown;
 return {...base,count:v.count,oldestAgeSeconds:v.oldestAgeSeconds,stuckDispatched:v.stuckDispatched,alarmReasons:[...v.alarmReasons]};};
+const alertHref=new RegExp('^/admin[A-Za-z0-9/?=&%#._:~+-]*$');
+const alertText=(t,lo,hi)=>typeof t==='string'&&t.length>=lo&&t.length<=hi&&[...t].every(c=>{const n=c.codePointAt(0);
+return n>=32&&!(n>=127&&n<=159)&&!(n>=0x202a&&n<=0x202e)&&!(n>=0x2066&&n<=0x2069);});
+const alertsKnown=Array.isArray(j.consoleAlerts)&&j.consoleAlerts.length<=8&&j.consoleAlerts.every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&
+Object.keys(v).sort().join(',')==='fact,href,id,title'&&Number.isSafeInteger(v.id)&&v.id>0&&v.id<1e15&&alertText(v.title,1,80)&&alertText(v.fact,0,160)
+&&typeof v.href==='string'&&v.href.length<=200&&alertHref.test(v.href))&&new Set(j.consoleAlerts.map(v=>v.id)).size===j.consoleAlerts.length;
 const mode=j.capacityMode,modeNow=Date.now();
 const modeKnown=mode&&typeof mode==='object'&&!Array.isArray(mode)&&['open','draining','disabled'].includes(mode.mode)
 &&Number.isSafeInteger(mode.changedAt)&&mode.changedAt>=0&&mode.changedAt-modeNow<=1000;
@@ -262,7 +305,8 @@ overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
 ...(modeKnown?{capacityMode:{mode:mode.mode,ageSeconds:Math.min(1e9,Math.max(0,Math.floor((modeNow-mode.changedAt)/1000)))}}:{}),
 ...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{}),
 ...(reviewKnown?{reviewFailures:j.reviewFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{}),
-...(stageKnown?{stageFailures:j.stageFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{})}));}
+...(stageKnown?{stageFailures:j.stageFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{}),
+...(alertsKnown?{consoleAlerts:j.consoleAlerts.map(v=>({id:v.id,title:v.title,fact:v.fact,href:v.href}))}:{})}));}
 catch{console.log(JSON.stringify({fresh:false,overall:'unknown'}));}"""
 
 
@@ -352,6 +396,9 @@ def observe(key, cfg, run=command, now=None):
                 mode = merge_capacity_modes([check.get('capacityMode') for check in checks])
                 if mode is not None:
                     result['capacityMode'] = mode
+                alerts = merge_console_alerts([check.get('consoleAlerts') for check in checks])
+                if alerts is not None:
+                    result['consoleAlerts'] = alerts
                 capacity = []
                 for check in checks:
                     if 'capacityUnknowns' in check:

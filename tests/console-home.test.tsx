@@ -29,7 +29,8 @@ describe("console home", () => {
     expect(titles).toEqual(["AI 1차가 거의 멈췄습니다", "소개 검수가 8일째 멈춰 있습니다", "규칙 심사 보류가 갑자기 늘었습니다", "공개 번역이 쌓입니다",
       "사유 번역이 쌓입니다", "키워드 검수가 쌓입니다", "사람 확인이 줄지 않습니다", "감사 거절이 쌓여 있습니다", "LG EXAONE이 자주 거절합니다", "M1max를 아직 안 씁니다",
       "순위에 같은 모델이 두 번 들어 있습니다"]);
-    expect(html).toContain('<li class="ch-task" data-tone="bad" data-rule="stage-stalled">');
+    // id — 휴대폰 알림의 주소(/admin/flow#task-…)가 이 줄로 온다(조각 4b)
+    expect(html).toContain('<li class="ch-task" id="task-stop-stage-first" data-tone="bad" data-rule="stage-stalled">');
     expect(plain).toContain("워커가 틱마다 후보 2건을 「이미 처리 중」으로 건너뛰고 끝납니다. gpu3090-qwen은 5칸이 모두 비어 있습니다.");
   });
 

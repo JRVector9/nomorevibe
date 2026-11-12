@@ -94,7 +94,8 @@ export function modelsLegacyTabHref(search: Search): string | null {
  * - 모델: 옛 「LLM 운영」에서 기록을 뺀 것. 고급 편집기는 「고급 설정」의 2차 메뉴.
  * - 수집·작업: 옛 설정의 수집·판정·분류·근거·외부 연동과 운영센터(/admin/status)의 작업 흐름·크롤러 활동.
  * - 콘텐츠: 옛 「프로젝트」(품질관리 제외)와 「콘텐츠 운영」.
- * - 기록: 운영 기록·변경 기록(작업 로그)·LLM 기록.
+ * - 기록: 바꾼 것(기본 — 작업 로그를 한 줄씩 묶은 표, 조각 4b)·모두 보기(작업 로그 원시 줄)·운영 기록·LLM 기록.
+ * - 홈의 「알림」(조각 4b): 휴대폰 알림 켜기·끄기와 조용한 시간, 보낸 알림.
  */
 export const WORKSPACES: readonly Workspace[] = [
   { id: "home", label: "홈", href: "/admin/flow", icon: "flow", tabs: [
@@ -102,6 +103,7 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "detail", label: "흐름 상세", href: "/admin/flow?tab=detail" },
     { id: "diagnostics", label: "시스템 진단", href: "/admin/flow?tab=diagnostics" },
     { id: "changes", label: "할 일·변경 기록", href: "/admin/flow?tab=changes" },
+    { id: "alerts", label: "알림", href: "/admin/alerts" },
   ] },
   // 조각 3b: 기본 화면은 묶음(/admin/review/batches). 옛 목록·상세(검수 및 발행)는 「하나씩 보기」로 그대로 둔다
   { id: "people", label: "사람 확인", href: PEOPLE_BATCHES_HREF, icon: "check", tabs: [
@@ -131,9 +133,11 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "news", label: "AI 소식", href: "/admin/content?tab=news" },
     { id: "ranking", label: "랭킹·공개 목록", href: "/admin/content?tab=ranking" },
   ] },
-  { id: "log", label: "기록", href: "/admin/settings?tab=history", icon: "clock", tabs: [
+  // 조각 4b: 기본은 바꾼 것을 한 줄씩(/admin/log). 원시 줄(작업 로그)은 「모두 보기」로 그대로 연다
+  { id: "log", label: "기록", href: "/admin/log", icon: "clock", tabs: [
+    { id: "summary", label: "바꾼 것", href: "/admin/log" },
+    { id: "changes", label: "모두 보기", href: "/admin/activity" },
     { id: "history", label: "운영 기록", href: "/admin/settings?tab=history" },
-    { id: "changes", label: "변경 기록", href: "/admin/activity" },
     { id: "llm", label: "LLM 기록", href: "/admin/models/history" },
   ] },
 ];
@@ -229,6 +233,8 @@ function place(pathname: string, search: Search): Place {
   const tab = search.get("tab");
   switch (pathname) {
     case "/admin/flow": return { id: "home", tab: homeTab(tab) };
+    case "/admin/alerts": return { id: "home", tab: "alerts" };
+    case "/admin/log": return { id: "log", tab: "summary" };
     case "/admin/inbox": return { id: "home", tab: "changes", secondary: WORKSPACE_SECONDARY.homeChanges, secondaryTab: "inbox" };
     case "/admin/activity":
       // 홈의 「할 일·변경 기록」에서 연 변경 기록(?workspace=home)은 홈에 남는다. 나머지(LLM 기록에서 연 것 포함)는 기록 메뉴

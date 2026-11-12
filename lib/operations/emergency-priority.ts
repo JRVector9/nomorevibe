@@ -52,6 +52,8 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "product-embedding": { tier: "translation-uptime", embedding: true },
   // 모델을 부르지 않고 종료 근거가 있는 보낸 호출(dispatched) 점유를 풀고 확인 못함 행을 정산한다. 비상 중에도 모델 자리를 되돌려야 하므로 멈추지 않는다.
   "model-capacity-reclaim": { tier: "translation-uptime" },
+  // 휴대폰 알림 줄(운영 콘솔 조각 4b) — 홈 할 일 읽기가 무거워 비상 중에는 들이지 않는다(Oracle watchdog 의 장애 알림은 따로 그대로 간다)
+  "console-alerts": "suspended",
   "crawl-publish": { tier: "approved-publish", model: true },
   "crawl-judge": { tier: "prepared-review" },
   "crawl-agent-review": { tier: "prepared-review", model: true },
