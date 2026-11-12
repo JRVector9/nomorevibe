@@ -1,0 +1,452 @@
+/* 운영 콘솔 「수집·작업」(2026-11-12 최종 시안 화면 5 · 흐름 4 · 흐름 6의 4, 조각 4a) — 구조·정렬만 시안에서 가져오고 색·글꼴은 관리자 토큰(prototype.css).
+   표는 열 폭 고정, 숫자는 오른쪽 정렬·tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만. */
+.admin-prototype .sources-console {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.admin-prototype .sc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+.admin-prototype .sc-head h2,
+.admin-prototype .sc-head h3 {
+  font-size: calc(15px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+}
+.admin-prototype .sc-count,
+.admin-prototype .sc-muted,
+.admin-prototype .sc-hint {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sc-head .sc-right {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admin-prototype .sc-notice {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.admin-prototype .sc-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .sc-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .sc-table th,
+.admin-prototype .sc-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .sc-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .sc-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-prototype .sc-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .sc-table tbody th a {
+  color: inherit;
+}
+.admin-prototype .sc-table tbody th a:hover,
+.admin-prototype .sc-table tbody tr[data-selected="true"] th a {
+  color: var(--blue);
+}
+.admin-prototype .sc-table tbody tr[data-selected="true"] > * {
+  background: var(--surface-2);
+}
+.admin-prototype .sc-table .n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-prototype .sc-table .q,
+.admin-prototype .sc-table small {
+  color: var(--muted);
+}
+.admin-prototype .sc-table small {
+  display: block;
+  font-weight: 400;
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .sc-table td.top,
+.admin-prototype .sc-table th.top {
+  vertical-align: top;
+}
+.admin-prototype .sc-table tr.sc-group > th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 600;
+}
+/* 공개까지 간 비율 막대 — 막대 길이만 초록, 글자는 늘 잉크 */
+.admin-prototype .sc-use {
+  display: grid;
+  grid-template-columns: minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.admin-prototype .sc-use > span {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.admin-prototype .sc-use > span > i {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+.admin-prototype .sc-use b {
+  min-width: 4.5em;
+  text-align: right;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sc-none {
+  color: var(--muted);
+}
+.admin-prototype .sc-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.admin-prototype .sc-st > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--soft);
+}
+.admin-prototype .sc-st[data-tone="ok"] > i { background: var(--green); }
+.admin-prototype .sc-st[data-tone="warn"] > i { background: var(--amber); }
+.admin-prototype .sc-st[data-tone="bad"] { color: var(--red); font-weight: 600; }
+.admin-prototype .sc-st[data-tone="bad"] > i { background: var(--red); }
+.admin-prototype .sc-st[data-tone="off"] { color: var(--muted); }
+.admin-prototype .sc-why {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  white-space: normal;
+}
+.admin-prototype .sc-mark {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+
+/* 수집원 상세 */
+.admin-prototype .sc-detail {
+  display: grid;
+  max-width: 820px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  scroll-margin-top: 80px;
+}
+.admin-prototype .sc-detail > section {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.admin-prototype .sc-detail > section:last-child {
+  border-bottom: 0;
+}
+.admin-prototype .sc-lab {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .sc-kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  color: var(--muted);
+}
+.admin-prototype .sc-kv b {
+  margin-left: 6px;
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sc-fun {
+  display: grid;
+  gap: 4px;
+}
+.admin-prototype .sc-fun > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 10px;
+}
+.admin-prototype .sc-fun .b {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.admin-prototype .sc-fun .b > i {
+  display: block;
+  height: 100%;
+  background: var(--soft);
+}
+.admin-prototype .sc-fun > div[data-key="published"] .b > i {
+  background: var(--green);
+}
+.admin-prototype .sc-fun > div > span:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sc-dl {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+}
+.admin-prototype .sc-dl dt {
+  color: var(--muted);
+}
+.admin-prototype .sc-dl dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .sc-dl .num,
+.admin-prototype .sc-num {
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sc-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.admin-prototype .sc-acts details {
+  min-width: 0;
+}
+.admin-prototype .sc-acts details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.admin-prototype .sc-acts details > summary::-webkit-details-marker {
+  display: none;
+}
+.admin-prototype .sc-acts details[open] {
+  flex-basis: 100%;
+}
+
+/* 폼·저장 전 확인 */
+.admin-prototype .sc-form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.admin-prototype .sc-form label {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.admin-prototype .sc-form label.sc-check {
+  display: flex;
+  gap: 8px;
+}
+.admin-prototype .sc-form label > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .sc-form input[type="text"],
+.admin-prototype .sc-form input[type="number"],
+.admin-prototype .sc-form input[type="url"],
+.admin-prototype .sc-form select {
+  min-width: 0;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.admin-prototype .sc-form input.num {
+  max-width: 120px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sc-form fieldset {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.admin-prototype .sc-form fieldset legend {
+  padding: 0 4px;
+  color: var(--muted);
+}
+.admin-prototype .sc-dlg {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.admin-prototype .sc-dlg h4 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .sc-diff {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .sc-diff li {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+}
+.admin-prototype .sc-diff li > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .sc-diff s {
+  margin-right: 6px;
+  color: var(--muted);
+}
+.admin-prototype .sc-msg[role="alert"] {
+  color: var(--red);
+}
+.admin-prototype .sc-msg[data-warn="true"] {
+  color: var(--amber);
+}
+
+/* 수집원 추가 세 걸음 */
+.admin-prototype .sc-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+.admin-prototype .sc-steps li b {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .sc-steps li[aria-current="step"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+.admin-prototype .sc-steps li[aria-current="step"] b {
+  border-color: var(--ink);
+}
+.admin-prototype .sc-card {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .sc-pick {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.admin-prototype .sc-pick li + li {
+  border-top: 1px solid var(--line);
+}
+.admin-prototype .sc-pick li > * {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+.admin-prototype .sc-pick li > button {
+  cursor: pointer;
+}
+.admin-prototype .sc-pick li > *:hover {
+  background: var(--surface-2);
+}
+.admin-prototype .sc-pick li[data-off="true"] > * {
+  color: var(--muted);
+  cursor: default;
+}
+.admin-prototype .sc-pick li > * > span:last-child {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .sc-samples {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+}
+@media (max-width: 640px) {
+  .admin-prototype .sc-form label,
+  .admin-prototype .sc-dl,
+  .admin-prototype .sc-diff li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .admin-prototype .sc-fun > div {
+    grid-template-columns: 84px minmax(0, 1fr) 56px;
+  }
+}
+.admin-prototype .sc-table small code {
+  display: inline-block;
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-all;
+}

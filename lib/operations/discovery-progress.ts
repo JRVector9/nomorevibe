@@ -4,7 +4,7 @@ import { DB_CLOCK_SQL } from "./replica-cache";
 import { DISCOVERY_PROGRESS_COUNTERS, DISCOVERY_PROGRESS_PREFIX, type DiscoveryProgressCounter } from "@/lib/crawl/discovery-progress-contract";
 
 export type DiscoveryProgressRow = {
-  worker: string; lane: "latest" | "full" | "korean" | "geeknews"; signal: string;
+  worker: string; lane: "latest" | "full" | "korean" | "geeknews" | "feed"; signal: string;
   observedAt: string; lastProgressAt: string | null; pendingSince: string | null;
   window: { from: string; to: string } | null; page: number | null;
   completedThrough: string | null; lagMinutes: number | null; blockedBy: string | null;
@@ -27,7 +27,7 @@ export function buildDiscoveryProgress(at: string, source: unknown, truncated = 
     if (!object(raw) || typeof raw.key !== "string" || !raw.key.startsWith(DISCOVERY_PROGRESS_PREFIX) || !object(raw.value)) continue;
     const v = raw.value;
     const worker = label(v.worker), signal = label(v.signal), observedAt = iso(v.at);
-    if (v.v !== 1 || !worker || !signal || !observedAt || !["latest", "full", "korean", "geeknews"].includes(String(v.lane))) continue;
+    if (v.v !== 1 || !worker || !signal || !observedAt || !["latest", "full", "korean", "geeknews", "feed"].includes(String(v.lane))) continue;
     const hour = Object.fromEntries(DISCOVERY_PROGRESS_COUNTERS.map(key => [key, 0])) as Record<DiscoveryProgressCounter, number>;
     for (const [key, number] of Object.entries(object(v.counts) ? v.counts : {})) {
       const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})\|([a-zA-Z]+)$/.exec(key);

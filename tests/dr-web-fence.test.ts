@@ -401,7 +401,9 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-12 운영 콘솔 조각 2a admin/flow/task-keep-actions.ts: 할 일 「사유 남기고 유지」·「그대로 두기」(keepConsoleTaskAction) 하나.
   // 2026-11-12 운영 콘솔 조각 3b admin/review/batches/actions.ts: 사람 확인 묶음의 표본 뽑기·표본 판정·일괄 결정·묶음째 되돌리기 넷이 더해져 127.
   // 2026-11-12 운영 콘솔 조각 3a admin/models/compare/actions.ts: requestSampleComparisonAction(표본 비교 요청 — 계약 준비·비교 줄·감사) 하나가 더해져 128.
-  expect(wrapped).toBe(128);
+  // 2026-11-12 운영 콘솔 조각 4a admin/sources/actions.ts: 잡 주기 저장(saveJobIntervalAction)·글 목록 수집원 저장(saveFeedSourceAction)·
+  // 수집원 미리 보기(previewFeedSourceAction — 쓰지 않지만 같은 관문) 셋이 더해져 131.
+  expect(wrapped).toBe(131);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

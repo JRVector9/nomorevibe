@@ -68,6 +68,8 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   const evidenceRequired = new Set(settings.discover.queries.filter((q) => q.requireEvidence).map((q) => q.label));
   if (settings.discover.showHn.requireEvidence) evidenceRequired.add(SHOW_HN_SIGNAL);
   if (settings.discover.showGn.requireEvidence) evidenceRequired.add(SHOW_GN_SIGNAL);
+  // 화면에서 더한 글 목록 수집원(discover.feeds)도 수집원마다 — 신호 이름이 수집원 이름이다
+  for (const feed of settings.discover.feeds ?? []) if (feed.requireEvidence) evidenceRequired.add(feed.name);
   // Oracle language routing never establishes AI authorship.
   evidenceRequired.add('Oracle Korean');
   if (ctx.lease && ctx.hasBudget()) {

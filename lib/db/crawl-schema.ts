@@ -27,7 +27,8 @@ import type { HumanBatchKey, HumanBatchMember, HumanBatchResult, HumanBatchUndoR
  */
 export type FrontierState = "pending" | "fetching" | "done" | "failed" | "skipped";
 
-export type DiscoverySource = { source: "geeknews"; topicId: string; url: string };
+/** geeknews: Show GN 글(번호) · feed: 화면에서 더한 글 목록 수집원의 글(lib/crawl/feed-sources.ts — 수집원 열쇠와 글 주소) */
+export type DiscoverySource = { source: "geeknews"; topicId: string; url: string } | { source: "feed"; feed: string; url: string };
 
 export const crawlFrontier = pgTable(
   "crawl_frontier",

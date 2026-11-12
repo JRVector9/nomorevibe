@@ -62,6 +62,8 @@ export const CHANGE_WATCH_ACTIONS: readonly string[] = Object.freeze([...new Set
   CAPACITY_MODE_ACTION, "llm-assist-control", "ai-connection-model-hide", "search-model-settings-save", "evidence-settings",
   "ranking-schedule", "ranking-cancel", "github-collector-token-save", "github-collector-enable", "github-collector-disable",
   "github-collector-app-save", "github-collector-app-enable", "github-collector-app-disable",
+  // 수집원 추가·고침(조각 4a, lib/crawl/feed-source-store.ts) — 잡 주기 바꾸기는 위의 runtime-settings-save(jobs.<잡>.intervalMs)로 뜬다
+  "crawl-source-save",
 ])]);
 
 export type ChangeVerdict = "better" | "same" | "worse" | "fell_back" | "unused" | "unknown" | "counting";
