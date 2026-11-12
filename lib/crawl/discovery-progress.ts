@@ -5,7 +5,7 @@ import { logger } from "@/lib/observability/logger";
 import { DISCOVERY_PROGRESS_COUNTERS, DISCOVERY_PROGRESS_PREFIX, type DiscoveryProgressCounter } from "./discovery-progress-contract";
 export type DiscoveryProgressInput = {
   worker: string;
-  lane: "latest" | "full" | "korean" | "geeknews";
+  lane: "latest" | "full" | "korean" | "geeknews" | "feed";
   signal: string;
   window?: { from: string; to: string };
   page?: number;

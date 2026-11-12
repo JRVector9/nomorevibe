@@ -9,9 +9,9 @@ import { shortRuntimeSettingsVersion } from "@/lib/operations/runtime-settings-s
 
 export type LimitsSaveState = { ok?: true; message?: string; issues?: string[] } | null;
 
-/** 실시간 한도를 그리는 화면들 — 저장 뒤 다시 그린다(옮긴 칸은 장비 한도·작업 배정·공개 번역 화면이 같은 행을 그린다) */
+/** 실시간 한도를 그리는 화면들 — 저장 뒤 다시 그린다(옮긴 칸은 장비 한도·작업 배정·공개 번역 화면이 같은 행을, 운영 홈의 단계 패널이 그 단계 줄을 그린다) */
 const AFFECTED_PATHS = ["/admin/models/limits", "/admin/models", "/admin/models/assignments", "/admin/models/devices", "/admin/models/tasks", "/admin/translations",
-  "/admin/status"];
+  "/admin/status", "/admin/flow"];
 
 function expectedRevisionOf(form: FormData): number | null {
   const revisionText = String(form.get("expectedRevision") ?? "").trim();

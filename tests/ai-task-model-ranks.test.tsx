@@ -142,16 +142,17 @@ describe("연결 입력", () => {
 
 describe("선택지와 검증", () => {
   const context = (rows: AiTaskRankRow[] = []) => ({ connections: CONNECTIONS, rows });
+  // 운영 콘솔 통합: 모델 하나만 내놓는 연결(Grok CLI)은 사용자가 정한 이름 하나만, 서로 다른 모델을 여럿 내놓는 연결만 「이름 · 모델」
   it("선택지는 이 작업이 받는 켜진 연결의 실제 모델 — 「연결 · 모델」, API 먼저; 목록에 없는 저장 값은 남긴다", () => {
     const options = aiTaskRankOptions(aiTask("first-review")!, CONNECTIONS, [row("first-review", 1, 1, SUPA, "old-model")]);
     expect(options.map(option => option.label)).toEqual(["gpu3090 · qwen3.8-flash-next", "gpu3090 · qwen-vision", "supa · Inferact/Qwen3.8-27B-NVFP4",
-      "supa · qwen3.8-flash-next", "검색 서버 · bge-m3", "검색 서버 · bge-m3-q8", "Claude CLI · sonnet", "Claude CLI · opus", "Grok CLI · grok-4.7",
+      "supa · qwen3.8-flash-next", "검색 서버 · bge-m3", "검색 서버 · bge-m3-q8", "Claude CLI · sonnet", "Claude CLI · opus", "Grok CLI",
       "supa · old-model (저장된 값 · 지금 목록에 없음)"]);
     expect(aiTaskRankOptions(aiTask("product-intro-check")!, CONNECTIONS, []).map(option => option.label)).toEqual(["Claude CLI · sonnet", "Claude CLI · opus"]);
     // 드롭다운은 서버(연결)마다 묶고 그 안에 모델 이름만 보인다(2026-11-02 화면 단순화) — 목록에 없는 저장 값도 그 서버 묶음에 「지금 목록에 없음」으로 남는다
     expect(options.map(option => [option.group, option.text])).toEqual([["gpu3090", "qwen3.8-flash-next"], ["gpu3090", "qwen-vision"],
       ["supa", "Inferact/Qwen3.8-27B-NVFP4"], ["supa", "qwen3.8-flash-next"], ["검색 서버", "bge-m3"], ["검색 서버", "bge-m3-q8"], ["Claude CLI", "sonnet"],
-      ["Claude CLI", "opus"], ["Grok CLI", "grok-4.7"], ["supa", "old-model (목록에 없음)"]]);
+      ["Claude CLI", "opus"], ["Grok CLI", "Grok CLI"], ["supa", "old-model (목록에 없음)"]]);
     const gone = aiTaskRankOptions(aiTask("crawl-tagline")!, CONNECTIONS, [row("crawl-tagline", 1, 1, "66666666-6666-4666-8666-666666666666", "x")]);
     expect(gone.at(-1)).toMatchObject({ group: "지워진 연결", text: "x (목록에 없음)", saved: true });
   });

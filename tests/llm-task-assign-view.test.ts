@@ -33,7 +33,7 @@ describe("작업 배정 — 설정 vs 실제(buildTaskAssignView)", () => {
     const first = rowOf(buildTaskAssignView(input()), "first-review#1");
     expect(first).toMatchObject({ anchor: "execution-first-review-1", mode: "fallback", modeText: "대체 실행", merged: false });
     expect(first.choices.map(choice => [choice.position, choice.connection, choice.model])).toEqual([
-      [1, "M3 OpenCode(OpenCode CLI)", "deepseek/deepseek-v4.1-flash"], [2, "gpu3090-qwen", "qwen3.8-flash-next"]]);
+      [1, "M3 OpenCode", "deepseek/deepseek-v4.1-flash"], [2, "gpu3090-qwen", "qwen3.8-flash-next"]]);
     // 장부: OpenCode 84 성공 + 2 실패 = 86, qwen 93
     expect(first.actual.calls.map(call => [call.position, call.model, call.settled, call.failed])).toEqual([
       [1, "deepseek/deepseek-v4.1-flash", 86, 2], [2, "qwen3.8-flash-next", 93, 0]]);

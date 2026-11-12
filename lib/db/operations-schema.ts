@@ -695,7 +695,9 @@ export const runtimeSettings = pgTable('runtime_settings', {
 ]);
 
 /** 마지막 GET {base_url}/models 결과 한 줄(0162). maxModelLen 은 엔진이 알려 줄 때만(mlx_lm.server 등은 없다). */
-export type AiConnectionModel = { id: string; maxModelLen: number | null };
+export type AiConnectionModel = { id: string; maxModelLen: number | null;
+  /** 서버가 알려 준 원래 모델(vLLM /models 의 root — served-model-name 별칭이면 같은 값). 2026-11-12 부터 알려 줄 때만 담는다 */
+  root?: string };
 /** 연결별 덧붙임(0162). contextTokens = /models 가 최대 길이를 주지 않는 모델의 운영자 입력 상한(토큰). */
 export type AiConnectionOptions = { contextTokens?: number };
 
@@ -774,6 +776,8 @@ export const aiTaskExecutionConfigs = pgTable('ai_task_execution_configs', {
   revision: bigint('revision', { mode: 'number' }).notNull().default(1),
   updatedBy: varchar('updated_by', { length: 120 }).notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  /** 0179: 묶음이 모두 설 때 순위(ai_task_models)를 예비로 쓴다. 기본 false(예비 없음) */
+  reserveRanks: boolean('reserve_ranks').notNull().default(false),
 }, table => [
   primaryKey({ columns: [table.task, table.slot] }),
   check('ai_task_execution_configs_task_check', sql`${table.task} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
@@ -789,6 +793,8 @@ export const aiTaskPoolMembers = pgTable('ai_task_pool_members', {
   model: varchar('model', { length: 200 }).notNull(), options: jsonb('options').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   canonicalModel: varchar('canonical_model', { length: 200 }).notNull(), deviceId: varchar('device_id', { length: 120 }).notNull(),
   engineKey: varchar('engine_key', { length: 64 }).notNull(),
+  /** 0179: 이 단계에 내줄 칸 수(1~8). NULL = 정하지 않음(예전 작업 분산 — 단계 동시 수를 구성원끼리 나눠 씀) */
+  maxSlots: integer('max_slots'),
 }, table => [
   foreignKey({ columns: [table.task, table.slot], foreignColumns: [aiTaskExecutionConfigs.task, aiTaskExecutionConfigs.slot], name: 'ai_task_pool_members_config_fk' }).onDelete('cascade'),
   foreignKey({ columns: [table.connectionId], foreignColumns: [aiConnections.id], name: 'ai_task_pool_members_connection_fk' }).onDelete('restrict'),
@@ -799,5 +805,69 @@ export const aiTaskPoolMembers = pgTable('ai_task_pool_members', {
   check('ai_task_pool_members_device_check', sql`char_length(${table.deviceId}) BETWEEN 1 AND 120 AND ${table.deviceId} = btrim(${table.deviceId}) AND ${table.deviceId} !~ '[[:cntrl:]]'`),
   check('ai_task_pool_members_engine_check', sql`${table.engineKey} ~ '^[a-f0-9]{64}$'`),
   check('ai_task_pool_members_options_check', sql`jsonb_typeof(${table.options}) = 'object' AND pg_column_size(${table.options}) <= 4096`),
+  check('ai_task_pool_members_max_slots_check', sql`${table.maxSlots} IS NULL OR ${table.maxSlots} BETWEEN 1 AND 8`),
   index('ai_task_pool_members_connection_idx').on(table.connectionId),
 ]);
+
+/**
+ * 표본 비교 기록(0180, 2026-11-12 운영 콘솔 조각 3a). 관리자가 「모델을 단계에 붙이기 전에 결과를 나란히 보기」를 요청하면 한 줄이 생기고,
+ * 그 작업의 배경 잡이 자기 lease 로 기존 호출 경로·용량 장부를 거쳐 한 묶음씩 부른 결과를 items 에 채운다. 운영 데이터(소개·번역 표)에는 쓰지 않는다.
+ * items = [{productId, name, text, current, candidate}] — 각 쪽은 {state, output, pass, reason}(lib/operations/model-sample-compare.ts).
+ * 연결 id 는 FK 가 아니다 — 비교 기록이 남아 있어도 연결을 지울 수 있게 이름을 함께 적어 둔다.
+ */
+export type ModelSampleRef = { connectionId: string; model: string; name: string };
+export const modelSampleComparisons = pgTable('model_sample_comparisons', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  task: varchar('task', { length: 64 }).notNull(),
+  status: varchar('status', { length: 16 }).$type<'queued' | 'running' | 'done' | 'failed' | 'cancelled'>().notNull().default('queued'),
+  statusCode: varchar('status_code', { length: 120 }),
+  candidate: jsonb('candidate').$type<ModelSampleRef>().notNull(),
+  current: jsonb('current').$type<ModelSampleRef | null>(),
+  sampleSize: integer('sample_size').notNull(),
+  items: jsonb('items').$type<Record<string, unknown>[]>().notNull().default(sql`'[]'::jsonb`),
+  deferrals: integer('deferrals').notNull().default(0),
+  requestedBy: varchar('requested_by', { length: 120 }).notNull(),
+  requestedAt: timestamp('requested_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  startedAt: timestamp('started_at', { withTimezone: true, precision: 3 }),
+  finishedAt: timestamp('finished_at', { withTimezone: true, precision: 3 }),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_sample_comparisons_task_check', sql`${table.task} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
+  check('model_sample_comparisons_status_check', sql`${table.status} IN ('queued','running','done','failed','cancelled')`),
+  check('model_sample_comparisons_size_check', sql`${table.sampleSize} BETWEEN 1 AND 40`),
+  check('model_sample_comparisons_deferrals_check', sql`${table.deferrals} BETWEEN 0 AND 1000`),
+  check('model_sample_comparisons_refs_check', sql`jsonb_typeof(${table.candidate}) = 'object' AND (${table.current} IS NULL OR jsonb_typeof(${table.current}) = 'object')`),
+  check('model_sample_comparisons_items_check', sql`jsonb_typeof(${table.items}) = 'array' AND jsonb_array_length(${table.items}) <= 40 AND pg_column_size(${table.items}) <= 262144`),
+  index('model_sample_comparisons_task_idx').on(table.task, table.id),
+  index('model_sample_comparisons_open_idx').on(table.task, table.id).where(sql`${table.status} IN ('queued','running')`),
+]);
+
+/**
+ * 휴대폰 알림(0183, 2026-11-12 운영 콘솔 조각 4b). 홈 할 일 중 알림 묶음(멈춤 · 평소와 다름)의 「한 번 생김」 하나가 한 줄이다.
+ * maintenance 잡(console-alerts)이 할 일 규칙(console-tasks.ts)을 읽어 열고·이어 쓰고·닫는다(lib/operations/console-alerts.ts planConsoleAlerts).
+ * released_at 이 있고 닫히지 않은 줄을 감시(monitor)가 읽어 기존 전달 통로(복구 게이트웨이 → Oracle watchdog Telegram)로 넘긴다 — Oracle 이 줄 id 마다 한 번 보낸다.
+ * 할 일이 같은 동안은 같은 줄(열린 줄은 할 일 열쇠마다 하나 — 부분 유일 색인), 사라져 닫힌 뒤 다시 생기면 새 줄(다시 알림)이다.
+ */
+export const consoleAlerts = pgTable('console_alerts', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  taskId: varchar('task_id', { length: 160 }).notNull(),
+  rule: varchar('rule', { length: 40 }).notNull(),
+  groupKey: varchar('group_key', { length: 8 }).$type<'stop' | 'odd' | 'pile' | 'tidy'>().notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  fact: varchar('fact', { length: 400 }).notNull(),
+  href: varchar('href', { length: 400 }).notNull(),
+  openedAt: timestamp('opened_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  seenAt: timestamp('seen_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  missingSince: timestamp('missing_since', { withTimezone: true, precision: 3 }),
+  releasedAt: timestamp('released_at', { withTimezone: true, precision: 3 }),
+  closedAt: timestamp('closed_at', { withTimezone: true, precision: 3 }),
+  closeReason: varchar('close_reason', { length: 16 }).$type<'resolved' | 'kept' | 'disabled'>(),
+}, table => [
+  check('console_alerts_group_check', sql`${table.groupKey} IN ('stop','odd','pile','tidy')`),
+  check('console_alerts_close_check', sql`(${table.closedAt} IS NULL) = (${table.closeReason} IS NULL) AND (${table.closeReason} IS NULL OR ${table.closeReason} IN ('resolved','kept','disabled'))`),
+  check('console_alerts_text_check', sql`${table.title} !~ '[[:cntrl:]]' AND ${table.fact} !~ '[[:cntrl:]]' AND ${table.href} !~ '[[:cntrl:]]' AND char_length(${table.title}) >= 1`),
+  uniqueIndex('console_alerts_open_task_idx').on(table.taskId).where(sql`${table.closedAt} IS NULL`),
+  index('console_alerts_released_idx').on(table.id).where(sql`${table.closedAt} IS NULL AND ${table.releasedAt} IS NOT NULL`),
+  index('console_alerts_opened_idx').on(table.openedAt.desc()),
+]);
+export type ConsoleAlertRecord = typeof consoleAlerts.$inferSelect;

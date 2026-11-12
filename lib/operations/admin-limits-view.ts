@@ -193,7 +193,8 @@ export type LimitsMeasurement = {
   mix: readonly { task: string; provider: string; model: string; groupId: string; calls: number }[];
   devices: readonly { deviceId: string; limitSlots: number; enabled: boolean; modelLimits: readonly { model: string; maxSlots: number }[] }[];
   policyRoutes: readonly { routeId: string; provider: string; model: string; groupId: string }[];
-  ranks: readonly { task: string; slot: number; rank: number; model: string; enabled: boolean }[];
+  /** name = 사용자가 정한 모델 이름(연결의 displayName·이름표). 옛 담긴 값에는 없다 — 그때는 model */
+  ranks: readonly { task: string; slot: number; rank: number; model: string; enabled: boolean; name?: string | null }[];
 };
 /** 장부 SQL 에 넘기는 지도: 장부 route → 작업 줄·분류 상한(ms) */
 export type LimitsMeasureMap = Record<string, { task: string; capMs: number | null; providers?: Record<string, number> }>;
@@ -414,8 +415,9 @@ function modelsText(task: LimitsTaskSpec, measurement: LimitsMeasurement | null)
   if (!measurement) return null;
   const ranks = measurement.ranks.filter(row => row.task === task.aiTask && row.enabled);
   const slots = [...new Set(ranks.map(row => row.slot))];
-  if (slots.length > 1) return `${slots.length}칸 · ${[...new Set(ranks.filter(row => row.rank === 1).map(row => row.model))].join(" · ")}`;
-  if (ranks.length) return [...ranks].sort((a, b) => a.rank - b.rank).slice(0, 3).map(row => `${row.rank}순위 ${row.model}`).join(" · ");
+  const shown = (row: (typeof ranks)[number]) => row.name || row.model;
+  if (slots.length > 1) return `${slots.length}칸 · ${[...new Set(ranks.filter(row => row.rank === 1).map(shown))].join(" · ")}`;
+  if (ranks.length) return [...ranks].sort((a, b) => a.rank - b.rank).slice(0, 3).map(row => `${row.rank}순위 ${shown(row)}`).join(" · ");
   const seen = new Map<string, number>();
   for (const row of measurement.mix.filter(entry => entry.task === task.id)) seen.set(row.model, (seen.get(row.model) ?? 0) + row.calls);
   return seen.size ? [...seen].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([model]) => model).join(" · ") : null;
@@ -431,7 +433,7 @@ type MixRow = { task: string; provider: string; model: string; groupId: string; 
 type UnknownRow = { task: string; unknown: number | string; tickCut: number | string; tickMin: number | string | null; tickMax: number | string | null;
   atCap: number | string; cancelled: number | string };
 type DeviceRow = { deviceId: string; limitSlots: number | string; enabled: boolean; modelLimits: unknown };
-type RankRow = { task: string; slot: number | string; rank: number | string; model: string; enabled: boolean };
+type RankRow = { task: string; slot: number | string; rank: number | string; model: string; enabled: boolean; name?: string | null };
 
 const num = (value: number | string | null | undefined): number => { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : 0; };
 const numOrNull = (value: number | string | null | undefined): number | null => value === null || value === undefined ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -458,7 +460,8 @@ export function limitsMeasurementFromRows(input: LimitsMeasureRows): LimitsMeasu
         ? [{ model: (limit as { model: string }).model, maxSlots: Number((limit as { max_slots: unknown }).max_slots) }] : []) })),
     policyRoutes: routes.flatMap(route => route && typeof route === "object" && typeof route.routeId === "string" && typeof route.groupId === "string"
       ? [{ routeId: String(route.routeId), provider: String(route.provider ?? ""), model: String(route.model ?? ""), groupId: String(route.groupId) }] : []),
-    ranks: input.ranks.map(row => ({ task: row.task, slot: num(row.slot), rank: num(row.rank), model: row.model, enabled: row.enabled === true })),
+    ranks: input.ranks.map(row => ({ task: row.task, slot: num(row.slot), rank: num(row.rank), model: row.model, enabled: row.enabled === true,
+      ...(typeof row.name === "string" && row.name ? { name: row.name } : {}) })),
   };
 }
 

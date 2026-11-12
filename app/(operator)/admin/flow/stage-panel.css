@@ -1,0 +1,381 @@
+/* 단계 패널(운영 콘솔 개편 조각 2a) — 2026-11-12 최종 시안 「화면 2 단계 패널」의 구조. 오른쪽에 붙는 칸(넓은 화면 560px, 좁은 화면은 전체 폭).
+   색·글꼴은 관리자 시안 토큰(prototype.css)만 쓴다. 숫자는 tabular-nums, 상태는 점 하나 + 짧은 말(console-home.css 의 .ch-st), 색은 상태에만. */
+.admin-prototype .sp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+}
+.admin-prototype .sp {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 61;
+  width: min(560px, 100vw);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 38px color-mix(in srgb, var(--ink) 10%, transparent);
+  display: grid;
+  align-content: start;
+}
+.admin-prototype .sp-sec {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .sp-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+.admin-prototype .sp-h-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.admin-prototype .sp-h-row h2 {
+  font-size: calc(17px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+  outline: none;
+}
+.admin-prototype .sp-close {
+  margin-left: auto;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+}
+.admin-prototype .sp-close:hover {
+  color: var(--ink);
+  border-color: var(--blue);
+}
+.admin-prototype .sp-lab {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+.admin-prototype .sp-kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  color: var(--muted);
+}
+.admin-prototype .sp-kv > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.admin-prototype .sp-kv b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sp-kv .sp-kv-head {
+  flex-basis: 100%;
+  color: var(--ink);
+  font-weight: 600;
+}
+.admin-prototype .sp-spark {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+}
+.admin-prototype .sp-note {
+  color: var(--muted);
+}
+/* 왜 이런가 · 최근 바뀐 것 — 왼쪽 짧은 이름표, 오른쪽 사실 한 줄 */
+.admin-prototype .sp-cause {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.admin-prototype .sp-cause > li {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+.admin-prototype .sp-cause > li > span:first-child {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .sp-cause > li > span:last-child {
+  overflow-wrap: anywhere;
+}
+.admin-prototype .sp-when > li > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+.admin-prototype .sp-when small {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sp-num {
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .sp-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+/* 작업(주기·마지막 성공·멈춤) */
+.admin-prototype .sp-jobs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.admin-prototype .sp-jobs > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.admin-prototype .sp-jobs > li > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.admin-prototype .sp-facts {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+/* 모델 — 방식(순위대로 · 동시에)과 순위 목록 */
+.admin-prototype .sp-models {
+  display: grid;
+  gap: 14px;
+}
+.admin-prototype .sp-line {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.admin-prototype .sp-line h4 {
+  font-weight: 600;
+}
+.admin-prototype .sp-seg {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.admin-prototype .sp-seg > button {
+  min-height: 32px;
+  padding: 4px 14px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+.admin-prototype .sp-seg > button:last-child {
+  border-right: 0;
+}
+.admin-prototype .sp-seg > button[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 650;
+}
+.admin-prototype .sp-seg > button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+.admin-prototype .sp-rank {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.admin-prototype .sp-rank > li {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 150px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .sp-rank > li:last-child {
+  border-bottom: 0;
+}
+.admin-prototype .sp-tag {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .sp-name {
+  display: grid;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .sp-name small {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .sp-rank > .sp-add {
+  background: var(--surface-2);
+}
+.admin-prototype .sp-rank > .sp-add .text-button {
+  justify-self: start;
+  font-weight: 600;
+}
+.admin-prototype .sp-edit,
+.admin-prototype .sp-dlg,
+.admin-prototype .sp-done {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.admin-prototype .sp-dlg h4 {
+  font-weight: 650;
+}
+.admin-prototype .sp-diff,
+.admin-prototype .sp-impact {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.admin-prototype .sp-diff > li {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+}
+.admin-prototype .sp-diff > li > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .sp-diff s {
+  margin-right: 6px;
+  color: var(--muted);
+}
+.admin-prototype .sp-impact > li {
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.admin-prototype .sp-impact > li[data-tone="warn"] {
+  border-left-color: var(--amber);
+}
+.admin-prototype .sp-impact > li[data-tone="bad"],
+.admin-prototype .sp-warn[data-tone="bad"] {
+  border-left-color: var(--red);
+  color: var(--red);
+}
+.admin-prototype .sp-warn[data-tone="warn"] {
+  color: var(--amber);
+}
+.admin-prototype .sp-ack {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+/* 한도 고치기 — 실시간 한도 편집기를 패널 폭에 맞춰 두 칸으로 쌓는다(화면 폭 기준 6칸 표를 쓰지 않는다) */
+.admin-prototype .sp-fold > summary {
+  cursor: pointer;
+  width: fit-content;
+  color: var(--blue);
+  font-weight: 600;
+}
+.admin-prototype .sp-fold[open] > summary {
+  margin-bottom: 8px;
+}
+.admin-prototype .sp .sp-lim .lim-thead {
+  display: none;
+}
+.admin-prototype .sp .sp-lim .lim-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 12px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.admin-prototype .sp .sp-lim .lim-row .lim-lbl {
+  display: block;
+}
+.admin-prototype .sp .sp-lim .lim-row .lim-task,
+.admin-prototype .sp .sp-lim .lim-row .lim-call,
+.admin-prototype .sp .sp-lim .lim-row .lim-more {
+  grid-column: 1 / -1;
+}
+.admin-prototype .sp .sp-lim .lim-todo-item {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.admin-prototype .sp .sp-lim .lim-todo-act {
+  grid-row: auto;
+  grid-column: 2;
+  justify-self: start;
+}
+@media (max-width: 620px) {
+  .admin-prototype .sp-sec {
+    padding: 12px 16px;
+  }
+  .admin-prototype .sp-rank > li {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+  .admin-prototype .sp-rank > li > .sp-facts {
+    grid-column: 2;
+  }
+}
+/* 패널 안의 순위·「동시에」 고르기(RankSelects layout="rows") — 서랍의 줄 모양(rank-drawer-rows.css)은 .fr 안에서만 걸리므로 패널 폭에 맞춰 따로 둔다(운영 콘솔 통합).
+   한 자리 = 왼쪽 이름(1순위·모델 1) + 오른쪽 고르기, 그 밑에 지금 칸·추론 강도 */
+.admin-prototype .sp-edit .fr-rank-rows {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row-label {
+  display: grid;
+  grid-template-columns: 4.6em minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: start;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row-name {
+  padding-top: 8px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.admin-prototype .sp-edit .fr-rank-row-model,
+.admin-prototype .sp-edit .fr-rank-row-effort {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.admin-prototype .sp-edit .fr-rank-row-model > .text-fg-2:first-child {
+  display: none; /* 「모델」 — 왼쪽 이름 칸이 이미 말한다 */
+}
+.admin-prototype .sp-edit .fr-rank-row-effort {
+  grid-column: 2;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  color: var(--muted);
+}

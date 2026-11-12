@@ -50,7 +50,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
 export type NavBadgeTone = "critical" | "warn" | "neutral";
 /**
  * 메뉴 옆 배지. label 은 보이는 짧은 글자("12", "요청 14"), title 은 마우스·화면 낭독기에 주는 설명("직접 판단 12건").
- * badges 의 열쇠는 메뉴 href 다 — 운영센터는 "/admin/status", 심사 큐는 "/admin/review".
+ * badges 의 열쇠는 옛 화면 href 다 — 운영센터는 "/admin/status", 심사 큐는 "/admin/review". 어느 메뉴에 붙는지는 BADGE_SOURCES.
  */
 export type NavBadge = { label: string; tone: NavBadgeTone; title?: string };
 export type NavBadges = Partial<Record<string, NavBadge>>;
@@ -88,34 +88,21 @@ export function auditBadge(takedowns: { pending: number; overdue: number } | nul
   return { label, tone: pending && takedownSignal(pending)?.tone === "bad" ? "critical" : "warn", title };
 }
 
+/**
+ * 메뉴 여섯마다 모으는 배지(열쇠는 옛 화면 href — badges.ts 가 만드는 값 그대로).
+ * 홈 = 운영센터의 긴급 수, 사람 확인 = 심사 큐의 직접 판단 수와 내릴 후보 배지(내려달라는 요청·소개 수정 요청·감사 거절 적체).
+ * 요청과 감사 적체는 이제 한 메뉴라 내릴 후보 배지를 나누지 않고 그대로 붙인다.
+ */
 const BADGE_SOURCES: Readonly<Record<WorkspaceId, readonly string[]>> = {
   home: ["/admin/status"],
-  review: ["/admin/review"],
-  requests: ["/admin/audit", "/admin/requests", "/admin/feedback", "/admin/maker-replies", "/admin/reactions"],
-  projects: ["/admin/audit", "/admin/products", "/admin/translations"],
+  people: ["/admin/review", "/admin/audit", "/admin/requests", "/admin/feedback", "/admin/maker-replies", "/admin/reactions"],
   models: ["/admin/models", "/admin/models/tasks", "/admin/models/devices", "/admin/models/contracts"],
-  content: ["/admin/talk", "/admin/news", "/admin/ranking"],
-  settings: ["/admin/github-accounts", "/admin/github-integrations"],
+  sources: ["/admin/github-accounts", "/admin/github-integrations"],
+  content: ["/admin/products", "/admin/translations", "/admin/talk", "/admin/news", "/admin/ranking"],
+  log: [],
 };
 const TONE_RANK: Record<NavBadgeTone, number> = { neutral: 0, warn: 1, critical: 2 };
 const LEGACY_LABELS = Object.fromEntries(NAV_GROUPS.flatMap(group => group.pages.map(page => [page.href, page.label])));
-
-/** The legacy audit badge contains request counts and an optional audit backlog; keep their workspace ownership separate. */
-function scopedAuditBadge(id: WorkspaceId, badge: NavBadge): NavBadge | undefined {
-  const title = badge.title ?? "";
-  // Older callers can provide a request badge without a description. Preserve that alarm in the request inbox.
-  if (!title) return id === "requests" ? badge : undefined;
-  const parts = title.split(" · ");
-  const requests = parts.filter(part => /내려달라는 요청|소개 수정 요청/.test(part));
-  const audits = parts.filter(part => /감사 거절/.test(part));
-  if (id === "requests") return requests.length ? { ...badge, title: requests.join(" · ") } : undefined;
-  if (id === "projects") {
-    if (!audits.length) return undefined;
-    // The original label counts requests when both kinds exist. Do not present it as an audit count.
-    return requests.length ? { label: "확인", tone: "warn", title: audits.join(" · ") } : badge;
-  }
-  return badge;
-}
 
 /**
  * A single source keeps its count. Multiple sources show the number of affected places, not a sum of overlapping
@@ -123,8 +110,7 @@ function scopedAuditBadge(id: WorkspaceId, badge: NavBadge): NavBadge | undefine
  */
 export function workspaceBadge(id: WorkspaceId, badges: NavBadges): NavBadge | undefined {
   const rows = [...new Set(BADGE_SOURCES[id])].flatMap(href => {
-    const original = badges[href];
-    const badge = original && (href === "/admin/audit" ? scopedAuditBadge(id, original) : original);
+    const badge = badges[href];
     return badge ? [{ href, badge }] : [];
   });
   if (!rows.length) return undefined;

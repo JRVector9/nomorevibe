@@ -1,7 +1,7 @@
 import { aiTask } from "./ai-tasks";
 import { aiTaskModelSnapshotRows, aiTaskModelsSnapshotPinned } from "./ai-task-models-snapshot";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
-import type { AiTaskExecutionConfig, AiTaskPoolMember } from "./ai-task-execution-config";
+import { AI_TASK_POOL_MEMBER_SLOTS_MAX, type AiTaskExecutionConfig, type AiTaskPoolMember } from "./ai-task-execution-config";
 import { logger } from "@/lib/observability/logger";
 
 const REFRESH_MS = 30_000;
@@ -17,7 +17,14 @@ type Raw = { task: string; slot: number; mode: string; revision: number; updated
   options: unknown; canonical_model: string | null; device_id: string | null; engine_key: string | null;
   label: string | null; kind: string | null; base_url: string | null; api_key_ciphertext: string | null;
   cli_tool: string | null; connection_device_id: string | null; connection_enabled: boolean | null;
-  models: unknown; connection_options: unknown };
+  models: unknown; connection_options: unknown; max_slots: number | string | null; reserve_ranks: boolean | string | null };
+/** 0179 칸(구성원 칸 수) — 없거나 NULL 이면 정하지 않음. 범위 밖이면 스냅숏을 버린다(지어낸 값으로 돌지 않는다). */
+function maxSlotsOf(value: Raw["max_slots"]): number | null {
+  if (value === null || value === undefined) return null;
+  const slots = Number(value);
+  if (!Number.isInteger(slots) || slots < 1 || slots > AI_TASK_POOL_MEMBER_SLOTS_MAX) throw new Error("invalid_task_pool_member_snapshot");
+  return slots;
+}
 
 async function reload(current: State): Promise<void> {
   try {
@@ -29,7 +36,8 @@ async function reload(current: State): Promise<void> {
         to_char(e.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
         m.member_id,m.position,m.connection_id,m.model,m.options,m.canonical_model,m.device_id,m.engine_key,
         c.label,c.kind,c.base_url,c.api_key_ciphertext,c.cli_tool,c.device_id AS connection_device_id,
-        c.enabled AS connection_enabled,c.models,c.options AS connection_options
+        c.enabled AS connection_enabled,c.models,c.options AS connection_options,
+        to_jsonb(m)->>'max_slots' AS max_slots,to_jsonb(e)->>'reserve_ranks' AS reserve_ranks
         FROM ai_task_execution_configs e LEFT JOIN ai_task_pool_members m ON m.task=e.task AND m.slot=e.slot
         LEFT JOIN ai_connections c ON c.id=m.connection_id ORDER BY e.task,e.slot,m.position`));
     }, { accessMode: "read only", isolationLevel: "repeatable read" }));
@@ -50,12 +58,12 @@ async function reload(current: State): Promise<void> {
           models: row.models, connection_options: row.connection_options }]);
         return Object.freeze({ memberId: row.member_id, position: Number(row.position), connectionId: row.connection_id,
           model: row.model, options: bound.options, canonicalModel: row.canonical_model, deviceId: row.device_id,
-          engineKey: row.engine_key, connection: bound.connection });
+          engineKey: row.engine_key, maxSlots: maxSlotsOf(row.max_slots), connection: bound.connection });
       });
       if (first.mode === "workload_pool" && (members.length < 1 || members.length > 4
         || members.some((member, index) => member.position !== index + 1))) throw new Error("invalid_task_pool_membership");
       configs.set(key, Object.freeze({ task: first.task, slot, mode: first.mode as AiTaskExecutionConfig["mode"], revision,
-        updatedAt: first.updated_at, members: Object.freeze(members) }));
+        updatedAt: first.updated_at, members: Object.freeze(members), reserveRanks: first.reserve_ranks === true || first.reserve_ranks === "true" }));
     }
     current.configs = configs; current.loaded = true; current.error = null;
   } catch (error) {
@@ -85,7 +93,7 @@ export function readAiTaskExecutionConfig(taskId: string, slot = 1): AiTaskExecu
   const known = !pinnedLegacyFixture() ? current.configs.get(keyOf(taskId, slot)) : undefined;
   if (!known && current.error && !pinnedLegacyFixture()) throw new ModelCapacityDeferredError("assignments_unavailable");
   return known ?? Object.freeze({ task: taskId, slot, mode: "fallback", revision: null,
-    updatedAt: null, members: Object.freeze([]) });
+    updatedAt: null, members: Object.freeze([]), reserveRanks: false });
 }
 export function aiTaskExecutionReadState(): Readonly<{ loaded: boolean; loadedAt: number; error: string | null }> {
   const current = state(); return { loaded: current.loaded || pinnedLegacyFixture(), loadedAt: current.loadedAt, error: current.error };

@@ -3,7 +3,7 @@ import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult, resumedProfileModel } from "@/lib/domain/products/search-profiles";
 import { isLockNotAvailable, readControlLockHolders } from "@/lib/llm/capacity-lock-diagnostics";
@@ -65,7 +65,8 @@ async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTa
     const remaining = tickRemaining(ctx, JOB, startedAt);
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
-    const concurrency = modelRequestBudget(JOB).concurrency, callMs = modelRouteTimeoutMs(JOB);
+    // 「동시에」(칸 수를 적은 묶음)면 칸 수의 합만큼 함께 돈다 — 그 밖은 예전처럼 단계 동시 수(TextTaskRanks.lanes)
+    const concurrency = ranks.lanes(modelRequestBudget(JOB).concurrency), callMs = modelRouteTimeoutMs(JOB);
     let written = 0, reused = 0, failed = 0, passed = 0, blocked = "";
     // 이번 틱에 이미 집은 제품은 다시 고르지 않는다 — 적지 못하고 돌아온(skipped·쓰기 경합·이 제품만의 미룸) 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다
     const visited = new Set<number>();
@@ -78,6 +79,7 @@ async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTa
         return { done: true };
       }
       let next = 0;
+      const roundStart = written + reused + failed + passed;
       const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
@@ -129,7 +131,8 @@ async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTa
             } catch (error) {
               // 이 제품만의 미룸 — 앞선 호출이 보내진 중(dispatched)·같은 제품이 다른 요청에 묶임(work_busy)·장부 세대 어긋남(ledger_mismatch).
               // 제품 하나를 건너뛰고 틱을 계속 돈다(호출·시도·실패 기록 없음; visited 가 이 틱에 다시 집지 않게 한다).
-              if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(error.reason)) {
+              // 「동시에」에서 고른 구성원만의 미룸도 같다(그 구성원은 이 틱 동안 쉬고 다음 제품은 남은 구성원이 받는다)
+              if (ranks.skipsWork(error)) {
                 passed++;
                 ctx.log("search_profile.passed", { productId: task.product.id, reason: error.reason });
                 continue;
@@ -137,6 +140,8 @@ async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTa
               throw error;
             }
             // 모든 순위를 이 틱에 쓸 수 없다 — 이 제품은 그대로 두고(호출·시도 기록 없음) 틱을 접는다
+            // 「동시에」에서 이 줄에 빈 칸이 없다 — 이 제품을 놓고(다음 바퀴가 다시 집는다) 이 줄만 끝낸다
+            if (attempt.kind === "idle") { visited.delete(task.product.id); return; }
             if (attempt.kind === "unusable" || attempt.value === "stop") return;
           }
         } catch (error) {
@@ -168,6 +173,8 @@ async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTa
         if (failure.reason instanceof ModelCapacityDeferredError && processed >= 1) return deferredJob("model_capacity", processed);
         throw failure.reason;
       }
+      // 「동시에」: 장비에 빈 칸이 없다는 힌트로 모든 줄이 이 바퀴에 한 건도 못 했다 — 다음 바퀴로 대기열을 훑지 않고 포화로 미룬다
+      if (ranks.poolIdle() && written + reused + failed + passed === roundStart) return deferredJob("model_capacity", written + reused + failed);
       if (blocked === "tick_budget") {
         ctx.log("search_profile.budget_deferred", { written, reused, failed, passed });
         return { done: false };

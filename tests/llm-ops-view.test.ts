@@ -189,7 +189,8 @@ describe("connect 에이전트 관측 읽기", () => {
 
 describe("옛 주소 → 새 화면", () => {
   it.each([
-    ["tab=live", "/admin/models"], ["tab=tasks", "/admin/models/tasks"], ["tab=connections", "/admin/models/llm"],
+    // 운영 콘솔 조각 3a: 대시보드는 /admin/models/dashboard 로 옮겼다(/admin/models 는 모델 목록)
+    ["tab=live", "/admin/models/dashboard"], ["tab=tasks", "/admin/models/tasks"], ["tab=connections", "/admin/models/llm"],
     ["tab=capacity", "/admin/models/llm"], ["tab=history", "/admin/models/history"], ["tab=unknown", "/admin/models"],
   ])("/admin/models?%s → %s", (search, href) => expect(modelsLegacyTabHref(query(search))).toBe(href));
   it("tab 이 없으면 넘기지 않고, advanced=1 은 tab 과 상관없이 고급 설정 화면으로 넘긴다(#조각은 브라우저가 지킨다)", () => {
@@ -199,16 +200,26 @@ describe("옛 주소 → 새 화면", () => {
     expect(MODELS_ADVANCED_HREF).toBe("/admin/models/advanced");
   });
   it.each([
-    ["/admin/models", "", "dashboard"], ["/admin/models", "tab=capacity", "llm"], ["/admin/models", "tab=history", "history"],
+    ["/admin/models", "", "list"], ["/admin/models", "tab=capacity", "advanced"], ["/admin/models/dashboard", "", "advanced"],
     ["/admin/models", "advanced=1", "advanced"], ["/admin/models", "tab=live&advanced=1", "advanced"],
-    ["/admin/models/llm", "", "llm"], ["/admin/models/tasks", "", "tasks"], ["/admin/models/history", "", "history"],
+    ["/admin/models/llm", "", "advanced"], ["/admin/models/tasks", "", "tasks"], ["/admin/models/new", "", "list"], ["/admin/models/compare", "", "list"],
     ["/admin/models/devices", "", "advanced"], ["/admin/models/limits", "", "advanced"], ["/admin/models/helpers", "", "advanced"],
-    ["/admin/models/assignments", "", "advanced"], ["/admin/models/contracts", "", "advanced"], ["/admin/models/human", "", "advanced"],
-    ["/admin/models/search", "", "advanced"], ["/admin/models/advanced", "", "advanced"], ["/admin/activity", "workspace=models", "history"],
-  ])("%s?%s 는 LLM 운영의 %s 탭", (path, search, tab) => {
+    ["/admin/models/assignments", "", "advanced"], ["/admin/models/contracts", "", "advanced"],
+    ["/admin/models/search", "", "advanced"], ["/admin/models/advanced", "", "advanced"],
+  ])("%s?%s 는 모델 메뉴의 %s 탭", (path, search, tab) => {
     const location = resolveWorkspace(path, query(search));
     expect(location.workspace.id).toBe("models");
     expect(location.tab).toBe(tab);
     expect(location.secondary).toEqual(tab === "advanced" ? WORKSPACE_SECONDARY.modelsAdvanced : []);
+  });
+  // 2026-11-12 메뉴 여섯: 옛 「LLM 운영 › 기록」은 기록 메뉴의 LLM 기록, 사람 위임 모델은 사람 확인 메뉴
+  it.each([
+    ["/admin/models", "tab=history", "log", "llm"], ["/admin/models/history", "", "log", "llm"],
+    ["/admin/activity", "workspace=models", "log", "changes"], ["/admin/models/human", "", "people", "delegate"],
+  ])("%s?%s 는 %s 메뉴의 %s 탭", (path, search, owner, tab) => {
+    const location = resolveWorkspace(path, query(search));
+    expect(location.workspace.id).toBe(owner);
+    expect(location.tab).toBe(tab);
+    expect(location.secondary).toEqual([]);
   });
 });

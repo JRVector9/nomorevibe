@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { JOB_NAMES } from "@/lib/jobs/catalog";
+import { intervalOverridable, JOB_INTERVAL_MAX_MS, JOB_INTERVAL_MIN_MS } from "@/lib/jobs/job-intervals";
 import { DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS, unknownHoldSecondsSchema } from "@/lib/llm/capacity-unknown-hold";
 import { DEADLINE_LADDER_SKEW_MS, deadlineLadderSchema, type DeadlineLadder } from "@/lib/llm/deadline-policy";
 import { DEFAULT_MODEL_DEADLINES, DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPOSE_LIMITS, DEFAULT_MODEL_TIMEOUTS, MODEL_PURPOSE_ENV,
@@ -20,7 +21,12 @@ import { DEFAULT_MODEL_DEADLINES, DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPO
 export type PurposeLimit = { maxTokens: number; concurrency: number; timeoutMs?: number };
 export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number; slowCallMs?: number; soloAttempts?: number; callMs?: number; maxAttempts?: number; consumerConcurrency?: number; classifierConcurrency?: number;
   /** 공개분 변경 재판정(published-recheck) — 틱마다 견줄 공개 제품 수·하루에 올릴 수·감사 잡 틱마다 물을 수·같다고 볼 낱말 유사도(%)·1차에 물러나는 상한(시간) */
-  scanBatch?: number; dailyCap?: number; askBatch?: number; minSimilarity?: number; yieldHours?: number };
+  scanBatch?: number; dailyCap?: number; askBatch?: number; minSimilarity?: number; yieldHours?: number;
+  /**
+   * 잡 주기 덮어쓰기(ms, 2026-11-12 운영 콘솔 조각 4a) — scheduler 가 읽는다(lib/jobs/job-intervals.ts). 다른 손잡이와 달리 코드 기본값(DEFAULT_RUNTIME_SETTINGS.jobs)에
+   * 없다: 기본값은 카탈로그(lib/jobs/catalog.ts intervalMs)이고, 주기가 있는 카탈로그 잡이면 어느 잡에나 적을 수 있다. 범위 1분~24시간
+   */
+  intervalMs?: number };
 export type JobKnobName = keyof JobKnobs;
 export type ProductTranslationPolicy = { maxSourceChars: number; batchChars: number; batchMax: 4; demandLimit: number; maxAttempts: number; jobMarginMs: number };
 export type JobBudget = number | "auto";
@@ -171,7 +177,11 @@ export const jobKnobsSchema = z.object({
   batch: int(1, 64), batchChars: int(100, 30_000), minCallMs: ms(1_000, 600_000), slowCallMs: ms(1_000, 600_000),
   soloAttempts: int(1, 10), callMs: ms(5_000, 600_000), maxAttempts: int(1, 50), consumerConcurrency: int(1, 4), classifierConcurrency: int(1, 4),
   scanBatch: int(10, 2_000), dailyCap: int(0, 5_000), askBatch: int(0, 16), minSimilarity: int(0, 100), yieldHours: int(0, 168),
+  intervalMs: int(JOB_INTERVAL_MIN_MS, JOB_INTERVAL_MAX_MS),
 }).partial().strict();
+/** 코드 기본값에 없어도 적을 수 있는 손잡이 — 잡 주기(카탈로그에 주기가 있는 잡만) */
+const knobAllowed = (job: string, knob: string, base: JobKnobs | undefined) =>
+  knob === "intervalMs" ? intervalOverridable(job) : !!base && knob in base;
 export const jobBudgetSchema = z.union([ms(5_000), z.literal("auto")]);
 export const JOB_KNOB_NAMES = Object.freeze(Object.keys(jobKnobsSchema.shape) as JobKnobName[]);
 /** 모델 배정 읽기 묶음 — 열거 칸만(불리언처럼 쓰되 저장 문서에는 글자로 남아 감사 줄이 "off → on" 으로 읽힌다) */
@@ -246,7 +256,7 @@ function crossCheckIssues(value: RuntimeSettingsDocument | RuntimeSettings, mode
   for (const [job, knobs] of Object.entries(settings.jobs)) {
     if (!JOB_NAMES.includes(job)) { issues.push({ message: `unknown_job:${job}`, path: ["jobs", job] }); continue; }
     const base = DEFAULT_RUNTIME_SETTINGS.jobs[job];
-    for (const knob of Object.keys(knobs)) if (!base || !(knob in base)) issues.push({ message: `unknown_job_knob:${job}.${knob}`, path: ["jobs", job, knob] });
+    for (const knob of Object.keys(knobs)) if (!knobAllowed(job, knob, base)) issues.push({ message: `unknown_job_knob:${job}.${knob}`, path: ["jobs", job, knob] });
   }
   for (const job of Object.keys(settings.budgets)) if (!JOB_NAMES.includes(job)) issues.push({ message: `unknown_job:${job}`, path: ["budgets", job] });
   const product = settings.translation.product;
@@ -368,13 +378,13 @@ export function resolveRuntimeSettings(stored: unknown, options: { models?: read
     if (value === null) continue;
     if (!JOB_NAMES.includes(job)) { issues.push(`unknown_job:${job}`); continue; }
     if (!isPlainObject(value)) { issues.push(`runtime_settings_invalid:jobs.${job}`); continue; }
-    const base = jobs[job];
     for (const [knob, knobValue] of Object.entries(value)) {
       if (knobValue === null) continue;
       const field = jobKnobsSchema.shape[knob as JobKnobName];
-      if (!base || !field || !(knob in base)) { issues.push(`unknown_job_knob:${job}.${knob}`); continue; }
+      if (!field || !knobAllowed(job, knob, jobs[job])) { issues.push(`unknown_job_knob:${job}.${knob}`); continue; }
       const parsed = field.safeParse(knobValue);
-      if (parsed.success) base[knob as JobKnobName] = parsed.data; else issues.push(`runtime_settings_invalid:jobs.${job}.${knob}`);
+      // 주기 덮어쓰기는 코드 기본값에 줄이 없는 잡에도 적힌다 — 그 잡의 줄을 그때 만든다(덮어쓰기가 없으면 settings.jobs 의 모양은 예전과 같다)
+      if (parsed.success) (jobs[job] ??= {})[knob as JobKnobName] = parsed.data; else issues.push(`runtime_settings_invalid:jobs.${job}.${knob}`);
     }
   }
 
@@ -466,7 +476,8 @@ const TRANSLATION_FIELD_LABELS: Record<keyof ProductTranslationPolicy, string> =
   demandLimit: "요청 보류 한도", maxAttempts: "최대 시도", jobMarginMs: "틱 여유(ms)" };
 const KNOB_LABELS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(ms)", slowCallMs: "느린 호출(ms)",
   soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)", classifierConcurrency: "분류 동시 묶음(1~4)",
-  scanBatch: "틱마다 견줄 제품", dailyCap: "하루 올리기 상한", askBatch: "감사 틱마다 묻기", minSimilarity: "같다고 볼 유사도(%)", yieldHours: "1차 양보 상한(시간)" };
+  scanBatch: "틱마다 견줄 제품", dailyCap: "하루 올리기 상한", askBatch: "감사 틱마다 묻기", minSimilarity: "같다고 볼 유사도(%)", yieldHours: "1차 양보 상한(시간)",
+  intervalMs: "주기(ms)" };
 export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산",
   assignments: "모델 배정 읽기", capacity: "모델 장부 점유", devices: "장비 한도" };
 /** 열거 칸의 값 이름 — 폼의 선택지와 감사 줄이 같은 말을 쓴다 */

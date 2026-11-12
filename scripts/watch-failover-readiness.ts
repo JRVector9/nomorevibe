@@ -6,6 +6,7 @@ import { readMonitorStatus, type MonitorStatus } from '../lib/operations/failove
 import { TEXT_PROGRESS_STAGE_JOBS } from '../lib/operations/worker-progress';
 import { readBodyStrictlyCapped } from '../lib/net/fetch';
 import { capacityMonitorThresholds, capacityReviewOnlyAlarm } from '../lib/operations/model-capacity-unknowns';
+import type { ConsoleAlertRelay } from '../lib/operations/console-alerts';
 
 export type MonitorCycleState = { badSamples: number };
 export type MonitorPushTarget = { name: 'primary' | 'external'; url: string };
@@ -58,7 +59,12 @@ export async function runMonitorCycle(
   return { badSamples };
 }
 
-export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env.MONITOR_HEALTH_PATH ?? '/tmp/monitor-health.json') {
+/**
+ * consoleAlerts — 휴대폰 알림(운영 콘솔 조각 4b): 닫히지 않았고 내보낸 홈 할 일 알림 줄(console-alerts-relay.ts). 읽지 못한 주기에는 칸이 없다
+ * (복구 게이트웨이·Oracle 은 칸이 없으면 「모름」으로 보고 이미 보낸 기록을 지우지 않는다). 빈 목록은 「지금 알릴 것 없음」이다.
+ */
+export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env.MONITOR_HEALTH_PATH ?? '/tmp/monitor-health.json',
+  consoleAlerts?: readonly ConsoleAlertRelay[]) {
   const temporary = `${path}.${process.pid}.tmp`;
   const positive = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value) && value > 0;
   // Stable keys let the independent watchdog age a failure across retries without
@@ -126,7 +132,7 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
   const capacityMode = mode && ['open', 'draining', 'disabled'].includes(mode.mode) && Number.isSafeInteger(mode.changedAt) && mode.changedAt >= 0
     ? { mode: mode.mode, changedAt: mode.changedAt } : undefined;
   writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures, stageFailures,
-    capacityUnknowns: status.capacityUnknowns, capacityMode }), { mode: 0o600 });
+    capacityUnknowns: status.capacityUnknowns, capacityMode, ...(consoleAlerts ? { consoleAlerts } : {}) }), { mode: 0o600 });
   renameSync(temporary, path);
 }
 
@@ -195,14 +201,17 @@ async function main() {
   process.once('SIGINT', () => stop.abort());
   process.once('SIGTERM', () => stop.abort());
   let state: MonitorCycleState = { badSamples: 0 };
+  // 휴대폰 알림 줄(조각 4b) — 표가 없거나(마이그레이션 0183 전) 읽지 못하면 칸을 빼고 쓴다. 감시의 상태·Kuma 는 바꾸지 않는다
+  const { readConsoleAlertRelay } = await import('../lib/operations/console-alerts-relay');
   while (!stop.signal.aborted) {
     const status = await readMonitorStatus();
+    const consoleAlerts = await readConsoleAlertRelay().catch(() => undefined);
     try {
       state = await runMonitorCycle(state, status, {
         push: (next, message) => pushMonitorTargets(targets, next, message, receipts => {
           console.log(JSON.stringify({ event: 'monitor.push', state: next, receipts }));
         }),
-        record: recordMonitorHeartbeat,
+        record: current => recordMonitorHeartbeat(current, undefined, consoleAlerts),
       });
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'monitor_push_failed') throw error;

@@ -2,6 +2,8 @@ import { knownClassificationProvider } from "@/lib/operations/classification-mod
 import { Fragment } from "react";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
+import { jobIntervalOverrides } from "@/lib/jobs/job-intervals";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { isPausedJob } from "@/lib/jobs/status";
 import { downProductCount, DOWN_THRESHOLD } from "@/lib/domain/products/health";
@@ -132,7 +134,8 @@ export function deriveJobHealth(inputs: ActionInputs, workerProgress: DerivedSta
     jobs: inputs.jobStates.map((row) => ({ name: row.name, lastRunAt: asDate(row.lastRunAt), lastSuccessAt: asDate(row.lastSuccessAt),
       lastError: row.lastError, notBefore: asDate(row.notBefore), runs: typeof row.runs === "number" ? row.runs : 0 })),
     observations: inputs.ops.observations, deferrals: inputs.jobDeferrals ?? null, batch: inputs.jobBatch ?? LEGACY_BATCH,
-    silentRoles, now: new Date(inputs.ops.fetchedAt),
+    // 운영 설정이 덮어쓴 잡 주기 — 이 프로세스가 마지막으로 읽은 판(못 읽었으면 코드 기본값)
+    silentRoles, intervals: jobIntervalOverrides({ jobs: runtimeSettings().jobs }), now: new Date(inputs.ops.fetchedAt),
   });
 }
 

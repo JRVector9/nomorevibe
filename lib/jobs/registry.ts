@@ -53,6 +53,7 @@ import { queueEmailDigests, sendEmailOutbox } from "@/lib/jobs/me/email";
 import { recheckMakers } from "@/lib/jobs/me/maker-recheck";
 import { pruneNotifications, sendCategoryDigest, sendDelistedNotifications } from "@/lib/jobs/me/notifications";
 import { reclaimEvidencedModelCapacity } from "@/lib/jobs/model-capacity-reclaim";
+import { sendConsoleAlerts } from "@/lib/jobs/console-alerts";
 import { MODEL_POOL_JOBS, withStoredAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
@@ -180,6 +181,8 @@ const HANDLERS: Record<string, AnyJob> = {
   "notification-category-digest": (ctx) => sendCategoryDigest(ctx),
   "notification-prune": pruneNotifications,
   "model-capacity-reclaim": reclaimEvidencedModelCapacity,
+  /** 휴대폰 알림 — 홈 할 일(멈춤·평소와 다름)이 새로 생기면 알림 줄을 연다(전송은 감시 → Oracle Telegram 통로, 운영 콘솔 조각 4b) */
+  "console-alerts": sendConsoleAlerts,
 
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),

@@ -1,7 +1,7 @@
 import { AI_TASKS, aiTask, aiTaskAccepts, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import { aiTaskEditTarget } from "./ai-task-edit-target";
 import {
-  AI_RANK_SLOT_NAMES, aiRankChoiceOfRow, aiConnectionLabel, aiConnectionModelIds, aiModelsErrorText, aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskRankOptions, validateAiTaskRanks,
+  AI_RANK_SLOT_NAMES, aiRankChoiceOfRow, aiConnectionModelIds, aiModelChoiceName, aiModelDisplayName, aiModelsErrorText, aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskRankOptions, validateAiTaskRanks,
   type AiConnectionView, type AiRankChoice, type AiRankOption, type AiTaskRankRow,
 } from "./admin-ai-tasks";
 import { isLocalModelHost } from "./admin-models-view";
@@ -23,7 +23,8 @@ import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 export type FlowConnectionState = { id: string; label: string; device: string; state: "ok" | "no_key" | "off" | "no_list" | "cli"; text: string };
 
 export function flowConnectionState(connection: AiConnectionView): FlowConnectionState {
-  const base = { id: connection.id, label: aiConnectionLabel(connection), device: connection.deviceId };
+  // 이름은 사용자가 정한 이름 하나(운영 콘솔 통합 — aiModelDisplayName)
+  const base = { id: connection.id, label: aiModelDisplayName(connection), device: connection.deviceId };
   if (!connection.enabled) return { ...base, state: "off", text: "꺼짐" };
   if (connection.kind === "cli") return { ...base, state: "cli", text: connection.cliVersion ? `CLI ${connection.cliVersion.trim().split(/\s+/)[0]}` : "CLI" };
   if (!connection.models || connection.models.length === 0)
@@ -124,7 +125,8 @@ function buildRankEditor(entries: readonly (readonly [LlmStationKey | "off_belt"
         if (connection.enabled || !aiTaskAccepts(task, connection)) continue;
         for (const model of aiConnectionModelIds(connection)) {
           if (options.some((option) => option.provider === connection.id && option.model === model)) continue;
-          options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: group(connection.id, connection.label), text: model, off: true });
+          options.push({ provider: connection.id, model, label: aiModelChoiceName(connection, model), group: group(connection.id, aiModelDisplayName(connection)),
+            text: aiModelChoiceName(connection, model, { short: true }), off: true });
         }
       }
       const editTarget = id === "publish-classify" ? null : aiTaskEditTarget(id);
@@ -170,7 +172,8 @@ export function rankChainText(editor: FlowRankEditor | null, ranks: readonly (Ai
   const parts = ranks.map((row, index) => {
     if (!row) return null;
     const connection = editor?.connections.find((entry) => entry.id === row.provider);
-    return `${index + 1}순위 ${connection ? aiConnectionLabel(connection) : "지워진 연결"} · ${row.model}${row.reasoningEffort ? ` · 추론 ${row.reasoningEffort}` : ""}`;
+    // 사용자가 정한 이름 하나(운영 콘솔 통합) — 서로 다른 모델을 여럿 내놓는 연결만 서버 이름을 덧붙인다
+    return `${index + 1}순위 ${connection ? aiModelChoiceName(connection, row.model) : `지워진 연결 · ${row.model}`}${row.reasoningEffort ? ` · 추론 ${row.reasoningEffort}` : ""}`;
   }).filter((part): part is string => !!part);
   return parts.length ? parts.join(" → ") : "비어 있음";
 }
@@ -226,7 +229,7 @@ export function rankDeviceImpact(editor: FlowRankEditor, changes: readonly RankC
     const connection = row ? editor.connections.find((entry) => entry.id === row.provider) : undefined;
     if (!connection) continue;
     const entry = out.get(connection.deviceId) ?? { deviceId: connection.deviceId, connections: new Set<string>(), create: null };
-    entry.connections.add(aiConnectionLabel(connection));
+    entry.connections.add(aiModelDisplayName(connection));
     entry.create ??= connection.capacitySlots;
     out.set(connection.deviceId, entry);
   }

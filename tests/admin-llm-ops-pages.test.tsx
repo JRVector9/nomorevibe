@@ -309,7 +309,7 @@ describe("기록(/admin/models/history) 그리기", () => {
 });
 
 describe("옛 주소는 새 화면으로 넘긴다", () => {
-  it.each([["tasks", "/admin/models/tasks"], ["connections", "/admin/models/llm"], ["capacity", "/admin/models/llm"], ["history", "/admin/models/history"], ["live", "/admin/models"]])(
+  it.each([["tasks", "/admin/models/tasks"], ["connections", "/admin/models/llm"], ["capacity", "/admin/models/llm"], ["history", "/admin/models/history"], ["live", "/admin/models/dashboard"]])(
     "/admin/models?tab=%s → %s", async (tab, href) => {
       const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
       await expect(ModelsPage({ searchParams: Promise.resolve({ tab }) })).rejects.toThrow(`NEXT_REDIRECT:${href}`);
@@ -319,7 +319,7 @@ describe("옛 주소는 새 화면으로 넘긴다", () => {
     await expect(ModelsPage({ searchParams: Promise.resolve({ tab: "live", advanced: "1" }) })).rejects.toThrow("NEXT_REDIRECT:/admin/models/advanced");
     await expect(ModelsPage({ searchParams: Promise.resolve({ advanced: "1" }) })).rejects.toThrow("NEXT_REDIRECT:/admin/models/advanced");
   });
-  it("tab·advanced 가 없으면 넘기지 않고 대시보드를 그린다", async () => {
+  it("tab·advanced 가 없으면 넘기지 않고 모델 목록을 그린다(대시보드는 /admin/models/dashboard)", async () => {
     const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
     await ModelsPage({ searchParams: Promise.resolve({}) });
     expect(mocks.redirect).not.toHaveBeenCalled();

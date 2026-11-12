@@ -66,3 +66,22 @@ class WatchdogConfigurationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AdminOriginConfigurationTests(unittest.TestCase):
+    """2026-11-12 운영 콘솔 조각 4b: 휴대폰 알림 링크 앞에 붙이는 관리자 사이트 주소(선택). 설정 틀은 위 시험과 같다."""
+    setUp = WatchdogConfigurationTests.setUp
+    read = WatchdogConfigurationTests.read
+
+    def test_admin_origin_is_optional_and_only_a_plain_https_origin(self):
+        self.assertNotIn('adminOrigin', self.read())
+        for origin in ['https://nomorevibe.example', 'https://nomorevibe.example/']:
+            with self.subTest(origin=origin):
+                self.config['adminOrigin'] = origin
+                self.assertEqual(self.read()['adminOrigin'], origin)
+        for origin in ['http://nomorevibe.example', 'https://nomorevibe.example/admin', 'https://user:pw@nomorevibe.example',
+                       'https://nomorevibe.example/?x=1', 'nomorevibe.example', 7]:
+            with self.subTest(origin=origin):
+                self.config['adminOrigin'] = origin
+                with self.assertRaisesRegex(ValueError, 'invalid_admin_origin'):
+                    self.read()

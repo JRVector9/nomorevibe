@@ -18,7 +18,16 @@ import { logger } from "@/lib/observability/logger";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { OPS_FRESH_COOKIE } from "../status/fresh";
 import { jobControlCsrf } from "../status/job-control-csrf";
+import { readConsoleHome, type ConsoleHomeRead } from "@/lib/operations/console-home-read";
+import { buildConsoleTasks } from "@/lib/operations/console-tasks";
+import { stagePanel, type StagePanelDef } from "@/lib/operations/stage-panel-catalog";
+import { buildStagePanel, previewContext, stageChanges } from "@/lib/operations/stage-panel-model";
+import { readStagePanelExtra } from "@/lib/operations/stage-panel-read";
+import { homeTab } from "../workspace-navigation";
+import { ChangeWatch } from "./ChangeWatch";
+import { StagePanel, StagePanelLoading } from "./StagePanel";
 import { readOperatorAway, readOperatorChanges, readOperatorDeskShared, readOperatorDiagnostics } from "./desk";
+import { ConsoleHome } from "./ConsoleHome";
 import type { FlowControls } from "./FlowBoard";
 import { FlowBoard } from "./FlowBoard";
 import { HumanModelSettings } from "./HumanModelSettings";
@@ -54,8 +63,10 @@ async function readControls(admin: { login: string; exp: number }): Promise<Flow
 }
 
 /**
- * 전체 흐름 — 탐색 → 검수 → 프로필 준비 → 발행 → 공개. 검색·번역은 공개 후 별도 분기로 보인다.
- * 기존 공용 집계와 잡·역할 관측의 시각·단위를 함께 표시한다. 추가 모델 호출이나 DB 집계를 하지 않는다.
+ * 운영 홈 — 기본 탭(home)은 「지금 할 일」(네 묶음) + 「흐름」 표(조각 1b, ConsoleHome) + 「바꾼 것 지켜보기」(조각 1c, ChangeWatch).
+ * ?stage=<단계> 면 그 단계의 패널(조각 2a, StagePanel)이 오른쪽에 열린다 — 새로고침·공유해도 같은 패널이다. 탭 해석은 메뉴와 같은 homeTab.
+ * 「흐름 상세」(tab=detail, 옛 주소 tab=flow 도 같다)는 지금까지의 전체 흐름이다 — 탐색 → 검수 → 프로필 준비 → 발행 → 공개. 검색·번역은 공개 후 별도 분기로 보인다.
+ * 기존 공용 집계와 잡·역할 관측의 시각·단위를 함께 표시한다. 추가 모델 호출을 하지 않는다(홈의 24시간 장부 집계는 공유 캐시로 나눠 쓴다).
  * 그 자리의 장애 대응, 그리고 1인 관리자 필수 칸(할 일 — 경보·사람 판단·자리 비운 사이·모두 보기, 최근 바뀐 설정·장비·점검 창).
  * 이 화면이 직접 바꾸는 것은 작업 멈춤·재개(운영센터와 같은 서버 동작, 사유 필수, 작업 로그) 하나다. 나머지는 각 조치의 링크가 보내는 화면에서 한다.
  */
@@ -64,22 +75,55 @@ export default async function AdminFlowPage({ searchParams }: { searchParams?: P
   if (!admin) redirect("/admin/login");
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   const params = await searchParams;
-  const tab = typeof params?.tab === "string" ? params.tab : "flow";
+  const tab = homeTab(typeof params?.tab === "string" ? params.tab : null);
   const advanced = params?.advanced === "1";
+  const stage = typeof params?.stage === "string" ? params.stage : null;
   return (
     <main className="stack pb-10 pt-4"><PageStamp />
       <h1 className="admin-vh">운영 홈 · 실시간 전체 흐름</h1>
       <Suspense fallback={<p className="notice" aria-busy="true">운영 흐름을 읽는 중…</p>}>
-        <FlowWorkspace admin={admin} fresh={fresh} tab={tab} advanced={advanced} />
+        {tab === "home" ? <HomeWorkspace admin={admin} fresh={fresh} stage={stage} />
+          : <FlowWorkspace admin={admin} fresh={fresh} tab={tab} advanced={advanced} stage={stage} />}
       </Suspense>
     </main>
   );
 }
 
+/** 운영 홈 — 할 일 규칙의 입력을 한 번 읽어(읽기마다 따로 실패) 할 일·흐름 표를 그리고, 단계가 열려 있으면 그 패널을 붙인다 */
+async function HomeWorkspace({ admin, fresh, stage }: { admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean; stage: string | null }) {
+  const def = stagePanel(stage);
+  // 패널의 덧읽기는 홈 읽기와 함께 시작한다 — 패널은 따로 기다린다(Suspense), 홈을 막지 않는다
+  const extraRead = def ? readStagePanelExtra(def, fresh) : null;
+  const data = await readConsoleHome(fresh);
+  const secret = authSecret();
+  const readOnly = adminWorkspaceReadOnly();
+  const csrf = secret && !readOnly ? { token: jobControlCsrf(admin, secret), expiresAt: admin.exp } : null;
+  // 「바꾼 것 지켜보기」(조각 1c)는 스스로 읽고 스스로 기다린다(웹들이 나눠 쓰는 캐시)
+  return <ConsoleHome data={data} csrf={csrf} changeWatch={<ChangeWatch fresh={fresh} />}
+    panel={def && extraRead ? <Suspense key={def.key} fallback={<StagePanelLoading label={def.label} />}>
+      <StagePanelLoaded def={def} data={data} extraRead={extraRead} csrf={csrf} readOnly={readOnly} />
+    </Suspense> : undefined} />;
+}
+
+/** 단계 패널 — 홈 읽기(진행·잡·연결·순위·장비·장부)에 패널 덧읽기(멈춘 기록·degraded·순위 사정·순위 편집기·한도·바뀐 것)를 더한다 */
+async function StagePanelLoaded({ def, data, extraRead, csrf, readOnly }: { def: StagePanelDef; data: ConsoleHomeRead;
+  extraRead: ReturnType<typeof readStagePanelExtra>; csrf: { token: string; expiresAt: number } | null; readOnly: boolean }) {
+  const extra = await extraRead;
+  const board = buildConsoleTasks(data.inputs);
+  const panel = buildStagePanel({ key: def.key, now: data.checkedAt, conveyor: data.conveyor, inputs: data.inputs, board, jobStates: data.jobStates,
+    pauses: extra.pauses, degraded: extra.degraded, runtime: extra.runtime, executions: data.executions });
+  if (!panel) return null;
+  const lockReason = readOnly ? "읽기 전용 미리보기 — 여기서는 저장할 수 없습니다."
+    : !data.executions ? "실행 방식을 읽지 못했습니다 — 확인할 때까지 배정을 저장할 수 없습니다." : null;
+  return <StagePanel panel={panel} editor={extra.editor} context={previewContext(data.inputs)} limits={extra.limits} limitRows={extra.limitRows}
+    limitImpact={extra.limitImpact} changes={extra.changes ? stageChanges(extra.changes.rows, panel) : []} changesRead={!!extra.changes}
+    csrf={csrf} jobVersions={data.jobVersions} readOnly={readOnly} lockReason={lockReason} now={new Date(data.checkedAt)} />;
+}
+
 type DeskRead = Promise<OperatorDesk | null>;
 
-async function FlowWorkspace({ admin, fresh, tab, advanced }: {
-  admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean; tab: string; advanced: boolean;
+async function FlowWorkspace({ admin, fresh, tab, advanced, stage }: {
+  admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean; tab: string; advanced: boolean; stage: string | null;
 }) {
   if (tab === "changes") {
     const desk = await readOperatorChanges(admin.login).catch(quiet("desk.changes_unavailable"));
@@ -118,7 +162,7 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
     : <Suspense fallback={<p className="small muted" aria-busy="true">고급 운영 관측을 읽는 중…</p>}>
         <AdvancedFlow data={conveyor} controls={controls} deskRead={fullDeskRead} editor={editor} readRanks={diagnostics} login={admin.login} fresh={fresh} />
       </Suspense>;
-  return <PrototypeFlow humanModelSettings={!diagnostics ? <Suspense fallback={<p className="small muted" aria-busy="true">AI 보조 모델 설정을 읽는 중…</p>}><HumanModelSettings /></Suspense> : undefined} data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab} humanAssist={humanAssist}
+  return <PrototypeFlow initialStage={stage} humanModelSettings={!diagnostics ? <Suspense fallback={<p className="small muted" aria-busy="true">AI 보조 모델 설정을 읽는 중…</p>}><HumanModelSettings /></Suspense> : undefined} data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab} humanAssist={humanAssist}
     reactionRequests={reactions?.count ?? null} advancedContent={advancedContent}
     overviewContent={!diagnostics ? <Suspense fallback={<p className="notice" aria-busy="true">프로젝트 등록 수와 발행 추이를 읽는 중…</p>}>
       <FlowOverviewSummary data={conveyor} desk={desk} reactionRequests={reactions?.count ?? null} />

@@ -172,3 +172,15 @@ it('preserves unknown scheduler and overall observations instead of emitting an 
   report.progress!.overall = 'unknown';
   expect(heartbeat(report).value).not.toHaveProperty('stageFailures');
 });
+
+it('writes the phone alert rows only when they were read — an absent field is unknown, an empty list is "nothing to send" (console 4b)', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'nomorevibe-monitor-heartbeat-'));
+  directories.push(directory);
+  const path = join(directory, 'health.json');
+  recordMonitorHeartbeat(status([]), path, [{ id: 7, title: 'AI 1차가 거의 멈췄습니다', fact: '대기 857건 · 최근 1시간 3건', href: '/admin/flow?stage=first' }]);
+  expect(JSON.parse(readFileSync(path, 'utf8')).consoleAlerts).toEqual([{ id: 7, title: 'AI 1차가 거의 멈췄습니다', fact: '대기 857건 · 최근 1시간 3건', href: '/admin/flow?stage=first' }]);
+  recordMonitorHeartbeat(status([]), path, []);
+  expect(JSON.parse(readFileSync(path, 'utf8')).consoleAlerts).toEqual([]);
+  recordMonitorHeartbeat(status([]), path);
+  expect(JSON.parse(readFileSync(path, 'utf8'))).not.toHaveProperty('consoleAlerts');
+});

@@ -1,7 +1,7 @@
 import { modelRequestBudget, modelRouteTimeoutMs } from "@/lib/llm/model-registry";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
 import { taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
@@ -70,7 +70,8 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
     const remaining = tickRemaining(ctx, JOB, startedAt);
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
-    const concurrency = modelRequestBudget(JOB).concurrency, callMs = modelRouteTimeoutMs(JOB);
+    // 「동시에」(칸 수를 적은 묶음)면 칸 수의 합만큼 함께 돈다 — 그 밖은 예전처럼 단계 동시 수(TextTaskRanks.lanes)
+    const concurrency = ranks.lanes(modelRequestBudget(JOB).concurrency), callMs = modelRouteTimeoutMs(JOB);
     let written = 0, empty = 0, failed = 0, released = 0, blocked = "";
     /** 이 틱에 넘긴 후보(같은 작업의 미룸) — 다시 고르지 않는다 */
     const passed = new Set<number>();
@@ -89,6 +90,7 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
       }
 
       let next = 0, skipped = false;
+      const roundStart = written + empty + failed + passed.size;
       const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
@@ -186,11 +188,14 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 return "next";
               }, { prefer });
               // 모든 순위를 이 틱에 쓸 수 없다 — 이 후보는 그대로 두고(호출·시도 기록 없음) 틱을 접는다
+              // 「동시에」에서 이 줄에 빈 칸이 없다 — 이 후보를 놓고(다음 바퀴가 다시 집는다) 이 줄만 끝낸다
+              if (attempt.kind === "idle") { seen.delete(task.candidate.id); return; }
               if (attempt.kind === "unusable") return;
               if (attempt.value === "stop") return;
             } catch (error) {
-              if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) throw error;
+              if (!ranks.skipsWork(error)) throw error;
               // 이 후보만의 미룸이다(호출·시도·실패 기록 없음) — 이 후보를 넘기고 같은 줄의 다음 후보로 간다.
+              // 「동시에」에서 고른 구성원만의 미룸도 같다(그 구성원은 이 틱 동안 쉬고 다음 후보는 남은 구성원이 받는다).
               passed.add(task.candidate.id);
               ctx.log("tagline.passed", { repo: task.candidate.repo, reason: error.reason });
             }
@@ -209,6 +214,8 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
         throw failure.reason;
       }
       if (skipped) return { done: false };
+      // 「동시에」: 장비에 빈 칸이 없다는 힌트로 모든 줄이 이 바퀴에 한 건도 못 했다 — 다음 바퀴로 훑지 않고 포화로 미룬다
+      if (ranks.poolIdle() && written + empty + failed + passed.size === roundStart) return deferredJob("model_capacity", written + empty + failed);
       if (ranks.exhausted || !ranks.usable().length) {
         // 모든 순위가 이 틱에 쉰다. 포화면 예전처럼 미루고(줄이 풀리면 곧 다시), 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
         const processed = written + empty + failed;

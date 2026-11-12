@@ -17,7 +17,11 @@ import { reasonTranslationServingProvider } from "@/lib/llm/reason-translation-s
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { assertProviderNotRateLimited } from "@/lib/llm/provider-rate-limit";
 
-type Options = { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease };
+/**
+ * pendingClaims: 한 틱에 여러 줄이 함께 돌 때(「동시에」 칸 수) 이 틱이 이미 집은 장부 요청 id — 다른 줄이 같은 대기 요청을 이어받지 않게 한다
+ * (product-translation-model-capacity.ts 와 같은 뜻). 한 줄로 돌 때는 없다(예전 그대로).
+ */
+type Options = { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease; pendingClaims?: { requestIds: Set<string> } };
 type ReservedReasonTranslationResult = Awaited<ReturnType<typeof translateWithReservedReasonGateway>>['result'];
 export type ReasonTranslationCapacityResult = { kind: 'skipped' }
   | { kind: 'ready'; batch: PendingTranslation[]; result: ReservedReasonTranslationResult; expectation: ReasonTranslationWriteExpectation; unknown: boolean };
@@ -29,6 +33,8 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   const batch = structuredClone(value), lease = structuredClone(job);
   const options = { signal: valueOptions.signal, timeoutMs: valueOptions.timeoutMs,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
+  // Tick-local lane scheduling only; durable admission/dispatch checks remain below.
+  const pendingClaims = valueOptions.pendingClaims;
   // Capture only the owner tuple before awaiting; disabled never parses a new
   // role requirement. No missing owner is replaced by a generated boot.
   const env = Object.fromEntries(['ROLE_LEASE_ROLE','ROLE_LEASE_INSTANCE_ID','ROLE_LEASE_BOOT_ID','ROLE_LEASE_RELEASE',
@@ -61,16 +67,21 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   const own = await findOwnPendingReasonTranslationRequests({ owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId }, model: textTaskModel("reason-translate"), provider });
   for (const candidate of own) {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');
+    if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     const recovered = await pendingReasonTranslationBatch(candidate.memberKeys);
+    if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     if (!recovered) { await cancelOwnPendingReasonTranslationRequest(candidate); continue; }
     const recoveredCall = prepareReasonTranslationGatewayCall(recovered.map(item => item.body), { model: textTaskModel("reason-translate"), timeoutMs: options.timeoutMs, provider });
     if (recoveredCall.kind !== 'prepared') throw new ModelCapacityDeferredError('provider_contract_unavailable');
     const current = await prepareReasonTranslationDispatch(recovered, lease, { roleLease, call: recoveredCall });
+    if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     if (current.kind === 'disabled') throw new ModelCapacityDeferredError('disabled');
     if (current.kind === 'skipped') { await cancelOwnPendingReasonTranslationRequest(candidate); continue; }
     if (!('members' in current)) throw new Error('reason_translation_preparation_invalid');
     const recoveredKey = `${reasonTranslationLogicalWorkKey(current.members)}:${reasonTranslationInputHash({ members: current.members, model: textTaskModel("reason-translate") })}`;
     if (candidate.request.workKey !== recoveredKey) { await cancelOwnPendingReasonTranslationRequest(candidate); continue; }
+    // claim and adoption do not yield
+    pendingClaims?.requestIds.add(candidate.request.requestId);
     checked = recovered; call = recoveredCall; initial = current;
     adopted = { requestId: candidate.request.requestId, state: candidate.state }; break;
   }
@@ -80,7 +91,11 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
     workKey: `${logical}:${reasonTranslationInputHash({ members, model: textTaskModel("reason-translate") })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
-  const slot = await requestReasonTranslationModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
+  // 다른 줄이 이 틱에 이미 집은 요청이다 — 이 묶음만 넘긴다
+  if (!adopted && pending && pendingClaims?.requestIds.has(pending.requestId)) throw new ModelCapacityDeferredError('work_busy');
+  const requestId = pending?.requestId ?? randomUUID();
+  pendingClaims?.requestIds.add(requestId);
+  const slot = await requestReasonTranslationModelSlot({ ...identity, requestId }, members);
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
   let prepared: Awaited<ReturnType<typeof prepareReasonTranslationDispatch>>;
   try {

@@ -1,0 +1,2707 @@
+{
+ "_source": "admin-final-20261112/probe.json (2026-11-11T23:59Z 실측) 축소 — scripts 없이 시험 fixture 로만 쓴다 · 2a: 장비 한도·경로 점유, 잡 행, 실행 쪽 순위 사정, 실행 설정, 실시간 한도 4줄을 같은 실측에서 덧붙임",
+ "at": "2026-11-11T23:59:32.820Z",
+ "conveyor": {
+  "measuredAt": "2026-11-11T23:59:34.980Z",
+  "hours": [
+   "2026-11-11T00:00:00.000Z",
+   "2026-11-11T01:00:00.000Z",
+   "2026-11-11T02:00:00.000Z",
+   "2026-11-11T03:00:00.000Z",
+   "2026-11-11T04:00:00.000Z",
+   "2026-11-11T05:00:00.000Z",
+   "2026-11-11T06:00:00.000Z",
+   "2026-11-11T07:00:00.000Z",
+   "2026-11-11T08:00:00.000Z",
+   "2026-11-11T09:00:00.000Z",
+   "2026-11-11T10:00:00.000Z",
+   "2026-11-11T11:00:00.000Z",
+   "2026-11-11T12:00:00.000Z",
+   "2026-11-11T13:00:00.000Z",
+   "2026-11-11T14:00:00.000Z",
+   "2026-11-11T15:00:00.000Z",
+   "2026-11-11T16:00:00.000Z",
+   "2026-11-11T17:00:00.000Z",
+   "2026-11-11T18:00:00.000Z",
+   "2026-11-11T19:00:00.000Z",
+   "2026-11-11T20:00:00.000Z",
+   "2026-11-11T21:00:00.000Z",
+   "2026-11-11T22:00:00.000Z",
+   "2026-11-11T23:00:00.000Z"
+  ],
+  "stations": [
+   {
+    "key": "discover",
+    "phase": "explore",
+    "label": "탐색",
+    "what": "",
+    "waiting": null,
+    "oldestMinutes": null,
+    "done5m": null,
+    "doneHour": 541,
+    "done24h": 13251,
+    "unit": "건",
+    "spark": [
+     595,
+     672,
+     468,
+     559,
+     688,
+     638,
+     672,
+     587,
+     546,
+     579,
+     478,
+     499,
+     444,
+     509,
+     556,
+     478,
+     423,
+     579,
+     566,
+     463,
+     553,
+     588,
+     570,
+     541
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "fetch",
+    "phase": "explore",
+    "label": "원본 수집",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 20,
+    "doneHour": null,
+    "done24h": 13983,
+    "unit": "건",
+    "spark": null,
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "judge",
+    "phase": "review",
+    "label": "규칙 심사",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 20,
+    "doneHour": 544,
+    "done24h": 13415,
+    "unit": "건",
+    "spark": [
+     579,
+     660,
+     481,
+     544,
+     683,
+     627,
+     681,
+     565,
+     556,
+     596,
+     522,
+     506,
+     493,
+     529,
+     576,
+     495,
+     457,
+     606,
+     565,
+     455,
+     545,
+     595,
+     563,
+     536
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "first",
+    "phase": "review",
+    "label": "AI 1차",
+    "what": "",
+    "waiting": 857,
+    "oldestMinutes": 482.1139,
+    "done5m": 0,
+    "doneHour": 3,
+    "done24h": 2479,
+    "unit": "건",
+    "spark": [
+     91,
+     150,
+     139,
+     140,
+     171,
+     161,
+     147,
+     134,
+     154,
+     169,
+     133,
+     150,
+     117,
+     147,
+     155,
+     130,
+     35,
+     39,
+     15,
+     3,
+     10,
+     0,
+     86,
+     3
+    ],
+    "tone": "jam",
+    "status": "막힘",
+    "reason": "대기가 있는데 처리가 없습니다",
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "second",
+    "phase": "review",
+    "label": "AI 2차",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 0,
+    "doneHour": 1,
+    "done24h": 1618,
+    "unit": "표",
+    "spark": [
+     49,
+     82,
+     62,
+     74,
+     95,
+     88,
+     77,
+     73,
+     88,
+     133,
+     102,
+     93,
+     100,
+     111,
+     101,
+     96,
+     81,
+     70,
+     20,
+     4,
+     15,
+     0,
+     3,
+     1
+    ],
+    "tone": "slow",
+    "status": "갈림 보류 늘어남",
+    "reason": "2차 갈림 보류가 24시간 동안 101건 늘었습니다(누적 4,283)",
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "profile",
+    "phase": "profile",
+    "label": "프로필 준비",
+    "what": "",
+    "waiting": 133,
+    "oldestMinutes": null,
+    "done5m": null,
+    "doneHour": 0,
+    "done24h": 230,
+    "unit": "건",
+    "spark": [
+     2,
+     3,
+     2,
+     1,
+     2,
+     5,
+     4,
+     0,
+     2,
+     3,
+     7,
+     4,
+     3,
+     0,
+     0,
+     126,
+     64,
+     2,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "publish",
+    "phase": "publish",
+    "label": "발행",
+    "what": "",
+    "waiting": 0,
+    "oldestMinutes": null,
+    "done5m": 0,
+    "doneHour": 6,
+    "done24h": 1374,
+    "unit": "건",
+    "spark": [
+     42,
+     55,
+     45,
+     43,
+     67,
+     58,
+     50,
+     49,
+     64,
+     97,
+     86,
+     77,
+     86,
+     88,
+     80,
+     171,
+     100,
+     65,
+     19,
+     5,
+     14,
+     2,
+     5,
+     6
+    ],
+    "tone": "idle",
+    "status": "일감 없음",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   },
+   {
+    "key": "keywords",
+    "phase": "keywords",
+    "label": "키워드 등록",
+    "what": "",
+    "waiting": 36885,
+    "oldestMinutes": 6272.894783333333,
+    "done5m": null,
+    "doneHour": 136,
+    "done24h": 7160,
+    "unit": "건",
+    "spark": [
+     298,
+     385,
+     375,
+     370,
+     501,
+     389,
+     439,
+     441,
+     445,
+     558,
+     585,
+     405,
+     538,
+     210,
+     144,
+     149,
+     257,
+     123,
+     87,
+     71,
+     78,
+     81,
+     95,
+     136
+    ],
+    "tone": "flow",
+    "status": "흐름",
+    "reason": null,
+    "holds": [],
+    "facts": [],
+    "links": [],
+    "llm": null
+   }
+  ],
+  "human": {
+   "waiting": 4467,
+   "direct": 4440,
+   "agreed": 27,
+   "awaitingSecond": 87,
+   "awaitingAi": 238,
+   "decided24h": 0,
+   "oldestDays": 15,
+   "in24h": 101,
+   "tone": "slow",
+   "status": "쌓임",
+   "reason": "직접 판단 4,440건 — 500건을 넘었습니다",
+   "llm": null
+  },
+  "held": 4792,
+  "rejected": 671418,
+  "published": 78919,
+  "publishedHour": 6,
+  "bottleneck": "first",
+  "headline": {
+   "tone": "jam",
+   "title": "지금 가장 막힌 곳: AI 1차 — 막힘",
+   "detail": "대기가 있는데 처리가 없습니다 · 최근 1시간 발행 6건"
+  },
+  "funnel": [],
+  "holdsByReason": [
+   {
+    "reason": "second_review_split",
+    "label": "2차 갈림",
+    "count": 4283,
+    "recent24h": 101,
+    "href": "/admin/review?cause=second_review_split#review-list",
+    "station": "second"
+   },
+   {
+    "reason": "ambiguous",
+    "label": "규칙으로 못 가름",
+    "count": 325,
+    "recent24h": 323,
+    "href": null,
+    "station": "judge"
+   },
+   {
+    "reason": "no_description",
+    "label": "소개 문구 없음",
+    "count": 133,
+    "recent24h": 2,
+    "href": "/admin/review?cause=no_description#review-list",
+    "station": "profile"
+   },
+   {
+    "reason": "repo_deleted",
+    "label": "저장소 삭제됨",
+    "count": 30,
+    "recent24h": 7,
+    "href": "/admin/review?cause=repo_deleted#review-list",
+    "station": "fetch"
+   },
+   {
+    "reason": "review_approval_changed",
+    "label": "승인 근거 바뀜",
+    "count": 8,
+    "recent24h": 8,
+    "href": "/admin/review?cause=review_approval_changed#review-list",
+    "station": "publish"
+   },
+   {
+    "reason": "source_refresh_failed",
+    "label": "원본 재수집 실패",
+    "count": 7,
+    "recent24h": 0,
+    "href": "/admin/review?cause=source_refresh_failed#review-list",
+    "station": "fetch"
+   },
+   {
+    "reason": "suspected_spam",
+    "label": "스팸·악성 의심",
+    "count": 5,
+    "recent24h": 0,
+    "href": "/admin/review?cause=suspected_spam#review-list",
+    "station": "judge"
+   },
+   {
+    "reason": "ai_review_exhausted",
+    "label": "1차 재시도 소진",
+    "count": 1,
+    "recent24h": 0,
+    "href": "/admin/review?cause=ai_review_exhausted#review-list",
+    "station": "first"
+   }
+  ],
+  "sinkLlm": null,
+  "supportLlm": null
+ },
+ "progress": {
+  "stages": [
+   {
+    "stage": "fetch",
+    "job": "crawl-fetch",
+    "reason": "manual_attention",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 20,
+    "skipBlock": null
+   },
+   {
+    "stage": "judge",
+    "job": "crawl-judge",
+    "reason": "no_work",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 20,
+    "skipBlock": null
+   },
+   {
+    "stage": "first",
+    "job": "crawl-agent-review",
+    "reason": "no_progress",
+    "alarm": true,
+    "waiting": 857,
+    "oldestMinutes": 482.15813333333335,
+    "completed5m": 0,
+    "skipBlock": {
+     "reason": "all_skipped",
+     "code": "agent_review_all_skipped",
+     "detail": "running=2"
+    }
+   },
+   {
+    "stage": "second",
+    "job": "second-review",
+    "reason": "no_work",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "publish",
+    "job": "crawl-publish",
+    "reason": "no_work",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "evidence",
+    "job": "product-evidence-refresh",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 2116,
+    "oldestMinutes": 14818.338768216667,
+    "completed5m": 96,
+    "skipBlock": null
+   },
+   {
+    "stage": "agent-evidence",
+    "job": "agent-evidence-refresh",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 5,
+    "oldestMinutes": 0.4849,
+    "completed5m": 35,
+    "skipBlock": null
+   },
+   {
+    "stage": "ai-level",
+    "job": "ai-level-refresh",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 25,
+    "oldestMinutes": 0.45405,
+    "completed5m": 49,
+    "skipBlock": null
+   },
+   {
+    "stage": "uptime",
+    "job": "uptime-ping",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 3234,
+    "oldestMinutes": 16.75994865,
+    "completed5m": 999,
+    "skipBlock": null
+   },
+   {
+    "stage": "reason-translate",
+    "job": "reason-translate",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 78863,
+    "oldestMinutes": 60896.23847855,
+    "completed5m": 21,
+    "skipBlock": null
+   },
+   {
+    "stage": "crawl-tagline",
+    "job": "crawl-tagline",
+    "reason": "manual_attention",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "keywords",
+    "job": "product-search-profile",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 17,
+    "skipBlock": null
+   },
+   {
+    "stage": "keyword-verify",
+    "job": "product-search-verify",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 36882,
+    "oldestMinutes": 6273.276360533333,
+    "completed5m": 24,
+    "skipBlock": null
+   },
+   {
+    "stage": "product-translate",
+    "job": "product-translate",
+    "reason": "progressing",
+    "alarm": false,
+    "waiting": 187380,
+    "oldestMinutes": 22874.507983683332,
+    "completed5m": 17,
+    "skipBlock": null
+   },
+   {
+    "stage": "tagline-ko",
+    "job": "product-tagline-ko",
+    "reason": "upstream_stalled",
+    "alarm": true,
+    "waiting": 0,
+    "oldestMinutes": null,
+    "completed5m": 0,
+    "skipBlock": null
+   },
+   {
+    "stage": "intro-check",
+    "job": "product-intro-check",
+    "reason": "paused",
+    "alarm": false,
+    "waiting": 2143,
+    "oldestMinutes": 11877.401311233332,
+    "completed5m": 0,
+    "skipBlock": null
+   }
+  ],
+  "liveness": [
+   {
+    "role": "scheduler",
+    "reason": "present"
+   },
+   {
+    "role": "crawler",
+    "reason": "present"
+   },
+   {
+    "role": "reviewer",
+    "reason": "present"
+   },
+   {
+    "role": "publisher",
+    "reason": "present"
+   },
+   {
+    "role": "maintenance",
+    "reason": "present"
+   },
+   {
+    "role": "text",
+    "reason": "present"
+   }
+  ]
+ },
+ "jobs": [
+  {
+   "name": "agent-evidence-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:54.779Z",
+   "notBefore": null
+  },
+  {
+   "name": "ai-level-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:57.248Z",
+   "notBefore": null
+  },
+  {
+   "name": "audit-qwen",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:01.183Z",
+   "notBefore": null
+  },
+  {
+   "name": "audit-screen-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.712Z",
+   "notBefore": null
+  },
+  {
+   "name": "audit-second-opinion",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:00.590Z",
+   "notBefore": null
+  },
+  {
+   "name": "bluesky-talk",
+   "paused": false,
+   "lastRunAt": "2026-11-11T22:45:08.359Z",
+   "notBefore": null
+  },
+  {
+   "name": "cdn-purge",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:27.917Z",
+   "notBefore": null
+  },
+  {
+   "name": "click-rollup",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:38:50.262Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-agent-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.795Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-fetch",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:38.580Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-judge",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:39.328Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-ko-apply",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:33.504Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-publish",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:37.292Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-seed",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.720Z",
+   "notBefore": null
+  },
+  {
+   "name": "crawl-tagline",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:38.278Z",
+   "notBefore": null
+  },
+  {
+   "name": "email-outbox-send",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:30.246Z",
+   "notBefore": null
+  },
+  {
+   "name": "email-weekly-digest",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.574Z",
+   "notBefore": null
+  },
+  {
+   "name": "github-feedback-delivery",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:12.782Z",
+   "notBefore": null
+  },
+  {
+   "name": "github-integration-reconcile",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:48:24.336Z",
+   "notBefore": null
+  },
+  {
+   "name": "gn-show-seed",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:39:09.250Z",
+   "notBefore": null
+  },
+  {
+   "name": "grok-session-check",
+   "paused": false,
+   "lastRunAt": "2026-11-11T22:12:11.725Z",
+   "notBefore": null
+  },
+  {
+   "name": "heartbeat",
+   "paused": false,
+   "lastRunAt": "2026-08-29T02:24:02.611Z",
+   "notBefore": null
+  },
+  {
+   "name": "held-qwen-retry",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:58.876Z",
+   "notBefore": null
+  },
+  {
+   "name": "hn-show-seed",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:38:48.644Z",
+   "notBefore": null
+  },
+  {
+   "name": "hn-talk",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:46:49.909Z",
+   "notBefore": null
+  },
+  {
+   "name": "human-deepseek-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:33.333Z",
+   "notBefore": null
+  },
+  {
+   "name": "maker-recheck",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:10:57.757Z",
+   "notBefore": null
+  },
+  {
+   "name": "model-capacity-reclaim",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:35.279Z",
+   "notBefore": null
+  },
+  {
+   "name": "news-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:54:15.093Z",
+   "notBefore": null
+  },
+  {
+   "name": "notification-category-digest",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.634Z",
+   "notBefore": null
+  },
+  {
+   "name": "notification-delisted",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.604Z",
+   "notBefore": null
+  },
+  {
+   "name": "notification-prune",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:11:25.238Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-audit",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:52.383Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-automated-action-audit",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:43:31.024Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-embedding",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:51.759Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-evidence-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:41.384Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-intro-check",
+   "paused": true,
+   "lastRunAt": "2026-11-03T17:02:32.166Z",
+   "notBefore": "2126-10-10T17:03:03.555Z"
+  },
+  {
+   "name": "product-llm-assist-audit-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:33.744Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-llm-assist-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:32.008Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-readme-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:40.982Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-repo-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:32.136Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-health",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:18.696Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-profile",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:19.845Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:10.793Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-search-verify",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:29.119Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-site-evidence-refresh",
+   "paused": false,
+   "lastRunAt": null,
+   "notBefore": null
+  },
+  {
+   "name": "product-spam-rescan",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:56:19.307Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-star-observation",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:11.859Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-stars-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:19.845Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-tagline-ko",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:14.362Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-thumbnail-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:08.682Z",
+   "notBefore": null
+  },
+  {
+   "name": "product-translate",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:42.360Z",
+   "notBefore": null
+  },
+  {
+   "name": "published-recheck",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:55.513Z",
+   "notBefore": null
+  },
+  {
+   "name": "ranking-refresh",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:39:08.786Z",
+   "notBefore": null
+  },
+  {
+   "name": "reason-translate",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:57:58.106Z",
+   "notBefore": null
+  },
+  {
+   "name": "second-review",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:14.787Z",
+   "notBefore": "2026-11-08T16:36:37.207Z"
+  },
+  {
+   "name": "split-confirm",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:59.327Z",
+   "notBefore": null
+  },
+  {
+   "name": "split-tiebreak",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:59:02.967Z",
+   "notBefore": null
+  },
+  {
+   "name": "uptime-ping",
+   "paused": false,
+   "lastRunAt": "2026-11-11T23:58:40.583Z",
+   "notBefore": null
+  }
+ ],
+ "observation": {
+  "mode": "open",
+  "since": "2026-11-11T23:26:26.300000Z",
+  "devices": [
+   {
+    "deviceId": "Exaone",
+    "active": 0,
+    "models": [],
+    "limit": 1,
+    "routes": []
+   },
+   {
+    "deviceId": "anthropic-cli",
+    "active": 0,
+    "models": [],
+    "limit": 2,
+    "routes": []
+   },
+   {
+    "deviceId": "gpu3090-qwen",
+    "active": 0,
+    "models": [],
+    "limit": 5,
+    "routes": []
+   },
+   {
+    "deviceId": "m1-qwen",
+    "active": 1,
+    "models": [
+     {
+      "model": "m1-gemma",
+      "active": 1
+     }
+    ],
+    "limit": 2,
+    "routes": [
+     {
+      "routeId": "reason-translate",
+      "active": 1
+     }
+    ]
+   },
+   {
+    "deviceId": "m1max",
+    "active": 0,
+    "models": [],
+    "limit": 2,
+    "routes": []
+   },
+   {
+    "deviceId": "m3-mlx",
+    "active": 2,
+    "models": [
+     {
+      "model": "deepseek-v4.1-flash-1017",
+      "active": 1
+     },
+     {
+      "model": "gpt-oss-120b",
+      "active": 1
+     }
+    ],
+    "limit": 3,
+    "routes": [
+     {
+      "routeId": "local-human-deepseek",
+      "active": 1
+     },
+     {
+      "routeId": "product-translate",
+      "active": 1
+     }
+    ]
+   },
+   {
+    "deviceId": "m3-opencode-host",
+    "active": 0,
+    "models": [],
+    "limit": 2,
+    "routes": []
+   },
+   {
+    "deviceId": "openai-cli",
+    "active": 0,
+    "models": [],
+    "limit": 4,
+    "routes": []
+   },
+   {
+    "deviceId": "supa-direct",
+    "active": 3,
+    "models": [
+     {
+      "model": "supa",
+      "active": 3
+     }
+    ],
+    "limit": 3,
+    "routes": [
+     {
+      "routeId": "product-search-verify",
+      "active": 3
+     }
+    ]
+   }
+  ]
+ },
+ "takedown": {
+  "count": 0,
+  "overdue": 0
+ },
+ "agreed": {
+  "reject": 0,
+  "approve": 27
+ },
+ "audit": {
+  "open": 563,
+  "overdue": 553,
+  "oldestWaitDays": 27
+ },
+ "connections": [
+  {
+   "id": "conn-lg-exaone",
+   "label": "LG EXAONE",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "Exaone",
+   "capacitySlots": 1,
+   "enabled": true,
+   "models": [
+    "k-exaone_v2.5"
+   ],
+   "allowedTasks": [
+    "crawl-tagline",
+    "reason-translate",
+    "product-translate",
+    "product-tagline-ko"
+   ],
+   "keySetAt": "2026-11-10T21:48:29.724Z",
+   "keyValidDays": 30,
+   "updatedAt": "2026-11-11T22:06:46.952Z"
+  },
+  {
+   "id": "conn-m1max",
+   "label": "M1max",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m1max",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "mlx-community/Qwen3.8-27B-4bit",
+    "Qwen3.8"
+   ],
+   "allowedTasks": [],
+   "keySetAt": "2026-11-11T12:24:44.224Z",
+   "keyValidDays": null,
+   "updatedAt": "2026-11-11T22:07:21.824Z"
+  },
+  {
+   "id": "conn-gpu3090-qwen",
+   "label": "gpu3090-qwen",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "gpu3090-qwen",
+   "capacitySlots": 5,
+   "enabled": true,
+   "models": [
+    "qwen3.8-flash-next"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T13:19:13.044Z"
+  },
+  {
+   "id": "conn-m1-gemma",
+   "label": "m1-gemma",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m1-qwen",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "m1-gemma"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T14:38:21.742Z"
+  },
+  {
+   "id": "conn-m3-deepseek",
+   "label": "m3-deepseek",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m3-mlx",
+   "capacitySlots": 1,
+   "enabled": true,
+   "models": [
+    "deepseek-v4.1-flash-1017"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-09T02:05:48.493Z"
+  },
+  {
+   "id": "conn-m3-gpt-oss",
+   "label": "m3-gpt-oss",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "m3-mlx",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "gpt-oss-120b"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-09T02:05:48.535Z"
+  },
+  {
+   "id": "conn-supa-direct",
+   "label": "supa-direct",
+   "kind": "api",
+   "cliTool": null,
+   "deviceId": "supa-direct",
+   "capacitySlots": 3,
+   "enabled": true,
+   "models": [
+    "supa",
+    "Inferact/Qwen3.8-27B-NVFP4"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T14:47:30.771Z"
+  },
+  {
+   "id": "conn-claude-cli",
+   "label": "Claude CLI",
+   "kind": "cli",
+   "cliTool": "claude",
+   "deviceId": "anthropic-cli",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "sonnet"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-08T14:49:44.301Z"
+  },
+  {
+   "id": "conn-m3-opencode",
+   "label": "M3 OpenCode",
+   "kind": "cli",
+   "cliTool": "opencode",
+   "deviceId": "m3-opencode-host",
+   "capacitySlots": 2,
+   "enabled": true,
+   "models": [
+    "opencode-go/deepseek-v4.1-flash"
+   ],
+   "allowedTasks": [],
+   "keySetAt": null,
+   "keyValidDays": null,
+   "updatedAt": "2026-11-06T09:29:43.654Z"
+  }
+ ],
+ "ranks": [
+  {
+   "task": "assist-audit",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "assist-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "audit-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "audit-second-opinion",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "crawl-tagline",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "crawl-tagline",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "crawl-tagline",
+   "slot": 1,
+   "rank": 3,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "first-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-supa-direct",
+   "model": "Inferact/Qwen3.8-27B-NVFP4",
+   "enabled": true
+  },
+  {
+   "task": "first-review",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "held-review-retry",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "human-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "korean-translation-direct",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-audit",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "product-audit",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-opencode",
+   "model": "opencode-go/deepseek-v4.1-flash",
+   "enabled": true
+  },
+  {
+   "task": "product-audit",
+   "slot": 1,
+   "rank": 3,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "product-intro-check",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-claude-cli",
+   "model": "sonnet",
+   "enabled": true
+  },
+  {
+   "task": "product-search-profile",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-search-profile",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "product-search-verify",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-supa-direct",
+   "model": "supa",
+   "enabled": true
+  },
+  {
+   "task": "product-tagline-ko",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-tagline-ko",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-lg-exaone",
+   "model": "k-exaone_v2.5",
+   "enabled": true
+  },
+  {
+   "task": "product-translate",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-translate",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "product-translate",
+   "slot": 1,
+   "rank": 3,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "published-filter",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "reason-translate",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m1-gemma",
+   "model": "m1-gemma",
+   "enabled": true
+  },
+  {
+   "task": "screen-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  },
+  {
+   "task": "search-query-translate",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "second-review",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-supa-direct",
+   "model": "supa",
+   "enabled": true
+  },
+  {
+   "task": "second-review",
+   "slot": 1,
+   "rank": 2,
+   "connectionId": "conn-m3-gpt-oss",
+   "model": "gpt-oss-120b",
+   "enabled": true
+  },
+  {
+   "task": "split-confirm",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017",
+   "enabled": true
+  },
+  {
+   "task": "split-tiebreak",
+   "slot": 1,
+   "rank": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "enabled": true
+  }
+ ],
+ "pools": [
+  {
+   "task": "publish-classify",
+   "slot": 1,
+   "connectionId": "conn-m3-deepseek",
+   "model": "deepseek-v4.1-flash-1017"
+  },
+  {
+   "task": "publish-classify",
+   "slot": 1,
+   "connectionId": "conn-gpu3090-qwen",
+   "model": "qwen3.8-flash-next"
+  }
+ ],
+ "ledger": [
+  {
+   "routeId": "crawl-agent-review",
+   "groupId": "m3-opencode-host",
+   "model": "opencode-go/deepseek-v4.1-flash",
+   "calls": 2315,
+   "settled": 1991,
+   "avgSeconds": 15.3,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-agent-review",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 648,
+   "settled": 639,
+   "avgSeconds": 3.2,
+   "noResult": 4
+  },
+  {
+   "routeId": "crawl-agent-review",
+   "groupId": "supa-direct",
+   "model": "Inferact/Qwen3.8-27B-NVFP4",
+   "calls": 88,
+   "settled": 88,
+   "avgSeconds": 3.8,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-publish-classify",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 1090,
+   "settled": 1007,
+   "avgSeconds": 1.7,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-publish-classify",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 91,
+   "settled": 85,
+   "avgSeconds": 24.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "crawl-tagline",
+   "groupId": "m1-qwen",
+   "model": "m1-gemma",
+   "calls": 183,
+   "settled": 159,
+   "avgSeconds": 2.7,
+   "noResult": 1
+  },
+  {
+   "routeId": "crawl-tagline",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 89,
+   "settled": 89,
+   "avgSeconds": 4.8,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-audit",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 261,
+   "settled": 260,
+   "avgSeconds": 3.1,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-deepseek-confirm",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 13,
+   "settled": 13,
+   "avgSeconds": 7.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-held-qwen",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 145,
+   "settled": 143,
+   "avgSeconds": 3.0,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-human-deepseek",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 5230,
+   "settled": 5226,
+   "avgSeconds": 7.8,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-published-filter",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 10,
+   "settled": 10,
+   "avgSeconds": 3.1,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-qwen-tiebreak",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 85,
+   "settled": 82,
+   "avgSeconds": 2.9,
+   "noResult": 0
+  },
+  {
+   "routeId": "local-screen",
+   "groupId": "gpu3090-qwen",
+   "model": "qwen3.8-flash-next",
+   "calls": 3,
+   "settled": 3,
+   "avgSeconds": 3.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-audit",
+   "groupId": "m3-opencode-host",
+   "model": "opencode-go/deepseek-v4.1-flash",
+   "calls": 285,
+   "settled": 2,
+   "avgSeconds": 13.5,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-search-profile",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 6690,
+   "settled": 6686,
+   "avgSeconds": 6.3,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-search-profile",
+   "groupId": "m3-mlx",
+   "model": "deepseek-v4.1-flash-1017",
+   "calls": 553,
+   "settled": 553,
+   "avgSeconds": 6.4,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-search-verify",
+   "groupId": "supa-direct",
+   "model": "supa",
+   "calls": 6536,
+   "settled": 6451,
+   "avgSeconds": 18.6,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-tagline-ko",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 1027,
+   "settled": 1027,
+   "avgSeconds": 7.2,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-tagline-ko",
+   "groupId": "Exaone",
+   "model": "k-exaone_v2.5",
+   "calls": 135,
+   "settled": 61,
+   "avgSeconds": 2.2,
+   "noResult": 57
+  },
+  {
+   "routeId": "product-translate",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 1335,
+   "settled": 1332,
+   "avgSeconds": 11.6,
+   "noResult": 0
+  },
+  {
+   "routeId": "product-translate",
+   "groupId": "m1-qwen",
+   "model": "m1-gemma",
+   "calls": 650,
+   "settled": 626,
+   "avgSeconds": 5.3,
+   "noResult": 0
+  },
+  {
+   "routeId": "reason-translate",
+   "groupId": "m1-qwen",
+   "model": "m1-gemma",
+   "calls": 2624,
+   "settled": 2619,
+   "avgSeconds": 8.6,
+   "noResult": 0
+  },
+  {
+   "routeId": "search-query-translate",
+   "groupId": "m3-mlx",
+   "model": "gpt-oss-120b",
+   "calls": 1,
+   "settled": 1,
+   "avgSeconds": 1.2,
+   "noResult": 0
+  },
+  {
+   "routeId": "second-review",
+   "groupId": "supa-direct",
+   "model": "supa",
+   "calls": 1780,
+   "settled": 1655,
+   "avgSeconds": 4.0,
+   "noResult": 3
+  }
+ ],
+ "jobStates": [
+  {
+   "name": "agent-evidence-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:10.231Z",
+   "lastError": null
+  },
+  {
+   "name": "ai-level-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:01.804Z",
+   "lastError": null
+  },
+  {
+   "name": "audit-qwen",
+   "lastSuccessAt": "2026-11-11T23:59:09.810Z",
+   "lastError": null
+  },
+  {
+   "name": "audit-screen-review",
+   "lastSuccessAt": "2026-11-11T23:58:42.848Z",
+   "lastError": null
+  },
+  {
+   "name": "audit-second-opinion",
+   "lastSuccessAt": "2026-11-11T23:59:00.875Z",
+   "lastError": null
+  },
+  {
+   "name": "bluesky-talk",
+   "lastSuccessAt": "2026-11-11T22:45:17.712Z",
+   "lastError": null
+  },
+  {
+   "name": "cdn-purge",
+   "lastSuccessAt": "2026-11-11T23:59:27.948Z",
+   "lastError": null
+  },
+  {
+   "name": "click-rollup",
+   "lastSuccessAt": "2026-11-11T23:38:50.714Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-agent-review",
+   "lastSuccessAt": "2026-11-11T23:41:46.922Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-fetch",
+   "lastSuccessAt": "2026-11-11T23:58:38.703Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-judge",
+   "lastSuccessAt": "2026-11-11T23:57:40.025Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-ko-apply",
+   "lastSuccessAt": "2026-11-11T23:59:33.526Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-publish",
+   "lastSuccessAt": "2026-11-11T23:57:37.364Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-seed",
+   "lastSuccessAt": "2026-11-11T23:58:48.258Z",
+   "lastError": null
+  },
+  {
+   "name": "crawl-tagline",
+   "lastSuccessAt": "2026-11-11T23:58:38.319Z",
+   "lastError": null
+  },
+  {
+   "name": "email-outbox-send",
+   "lastSuccessAt": "2026-11-11T23:59:30.258Z",
+   "lastError": null
+  },
+  {
+   "name": "email-weekly-digest",
+   "lastSuccessAt": "2026-11-11T23:56:19.598Z",
+   "lastError": null
+  },
+  {
+   "name": "github-feedback-delivery",
+   "lastSuccessAt": "2026-11-11T23:59:12.845Z",
+   "lastError": null
+  },
+  {
+   "name": "github-integration-reconcile",
+   "lastSuccessAt": "2026-11-11T23:48:24.412Z",
+   "lastError": null
+  },
+  {
+   "name": "gn-show-seed",
+   "lastSuccessAt": "2026-11-11T23:39:09.820Z",
+   "lastError": null
+  },
+  {
+   "name": "grok-session-check",
+   "lastSuccessAt": "2026-11-11T22:12:11.739Z",
+   "lastError": null
+  },
+  {
+   "name": "heartbeat",
+   "lastSuccessAt": "2026-08-29T02:24:02.614Z",
+   "lastError": null
+  },
+  {
+   "name": "held-qwen-retry",
+   "lastSuccessAt": "2026-11-11T23:58:58.996Z",
+   "lastError": null
+  },
+  {
+   "name": "hn-show-seed",
+   "lastSuccessAt": "2026-11-11T23:38:49.186Z",
+   "lastError": null
+  },
+  {
+   "name": "hn-talk",
+   "lastSuccessAt": "2026-11-11T23:46:50.537Z",
+   "lastError": null
+  },
+  {
+   "name": "human-deepseek-review",
+   "lastSuccessAt": "2026-11-11T23:58:28.189Z",
+   "lastError": null
+  },
+  {
+   "name": "maker-recheck",
+   "lastSuccessAt": "2026-11-11T23:10:57.774Z",
+   "lastError": null
+  },
+  {
+   "name": "model-capacity-reclaim",
+   "lastSuccessAt": "2026-11-11T23:59:35.322Z",
+   "lastError": null
+  },
+  {
+   "name": "news-refresh",
+   "lastSuccessAt": "2026-11-11T23:54:17.504Z",
+   "lastError": null
+  },
+  {
+   "name": "notification-category-digest",
+   "lastSuccessAt": "2026-11-11T23:56:19.643Z",
+   "lastError": null
+  },
+  {
+   "name": "notification-delisted",
+   "lastSuccessAt": "2026-11-11T23:56:19.626Z",
+   "lastError": null
+  },
+  {
+   "name": "notification-prune",
+   "lastSuccessAt": "2026-11-11T23:11:25.255Z",
+   "lastError": null
+  },
+  {
+   "name": "product-audit",
+   "lastSuccessAt": "2026-11-11T23:58:52.581Z",
+   "lastError": null
+  },
+  {
+   "name": "product-automated-action-audit",
+   "lastSuccessAt": "2026-11-11T23:43:31.256Z",
+   "lastError": null
+  },
+  {
+   "name": "product-embedding",
+   "lastSuccessAt": "2026-11-11T23:58:53.589Z",
+   "lastError": null
+  },
+  {
+   "name": "product-evidence-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:36.389Z",
+   "lastError": null
+  },
+  {
+   "name": "product-intro-check",
+   "lastSuccessAt": "2026-11-03T17:02:32.828Z",
+   "lastError": null
+  },
+  {
+   "name": "product-llm-assist-audit-review",
+   "lastSuccessAt": "2026-11-11T23:59:33.769Z",
+   "lastError": null
+  },
+  {
+   "name": "product-llm-assist-review",
+   "lastSuccessAt": "2026-11-11T23:59:32.041Z",
+   "lastError": null
+  },
+  {
+   "name": "product-readme-refresh",
+   "lastSuccessAt": "2026-11-11T23:57:44.589Z",
+   "lastError": null
+  },
+  {
+   "name": "product-repo-review",
+   "lastSuccessAt": "2026-11-11T23:59:32.213Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-health",
+   "lastSuccessAt": "2026-11-11T23:59:30.238Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-profile",
+   "lastSuccessAt": "2026-11-11T23:59:31.375Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:18.687Z",
+   "lastError": null
+  },
+  {
+   "name": "product-search-verify",
+   "lastSuccessAt": "2026-11-11T23:59:24.068Z",
+   "lastError": null
+  },
+  {
+   "name": "product-site-evidence-refresh",
+   "lastSuccessAt": null,
+   "lastError": null
+  },
+  {
+   "name": "product-spam-rescan",
+   "lastSuccessAt": "2026-11-11T23:56:19.546Z",
+   "lastError": null
+  },
+  {
+   "name": "product-star-observation",
+   "lastSuccessAt": "2026-11-11T23:59:11.887Z",
+   "lastError": null
+  },
+  {
+   "name": "product-stars-refresh",
+   "lastSuccessAt": "2026-11-11T23:54:50.584Z",
+   "lastError": null
+  },
+  {
+   "name": "product-tagline-ko",
+   "lastSuccessAt": "2026-11-11T23:59:15.043Z",
+   "lastError": null
+  },
+  {
+   "name": "product-thumbnail-refresh",
+   "lastSuccessAt": "2026-11-11T23:59:10.766Z",
+   "lastError": null
+  },
+  {
+   "name": "product-translate",
+   "lastSuccessAt": "2026-11-11T23:58:52.736Z",
+   "lastError": null
+  },
+  {
+   "name": "published-recheck",
+   "lastSuccessAt": "2026-11-11T23:58:55.777Z",
+   "lastError": null
+  },
+  {
+   "name": "ranking-refresh",
+   "lastSuccessAt": "2026-11-11T23:39:08.816Z",
+   "lastError": null
+  },
+  {
+   "name": "reason-translate",
+   "lastSuccessAt": "2026-11-11T23:58:59.832Z",
+   "lastError": null
+  },
+  {
+   "name": "second-review",
+   "lastSuccessAt": "2026-10-25T23:41:15.981Z",
+   "lastError": null
+  },
+  {
+   "name": "split-confirm",
+   "lastSuccessAt": "2026-11-11T23:58:59.352Z",
+   "lastError": null
+  },
+  {
+   "name": "split-tiebreak",
+   "lastSuccessAt": "2026-11-11T23:59:03.065Z",
+   "lastError": null
+  },
+  {
+   "name": "uptime-ping",
+   "lastSuccessAt": "2026-11-11T23:59:03.638Z",
+   "lastError": null
+  }
+ ],
+ "runtime": {
+  "first-review": {
+   "from": "job",
+   "at": "2026-11-11T23:58:44.293Z",
+   "degraded": {
+    "code": "agent_review_all_skipped",
+    "detail": "running=2"
+   },
+   "startedAt": "2026-11-11T23:58:42.777Z",
+   "served": [],
+   "unusable": []
+  },
+  "publish-classify": {
+   "from": "job",
+   "at": "2026-11-11T23:57:37.350Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:57:37.273Z",
+   "pool": {
+    "configRevision": 2,
+    "members": 2,
+    "served": {},
+    "unusable": []
+   },
+   "served": [],
+   "unusable": []
+  },
+  "crawl-tagline": {
+   "from": "job",
+   "at": "2026-11-11T23:59:38.594Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:59:38.545Z",
+   "served": [],
+   "unusable": []
+  },
+  "product-search-profile": {
+   "from": "job",
+   "at": "2026-11-11T23:59:31.364Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:59:19.827Z",
+   "served": [
+    {
+     "rank": 1,
+     "count": 3
+    }
+   ],
+   "unusable": []
+  },
+  "product-tagline-ko": {
+   "from": "job",
+   "at": "2026-11-11T23:59:15.028Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:59:14.344Z",
+   "served": [],
+   "unusable": []
+  },
+  "product-translate": {
+   "from": "job",
+   "at": "2026-11-11T23:58:52.723Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:58:42.341Z",
+   "served": [
+    {
+     "rank": 1,
+     "count": 1
+    }
+   ],
+   "unusable": []
+  },
+  "reason-translate": {
+   "from": "job",
+   "at": "2026-11-11T23:58:59.818Z",
+   "degraded": null,
+   "startedAt": "2026-11-11T23:57:58.087Z",
+   "served": [
+    {
+     "rank": 1,
+     "count": 4
+    }
+   ],
+   "unusable": []
+  },
+  "second-review": {
+   "from": "job",
+   "at": "2026-11-02T10:46:15.978Z",
+   "degraded": {
+    "code": "no_task_models",
+    "detail": "2차 AI 검수: 작업 ↔ 모델(/admin/models/tasks)에 투표자 순위가 없습니다 — 옛 설정·기본 투표자로 대신 부르지 않습니다"
+   },
+   "startedAt": "2026-11-02T10:46:15.955Z",
+   "served": [],
+   "unusable": []
+  }
+ },
+ "executions": [
+  {
+   "task": "publish-classify",
+   "slot": 1,
+   "mode": "workload_pool",
+   "revision": 2,
+   "updatedAt": "2026-11-06T14:05:32.844Z",
+   "members": [
+    {
+     "memberId": "00000000-0000-4000-8000-000000000001",
+     "position": 1,
+     "connectionId": "conn-m3-deepseek",
+     "model": "deepseek-v4.1-flash-1017",
+     "options": {},
+     "deviceId": "m3-mlx"
+    },
+    {
+     "memberId": "00000000-0000-4000-8000-000000000002",
+     "position": 2,
+     "connectionId": "conn-gpu3090-qwen",
+     "model": "qwen3.8-flash-next",
+     "options": {},
+     "deviceId": "gpu3090-qwen"
+    }
+   ]
+  }
+ ],
+ "limits": {
+  "revision": 13,
+  "version": "c174ee490f153c3d",
+  "shortVersion": "vc174ee",
+  "updatedBy": "jr-claude",
+  "updatedAt": "2026-11-11T06:39:27.387Z",
+  "rowError": null,
+  "readOnly": false,
+  "issues": [],
+  "margin": {
+   "path": "translation.product.jobMarginMs",
+   "label": "자동 틱 여유",
+   "kind": "ms",
+   "unit": "초",
+   "initial": "15",
+   "defaultInput": "15",
+   "overridden": false,
+   "min": 5,
+   "max": 120,
+   "ceilingMs": null
+  },
+  "groups": [
+   {
+    "id": "text",
+    "label": "글 작업",
+    "rows": [
+     {
+      "id": "reason-translate",
+      "anchor": "row-reason-translate",
+      "group": "text",
+      "label": "사유 번역",
+      "sub": "심사 사유를 한국어로 옮깁니다",
+      "note": null,
+      "models": "1순위 m1-gemma",
+      "capMs": 45000,
+      "cap": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.reason-translate.timeoutMs",
+        "label": "사유 번역 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "45",
+        "defaultInput": "45",
+        "overridden": false,
+        "min": 1,
+        "max": 3600,
+        "ceilingMs": 300000
+       },
+       "note": null
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.reason-translate",
+        "label": "사유 번역 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "100",
+        "defaultInput": "55",
+        "overridden": true,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": false,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "routes.limits.reason-translate.timeoutMs",
+          "fixedMs": 45000,
+          "ceilingMs": 300000
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "text",
+       "text": "차례로 1건씩",
+       "href": null
+      },
+      "details": [
+       {
+        "path": "jobs.reason-translate.minCallMs",
+        "label": "새 호출을 시작할 최소 남은 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "45",
+        "defaultInput": "30",
+        "overridden": true,
+        "min": 1,
+        "max": 600,
+        "ceilingMs": null,
+        "note": "틱에 이만큼 남아 있어야 새 호출을 시작합니다. 호출 상한보다 짧으면 늦게 시작한 호출이 틱 끝에서 잘립니다"
+       },
+       {
+        "path": "jobs.reason-translate.batch",
+        "label": "한 번에 묶는 수",
+        "kind": "int",
+        "unit": "건",
+        "initial": "4",
+        "defaultInput": "4",
+        "overridden": false,
+        "min": 1,
+        "max": 64,
+        "ceilingMs": null
+       },
+       {
+        "path": "jobs.reason-translate.batchChars",
+        "label": "한 묶음 글자 수",
+        "kind": "int",
+        "unit": "자",
+        "initial": "1600",
+        "defaultInput": "1600",
+        "overridden": false,
+        "min": 100,
+        "max": 30000,
+        "ceilingMs": null
+       },
+       {
+        "path": "jobs.reason-translate.soloAttempts",
+        "label": "이만큼 실패하면 혼자 보냄",
+        "kind": "int",
+        "unit": "회",
+        "initial": "3",
+        "defaultInput": "3",
+        "overridden": false,
+        "min": 1,
+        "max": 10,
+        "ceilingMs": null
+       },
+       {
+        "path": "routes.limits.reason-translate.maxTokens",
+        "label": "응답 토큰 상한",
+        "kind": "int",
+        "unit": "토큰",
+        "initial": "6000",
+        "defaultInput": "6000",
+        "overridden": false,
+        "min": 1,
+        "max": 262144,
+        "ceilingMs": null
+       }
+      ],
+      "minCallPath": "jobs.reason-translate.minCallMs",
+      "measure": {
+       "calls": 2619,
+       "p50Ms": 8617,
+       "p99Ms": 12625.100000000026,
+       "maxMs": 44587,
+       "cutAtCap": 2,
+       "unknown": 2,
+       "tickCut": 1,
+       "tickCutMinMs": 20130,
+       "tickCutMaxMs": 20130,
+       "unknownAtCap": 1,
+       "cancelled": 2
+      },
+      "paused": false,
+      "slots": {
+       "deviceId": "m1-qwen",
+       "slots": 2
+      },
+      "status": {
+       "level": "ok",
+       "text": "정상",
+       "note": null
+      }
+     },
+     {
+      "id": "product-translate",
+      "anchor": "row-product-translate",
+      "group": "text",
+      "label": "공개 번역",
+      "sub": "공개 제품 글을 영어·중국어로 옮깁니다",
+      "note": "원문 글자 상한·묶음 글자·최대 시도는 공개 번역 화면에서 고칩니다.",
+      "models": "1순위 gpt-oss-120b · 2순위 gpt-oss-120b · 3순위 m1-gemma",
+      "capMs": 120000,
+      "cap": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.product-translate.timeoutMs",
+        "label": "공개 번역 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "120",
+        "defaultInput": "300",
+        "overridden": true,
+        "min": 1,
+        "max": 3600,
+        "ceilingMs": 300000
+       },
+       "note": null
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.product-translate",
+        "label": "공개 번역 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "135",
+        "defaultInput": "315",
+        "overridden": false,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": true,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "routes.limits.product-translate.timeoutMs",
+          "fixedMs": 120000,
+          "ceilingMs": 300000
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.product-translate.concurrency",
+        "label": "공개 번역 동시 호출",
+        "kind": "int",
+        "unit": "건",
+        "initial": "1",
+        "defaultInput": "1",
+        "overridden": true,
+        "min": 1,
+        "max": 64,
+        "ceilingMs": null
+       }
+      },
+      "details": [
+       {
+        "path": "routes.limits.product-translate.maxTokens",
+        "label": "응답 토큰 상한",
+        "kind": "int",
+        "unit": "토큰",
+        "initial": "30000",
+        "defaultInput": "30000",
+        "overridden": true,
+        "min": 1,
+        "max": 262144,
+        "ceilingMs": null
+       }
+      ],
+      "minCallPath": null,
+      "measure": {
+       "calls": 1959,
+       "p50Ms": 9022,
+       "p99Ms": 20744.5,
+       "maxMs": 34259,
+       "cutAtCap": 0,
+       "unknown": 0,
+       "tickCut": 0,
+       "tickCutMinMs": null,
+       "tickCutMaxMs": null,
+       "unknownAtCap": 0,
+       "cancelled": 26
+      },
+      "paused": false,
+      "slots": {
+       "deviceId": "m3-mlx",
+       "slots": 2
+      },
+      "status": {
+       "level": "ok",
+       "text": "정상",
+       "note": null
+      }
+     }
+    ]
+   },
+   {
+    "id": "review",
+    "label": "심사",
+    "rows": [
+     {
+      "id": "first-review",
+      "anchor": "row-first-review",
+      "group": "review",
+      "label": "1차 심사",
+      "sub": "수집한 후보를 처음 읽고 승인·거절·보류를 정합니다",
+      "note": null,
+      "models": "1순위 Inferact/Qwen3.8-27B-NVFP4 · 2순위 qwen3.8-flash-next",
+      "capMs": 60000,
+      "cap": {
+       "kind": "field",
+       "field": {
+        "path": "routes.limits.review-cli.timeoutMs",
+        "label": "CLI 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "60",
+        "defaultInput": "20",
+        "overridden": true,
+        "min": 1,
+        "max": 3600,
+        "ceilingMs": null
+       },
+       "note": "Qwen 직접 호출은 2차 심사 상한을 함께 씁니다"
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.crawl-agent-review",
+        "label": "1차 심사 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "110",
+        "defaultInput": "110",
+        "overridden": false,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": false,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "routes.deadlines.review-gateway.clientMs",
+          "fixedMs": 60000,
+          "ceilingMs": null
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "text",
+       "text": "장비 한도가 정함",
+       "href": "/admin/models/devices"
+      },
+      "details": [],
+      "minCallPath": null,
+      "measure": {
+       "calls": 2718,
+       "p50Ms": 9447.5,
+       "p99Ms": 60715.13,
+       "maxMs": 62320,
+       "cutAtCap": 74,
+       "unknown": 0,
+       "tickCut": 0,
+       "tickCutMinMs": null,
+       "tickCutMaxMs": null,
+       "unknownAtCap": 0,
+       "cancelled": 333
+      },
+      "paused": false,
+      "slots": {
+       "deviceId": "gpu3090-qwen",
+       "slots": 5
+      },
+      "status": {
+       "level": "info",
+       "text": "상한에 닿음",
+       "note": null
+      }
+     }
+    ]
+   },
+   {
+    "id": "audit",
+    "label": "감사 · 쉬는 작업",
+    "rows": [
+     {
+      "id": "product-intro-check",
+      "anchor": "row-product-intro-check",
+      "group": "audit",
+      "label": "소개 검수",
+      "sub": "AI 소개를 근거와 대조해 고칩니다",
+      "note": null,
+      "models": "1순위 sonnet",
+      "capMs": 90000,
+      "cap": {
+       "kind": "field",
+       "note": null,
+       "field": {
+        "path": "jobs.product-intro-check.callMs",
+        "label": "소개 검수 호출 상한",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "90",
+        "defaultInput": "90",
+        "overridden": false,
+        "min": 5,
+        "max": 600,
+        "ceilingMs": null
+       }
+      },
+      "tick": {
+       "kind": "field",
+       "field": {
+        "path": "budgets.product-intro-check",
+        "label": "소개 검수 틱 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "110",
+        "defaultInput": "110",
+        "overridden": false,
+        "min": 5,
+        "max": 3600,
+        "ceilingMs": null,
+        "auto": false,
+        "autoAllowed": true,
+        "declared": true,
+        "autoFrom": [
+         {
+          "path": "jobs.product-intro-check.callMs",
+          "fixedMs": 90000,
+          "ceilingMs": null
+         }
+        ],
+        "autoExtraMs": 0
+       }
+      },
+      "concurrency": {
+       "kind": "text",
+       "text": "장비 한도가 정함",
+       "href": "/admin/models/devices"
+      },
+      "details": [
+       {
+        "path": "jobs.product-intro-check.minCallMs",
+        "label": "새 호출을 시작할 최소 남은 시간",
+        "kind": "ms",
+        "unit": "초",
+        "initial": "40",
+        "defaultInput": "40",
+        "overridden": false,
+        "min": 1,
+        "max": 600,
+        "ceilingMs": null,
+        "note": "틱에 이만큼 남아 있어야 새 호출을 시작합니다. 호출 상한보다 짧으면 늦게 시작한 호출이 틱 끝에서 잘립니다"
+       },
+       {
+        "path": "routes.limits.product-intro-check.maxTokens",
+        "label": "응답 토큰 상한",
+        "kind": "int",
+        "unit": "토큰",
+        "initial": "8000",
+        "defaultInput": "8000",
+        "overridden": false,
+        "min": 1,
+        "max": 262144,
+        "ceilingMs": null
+       }
+      ],
+      "minCallPath": "jobs.product-intro-check.minCallMs",
+      "measure": {
+       "calls": 0,
+       "p50Ms": null,
+       "p99Ms": null,
+       "maxMs": null,
+       "cutAtCap": 0,
+       "unknown": 0,
+       "tickCut": 0,
+       "tickCutMinMs": null,
+       "tickCutMaxMs": null,
+       "unknownAtCap": 0,
+       "cancelled": 0
+      },
+      "paused": true,
+      "slots": {
+       "deviceId": "anthropic-cli",
+       "slots": 2
+      },
+      "status": {
+       "level": "off",
+       "text": "쉬는 중",
+       "note": "잡을 사람이 멈춰 두었습니다. 다시 돌 때 쓸 값을 그대로 고칠 수 있습니다"
+      }
+     }
+    ]
+   }
+  ],
+  "todos": [
+   {
+    "id": "first-review:cap-hit",
+    "level": "info",
+    "tag": "확인할 것",
+    "rowId": "first-review",
+    "task": "1차 심사",
+    "title": "호출의 2.7%가 상한 60초에서 끊깁니다",
+    "evidence": "24시간 2,718건 중 74건입니다. 지금 값은 유지해도 되지만 더 낮추면 끊기는 호출이 늘어납니다.",
+    "fills": []
+   }
+  ],
+  "advanced": [],
+  "ladder": {
+   "gatewayMs": "55",
+   "engineMs": "50",
+   "relayMs": ""
+  },
+  "measuredAt": "2026-11-11T23:59:36.689Z",
+  "measureError": null,
+  "unknownHoldSeconds": 600,
+  "apply": null,
+  "roles": [],
+  "audit": []
+ }
+}

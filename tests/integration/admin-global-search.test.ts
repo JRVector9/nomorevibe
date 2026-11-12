@@ -71,7 +71,7 @@ describe("adminGlobalSearch", () => {
     await product("percent-a", { name: "100% real" });
     await product("percent-b", { name: "1000 real" });
     expect((await adminGlobalSearch("0%")).products.map((p) => p.slug)).toEqual(["percent-a"]);
-    expect(await adminGlobalSearch("x")).toEqual({ q: "x", products: [], candidates: [], targets: [], engines: [], models: [], destinations: [] });
+    expect(await adminGlobalSearch("x")).toEqual({ q: "x", products: [], candidates: [], targets: [], engines: [], models: [], destinations: [], commands: [] });
   });
 
   it("서버·수동 모델·CLI·순위·분산 모델을 찾고 숨긴 모델과 비밀 값은 노출하지 않는다", async () => {

@@ -11,8 +11,15 @@ export type AdminSearchEngine = { id: string; label: string; kind: "api" | "cli"
 export type AdminSearchModel = { connectionId: string; connectionLabel: string; deviceId: string; kind: "api" | "cli";
   model: string; enabled: boolean; href: string };
 export type AdminSearchDestination = { id: string; title: string; detail: string; href: string };
+/**
+ * ⌘K 찾기·바꾸기(운영 콘솔 조각 4b) — 이름 하나로 찾은 화면(open)·조치(action)·기록(log). 조치는 실행하지 않고 그 조치가 있는 화면의 그 자리로 보낸다.
+ */
+export type AdminSearchCommand = { id: string; kind: "open" | "action" | "log"; title: string; detail: string; href: string };
+export const ADMIN_SEARCH_COMMAND_KINDS: Readonly<Record<AdminSearchCommand["kind"], string>> = { open: "화면", action: "조치", log: "기록" };
 export type AdminSearchResult = { q: string; products: AdminSearchProduct[]; candidates: AdminSearchCandidate[]; targets: AdminSearchTarget[];
-  engines: AdminSearchEngine[]; models: AdminSearchModel[]; destinations: AdminSearchDestination[] };
+  engines: AdminSearchEngine[]; models: AdminSearchModel[]; destinations: AdminSearchDestination[];
+  /** 옛 서버(배포 중)는 이 칸을 보내지 않는다 */
+  commands?: AdminSearchCommand[] };
 
 /** The connection editor, rather than a guessed default limit, resolves an unknown engine context. */
 export const contextSearch = (term: string) => /컨텍스트|문맥|context|max_model_len|engine_max_len|최대\s*길이/i.test(term);

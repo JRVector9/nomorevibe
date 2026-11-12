@@ -27,11 +27,16 @@ import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-sto
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
+import { inTextRank, pinTextRanks, textContract, textRankRow } from "../text-task-ranks-fixture";
+import { setAiTaskExecutionConfigsForTest } from "@/lib/llm/ai-task-execution-snapshot";
+import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
+import type { AiTaskPoolMember } from "@/lib/llm/ai-task-execution-config";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTranslationServingContract | null }));
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
-  ...await original<typeof import("@/lib/llm/product-translation-serving-contract")>(), resolveProductTranslationServingContract: () => serving.contract,
+  ...await original<typeof import("@/lib/llm/product-translation-serving-contract")>(),
+  // 계약 본문은 시험 서버 하나 — 「동시에」 시험의 둘째 구성원 모델도 같은 서버로 보낸다(모델 이름만 그 모델)
+  resolveProductTranslationServingContract: (model: string) => serving.contract && { ...serving.contract, model },
 }));
 type Raw = Record<string, unknown>;
 // 제품 번역의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B) — 이 파일은 순위 하나(이 모델)를 고정한다
@@ -140,11 +145,11 @@ async function elect() {
     ROLE_LEASE_RELEASE: role.release, ROLE_LEASE_EPOCH: String(role.epoch) })) vi.stubEnv(key, value);
   for (const key of ["ROLE_LEASE_BATCH_VERSION", "ROLE_LEASE_HOST", "ROLE_LEASE_BATCH_EPOCH"]) vi.stubEnv(key, undefined);
 }
-async function seed(fields: ("tagline" | "description")[] = ["tagline"]) {
+async function seed(fields: ("tagline" | "description")[] = ["tagline"], tagline = "문서를 정리하는 도구") {
   const slug = `${prefix}-${++serial}`;
   expect(await admin`SELECT id FROM products WHERE slug=${slug}`).toEqual([]); expect(await admin`SELECT id FROM cdn_purges WHERE slug=${slug}`).toEqual([]);
   expect(await admin`SELECT slug FROM takedown_requests WHERE slug=${slug}`).toEqual([]);
-  const [row] = await tracked(db.insert(products).values({ slug, name: "Doc", url: `https://${slug}.test`, tagline: "문서를 정리하는 도구",
+  const [row] = await tracked(db.insert(products).values({ slug, name: "Doc", url: `https://${slug}.test`, tagline,
     description: "문서를 정리하는 도구", taglineSource: "ai_page", category: "Productivity", status: "seeded", source: "crawler", verifyToken: "fixture", editTokenHash: "fixture" }).returning());
   ownProducts.set(row.id, slug); // committed ID registration, not an unexecuted lazy builder
   expect(await tracked(requestProductTranslations([row.id], "en", fields))).toBe(fields.length);
@@ -611,3 +616,51 @@ it("does not let a retry beyond the dispatch contract hold the queue when the li
     });
   } finally { setRuntimeSettingsForTest(null); }
 }));
+
+// 「동시에」(2026-11-12, 운영 콘솔 개편 2b): 칸 수 1·1 의 두 구성원 → 한 틱에 두 줄이 함께 돌고, 묶음마다 빈 칸이 있는 구성원이 받는다.
+// 호출은 진짜 장부(requestSlot·dispatch·정산)를 거치고, 장부·결과 행에 그 구성원의 모델 이름으로 남는다.
+it("concurrent pool: two capped members take one batch each in the same tick and the ledger records each member's model", exercise(async () => {
+  const SECOND_MODEL = "fixture-second-product-model";
+  const A_BASE = "http://pool-a.test:8000/v1", B_BASE = "http://pool-b.test:8000/v1";
+  const member = (memberId: string, model: string, connectionId: string, baseUrl: string, position: number): AiTaskPoolMember => {
+    const connection = textRankRow(jobName, model, { connectionId, baseUrl, deviceId: "engine", label: model }).connection;
+    return Object.freeze({ memberId, position, connectionId, model, options: {}, canonicalModel: model, deviceId: "engine",
+      engineKey: taskPoolEngineKey(connection, model), maxSlots: 1, connection });
+  };
+  const members = [member("0b0c0d0e-0000-4000-8000-0000000000a9", PRODUCT_TRANSLATE_MODEL, "0b0c0d0e-0000-4000-8000-0000000000a1", A_BASE, 1),
+    member("0b0c0d0e-0000-4000-8000-0000000000b9", SECOND_MODEL, "0b0c0d0e-0000-4000-8000-0000000000b1", B_BASE, 2)];
+  const both: ModelCapacityPolicy = { ...policy, routes: [...policy.routes,
+    { routeId: jobName, provider: "abcllm", model: SECOND_MODEL, providerBudgetId: "account", groupId: "engine" }] };
+  await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(both)}::text::jsonb,
+    policy_hash=${modelCapacityPolicyHash(both)},cursor=0,updated_at=clock_timestamp() WHERE id=1`;
+  setServingContractSnapshotForTest([textContract(jobName, PRODUCT_TRANSLATE_MODEL, { baseUrl: A_BASE }), textContract(jobName, SECOND_MODEL, { baseUrl: B_BASE })]);
+  setAiTaskExecutionConfigsForTest([{ task: jobName, slot: 1, mode: "workload_pool", revision: 5, updatedAt: null, reserveRanks: false, members }]);
+  // 묶음 하나에 필드 하나 — 두 제품이 두 묶음이 되게(묶음 글자 임계 200, 소개 150자)
+  setRuntimeSettingsForTest({ version: 1, translation: { product: { batchChars: 200 } } });
+  try {
+    const long = "문서를 정리하는 도구 ".repeat(14).trim();
+    const first = await seed(["tagline"], long), second = await seed(["tagline"], long);
+    await server(async ({ bodies, setReply }) => {
+      // 두 요청이 모두 엔진에 닿은 뒤에야 답한다 — 한 줄씩 차례로 돌면 둘째 요청이 오지 않아 3초 뒤 풀고 sequential 로 남긴다
+      const held: (() => void)[] = [];
+      let sequential = false;
+      setReply((response, body) => {
+        const items = JSON.parse(JSON.parse(body).messages[1].content);
+        held.push(() => response.end(JSON.stringify(replyBody(items.map(() => "Doc helps you manage documents")))));
+        if (held.length === 2) held.splice(0).forEach(send => send());
+        else setTimeout(() => { if (held.length) { sequential = true; held.splice(0).forEach(send => send()); } }, 3000);
+      });
+      expect(await tick()).toMatchObject({ status: "completed", done: true });
+      expect(sequential).toBe(false);
+      expect(bodies).toHaveLength(2);
+      expect(new Set(bodies.map(body => JSON.parse(body).model))).toEqual(new Set([PRODUCT_TRANSLATE_MODEL, SECOND_MODEL]));
+    });
+    const rows = await admin`SELECT model,state,route_id FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY model`;
+    expect(rows.map(row => ({ ...row }))).toEqual([PRODUCT_TRANSLATE_MODEL, SECOND_MODEL].sort().map(model => ({ model, state: "settled", route_id: jobName })));
+    const stored = await admin`SELECT product_id,status,model FROM product_translations WHERE product_id=ANY(${[first.product.id, second.product.id]}::int[])`;
+    expect(stored.every(row => row.status === "ready")).toBe(true);
+    expect(new Set(stored.map(row => row.model))).toEqual(new Set([PRODUCT_TRANSLATE_MODEL, SECOND_MODEL]));
+    const [observed] = await admin`SELECT value FROM operations_observations WHERE key=${`job:${jobName}`}`;
+    expect(JSON.stringify(observed.value)).toContain("pool_lanes");
+  } finally { setAiTaskExecutionConfigsForTest(null); setRuntimeSettingsForTest(null); }
+}), 30_000);

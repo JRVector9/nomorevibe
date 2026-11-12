@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { aiTaskSupportsWorkloadPool, aiTaskWorkloadPoolApiOnly, type AiTaskExecutionInput, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskPoolCappedLanes, aiTaskPoolFeatures, aiTaskSupportsPool, aiTaskWorkloadPoolApiOnly,
+  type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
-import { aiRankReasoningEfforts, type AiConnectionView, type AiRankChoice, type AiRankOption } from "@/lib/operations/admin-ai-tasks";
-import { modelPickerConnectionLabel, modelPickerModelLabel } from "../model-picker-display";
+import { aiModelChoiceName, aiRankReasoningEfforts, type AiConnectionView, type AiRankChoice, type AiRankOption } from "@/lib/operations/admin-ai-tasks";
+import { poolMemberIssues, poolMembersInput, poolSlotTexts } from "@/lib/operations/task-pool-form";
 import { RankSelects } from "../RankSelects";
 import type { AiTaskActionState } from "./actions";
 import { saveTaskExecutionAction } from "./execution-actions";
+import { PoolReserveField, PoolSlotFields } from "./PoolSlotFields";
 
 /** 실행 쪽의 순위 사정(화면 값) — 잡의 마지막 틱(from job) 또는 이 웹 프로세스의 마지막 요청(from web). at 은 화면 글, observedAt 은 원래 시각, fresh = 30분 안(서버가 정한다). */
 export type TaskRuntimeLine = { from: "job" | "web"; at: string; served: { rank: number; count: number }[]; unusable: { rank: number; code: string; text: string; count: number }[];
@@ -57,41 +59,30 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
   const initial = view.members.map(member => ({ provider: member.connectionId, model: member.model,
     ...(typeof member.options.reasoningEffort === "string" && member.options.reasoningEffort ? { reasoningEffort: member.options.reasoningEffort } : {}) }));
   const [value, setValue] = useState<(AiRankChoice | null)[]>(initial);
-  const supported = aiTaskSupportsWorkloadPool(view.task, view.slot);
+  // 0179: 구성원마다 이 단계에 내줄 칸 수(빈 칸 = 정하지 않음)와 예비 순위 — 검사·저장 값은 단계 패널과 같은 함수(task-pool-form)
+  const initialSlots = poolSlotTexts(view.members);
+  const [slots, setSlots] = useState<string[]>(initialSlots);
+  const [reserve, setReserve] = useState(view.reserveRanks);
+  const supported = aiTaskSupportsPool(view.task, view.slot);
+  const features = aiTaskPoolFeatures(view.task, view.slot);
   const apiOnly = aiTaskWorkloadPoolApiOnly(view.task);
   const currentRuntime = currentTaskPoolRuntime(view, connections, runtime);
   if (!supported && view.mode === "fallback") return null;
-  const membersOf = (values: readonly (AiRankChoice | null)[]): AiTaskExecutionInput["members"] => values.flatMap((choice, index) => {
-    if (!choice) return [];
-    // Repeated engines are independent distribution members; never reuse one member id in two positions.
-    const previous = view.members.find(member => member.position === index + 1 && member.connectionId === choice.provider && member.model === choice.model);
-    return [{ ...(previous ? { memberId: previous.memberId } : {}), connectionId: choice.provider, model: choice.model,
-      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}) }];
-  });
-  const members = membersOf(value);
-  const changed = mode !== view.mode || mode === "workload_pool" && JSON.stringify(members) !== JSON.stringify(membersOf(initial));
-  const issuesOf = (values: readonly (AiRankChoice | null)[]) => {
-    const selected = values.filter((choice): choice is AiRankChoice => choice !== null);
-    const issues: string[] = [];
-    if (!selected.length) issues.push("분산할 모델을 하나 이상 선택하세요.");
-    if (selected.some(choice => !connections.some(connection => connection.id === choice.provider && connection.enabled)))
-      issues.push("꺼졌거나 없는 연결을 바꿔주세요.");
-    if (apiOnly && selected.some(choice => !connections.some(connection => connection.id === choice.provider && (connection.kind === "api" || connection.cliTool === "opencode"))))
-      issues.push("발행 분류에는 API 또는 OpenCode 연결을 선택하세요.");
-    if (selected.some((choice, index) => connections.some(connection => connection.id === choice.provider && connection.kind === "cli")
-      && selected.slice(0, index).some(previous => previous.provider === choice.provider && previous.model === choice.model
-        && (previous.reasoningEffort ?? "") !== (choice.reasoningEffort ?? ""))))
-      issues.push("같은 CLI 연결·모델은 추론 강도를 같게 설정하세요.");
-    return issues;
-  };
+  const members = poolMembersInput(value, slots, view.members, features);
+  const reserveOn = features.reserve && reserve;
+  const changed = mode !== view.mode || mode === "workload_pool" && (JSON.stringify(members) !== JSON.stringify(poolMembersInput(initial, initialSlots, view.members, features))
+    || reserveOn !== (features.reserve && view.reserveRanks));
+  const lanes = aiTaskPoolCappedLanes({ task: view.task, slot: view.slot, mode: "workload_pool", members });
+  const issuesOf = (values: readonly (AiRankChoice | null)[]) => poolMemberIssues(values, slots, connections, { apiOnly, features });
+  const nameOf = (choice: AiRankChoice) => { const connection = connections.find(row => row.id === choice.provider); return connection ? aiModelChoiceName(connection, choice.model) : "지워진 연결"; };
   const issues = mode === "workload_pool" ? issuesOf(value) : [];
   // Keep a missing saved choice visible until the operator explicitly changes it.
   const choices = options.filter(option => !apiOnly || connections.some(connection => connection.id === option.provider && (connection.kind === "api" || connection.cliTool === "opencode")));
   for (const member of view.members) if (!choices.some(option => option.provider === member.connectionId && option.model === member.model)) {
     const connection = connections.find(row => row.id === member.connectionId);
     choices.push({ provider: member.connectionId, model: member.model, saved: true,
-      label: `${connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · ${member.model} (저장된 값)`,
-      group: connection ? modelPickerConnectionLabel(connection) : "연결 없음", text: connection ? modelPickerModelLabel(connection, member.model) : member.model,
+      label: `${connection ? aiModelChoiceName(connection, member.model) : "연결 없음"} (저장된 값)`,
+      group: connection ? aiModelChoiceName(connection) : "연결 없음", text: connection ? `${aiModelChoiceName(connection, member.model, { short: true })} (저장된 값)` : "저장된 값",
       reasoningEfforts: connection ? aiRankReasoningEfforts(view.task, connection, member.model) : [] });
   }
   return <section className="mt-task-execution" aria-label={`${label} 실행 방식`}>
@@ -99,12 +90,13 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
       <input type="hidden" name="task" value={view.task} /><input type="hidden" name="slot" value={view.slot} />
       <input type="hidden" name="expectedRevision" value={view.revision ?? ""} />
       <input type="hidden" name="members" value={JSON.stringify(mode === "workload_pool" ? members : [])} />
+      {mode === "workload_pool" && reserveOn && <input type="hidden" name="reserveRanks" value="1" />}
       <div className="mt-task-form-toolbar">
       <label className="grid min-w-0 gap-1 text-[13px]">실행 방식
         <select name="mode" value={mode} disabled={saving || readOnly} className="min-h-9 min-w-0 rounded-lg border border-line bg-bg-card px-2"
           onChange={event => setMode(event.target.value as typeof mode)}>
-          <option value="fallback">{apiOnly ? "기존 CLI 분류" : "대체 실행 · 우선순위로 모델 하나 선택"}</option>
-          <option value="workload_pool" disabled={!supported}>작업 분산 · 최대 4칸</option>
+          <option value="fallback">{apiOnly ? "기존 CLI 분류" : "순위대로 · 앞 모델을 쓸 수 없을 때 다음 순위"}</option>
+          <option value="workload_pool" disabled={!supported}>동시에 · 묶은 모델이 함께 처리</option>
         </select>
       </label>
       <button type="submit" disabled={saving || readOnly || !changed || issues.length > 0 || mode === "workload_pool" && !supported}
@@ -117,6 +109,10 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
           options={choices} connections={connections} value={value} onChange={setValue} slotNames={MEMBER_FIELDS}
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
         {view.task === "second-review" && <p className="text-[13px] text-fg-3">후보별 모델 하나를 고르며, 투표 수는 늘리지 않습니다.</p>}
+        {features.slotCaps && <PoolSlotFields value={value} slots={slots} disabled={saving || readOnly} nameOf={nameOf}
+          onChange={(index, raw) => setSlots(current => current.map((entry, at) => at === index ? raw : entry))} lanes={lanes} />}
+        {features.reserve && <PoolReserveField checked={reserve} disabled={saving || readOnly} onChange={setReserve} />}
+        {!features.slotCaps && <p className="text-[13px] text-fg-3">이 작업은 아직 모델별 상한·예비를 따르지 않습니다. 일 하나마다 모델 하나를 고릅니다.</p>}
       </> : <p className="text-[13px] text-fg-3">{apiOnly ? "API·OpenCode 모델을 쓰려면 작업 분산으로 전환하세요." : "우선 모델 하나를 사용하고, 대체가 필요할 때만 다음 순위로 전환합니다."}</p>}
       {view.mode === "workload_pool" && <div className="grid gap-1 text-[13px] text-fg-3">
         {currentRuntime?.pool ? <>
@@ -124,7 +120,7 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
           {taskPoolRuntimeGroups(view, currentRuntime).map(group => {
             const member = group.members[0];
             const connection = connections.find(row => row.id === member.connectionId);
-            return <p key={group.key}>{group.members.map(row => `모델 ${row.position}`).join("·")} · {connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · {connection ? modelPickerModelLabel(connection, member.model) : member.model}
+            return <p key={group.key}>{group.members.map(row => `모델 ${row.position}`).join("·")} · {connection ? aiModelChoiceName(connection, member.model) : "연결 없음"}
               {group.served === null ? " · 사용 집계 없음" : ` · ${group.shared ? "동일 모델 공유 업무" : "맡은 업무"} ${group.served}건`}
               {group.unusable > 0 && <span> · 사용 불가 {group.unusable}건</span>}</p>;
           })}

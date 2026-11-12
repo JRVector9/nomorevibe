@@ -28,9 +28,10 @@ describe("화면마다 다시 읽는 규칙", () => {
   });
 
   it.each([
-    ['/admin/flow', '', 15_000, 0], ['/admin/flow', 'tab=diagnostics', 15_000, 0],
+    ['/admin/flow', '', 15_000, 0], ['/admin/flow', 'tab=diagnostics', 15_000, 0], ['/admin/flow', 'stage=first', 30_000, 15_000],
+    ['/admin/flow', 'tab=detail&stage=first', 15_000, 0],
     ['/admin/flow', 'tab=changes', 60_000, 15_000], ['/admin/models', '', 15_000, 15_000],
-    ['/admin/models', 'tab=live', 15_000, 15_000], ['/admin/models', 'tab=capacity', 15_000, 15_000],
+    ['/admin/models', 'tab=live', 15_000, 15_000], ['/admin/models/dashboard', '', 15_000, 15_000], ['/admin/models/compare', '', 60_000, 15_000], ['/admin/models', 'tab=capacity', 15_000, 15_000],
     ['/admin/models', 'tab=unknown', 15_000, 15_000], ['/admin/models', 'tab=history', 60_000, 15_000],
     ['/admin/models', 'tab=tasks', 60_000, 15_000], ['/admin/models', 'tab=connections', 60_000, 15_000],
     ['/admin/review', 'tab=rejected', 60_000, 60_000], ['/admin/review', 'tab=human', 30_000, 60_000],
@@ -268,15 +269,20 @@ describe("갱신 줄", () => {
     router.pathname = "/admin/audit";
     router.search = "tab=requests";
     const requests = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z" account="operator@example.com"><main>실제 화면 본문</main></AdminShell>);
-    expect(requests).toContain('data-workspace="requests"');
+    // 2026-11-12 메뉴 여섯: 요청과 감사는 같은 「사람 확인」 메뉴 — query 는 그 안의 탭(요청함 › 내림·수정)을 고른다
+    expect(requests).toContain('data-workspace="people"');
     expect(requests).toContain('admin-workspace-tabs');
+    expect(requests).toMatch(/<a [^>]*aria-current="page"[^>]*href="\/admin\/requests\?tab=correction"/);
     expect(requests).toContain('search-launch');
     expect(requests).toContain('operator@example.com');
     expect(requests).toContain('action="/api/auth/logout"');
-    router.search = "tab=policy";
-    const quality = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>실제 화면 본문</main></AdminShell>);
-    expect(quality).toContain('data-workspace="projects"');
-    expect(quality).toContain('실제 화면 본문');
+    router.pathname = "/admin/settings";
+    router.search = "tab=history";
+    const history = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>실제 화면 본문</main></AdminShell>);
+    expect(history).toContain('data-workspace="log"');
+    expect(history).toContain('실제 화면 본문');
+    router.search = "tab=evidence";
+    expect(renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>실제 화면 본문</main></AdminShell>)).toContain('data-workspace="sources"');
     router.search = "";
   });
 });

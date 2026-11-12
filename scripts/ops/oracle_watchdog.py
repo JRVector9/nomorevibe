@@ -18,7 +18,8 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 from recovery_gateway import (PROVIDER_STAGES, UNKNOWN_CAPACITY, bounded_output, capacity_alarm, capacity_pending, save,
-                              valid_capacity_mode, valid_review_failures, valid_stage_failures, validate_capacity_unknowns)
+                              valid_capacity_mode, valid_console_alerts, valid_review_failures, valid_stage_failures,
+                              validate_capacity_unknowns)
 from incident_notifications import notify, validate_destination
 
 
@@ -61,7 +62,7 @@ def validate_report(report):
         raise ValueError('invalid_report')
     keys = set()
     for row in report['services']:
-        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'stageFailures', 'capacityUnknowns', 'capacityMode'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'stageFailures', 'capacityUnknowns', 'capacityMode', 'consoleAlerts'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
                 not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
                 row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
                 not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
@@ -78,6 +79,9 @@ def validate_report(report):
             raise ValueError('invalid_stage_failures')
         if 'capacityMode' in row and not valid_capacity_mode(row['capacityMode']):
             raise ValueError('invalid_capacity_mode')
+        # 2026-11-12 운영 콘솔 조각 4b: 휴대폰 알림 줄 — 관측일 뿐(행의 ok/reason 을 바꾸지 않는다). incident_notifications 가 줄 id 마다 한 번 보낸다
+        if 'consoleAlerts' in row and not valid_console_alerts(row['consoleAlerts']):
+            raise ValueError('invalid_console_alerts')
 
         if 'capacityUnknowns' in row:
             capacity = validate_capacity_unknowns(row['capacityUnknowns'])
@@ -354,6 +358,12 @@ def read_config(path):
         raise ValueError('overlapping_push_targets')
     if 'incidentNotifications' in config:
         validate_destination(config['incidentNotifications'])
+    # 2026-11-12 운영 콘솔 조각 4b: 휴대폰 알림(할 일)의 링크 앞에 붙일 관리자 사이트 주소(선택). 없으면 경로만 보낸다
+    if 'adminOrigin' in config:
+        origin = urlsplit(config['adminOrigin']) if isinstance(config['adminOrigin'], str) else None
+        if (origin is None or origin.scheme != 'https' or not origin.hostname or origin.username or origin.password or
+                origin.path not in ('', '/') or origin.query or origin.fragment):
+            raise ValueError('invalid_admin_origin')
     return config
 
 

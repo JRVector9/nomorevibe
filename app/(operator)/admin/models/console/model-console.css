@@ -1,0 +1,392 @@
+/* 운영 콘솔 「모델」(2026-11-12 최종 시안 화면 4 · 흐름 2·3, 조각 3a) — 구조·정렬만 시안에서 가져오고 색·글꼴은 관리자 토큰(prototype.css).
+   표는 열 폭 고정, 숫자는 오른쪽 정렬·tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만. */
+.admin-prototype .model-console {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.admin-prototype .mc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+.admin-prototype .mc-head h2 {
+  font-size: calc(15px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+}
+.admin-prototype .mc-count,
+.admin-prototype .mc-muted {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-head .mc-right {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admin-prototype .mc-notice {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.admin-prototype .mc-notice[data-tone="warn"] {
+  color: var(--ink);
+}
+.admin-prototype .mc-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .mc-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+.admin-prototype .mc-table th,
+.admin-prototype .mc-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .mc-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .mc-table thead th {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.admin-prototype .mc-table tbody th {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .mc-table tbody th a {
+  color: inherit;
+}
+.admin-prototype .mc-table tbody th a:hover,
+.admin-prototype .mc-table tbody tr[data-selected="true"] th a {
+  color: var(--blue);
+}
+.admin-prototype .mc-table tbody tr[data-selected="true"] > * {
+  background: var(--surface-2);
+}
+.admin-prototype .mc-table .n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-prototype .mc-table .q {
+  color: var(--muted);
+}
+/* 장비 칸은 한 줄 — 긴 장비 이름(기본은 장비 id)이 줄을 세 줄로 늘려 숫자 열이 들쭉날쭉해지지 않게 자르고, 전체는 title 로 본다(운영 콘솔 통합) */
+.admin-prototype .mc-table td.mc-machine {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-prototype .mc-table td.top {
+  vertical-align: top;
+}
+/* 사용률 막대 — 막대 길이만 회색·초록, 글자는 늘 잉크 */
+.admin-prototype .mc-use {
+  display: grid;
+  grid-template-columns: minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.admin-prototype .mc-use > span {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.admin-prototype .mc-use > span > i {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+.admin-prototype .mc-use[data-idle="true"] > span > i {
+  background: var(--soft);
+}
+.admin-prototype .mc-use b {
+  min-width: 5.5em;
+  text-align: right;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.admin-prototype .mc-st > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--soft);
+}
+.admin-prototype .mc-st[data-tone="ok"] > i { background: var(--green); }
+.admin-prototype .mc-st[data-tone="warn"] > i { background: var(--amber); }
+.admin-prototype .mc-st[data-tone="bad"] { color: var(--red); font-weight: 600; }
+.admin-prototype .mc-st[data-tone="bad"] > i { background: var(--red); }
+.admin-prototype .mc-st[data-tone="off"] { color: var(--muted); }
+
+/* 상세 패널 */
+.admin-prototype .mc-detail {
+  display: grid;
+  max-width: 760px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  scroll-margin-top: 80px;
+}
+.admin-prototype .mc-detail > section {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.admin-prototype .mc-detail > section:last-child {
+  border-bottom: 0;
+}
+.admin-prototype .mc-detail h3 {
+  font-size: calc(15px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+}
+.admin-prototype .mc-lab {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .mc-kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  color: var(--muted);
+}
+.admin-prototype .mc-kv b {
+  margin-left: 6px;
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-dl {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+}
+.admin-prototype .mc-dl dt {
+  color: var(--muted);
+}
+.admin-prototype .mc-dl dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .mc-dl dd.num {
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-cause {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .mc-cause li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+}
+.admin-prototype .mc-cause li > span:first-child {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.admin-prototype .mc-form {
+  display: grid;
+  gap: 10px;
+}
+.admin-prototype .mc-form label {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 14px;
+}
+.admin-prototype .mc-form label > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .mc-form input[type="text"],
+.admin-prototype .mc-form input[type="number"],
+.admin-prototype .mc-form input[type="password"],
+.admin-prototype .mc-form input[type="url"],
+.admin-prototype .mc-form select,
+.admin-prototype .mc-form textarea {
+  min-width: 0;
+  max-width: 360px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.admin-prototype .mc-form input.num {
+  max-width: 140px;
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .mc-form fieldset {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.admin-prototype .mc-form fieldset legend {
+  margin-bottom: 4px;
+  color: var(--muted);
+}
+.admin-prototype .mc-tasks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 4px 12px;
+}
+.admin-prototype .mc-form .mc-tasks label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.admin-prototype .mc-hint {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
+/* 저장 전 확인 — 바뀌는 값(전 → 후), 함께 쓰는 곳, 영향 */
+.admin-prototype .mc-dlg {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.admin-prototype .mc-dlg h4 {
+  font-weight: 700;
+}
+.admin-prototype .mc-diff {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-prototype .mc-diff li {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+}
+.admin-prototype .mc-diff li > span:first-child {
+  color: var(--muted);
+}
+.admin-prototype .mc-diff s {
+  margin-right: 8px;
+  color: var(--muted);
+}
+.admin-prototype .mc-msg[role="alert"] {
+  color: var(--red);
+}
+.admin-prototype .mc-msg[data-warn="true"] {
+  color: var(--amber);
+}
+
+/* 모델 추가 세 걸음·표본 비교 */
+.admin-prototype .mc-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+.admin-prototype .mc-steps li b {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .mc-steps li[aria-current="step"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+.admin-prototype .mc-steps li[aria-current="step"] b {
+  border-color: var(--ink);
+}
+.admin-prototype .mc-card {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.admin-prototype .mc-pick {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.admin-prototype .mc-pick li {
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .mc-pick li:last-child {
+  border-bottom: 0;
+}
+.admin-prototype .mc-pick label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.admin-prototype .mc-pick label > span:last-child {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-prototype .mc-out[data-pass="false"] {
+  color: var(--muted);
+}

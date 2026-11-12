@@ -97,7 +97,8 @@ describe("처리 LLM 바꾸기 — 전→후와 경고", () => {
     const lines = flowRankLinesFor(editor, "second");
     const changes = rankChanges(editor, lines, { "second-review#1": [{ provider: SUPA, model: "supa" }, null, null], "second-review#2": [null, null, null] });
     expect(changes.map((change) => [change.line.key, change.beforeText, change.afterText])).toEqual([
-      ["second-review#1", "1순위 m3-mlx (2) · gpt-oss-120b", "1순위 supa-direct · supa"]]);
+      // 모델 하나(별칭 포함)만 내놓는 연결은 사용자가 정한 이름 하나(운영 콘솔 통합) — 서버가 알려 준 모델 이름을 덧붙이지 않는다
+      ["second-review#1", "1순위 m3-mlx (2)", "1순위 supa-direct"]]);
   });
 
   it("allows the same model in 1차 and 2차 without a warning or acknowledgement", () => {
@@ -158,8 +159,9 @@ describe("처리 LLM 바꾸기 — 서랍 그림", () => {
     const html = renderToStaticMarkup(<RankDrawer editor={editor} lines={flowRankLinesFor(editor, "second")} title="AI 2차" secondWaiting={0} onClose={() => {}}
       initial={{ step: "confirm", drafts: { "second-review#1": [{ provider: QWEN, model: "qwen3.8-flash-next" }, null, null] } }} />);
     expect(html).toMatch(/<th scope="col">작업<\/th><th scope="col">전<\/th><th scope="col">후<\/th>/);
-    expect(html).toContain("1순위 m3-mlx (2) · gpt-oss-120b");
-    expect(html).toContain("1순위 gpu3090-qwen · qwen3.8-flash-next");
+    expect(html).toContain("1순위 m3-mlx (2)");
+    expect(html).toContain("1순위 gpu3090-qwen");
+    expect(html).not.toContain("1순위 gpu3090-qwen · qwen3.8-flash-next");
     expect(html).not.toContain('data-code="same_model"');
     expect(html).toContain('data-code="voter_reopen"');
     expect(html).not.toContain("경고를 읽었습니다 — 그래도 저장합니다");

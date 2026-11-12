@@ -11,7 +11,9 @@ import { ADMIN_THEME_SCRIPT, ThemeToggle } from "./components/ThemeToggle";
 import { AdminToastProvider } from "./components/Toast";
 import { resolveWorkspace } from "./workspace-navigation";
 import { WorkspaceTabs } from "./components/WorkspaceTabs";
+import type { AdmissionHeadline } from "@/lib/operations/admission-headline";
 import "./prototype.css";
+import "./console-shell.css";
 
 /**
  * 서버가 그릴 때만 실행되는 인라인 스크립트(next 가이드 preventing-flash-before-hydration) — 클라이언트 이동에서는
@@ -21,8 +23,11 @@ function InlineScript({ html }: { html: string }) {
   return <script type={typeof window === "undefined" ? "text/javascript" : "text/plain"} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/** 메뉴 배지 한 벌 — unknown 은 이번에 셀 수 없었던 칸(배지 없음과 다르다: 전에 보이던 값을 둔다) */
-export type BadgeSet = { badges?: NavBadges; unknown?: string[] };
+/**
+ * 메뉴 배지 한 벌 — unknown 은 이번에 셀 수 없었던 칸(배지 없음과 다르다: 전에 보이던 값을 둔다).
+ * admission — 머리줄의 접수 표시(GET /admin/nav-badges 가 서버에서 글자까지 만들어 준다, 운영 콘솔 조각 4b)
+ */
+export type BadgeSet = { badges?: NavBadges; unknown?: string[]; admission?: AdmissionHeadline };
 
 /**
  * 메뉴 배지 — 서버 레이아웃이 넘긴 선택 값(있으면)과, 인증된 화면이 뜬 뒤 GET /admin/nav-badges 로 읽은 값.
@@ -32,11 +37,13 @@ export type BadgeSet = { badges?: NavBadges; unknown?: string[] };
  * 앞 요청은 다음 이동이나 재렌더에서 끊는다.
  */
 function useLiveBadges(pathname: string, layout: BadgeSet, renderedAt: string, authenticated: boolean) {
-  const [shown, setShown] = useState<{ from: string; badges: NavBadges }>(() => ({ from: renderedAt, badges: mergeBadges(undefined, layout) }));
+  const [shown, setShown] = useState<{ from: string; badges: NavBadges; admission: AdmissionHeadline | null }>(() =>
+    ({ from: renderedAt, badges: mergeBadges(undefined, layout), admission: null }));
   // 레이아웃이 다시 그렸다 — 선택 배지 값을 넘겼을 때만 그 값을 지금 보이는 것 위에 합친다(넘기지 않았으면 아래에서 새로 읽는다)
   if (shown.from !== renderedAt) setShown((prev) => ({
     from: renderedAt,
     badges: layout.badges === undefined && layout.unknown === undefined ? prev.badges : mergeBadges(prev.badges, layout),
+    admission: prev.admission,
   }));
   useEffect(() => {
     if (!authenticated || pathname.split("?")[0] === "/admin/login") return;
@@ -45,13 +52,25 @@ function useLiveBadges(pathname: string, layout: BadgeSet, renderedAt: string, a
       .then((response) => response.ok ? response.json() as Promise<BadgeSet> : null)
       .then((body) => {
         if (!controller.signal.aborted && body?.badges) setShown((prev) => prev.from === renderedAt
-          ? { from: prev.from, badges: mergeBadges(prev.badges, body) }
+          ? { from: prev.from, badges: mergeBadges(prev.badges, body), admission: body.admission ?? prev.admission }
           : prev);
       })
       .catch(() => undefined);
     return () => controller.abort();
   }, [authenticated, pathname, renderedAt]);
-  return shown.badges;
+  return shown;
+}
+
+/**
+ * 머리줄의 접수 표시(시안 흐름 6 「머리줄 · 접수」) — 열림/중단 · 언제부터 · 누가. 누르면 기존 접수 칸(대시보드의 AdmissionControl —
+ * 사유 필수·기존 운영 실행기·작업 로그)으로 간다. 여기서 바꾸지 않는다. 처음 읽기 전에는 링크 없이 「접수」만 둔다.
+ */
+export function AdmissionPill({ admission, onNavigate }: { admission: AdmissionHeadline | null; onNavigate?: (href: string) => void }) {
+  if (!admission) return <span className="top-admission" data-tone="off" aria-busy="true"><i aria-hidden="true" /><b>접수</b></span>;
+  return <Link prefetch={false} href={admission.href} className="top-admission" data-tone={admission.tone} data-mode={admission.mode ?? "unknown"}
+    title={admission.title} onNavigate={() => onNavigate?.(admission.href)}>
+    <i aria-hidden="true" /><b>{admission.label}</b>{admission.detail && <span className="top-admission-detail">{admission.detail}</span>}
+  </Link>;
 }
 
 /**
@@ -78,7 +97,7 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
   const location = resolveWorkspace(pathname, new URLSearchParams(search));
   const [expandedOn, setExpandedOn] = useState<string | null>(null);
   // 761~1279px 의 접힌 메뉴를 펼쳤는가 — 페이지를 옮겨도 그대로 둔다
-  const liveBadges = useLiveBadges(routeKey, { badges, unknown: unknownBadges }, renderedAt, Boolean(account));
+  const live = useLiveBadges(routeKey, { badges, unknown: unknownBadges }, renderedAt, Boolean(account));
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setExpandedOn(null); };
     document.addEventListener("keydown", onEscape);
@@ -95,7 +114,7 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
         <aside className={`sidebar${expanded ? " open" : ""}`} id="admin-sidebar-menu" aria-label="관리자 사이드바">
           <Link href="/admin/flow" className="brand" onNavigate={() => onNavigate("/admin/flow")}>NoMore<span>Vibe</span><small>OPERATOR WORKSPACE</small></Link>
           <CommandSearch appearance="prototype" />
-          <AdminNav current={pathname} search={search} badges={liveBadges} onNavigate={onNavigate} />
+          <AdminNav current={pathname} search={search} badges={live.badges} onNavigate={onNavigate} />
           <div className="sidebar-bottom">
             <Link href="/admin/settings?tab=history" onNavigate={() => onNavigate("/admin/settings?tab=history")}>▧ &nbsp; 전체 운영 기록</Link>
             {analyticsUrl ? <a href={analyticsUrl} target="_blank" rel="noopener noreferrer">↗ &nbsp; 방문·전환 분석</a>
@@ -109,10 +128,11 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
           <header className="topbar">
             <div className="top-left"><button type="button" className="mobile-menu icon-button admin-menu-toggle" aria-label="메뉴 열기" aria-expanded={expanded}
               aria-controls="admin-sidebar-menu" onClick={() => setExpandedOn(expanded ? null : routeKey)}>☰</button><span id="breadcrumb">운영 / {location.workspace.label}</span></div>
-            <div className="top-tools"><LiveBar fallbackAt={renderedAt} appearance="prototype" navigationPending={navigationPending} /><span className="top-avatar">{initials}</span></div>
+            <div className="top-tools"><AdmissionPill admission={live.admission} onNavigate={onNavigate} />
+              <LiveBar fallbackAt={renderedAt} appearance="prototype" navigationPending={navigationPending} /><span className="top-avatar">{initials}</span></div>
           </header>
           <div id="page" tabIndex={-1}>
-            <WorkspaceTabs location={location} pathname={pathname} search={search} onNavigate={onNavigate} />
+            <WorkspaceTabs location={location} onNavigate={onNavigate} />
             <div className="admin-workspace-view">{children}</div>
           </div>
           <footer className="app-footer"><span>NO MORE VIBE / ADMIN WORKSPACE</span><span>실제 운영 원본 · 관측 시각 KST</span></footer>

@@ -1,0 +1,626 @@
+import { HUMAN_BACKLOG_LIMIT } from "@/lib/crawl/human-queue";
+import { AI_TASKS, aiTaskAccepts, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import type { ChangeWatchTask } from "./change-watch";
+import type { Conveyor } from "./conveyor-model";
+import { SAMPLE_COMPARE_SUPPORTED } from "./model-sample-compare";
+import { stagePanel, stagePanelHref, stagePanelKeyOfTask } from "./stage-panel-catalog";
+
+/**
+ * 운영 콘솔 홈의 「지금 할 일」 규칙(2026-11-12 최종 시안 「할 일이 생기는 조건」 11줄).
+ *
+ * DB 를 읽지 않는 순수 함수다 — 입력은 관리자 화면이 이미 쓰는 읽기 값(console-home-read.ts 가 모은다)이고,
+ * 출력은 네 묶음(멈춤 · 평소와 다름 · 쌓임 · 정리)의 할 일이다. 할 일은 사람이 적지 않는다 — 이 규칙에서만 나온다.
+ * 판단은 사람이 한다: 접수를 열거나 멈춘 작업을 다시 켜는 것은 단추가 보내는 기존 화면·서버 동작이 하고, 여기서는 고르지 않는다.
+ * 읽기 하나를 못 읽으면 그 읽기에 기대는 규칙만 「셀 수 없음」으로 남기고 나머지 할 일은 그대로 낸다.
+ * 「바꾼 뒤 처리량 하락」은 판정하지 않는다 — 바꾼 것 지켜보기(change-watch.ts judgeChange)가 판정한 할 일을 받아 그대로 올린다(판정은 한 곳).
+ * 사람이 「확인했고 그대로 둔다」로 표시한 할 일(console-task-keep.ts, 작업 로그)은 정한 기간 동안 목록에서 내리고 「그대로 둔 것」에 적는다.
+ * 접수 중단(DRAIN) 중에는 모델을 쓰는 단계의 「멈춤」(1시간 처리가 대기의 10분의 1 미만)을 「접수 중단 때문」 한 줄로 접는다(조각 4b, 시안 흐름 6) —
+ * 같은 까닭으로 줄이 여러 개 뜨지 않게. 그 한 줄은 중단이 30분을 넘기 전에는 알리지 않는다(배포 창의 짧은 DRAIN 이 휴대폰을 울리지 않게).
+ */
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** 할 일 규칙의 기준값 — 바꿀 때는 여기 한 곳만 고친다(시안 「할 일이 생기는 조건」 표와 같은 값) */
+export const CONSOLE_TASK_LIMITS = Object.freeze({
+  /** 멈춤: 대기가 있는데 1시간 처리가 대기의 이 비율(10분의 1)에 못 미치는 단계 */
+  stalledRatio: 0.1,
+  /** 멈춤: 사람이 멈춘 작업이 이만큼(하루)을 넘김 */
+  pausedJobMs: DAY,
+  /** 멈춤: 모델 접수 중단이 이만큼(30분)을 넘김 */
+  admissionPausedMs: 30 * MINUTE,
+  /** 멈춤: 내림 요청 약속 시간 — takedownSummary 의 overdue 가 이 기준(24시간)으로 센다. 화면 글자에만 쓴다 */
+  takedownHours: 24,
+  /** 평소와 다름: 보류 사유 하나가 24시간에 이만큼(50건)보다 많이 늘고 */
+  holdSurge: 50,
+  /** 평소와 다름: 그 사유 누적의 이 비율(절반) 이상이 24시간 안의 것 */
+  holdNewShare: 0.5,
+  /** 쌓임: 지금 속도(24시간 정산 수)로 이 날수(3일)를 넘게 걸리는 단계 */
+  backlogDays: 3,
+  /** 쌓임: 사람 확인 대기가 이만큼(500건)을 넘김 — 심사 큐·운영센터의 쌓임 경고와 같은 수 */
+  humanWaiting: HUMAN_BACKLOG_LIMIT,
+  /** 쌓임: 감사 거절이 이 날수(7일)를 넘게 기다림 — openBacklogStats 의 overdue(AUDIT_BACKLOG_OVERDUE_DAYS)가 센다. 화면 글자에만 쓴다 */
+  auditOverdueDays: 7,
+  /** 정리: 결과 없이 끝난 호출이 하루 이만큼(10건) 이상인 모델 */
+  noResultPerDay: 10,
+  /** 정리: 키 만료 이 날수(7일) 전부터 */
+  keyExpiryDays: 7,
+  /** 남는 모델: 24시간 사용률(호출 시간 합 ÷ (86,400초 × 동시 한도))이 이 값(5%) 미만 */
+  idleUtilization: 0.05,
+  /** 「사유 남기고 유지」·「그대로 두기」로 내린 할 일이 다시 올라오기까지(7일) */
+  keepMs: 7 * DAY,
+});
+
+/** 접수 OPEN·DRAIN 을 바꾸는 곳 — 모델 › 고급 설정 › 대시보드의 접수 칸(AdmissionControl, 사유 필수·기존 운영 실행기·작업 로그). 머리줄의 접수 표시도 여기로 보낸다 */
+export const ADMISSION_HREF = "/admin/models/dashboard#admission";
+
+/** 「확인했고 그대로 둔다」를 받는 규칙 — 사람이 멈춘 작업(사유 남기고 유지)과 자주 거절하는 모델(그대로 두기). 시안 「할 일이 생기는 조건」의 단추 */
+export const CONSOLE_KEEP_RULES: readonly ConsoleRuleKey[] = Object.freeze(["job-paused", "no-result"]);
+/** 「그대로 둔다」 사유 글자 상한 — 작업 멈춤·재개 사유와 같다 */
+export const CONSOLE_KEEP_REASON_MAX = 500;
+/** 그대로 둘 수 있는 할 일 열쇠 — 서버 동작이 받는 모양(작업 이름·연결 id) */
+export const CONSOLE_KEEP_ID = /^(stop:job:[a-z0-9][a-z0-9-]{0,59}|tidy:no-result:[A-Za-z0-9][A-Za-z0-9_-]{0,79})$/;
+
+export type ConsoleGroupKey = "stop" | "odd" | "pile" | "tidy";
+/** 묶음 순서와 알림 — 휴대폰 알림(조각 ④)은 멈춤과 평소와 다름만 보낸다 */
+export const CONSOLE_GROUPS: readonly { key: ConsoleGroupKey; label: string; notify: boolean }[] = Object.freeze([
+  { key: "stop", label: "멈춤", notify: true },
+  { key: "odd", label: "평소와 다름", notify: true },
+  { key: "pile", label: "쌓임", notify: false },
+  { key: "tidy", label: "정리", notify: false },
+]);
+
+export type ConsoleRuleKey =
+  | "stage-stalled" | "job-paused" | "admission-paused" | "takedown-overdue"
+  | "hold-surge" | "change-drop"
+  | "backlog-eta" | "human-or-audit"
+  | "no-result" | "unused-or-duplicate" | "key-expiry";
+
+/**
+ * 끝내는 단추 — 링크(기존 화면), 기존 작업 멈춤·재개 서버 동작(사유 필수, 작업 로그 job-pause·job-resume),
+ * 또는 「확인했고 그대로 둔다」(사유 필수, 작업 로그 console-task-keep — keepMs 동안 목록에서 내린다)
+ */
+export type ConsoleAction =
+  | { kind: "link"; label: string; href: string }
+  | { kind: "job-resume"; label: string; job: string; fallbackHref: string }
+  | { kind: "keep"; label: string; taskId: string };
+
+/** 사람이 「그대로 둔다」로 표시한 할 일(작업 로그 console-task-keep 의 최근 줄) — until 이 지나면 다시 올라온다 */
+export type ConsoleKept = { taskId: string; at: string; until: string; actor: string; reason: string;
+  /** 표시할 때의 대상 판(사람이 멈춘 작업 = 작업 제어 판). 지금 판과 다르면(그 사이 재개·다시 멈춤) 표시가 맞지 않아 다시 올라온다 */
+  ref?: string };
+
+export type ConsoleTask = {
+  /** 같은 할 일이 다음 읽기에도 같은 열쇠를 갖는다(알림·지켜보기가 이어 붙인다) */
+  id: string;
+  group: ConsoleGroupKey;
+  rule: ConsoleRuleKey;
+  /** 점 색 — 멈춤 bad, 평소와 다름·쌓임 warn, 정리 off */
+  tone: "bad" | "warn" | "off";
+  title: string;
+  /** 사실 한 줄 — 읽은 값만 */
+  fact: string;
+  /** 이유 한 줄 — 읽은 값으로 말할 수 있을 때만 */
+  why: string | null;
+  actions: ConsoleAction[];
+  /** 휴대폰 알림 대상(묶음의 notify) */
+  notify: boolean;
+  /** 쌓임 정렬 — 지금 속도로 며칠(못 줄면 Infinity) */
+  days?: number;
+  /** 「그대로 둔다」 표시가 맞는 판(사람이 멈춘 작업의 작업 제어 판) */
+  keepRef?: string;
+  /** 쌓임(backlog-eta)의 AI 작업 id — 모델 추가의 「쓸 단계」 권하기가 같은 계산을 쓴다(조각 3a) */
+  stageTask?: string;
+};
+
+export type ConsoleTaskGroup = { key: ConsoleGroupKey; label: string; notify: boolean; tasks: ConsoleTask[];
+  /** 읽지 못해 확인하지 못한 규칙 — 화면은 「셀 수 없음」으로 적는다 */
+  unknown: string[] };
+
+export type ConsoleTaskBoard = {
+  /** 이 목록을 만든 시각(마지막 확인) */
+  checkedAt: string;
+  groups: ConsoleTaskGroup[];
+  total: number;
+  /** 사람이 그대로 두기로 해 목록에서 내린 할 일과 그 표시 */
+  kept: { task: ConsoleTask; keep: ConsoleKept }[];
+  /** 그대로 둔 표시를 읽지 못했다 — 모든 할 일을 그대로 보인다 */
+  keptUnknown: boolean;
+  /** 흐름 표가 같은 판정을 쓰게 — 멈춤으로 올린 칸(StationKey)과 쌓임으로 올린 공개 뒤 단계(진행 단계 열쇠) */
+  marks: { stopped: string[]; piling: string[] };
+};
+
+// ── 입력 ───────────────────────────────────────────────────────────────────────────────────────────────
+
+/** 워커 진행(readWorkerProgress) 단계 — 쓰는 칸만 */
+export type ConsoleProgressStage = {
+  stage: string; job?: string | null; reason: string; alarm?: boolean; waiting?: number | null; oldestMinutes?: number | null;
+  completed5m?: number | null;
+  /** 막 끝난 틱이 일을 모두 건너뛴 까닭(worker-progress-query 의 StageSkipDetail) */
+  skipBlock?: { reason: string; code: string; detail: string | null } | null;
+};
+export type ConsoleProgress = { stages: readonly ConsoleProgressStage[]; liveness?: readonly { role: string; reason: string }[] };
+/** listJobStates — 사람이 멈췄는가(isPausedJob)와 마지막 실행 */
+export type ConsoleJob = { name: string; paused: boolean; lastRunAt: string | null; notBefore?: string | null;
+  /** 작업 제어 판(마지막 job-pause·job-resume 작업 로그 id) — 「사유 남기고 유지」가 이 판에 붙는다. 모르면 없음 */
+  controlVersion?: number };
+/** listAiConnections 의 쓰는 칸 — models 는 서버 목록·직접 적은 모델·CLI 모델을 합친 것 */
+export type ConsoleConnection = {
+  /** label = 사용자가 정한 모델 이름(aiModelDisplayName — 운영 콘솔 3a). 화면은 서버가 알려 준 이름·장비 id 를 따로 적지 않는다 */
+  id: string; label: string; kind: "api" | "cli"; cliTool: string | null; deviceId: string; capacitySlots: number; enabled: boolean;
+  models: readonly string[]; allowedTasks: readonly string[]; keySetAt: string | null; keyValidDays: number | null; updatedAt: string;
+  /** 서로 다른 모델 묶음 수(같은 root 의 별칭은 하나 — aiConnectionModelGroupCount). 옛 담긴 값에는 없다(그때는 이름 수로 센다) */
+  modelGroups?: number;
+};
+/**
+ * 순위·「동시에」의 모델 하나를 부르는 말 — 사용자가 정한 이름(label) 하나. 서로 다른 모델을 여럿 내놓는 연결이거나 목록에 없는 이름을 부를 때만
+ * 가를 수 있게 서버 이름을 덧붙인다(작업 배정의 aiModelChoiceName 과 같은 규칙).
+ */
+export function consoleModelName(connection: Pick<ConsoleConnection, "label" | "models" | "modelGroups">, model?: string | null): string {
+  if (!model) return connection.label;
+  const groups = connection.modelGroups ?? connection.models.length;
+  return groups <= 1 && (connection.models.includes(model) || !connection.models.length) ? connection.label : `${connection.label} · ${model}`;
+}
+export type ConsoleRank = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean };
+/** 작업 분산(workload_pool)으로 묶은 구성원 */
+export type ConsolePoolMember = { task: string; slot: number; connectionId: string; model: string };
+/** 장비 점유(readAdminModelsObservation devices) */
+export type ConsoleDevice = { deviceId: string; active: number; models: readonly { model: string; active: number }[];
+  /** 장비 한도(칸) — 옛 담긴 값에는 없다 */
+  limit?: number;
+  /** 경로(장부 route)마다 지금 쥔 칸 — 그 칸을 쓰는 단계. 옛 담긴 값에는 없다 */
+  routes?: readonly { routeId: string; active: number }[] };
+/** 24시간 장부(model_capacity_requests) — route·장비·모델로 묶은 것 */
+export type ConsoleLedgerRow = { routeId: string; groupId: string; model: string; calls: number; settled: number; avgSeconds: number | null; noResult: number };
+
+export type ConsoleTaskInputs = {
+  now: string;
+  conveyor: Pick<Conveyor, "stations" | "human" | "holdsByReason"> | null;
+  progress: ConsoleProgress | null;
+  jobs: readonly ConsoleJob[] | null;
+  /** 모델 접수(model_capacity_control) — 상태와 바뀐 때 */
+  admission: { mode: "open" | "draining" | "disabled"; since: string | null } | null;
+  /** 오늘 할 일(sharedInbox)의 내림 요청 칸 */
+  takedown: { count: number; overdue: number } | null;
+  /** 두 모델이 같은 결론을 낸 사람 몫(sharedHumanQueueOverview.agreed — 오늘 할 일의 「확정 필요」와 같은 수) */
+  agreed: { approve: number; reject: number } | null;
+  /** 감사 거절 적체(openBacklogStats) */
+  audit: { open: number; overdue: number; oldestWaitDays: number | null } | null;
+  connections: readonly ConsoleConnection[] | null;
+  ranks: readonly ConsoleRank[] | null;
+  pools: readonly ConsolePoolMember[] | null;
+  devices: readonly ConsoleDevice[] | null;
+  ledger: readonly ConsoleLedgerRow[] | null;
+  /**
+   * 바꾼 것 지켜보기(change-watch.ts changeWatchTasks)가 판정해 내준 「다시 떨어짐」·「나빠짐」 — 여기서는 다시 판정하지 않는다.
+   * 넣지 않으면(undefined) 이 규칙을 보지 않고, null 이면 「셀 수 없음」(0건이 아니다)
+   */
+  changeWatch?: readonly ChangeWatchTask[] | null;
+  /** 그대로 둔 할 일(console-task-keep.ts readConsoleKept). 넣지 않으면 없음, null 이면 읽지 못함(모든 할 일을 보인다) */
+  kept?: readonly ConsoleKept[] | null;
+  /** 시험용 — 기본은 AI_TASKS */
+  tasks?: readonly AiTaskDef[];
+};
+
+// ── 글자 ───────────────────────────────────────────────────────────────────────────────────────────────
+
+export const formatCount = (value: number) => Math.round(value).toLocaleString("ko-KR");
+
+/** 분 → 「8시간 2분」「5.7일」(시안 dur 와 같은 끊음) */
+export function formatDuration(minutes: number): string {
+  if (minutes < 1) return "1분 미만";
+  if (minutes < 60) return `${Math.floor(minutes)}분`;
+  if (minutes < 2880) {
+    const hours = Math.floor(minutes / 60), rest = Math.floor(minutes % 60);
+    return rest >= 1 ? `${hours}시간 ${rest}분` : `${hours}시간`;
+  }
+  const days = minutes / 1440;
+  return days >= 10 ? `${Math.round(days)}일` : `${days.toFixed(1)}일`;
+}
+
+/** 지금 속도로 걸리는 날 — 10일부터는 정수 */
+export const formatDays = (days: number) => days >= 10 ? `${Math.round(days)}일` : `${days.toFixed(1)}일`;
+
+/** 사용률(0~1) → 「1%」「1% 미만」 */
+export function formatShare(value: number, calls: number): string {
+  if (!calls) return "0%";
+  const percent = value * 100;
+  return percent > 0 && percent < 1 ? "1% 미만" : `${Math.round(percent)}%`;
+}
+
+const KST = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+/** KST 「11-12 07:07」, 날짜만이면 「11-12」 */
+export function formatKst(value: string | number, dateOnly = false): string {
+  const parts = Object.fromEntries(KST.formatToParts(new Date(value)).map(part => [part.type, part.value]));
+  const hour = parts.hour === "24" ? "00" : parts.hour;
+  return dateOnly ? `${parts.month}-${parts.day}` : `${parts.month}-${parts.day} ${hour}:${parts.minute}`;
+}
+export function formatKstTime(value: string | number): string {
+  return formatKst(value).slice(6);
+}
+
+/** 이름 끝소리 — 한글은 받침, 숫자는 읽는 소리, 영문은 대략의 발음(L·M·N·R 로 끝나는 머리글자, -m·-n·-l·-ng, -me·-ne·-le) */
+function endsWithConsonant(word: string): boolean {
+  const text = word.trim().replace(/[\s)\]」』"'.,·]+$/u, "");
+  const last = text.at(-1);
+  if (!last) return false;
+  const code = last.charCodeAt(0);
+  if (code >= 0xac00 && code <= 0xd7a3) return (code - 0xac00) % 28 !== 0;
+  if (/[0-9]/.test(last)) return "013678".includes(last);
+  const latin = /[A-Za-z]+$/.exec(text)?.[0];
+  if (!latin) return false;
+  if (latin.length <= 3 && latin === latin.toUpperCase()) return "LMNR".includes(latin.at(-1)!);
+  return /(ng|m|n|l)$/i.test(latin) || /(m|n|l)e$/i.test(latin);
+}
+/** 조사 붙이기 — josa("gpu3090-qwen", "은/는") → 「gpu3090-qwen은」 */
+export function josa(word: string, pair: "이/가" | "을/를" | "은/는"): string {
+  const [withFinal, withoutFinal] = pair.split("/");
+  return `${word}${endsWithConsonant(word) ? withFinal : withoutFinal}`;
+}
+
+/** 공개 뒤·진행 단계 이름 — 시안의 말(공개 번역 등). 없는 열쇠는 작업 이름으로 */
+export const CONSOLE_STAGE_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  fetch: "원본 수집", judge: "규칙 심사", first: "AI 1차", second: "AI 2차", publish: "발행",
+  evidence: "공개 근거", "agent-evidence": "개발 AI 근거", "ai-level": "AI 단계", uptime: "응답 점검",
+  "crawl-tagline": "소개 짓기", keywords: "키워드 짓기", "keyword-verify": "키워드 검수",
+  "product-translate": "공개 번역", "reason-translate": "사유 번역", "tagline-ko": "한국어 소개", "intro-check": "소개 검수",
+});
+
+/** 「단계 열기」가 여는 단계 패널(운영 홈 ?stage=, 조각 2a) — 흐름 칸 열쇠나 워커 진행 단계 열쇠를 받는다 */
+export const consoleStageHref = (stage: string) => stagePanelHref(stage);
+const jobHref = (job: string) => `/admin/status?tab=jobs&job=${encodeURIComponent(job)}`;
+/**
+ * 모델 상세(운영 콘솔 3a 「모델」 — model-console.ts modelHref 와 같은 주소). 「쉬게 하기」·「키 바꾸기」는 상세의 조치가 저장 전 확인을 거쳐 한다.
+ * model-console.ts 는 이 파일의 기준값을 모듈을 읽을 때 쓰므로 거꾸로 가져오지 않는다(순환 import 의 초기화 순서).
+ */
+const modelDetailHref = (id: string) => `/admin/models?model=${encodeURIComponent(id)}#model-detail`;
+/** 모델 추가 ③ 쓸 단계(3a) — 넣어 두고 아직 붙이지 않은 모델을 밀린 단계부터 권한다 */
+const modelStagesHref = (id: string) => `/admin/models/new?id=${encodeURIComponent(id)}&step=3`;
+/** 표본 비교(3a) — 붙이기 전에 결과를 나란히 본다. 지금 실행까지 붙은 작업만(SAMPLE_COMPARE_SUPPORTED) */
+const compareHref = (task: string, candidate: string) => `/admin/models/compare?task=${encodeURIComponent(task)}&candidate=${encodeURIComponent(candidate)}`;
+/** 모델 접수 칸 — 3a 가 옮긴 대시보드의 접수 칸(#admission). 여닫는 것은 사람이 그 칸에서 한다 */
+/** 감사 거절 목록 — 사람 확인 묶음 화면(3b)의 「요청과 감사」가 여는 곳과 같은 주소(inbox AUDIT_TAB_HREF) */
+const AUDIT_REJECTS_HREF = "/admin/audit?tab=audit";
+const taskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
+/** 순위·배정을 고치는 곳 — 그 작업의 단계 패널 모델 구역(조각 2a), 패널이 없는 작업은 작업 배정의 그 줄 */
+const taskStageHref = (task: string, slot = 1) => { const key = stagePanelKeyOfTask(task); return key ? stagePanelHref(key, "models") : taskHref(task, slot); };
+const link = (label: string, href: string): ConsoleAction => ({ kind: "link", label, href });
+
+/** 보류 사유가 생긴 칸 → 심사 큐의 그 칸(심사 큐 ?cause= 가 없는 사유) */
+const HOLD_FALLBACK_HREF: Readonly<Record<string, string>> = {
+  judge: "/admin/review?tab=all&stage=judge", first: "/admin/review?tab=all&stage=ai", second: "/admin/review?tab=all&stage=second",
+  profile: "/admin/review?tab=publish&stage=publish", publish: "/admin/review?tab=publish&stage=publish", human: "/admin/review?tab=human",
+};
+
+/** 멈춤(1시간 처리 비율)을 보는 칸 — 일감 줄(worker 대기)이 있는 칸만. 프로필 준비의 대기는 보류·재분류 수라 빼고, 키워드 등록은 쌓임 규칙이 본다 */
+const QUEUE_STATIONS = new Set(["fetch", "judge", "first", "second", "publish"]);
+
+/** 워커가 틱마다 건너뛴 까닭(agent_review_all_skipped 의 detail 「running=2」) — 알려진 열쇠만 쉬운 말로 */
+const SKIP_LABELS: Readonly<Record<string, string>> = { running: "「이미 처리 중」으로" };
+export function skipSentence(skip: NonNullable<ConsoleProgressStage["skipBlock"]>): string {
+  if (skip.reason === "key_missing") return "모든 순위의 연결에 키가 없어 워커가 틱마다 건너뜁니다.";
+  const pairs = [...(skip.detail ?? "").matchAll(/([a-z_]+)=(\d+)/g)];
+  if (!pairs.length) return `워커가 틱마다 후보를 모두 건너뛰고 끝납니다(${skip.code}).`;
+  const parts = pairs.map(([, key, count]) => `${formatCount(Number(count))}건을 ${SKIP_LABELS[key] ?? `「${key}」(으)로`}`);
+  return `워커가 틱마다 후보 ${parts.join(", ")} 건너뛰고 끝납니다.`;
+}
+
+// ── 모델 계산 ──────────────────────────────────────────────────────────────────────────────────────────
+
+export type ModelStat = {
+  connection: ConsoleConnection;
+  /** 24시간 장부 — 못 읽었으면 null */
+  calls: number | null; settled: number | null; noResult: number | null;
+  /** 24시간 사용률(0~1) — 호출 시간 합 ÷ (86,400초 × 동시 한도) */
+  utilization: number | null;
+  /** 지금 쓰는 칸 — 장비 관측을 못 읽었으면 null */
+  active: number | null;
+  /** 이 모델을 순위·작업 분산에 둔 작업 */
+  tasks: Set<string>;
+};
+
+export function modelStats(inputs: Pick<ConsoleTaskInputs, "connections" | "ranks" | "pools" | "ledger" | "devices">): Map<string, ModelStat> {
+  const stats = new Map<string, ModelStat>();
+  for (const connection of inputs.connections ?? []) {
+    const used = [...(inputs.ranks ?? []).filter(row => row.connectionId === connection.id && row.enabled),
+      ...(inputs.pools ?? []).filter(row => row.connectionId === connection.id)];
+    const models = new Set([...connection.models, ...used.map(row => row.model)]);
+    const rows = inputs.ledger?.filter(row => row.groupId === connection.deviceId && models.has(row.model)) ?? null;
+    const seconds = rows?.reduce((total, row) => total + (row.avgSeconds ?? 0) * row.settled, 0) ?? null;
+    const device = inputs.devices?.find(row => row.deviceId === connection.deviceId) ?? null;
+    const perModel = device?.models.filter(row => models.has(row.model)) ?? [];
+    stats.set(connection.id, {
+      connection,
+      calls: rows ? rows.reduce((total, row) => total + row.calls, 0) : null,
+      settled: rows ? rows.reduce((total, row) => total + row.settled, 0) : null,
+      noResult: rows ? rows.reduce((total, row) => total + row.noResult, 0) : null,
+      utilization: seconds === null ? null : seconds / (86_400 * Math.max(1, connection.capacitySlots)),
+      active: !inputs.devices ? null : !device ? 0 : perModel.length ? perModel.reduce((total, row) => total + row.active, 0) : device.models.length ? 0 : device.active,
+      tasks: new Set(used.map(row => row.task)),
+    });
+  }
+  return stats;
+}
+
+/**
+ * 남는 모델 — 24시간 사용률 5% 미만, 자주 거절하지 않고, 쓰는 단계가 모두 멈춰 비어 있는 것도 아닌 켜진 모델.
+ * 그 작업이 받는 것만, 이미 그 작업에 있는 것은 뺀다. 칸이 많은 것 → 덜 쓰는 것 → 이름 순. 홈 「쌓임」과 단계 패널의 「모델 붙이기」가 같이 쓴다.
+ */
+export function idleModels(inputs: Pick<ConsoleTaskInputs, "connections" | "ranks" | "pools" | "ledger" | "devices" | "jobs" | "tasks">, taskId: string,
+  stats: ReadonlyMap<string, ModelStat> = modelStats(inputs)): ModelStat[] {
+  const tasks = inputs.tasks ?? AI_TASKS;
+  const pausedJobs = new Set((inputs.jobs ?? []).filter(job => job.paused).map(job => job.name));
+  const taskPaused = (id: string) => { const def = tasks.find(task => task.id === id); return !!def && def.jobs.length > 0 && def.jobs.every(job => pausedJobs.has(job)); };
+  const def = tasks.find(task => task.id === taskId) ?? null;
+  return [...stats.values()].filter(stat => stat.connection.enabled && stat.utilization !== null && stat.utilization < CONSOLE_TASK_LIMITS.idleUtilization
+    && (stat.noResult ?? 0) < CONSOLE_TASK_LIMITS.noResultPerDay && !(stat.tasks.size > 0 && [...stat.tasks].every(taskPaused))
+    && !stat.tasks.has(taskId) && (!def || aiTaskAccepts(def, stat.connection)))
+    .sort((a, b) => b.connection.capacitySlots - a.connection.capacitySlots || a.utilization! - b.utilization! || a.connection.label.localeCompare(b.connection.label));
+}
+/** 「남는 모델: gpu3090-qwen(1%) · M1max(0%)」 — 없으면 null */
+export function idleModelsText(idle: readonly ModelStat[]): string | null {
+  return idle.length ? `남는 모델: ${idle.map(stat => `${stat.connection.label}(${formatShare(stat.utilization!, stat.calls ?? 0)})`).join(" · ")}` : null;
+}
+
+// ── 규칙 ───────────────────────────────────────────────────────────────────────────────────────────────
+
+export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
+  const now = Date.parse(inputs.now);
+  const tasks = inputs.tasks ?? AI_TASKS;
+  const limits = CONSOLE_TASK_LIMITS;
+  const groups = Object.fromEntries(CONSOLE_GROUPS.map(group => [group.key, { ...group, tasks: [] as ConsoleTask[], unknown: [] as string[] }])) as
+    Record<ConsoleGroupKey, ConsoleTaskGroup>;
+  // notify 는 묶음의 것을 따른다 — 접수 중단으로 접은 줄만 30분 전까지 끈다
+  const add = (group: ConsoleGroupKey, task: Omit<ConsoleTask, "group" | "notify" | "tone"> & { tone?: ConsoleTask["tone"]; notify?: boolean }) =>
+    groups[group].tasks.push({ tone: group === "stop" ? "bad" : group === "tidy" ? "off" : "warn", ...task, group, notify: groups[group].notify && task.notify !== false });
+  const unknown = (group: ConsoleGroupKey, what: string) => { if (!groups[group].unknown.includes(what)) groups[group].unknown.push(what); };
+
+  const stats = modelStats(inputs);
+  const pausedJobs = new Set((inputs.jobs ?? []).filter(job => job.paused).map(job => job.name));
+  const taskDef = (id: string) => tasks.find(task => task.id === id) ?? null;
+  /** 진행 단계의 잡을 맡는 AI 작업(장부 route 가 있는 첫 작업) */
+  const taskForJob = (job: string | null | undefined) => job ? tasks.find(task => task.routeId && task.jobs.includes(job)) ?? null : null;
+  const progressOf = (stage: string) => inputs.progress?.stages.find(row => row.stage === stage) ?? null;
+  const name = (stat: ModelStat) => stat.connection.label;
+  const rankStats = (taskId: string) => {
+    const seen = new Set<string>();
+    return (inputs.ranks ?? []).filter(row => row.task === taskId && row.enabled).sort((a, b) => a.slot - b.slot || a.rank - b.rank)
+      .flatMap(row => { if (seen.has(row.connectionId)) return []; seen.add(row.connectionId); const stat = stats.get(row.connectionId); return stat ? [stat] : []; });
+  };
+
+  // ── 멈춤 1: 대기가 있는데 1시간 처리가 대기의 1/10 미만인 단계
+  const stopped: string[] = [];
+  // 접수 중단(DRAIN) 중에는 모델을 쓰는 단계(장부 경로가 있는 AI 작업이 맡거나 단계 패널에 배정 작업이 있는 칸)의 멈춤을 따로 모아 한 줄로 접는다
+  const draining = inputs.admission?.mode === "draining";
+  const held: { key: string; label: string }[] = [];
+  if (!inputs.conveyor) unknown("stop", "단계 처리");
+  for (const station of inputs.conveyor?.stations ?? []) {
+    if (!QUEUE_STATIONS.has(station.key) || !station.waiting) continue;
+    const progress = progressOf(station.key);
+    // 사람이 멈춘 잡의 칸은 「멈춘 작업」 규칙이 맡는다(하루가 지나면)
+    if (progress?.reason === "paused" || (progress?.job && pausedJobs.has(progress.job))) continue;
+    const perHour = station.doneHour ?? (station.done5m !== null ? station.done5m * 12 : null);
+    if (perHour === null) { unknown("stop", `${station.label} 처리 수`); continue; }
+    if (perHour >= station.waiting * limits.stalledRatio) continue;
+    const def = taskForJob(progress?.job);
+    if (draining && (def?.routeId || (stagePanel(station.key)?.tasks.length ?? 0) > 0)) {
+      // 흐름 표는 그대로 「멈춤」으로 그린다 — 할 일만 접는다
+      stopped.push(station.key);
+      held.push({ key: station.key, label: station.label });
+      continue;
+    }
+    const free = def ? rankStats(def.id).filter(stat => stat.active === 0)
+      .map(stat => `${josa(name(stat), "은/는")} ${stat.connection.capacitySlots}칸이 모두 비어 있습니다.`) : [];
+    const why = [progress?.skipBlock ? skipSentence(progress.skipBlock) : null, ...free].filter(Boolean).join(" ");
+    stopped.push(station.key);
+    add("stop", {
+      id: `stop:stage:${station.key}`, rule: "stage-stalled",
+      title: `${josa(station.label, "이/가")} ${perHour === 0 ? "멈췄습니다" : "거의 멈췄습니다"}`,
+      fact: [`대기 ${formatCount(station.waiting)}건`, station.oldestMinutes !== null ? `가장 오래된 것 ${formatDuration(station.oldestMinutes)}` : null,
+        station.doneHour !== null ? `최근 1시간 ${formatCount(station.doneHour)}건` : `최근 5분 ${formatCount(station.done5m ?? 0)}건`].filter(Boolean).join(" · "),
+      why: why || null, actions: [link("단계 열기", consoleStageHref(station.key))],
+    });
+  }
+
+  // ── 멈춤 2: 사람이 멈춘 작업이 하루를 넘김
+  if (!inputs.jobs) unknown("stop", "멈춘 작업");
+  const jobLabel = (job: string) => {
+    const stage = inputs.progress?.stages.find(row => row.job === job);
+    return (stage && CONSOLE_STAGE_LABELS[stage.stage]) ?? tasks.find(task => task.jobs.includes(job))?.label ?? job;
+  };
+  const pausedRows = (inputs.jobs ?? []).filter(job => job.paused).map(job => ({ job, since: job.lastRunAt ? Date.parse(job.lastRunAt) : null }))
+    .filter(row => row.since === null || now - row.since > limits.pausedJobMs)
+    .sort((a, b) => (a.since ?? -Infinity) - (b.since ?? -Infinity) || a.job.name.localeCompare(b.job.name));
+  for (const { job, since } of pausedRows) {
+    const label = jobLabel(job.name);
+    const waiting = inputs.progress?.stages.find(row => row.job === job.name)?.waiting;
+    add("stop", {
+      id: `stop:job:${job.name}`, rule: "job-paused",
+      title: since === null ? `${josa(label, "이/가")} 멈춰 있습니다` : `${josa(label, "이/가")} ${Math.floor((now - since) / DAY)}일째 멈춰 있습니다`,
+      fact: [typeof waiting === "number" ? `대기 ${formatCount(waiting)}건` : null, "사람이 멈춤", since === null ? "마지막 실행 기록 없음" : null].filter(Boolean).join(" · "),
+      why: null, ...(job.controlVersion !== undefined ? { keepRef: String(job.controlVersion) } : {}),
+      actions: [{ kind: "job-resume", label: "재개", job: job.name, fallbackHref: jobHref(job.name) },
+        { kind: "keep", label: "사유 남기고 유지", taskId: `stop:job:${job.name}` }, link("작업 보기", jobHref(job.name))],
+    });
+  }
+
+  // ── 멈춤 3: 접수 중단이 30분을 넘김(DRAIN). 다시 여는 것은 사람이 모델 대시보드의 접수 칸에서 한다(자동으로 열지 않는다).
+  // 중단 중에 멈춘 모델 단계(held)는 이 한 줄에 접는다 — 30분 전에는 알리지 않는 같은 열쇠의 줄로, 30분이 지나면 접수 할 일의 까닭으로.
+  if (!inputs.admission) unknown("stop", "접수 상태");
+  else if (inputs.admission.mode === "draining") {
+    const since = inputs.admission.since ? Date.parse(inputs.admission.since) : NaN;
+    const heldNames = held.map(row => row.label).join(" · ");
+    const heldWhy = held.length ? `접수 중단 때문에 모델 단계 ${held.length}개가 멈춰 있습니다: ${heldNames}.` : null;
+    if (!Number.isFinite(since)) unknown("stop", "접수 중단 시각");
+    if (Number.isFinite(since) && now - since > limits.admissionPausedMs) add("stop", {
+      id: "stop:admission", rule: "admission-paused",
+      title: `접수가 ${formatDuration((now - since) / MINUTE)}째 멈춰 있습니다`,
+      fact: `모델 접수 중단 · ${formatKst(since)}부터`, why: heldWhy, actions: [link("접수 열기", ADMISSION_HREF)],
+    });
+    else if (held.length) add("stop", {
+      id: "stop:admission", rule: "admission-paused", notify: false,
+      title: held.length === 1 ? `${josa(held[0].label, "이/가")} 접수 중단 때문에 멈춰 있습니다` : `모델 단계 ${held.length}개가 접수 중단 때문에 멈춰 있습니다`,
+      fact: [heldNames, Number.isFinite(since) ? `접수 중단 ${formatKst(since)}부터 · ${formatDuration((now - since) / MINUTE)}` : "접수 중단"].join(" · "),
+      why: `접수를 다시 열면 풀립니다. 중단이 ${Math.round(limits.admissionPausedMs / MINUTE)}분을 넘으면 알림을 보냅니다.`,
+      actions: [link("접수 열기", ADMISSION_HREF), link("단계 열기", consoleStageHref(held[0].key))],
+    });
+  }
+
+  // ── 멈춤 4: 내림 요청이 24시간을 넘김
+  if (!inputs.takedown) unknown("stop", "내림 요청");
+  else if (inputs.takedown.overdue > 0) add("stop", {
+    id: "stop:takedown", rule: "takedown-overdue", title: `내림 요청이 ${limits.takedownHours}시간을 넘겼습니다`,
+    fact: `요청 ${formatCount(inputs.takedown.count)}건 · ${limits.takedownHours}시간 넘은 것 ${formatCount(inputs.takedown.overdue)}건`, why: null,
+    actions: [link("요청 열기", "/admin/requests?tab=correction&kind=takedown")],
+  });
+
+  // ── 평소와 다름 1: 보류 사유 하나가 24시간에 50건 넘게 늘고, 그 사유의 절반 이상이 새것
+  if (!inputs.conveyor) unknown("odd", "보류 사유");
+  for (const hold of inputs.conveyor?.holdsByReason ?? []) {
+    const recent = hold.recent24h ?? 0;
+    if (!(recent > limits.holdSurge && recent >= hold.count * limits.holdNewShare)) continue;
+    const where = hold.station === "human" ? "사람 확인" : inputs.conveyor!.stations.find(station => station.key === hold.station)?.label ?? hold.station;
+    const before = hold.count - recent;
+    add("odd", {
+      id: `odd:hold:${hold.reason}`, rule: "hold-surge", title: `${where} 보류가 갑자기 늘었습니다`,
+      fact: `${hold.label} · 24시간 +${formatCount(recent)}건 · 누적 ${formatCount(hold.count)}건`,
+      why: `${before * 10 <= recent ? "어제까지는 거의 없던 보류입니다." : "누적의 절반 넘게 최근 24시간에 생겼습니다."} 어제 들어간 변경과 나란히 볼 것.`,
+      actions: [link("보류 보기", hold.href ?? HOLD_FALLBACK_HREF[hold.station] ?? "/admin/review"), link("기록 보기", "/admin/activity")],
+    });
+  }
+
+  // ── 평소와 다름 2: 바꾼 뒤 처리량이 바꾸기 전보다 떨어짐 — 판정은 바꾼 것 지켜보기(judgeChange)가 하고, 여기서는 그 할 일을 그대로 올린다
+  if (inputs.changeWatch === null) unknown("odd", "바꾼 뒤 처리량");
+  for (const row of inputs.changeWatch ?? []) add("odd", {
+    id: `odd:${row.key}`, rule: "change-drop", title: row.title, fact: row.fact, why: row.why ?? null,
+    actions: row.actions.map(action => link(action.label, action.href)),
+  });
+
+  // ── 쌓임 1: 지금 속도(24시간 정산 수)로 3일 넘게 걸리는 단계 — 오래 걸리는 순
+  const piling: string[] = [];
+  if (!inputs.progress) unknown("pile", "단계 대기");
+  else if (!inputs.ledger) unknown("pile", "지금 속도(24시간 장부)");
+  else {
+    const eta: (ConsoleTask & { days: number })[] = [];
+    for (const stage of inputs.progress.stages) {
+      const waiting = stage.waiting ?? 0;
+      if (waiting <= 0 || stopped.includes(stage.stage) || stage.reason === "paused" || (stage.job && pausedJobs.has(stage.job))) continue;
+      const def = taskForJob(stage.job);
+      if (!def?.routeId) continue;
+      const settled = inputs.ledger.filter(row => row.routeId === def.routeId).reduce((total, row) => total + row.settled, 0);
+      const days = settled > 0 ? waiting / settled : Infinity;
+      if (days <= limits.backlogDays) continue;
+      const label = CONSOLE_STAGE_LABELS[stage.stage] ?? def.label;
+      const models = rankStats(def.id);
+      const idle = idleModels(inputs, def.id, stats);
+      const why = [models.length === 1 ? `쓰는 모델이 ${name(models[0])} 하나입니다.` : null, idleModelsText(idle)].filter(Boolean).join(" ");
+      piling.push(stage.stage);
+      eta.push({
+        id: `pile:stage:${stage.stage}`, group: "pile", rule: "backlog-eta", tone: "warn", notify: groups.pile.notify, days, stageTask: def.id,
+        title: `${josa(label, "이/가")} 쌓입니다`,
+        fact: settled > 0 ? `대기 ${formatCount(waiting)}건 · 하루 ${formatCount(settled)}건 처리 · 지금 속도로 ${formatDays(days)}`
+          : `대기 ${formatCount(waiting)}건 · 24시간 처리 0건 · 지금 속도로는 줄지 않음`,
+        // 모델 붙이기는 단계 패널의 모델 구역에서 — 표본 비교를 받는 작업(한국어 소개)은 남는 모델로 결과를 먼저 나란히 보는 길을 함께(시안 흐름 2)
+        why: why || null, actions: [link("모델 붙이기", stagePanelHref(stage.stage, "models")),
+          ...(SAMPLE_COMPARE_SUPPORTED.includes(def.id) && idle.length ? [link("표본 비교", compareHref(def.id, idle[0].connection.id))] : [])],
+      });
+    }
+    groups.pile.tasks.push(...eta.sort((a, b) => b.days - a.days));
+  }
+
+  // ── 쌓임 2: 사람 확인 500건 초과, 또는 감사 거절이 7일 넘음
+  const human = inputs.conveyor?.human ?? null;
+  if (!human) unknown("pile", "사람 확인");
+  else if (human.waiting > limits.humanWaiting) {
+    const agreedTotal = inputs.agreed ? inputs.agreed.approve + inputs.agreed.reject : human.agreed;
+    const agreedText = !agreedTotal ? null : !inputs.agreed ? `두 모델이 같은 결론을 낸 ${formatCount(agreedTotal)}건`
+      : inputs.agreed.reject === 0 ? `두 모델이 모두 승인한 ${formatCount(agreedTotal)}건` : inputs.agreed.approve === 0 ? `두 모델이 모두 거절한 ${formatCount(agreedTotal)}건`
+      : `두 모델이 같은 결론을 낸 ${formatCount(agreedTotal)}건(승인 ${formatCount(inputs.agreed.approve)} · 거절 ${formatCount(inputs.agreed.reject)})`;
+    add("pile", {
+      id: "pile:human", rule: "human-or-audit", title: "사람 확인이 줄지 않습니다",
+      fact: [`대기 ${formatCount(human.waiting)}건`, human.oldestDays !== null ? `가장 오래된 것 ${formatCount(human.oldestDays)}일` : null,
+        human.decided24h !== null ? `24시간 동안 사람이 끝낸 것 ${formatCount(human.decided24h)}건` : null].filter(Boolean).join(" · "),
+      why: agreedText ? `${agreedText}은 표본만 보고 한 번에 끝낼 수 있습니다.` : null,
+      actions: [link("묶음 보기", "/admin/review/batches")],
+    });
+  }
+  if (!inputs.audit) unknown("pile", "감사 거절");
+  else if (inputs.audit.overdue > 0) add("pile", {
+    id: "pile:audit", rule: "human-or-audit", title: "감사 거절이 쌓여 있습니다",
+    fact: [`열린 거절 ${formatCount(inputs.audit.open)}건`, `${limits.auditOverdueDays}일 넘은 것 ${formatCount(inputs.audit.overdue)}건`,
+      inputs.audit.oldestWaitDays !== null ? `가장 오래된 것 ${formatCount(inputs.audit.oldestWaitDays)}일` : null].filter(Boolean).join(" · "),
+    // 감사 거절에는 묶음 화면이 없다(3b 는 심사 보류만 묶는다) — 사람 확인 화면의 「요청과 감사」와 같은 목록을 바로 연다
+    why: null, actions: [link("거절 목록 보기", AUDIT_REJECTS_HREF)],
+  });
+
+  // ── 정리 1: 결과 없이 끝난 호출이 하루 10건 이상인 모델
+  if (!inputs.connections) unknown("tidy", "모델 목록");
+  else if (!inputs.ledger) unknown("tidy", "결과 없이 끝난 호출(24시간 장부)");
+  for (const stat of stats.values()) {
+    if (!stat.connection.enabled || stat.noResult === null || stat.noResult < limits.noResultPerDay) continue;
+    add("tidy", {
+      id: `tidy:no-result:${stat.connection.id}`, rule: "no-result", title: `${josa(name(stat), "이/가")} 자주 거절합니다`,
+      fact: `24시간 ${formatCount(stat.calls ?? 0)}건 중 ${formatCount(stat.noResult)}건이 결과 없이 끝남`, why: null,
+      actions: [link("쉬게 하기", modelDetailHref(stat.connection.id)), { kind: "keep", label: "그대로 두기", taskId: `tidy:no-result:${stat.connection.id}` }],
+    });
+  }
+
+  // ── 정리 2: 쓰는 단계가 없는 모델 · 순위에 같은 모델이 두 번
+  if (inputs.connections && (!inputs.ranks || !inputs.pools)) unknown("tidy", "모델을 쓰는 단계");
+  else if (inputs.connections) for (const stat of stats.values()) {
+    if (!stat.connection.enabled || stat.tasks.size) continue;
+    add("tidy", {
+      id: `tidy:unused:${stat.connection.id}`, rule: "unused-or-duplicate", title: `${josa(name(stat), "을/를")} 아직 안 씁니다`,
+      fact: [`${formatKst(stat.connection.updatedAt)} 저장`, stat.calls === null ? "호출 셀 수 없음" : `호출 ${formatCount(stat.calls)}건`, "쓰는 단계 없음"].join(" · "),
+      why: null, actions: [link("단계에 붙이기", modelStagesHref(stat.connection.id)), link("모델 상세", modelDetailHref(stat.connection.id))],
+    });
+  }
+  if (inputs.ranks) {
+    const repeats: { task: string; slot: number; text: string }[] = [];
+    const slots = new Map<string, ConsoleRank[]>();
+    for (const row of inputs.ranks) if (row.enabled) slots.set(`${row.task}#${row.slot}`, [...(slots.get(`${row.task}#${row.slot}`) ?? []), row]);
+    for (const rows of slots.values()) {
+      const byModel = new Map<string, number[]>();
+      for (const row of rows) byModel.set(`${row.connectionId}\u0000${row.model}`, [...(byModel.get(`${row.connectionId}\u0000${row.model}`) ?? []), row.rank]);
+      const twice = [...byModel.values()].filter(ranks => ranks.length > 1);
+      if (!twice.length) continue;
+      const def = taskDef(rows[0].task);
+      const label = `${def?.label ?? rows[0].task}${def && def.slots > 1 ? ` ${def.slotLabel ?? "칸"} ${rows[0].slot}` : ""}`;
+      repeats.push({ task: rows[0].task, slot: rows[0].slot, text: twice.map(ranks => `${label}(${ranks.sort((a, b) => a - b).join("·")}순위)`).join(" · ") });
+    }
+    if (repeats.length) add("tidy", {
+      id: "tidy:duplicate-ranks", rule: "unused-or-duplicate", title: "순위에 같은 모델이 두 번 들어 있습니다",
+      fact: repeats.map(row => row.text).join(" · "), why: "같은 모델을 다시 부르는 순위는 앞 순위가 못 할 때 대신하지 못합니다.",
+      actions: [link("순위 고치기", taskStageHref(repeats[0].task, repeats[0].slot))],
+    });
+  }
+
+  // ── 정리 3: 키 만료 7일 전
+  for (const stat of stats.values()) {
+    const { keySetAt, keyValidDays, enabled } = stat.connection;
+    if (!enabled || !keySetAt || !keyValidDays) continue;
+    const expires = Date.parse(keySetAt) + keyValidDays * DAY;
+    if (!Number.isFinite(expires) || expires - now > limits.keyExpiryDays * DAY) continue;
+    add("tidy", {
+      id: `tidy:key:${stat.connection.id}`, rule: "key-expiry",
+      title: expires > now ? `${name(stat)} 키가 ${Math.ceil((expires - now) / DAY)}일 뒤 만료됩니다` : `${name(stat)} 키가 만료됐습니다`,
+      fact: `${formatKst(keySetAt, true)} 넣음 · ${formatKst(expires, true)} 만료`, why: null, actions: [link("키 바꾸기", modelDetailHref(stat.connection.id))],
+    });
+  }
+
+  // ── 그대로 둔 것: 사람이 「확인했고 그대로 둔다」로 표시한 할 일은 그 기간 동안 목록에서 내린다(받는 규칙만, 기간이 지나면 다시 올라온다)
+  const keeps = new Map((inputs.kept ?? []).filter(row => Date.parse(row.until) > now).map(row => [row.taskId, row]));
+  const kept: ConsoleTaskBoard["kept"] = [];
+  for (const group of Object.values(groups)) group.tasks = group.tasks.filter(task => {
+    const found = CONSOLE_KEEP_RULES.includes(task.rule) ? keeps.get(task.id) : undefined;
+    // 표시한 뒤 대상이 바뀌었으면(멈춘 작업을 재개했다가 다시 멈춤) 그 표시는 지금 할 일에 맞지 않는다
+    const keep = found && (!found.ref || !task.keepRef || found.ref === task.keepRef) ? found : undefined;
+    if (keep) kept.push({ task, keep });
+    return !keep;
+  });
+
+  const list = CONSOLE_GROUPS.map(group => groups[group.key]);
+  return { checkedAt: inputs.now, groups: list, total: list.reduce((total, group) => total + group.tasks.length, 0), marks: { stopped, piling },
+    kept, keptUnknown: inputs.kept === null };
+}

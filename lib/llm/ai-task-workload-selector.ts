@@ -9,7 +9,7 @@ import { deviceFits, deviceModelQuotaFits, deviceRoleRank, deviceRouteQuotaFits 
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { taskPoolEngineKey } from "./ai-task-pool-identity";
 import { aiTaskUsesCliEngine, cliEngineRevision, type CliEngineSource } from "./cli-engine-config";
-import { aiTaskSupportsWorkloadPool, type AiTaskExecutionConfig, type AiTaskWorkloadCandidate, type AiTaskWorkloadChoice } from "./ai-task-execution-config";
+import { aiTaskSupportsPool, type AiTaskExecutionConfig, type AiTaskWorkloadCandidate, type AiTaskWorkloadChoice } from "./ai-task-execution-config";
 
 const cursors = new Map<string, number>();
 
@@ -48,7 +48,7 @@ function sameCliEngineSource(left: CliEngineSource, right: CliEngineSource): boo
 export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate>(config: AiTaskExecutionConfig,
   candidates: readonly T[], options: Readonly<{ preferIdentity?: string | null; preferMemberId?: string | null; executor?: ProductTransaction }> = {}): Promise<AiTaskWorkloadChoice<T> | null> {
   if (config.mode !== "workload_pool") return null;
-  if (!aiTaskSupportsWorkloadPool(config.task, config.slot)) throw new ModelCapacityDeferredError("assignments_unavailable");
+  if (!aiTaskSupportsPool(config.task, config.slot)) throw new ModelCapacityDeferredError("assignments_unavailable");
   if (config.revision === null || config.members.length < 1 || config.members.length > 4)
     throw new ModelCapacityDeferredError("assignments_unavailable");
   const task = aiTask(config.task);

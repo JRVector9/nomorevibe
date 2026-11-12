@@ -32,7 +32,8 @@ export async function pendingTextPoolTargetModel(ranks: TextTaskRanks, target: T
   if (ranks.mode !== 'workload_pool') return null;
   if (ranks.routeId !== target.routeId) throw new Error('text_pool_affinity_route_mismatch');
   if (!owner) throw new ModelCapacityDeferredError('owner_unavailable');
-  const models = ranks.resolution.candidates.flatMap(candidate => candidate.binding ? [candidate.binding.identity]
+  // 구성원과 예비 순위(0179) 모두 — 예비로 줄에 세운 고정 대상도 그 모델로 이어받는다
+  const models = ranks.candidates().flatMap(candidate => candidate.binding ? [candidate.binding.identity]
     : [candidate.rank.model, aiTaskAliasIdentity(candidate.rank.model, candidate.rank.connection.id)].filter((model): model is string => !!model));
   const matches = await readTextTargetPoolAffinities(target, models, owner);
   if (matches.length > 1) throw new ModelCapacityDeferredError('ledger_mismatch');

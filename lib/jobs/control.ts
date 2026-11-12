@@ -9,6 +9,7 @@ import { batchPendingNames, lockJobBatch } from "./batch-repository";
 import { batchJobsForRole, catalogJobsForBatch, type BatchRole } from "./batches";
 import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
+import { readJobIntervalOverrides } from "./job-interval-reader";
 
 export type JobLease = { name: string; token: string; requestedVersion: number };
 export { JobLeaseLostError } from "./lease";
@@ -32,10 +33,19 @@ export function scheduledJobs(batch: { mode: string; writerContractVersion: numb
   return catalogJobsForBatch(batch).filter(job => job.intervalMs !== null);
 }
 
-/** Coalesce scheduled signals and advance from the scheduled instant, not handler completion. */
+/**
+ * Coalesce scheduled signals and advance from the scheduled instant, not handler completion.
+ *
+ * 주기는 카탈로그(intervalMs)이고, 운영 설정의 잡 주기 덮어쓰기(runtime_settings jobs.<잡>.intervalMs, lib/jobs/job-intervals.ts)가 있으면 그 값이다.
+ * 덮어쓰기가 없는 잡은 예전과 같은 SQL 이다(tests/integration/job-interval-override.test.ts). 덮어쓴 잡은 하나만 더 본다 — 이미 잡힌 예약이 새 주기보다
+ * 멀면(주기를 줄였다) 지금 요청하고 새 주기 안으로 다시 잡는다. 덮어쓰기를 지우면(코드 기본값으로) 이미 잡힌 예약까지는 그대로 기다린다.
+ * options.overrides 는 시험용 주입이다(없으면 30초 나눠 쓰는 행 읽기 — TX 밖이라 읽기 실패가 이 TX 를 깨지 않는다).
+ */
 export async function requestDueJobs(
   acknowledge?: (tx: ProductTransaction, tick: { batchEpoch: number; requested: number }) => Promise<void>,
+  options: { overrides?: ReadonlyMap<string, number> } = {},
 ): Promise<number> {
+  const overrides = options.overrides ?? await readJobIntervalOverrides();
   return db.transaction(async tx => {
     // DR writer fence가 첫 lock이다(seal의 fence UPDATE → batch → jobs와 같은 순서). fenced DB의 scheduler는 정기 요청을 만들지 않는다.
     if (!await writerSiteActive(tx)) return 0;
@@ -43,15 +53,19 @@ export async function requestDueJobs(
     let count = 0;
     for (const job of scheduledJobs(batch)) {
       await tx.insert(jobs).values({ name: job.name }).onConflictDoNothing();
-      const duration = sql`${job.intervalMs} * interval '1 millisecond'`;
+      const override = overrides.get(job.name);
+      const intervalMs = override ?? job.intervalMs;
+      const duration = sql`${intervalMs} * interval '1 millisecond'`;
       const [due] = await tx.update(jobs).set({
         requestedVersion: sql`case when ${jobs.requestedVersion} = ${jobs.processedVersion}
           then ${jobs.requestedVersion} + 1 else ${jobs.requestedVersion} end`,
         nextScheduledAt: sql`coalesce(${jobs.nextScheduledAt}, now()) +
-          (floor(extract(epoch from (now() - coalesce(${jobs.nextScheduledAt}, now()))) * 1000 / ${job.intervalMs}) + 1) * (${duration})`,
+          (floor(extract(epoch from (now() - coalesce(${jobs.nextScheduledAt}, now()))) * 1000 / ${intervalMs}) + 1) * (${duration})`,
         updatedAt: sql`now()`,
       }).where(and(eq(jobs.name, job.name),
-        or(isNull(jobs.nextScheduledAt), sql`${jobs.nextScheduledAt} <= now()`),
+        override === undefined
+          ? or(isNull(jobs.nextScheduledAt), sql`${jobs.nextScheduledAt} <= now()`)
+          : or(isNull(jobs.nextScheduledAt), sql`${jobs.nextScheduledAt} <= now()`, sql`${jobs.nextScheduledAt} > now() + (${duration})`),
         sql`${jobs.requestedVersion} < 9007199254740991`,
       )).returning({ name: jobs.name });
       if (due) count++;

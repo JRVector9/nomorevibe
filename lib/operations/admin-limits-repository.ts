@@ -80,7 +80,10 @@ export async function queryLimitsMeasurement(map: LimitsMeasureMap): Promise<Lim
     const devices = await tx.execute<LimitsMeasureRows["devices"][number]>(sql`SELECT device_id AS "deviceId", limit_slots AS "limitSlots", enabled, model_limits AS "modelLimits"
       FROM model_capacity_devices ORDER BY device_id LIMIT 200`);
     const [control] = await tx.execute<{ routes: unknown }>(sql`SELECT policy->'routes' AS routes FROM model_capacity_control WHERE id = 1`);
-    const ranks = await tx.execute<LimitsMeasureRows["ranks"][number]>(sql`SELECT task, slot, rank, model, enabled FROM ai_task_models ORDER BY task, slot, rank LIMIT 500`);
+    // 「지금 모델」은 사용자가 정한 이름으로 적는다(운영 콘솔 통합 — aiModelDisplayName 과 같은 규칙: options.displayName, 없으면 연결 이름표)
+    const ranks = await tx.execute<LimitsMeasureRows["ranks"][number]>(sql`SELECT r.task, r.slot, r.rank, r.model, r.enabled,
+        coalesce(nullif(btrim(c.options->>'displayName'), ''), c.label) AS name
+      FROM ai_task_models r LEFT JOIN ai_connections c ON c.id = r.connection_id ORDER BY r.task, r.slot, r.rank LIMIT 500`);
     const rows = Array.from(settled);
     if (rows.length > 2000) throw new Error("limits_measurement_truncated");
     const num = (value: number | string) => Number(value);

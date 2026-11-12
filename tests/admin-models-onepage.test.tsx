@@ -204,7 +204,7 @@ describe("장비 표·검토 목록·접기·상단 띠", () => {
     expect(source).toContain("roleOverview()"); expect(source).toContain("readModelCapacityUnknowns("); expect(source).toContain("readCatalogJobRegistration()");
     // 확인 못함 검토 목록은 기록 화면(PR 3)이 맡는다 — 고급 설정에는 넣지 않는다
     expect(source).not.toContain("UnknownReview");
-    const dashboard = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/page.tsx"), "utf8");
+    const dashboard = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/dashboard/page.tsx"), "utf8");
     expect(dashboard).not.toMatch(/ModelsWorkspace|LiveModels|HelpersFold|ReviewModelsForm/);
   });
   it("LiveModels 는 타일·표·범례·처리량 접기를 한 구획에 그리고 장부 오류면 띠와 경고만 그린다", () => {
