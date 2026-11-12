@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/status/job-control-actions", () => ({ controlJobAction: vi.fn() }));
+vi.mock("@/app/(operator)/admin/flow/task-keep-actions", () => ({ keepConsoleTaskAction: vi.fn() }));
 
 import { ConsoleHome } from "@/app/(operator)/admin/flow/ConsoleHome";
 import { consoleFixtureRead } from "./fixtures/console-home";
@@ -32,14 +33,30 @@ describe("console home", () => {
     expect(plain).toContain("워커가 틱마다 후보 2건을 「이미 처리 중」으로 건너뛰고 끝납니다. gpu3090-qwen은 5칸이 모두 비어 있습니다.");
   });
 
-  it("links every button to an existing screen or the existing job control", () => {
-    expect(html).toContain('href="/admin/flow?tab=detail&amp;stage=first#prototype-selected-stage">단계 열기</a>');
+  it("links every button to the stage panel, an existing screen or the existing job control", () => {
+    // 「단계 열기」·「모델 붙이기」는 단계 패널(조각 2a, ?stage=) — 키워드 검수 쌓임은 키워드 등록 패널
+    expect(html).toContain('href="/admin/flow?stage=first">단계 열기</a>');
+    expect(html).toContain('href="/admin/flow?stage=product-translate#sp-models">모델 붙이기</a>');
+    expect(html).toContain('href="/admin/flow?stage=keywords#sp-models">모델 붙이기</a>');
     // 재개 — 운영센터와 같은 작업 제어 폼(사유 필수)
     expect(html).toMatch(/<details class="ch-job"><summary class="button small primary">재개<\/summary><form[^>]*>.*재개 사유.*이 작업 재개<\/button>/);
-    expect(html).toContain('href="/admin/models/tasks#execution-product-translate-1">모델 붙이기</a>');
     expect(html).toContain('href="/admin/review?tab=human&amp;stage=agreed">묶음 보기</a>');
     expect(html).toContain('href="/admin/audit">묶음 보기</a>');
-    expect(html).not.toMatch(/사유 남기고 유지|그대로 두기/);
+  });
+
+  it("offers 「사유 남기고 유지」 and 「그대로 두기」 with a required reason, only where a person can write", () => {
+    expect(html).toMatch(/<summary class="button small">사유 남기고 유지<\/summary><form[^>]*class="ch-keep-form"[^>]*>.*소개 검수가 8일째 멈춰 있습니다.*7일 동안 목록에서 내리고.*<input required=""/);
+    expect(html).toMatch(/<summary class="button small">그대로 두기<\/summary><form[^>]*class="ch-keep-form"/);
+    const readOnly = renderToStaticMarkup(<ConsoleHome data={consoleFixtureRead()} csrf={null} />);
+    expect(readOnly).not.toMatch(/사유 남기고 유지|그대로 두기/);
+  });
+
+  it("moves kept tasks into 「그대로 둔 것」 and says when the marks could not be read", () => {
+    const keep = { taskId: "tidy:no-result:conn-lg-exaone", at: "2026-11-11T23:00:00.000Z", until: "2026-11-18T23:00:00.000Z", actor: "JR", reason: "약관상 번역에만 씀" };
+    const kept = text(renderToStaticMarkup(<ConsoleHome data={consoleFixtureRead({ kept: [keep] })} csrf={csrf} />));
+    expect(kept).toContain("지금 할 일 10건");
+    expect(kept).toContain("그대로 둔 것 1건 LG EXAONE이 자주 거절합니다 JR · 11-12 08:00 · 11-19 08:00까지 · 약관상 번역에만 씀");
+    expect(text(renderToStaticMarkup(<ConsoleHome data={consoleFixtureRead({ kept: null })} csrf={csrf} />))).toContain("그대로 둔 표시를 읽지 못해 모든 할 일을 그대로 보입니다.");
   });
 
   it("falls back to the job detail when the inline control cannot be offered", () => {
@@ -57,10 +74,16 @@ describe("console home", () => {
     expect(html.match(/<svg class="ch-spark"/g)).toHaveLength(7);
   });
 
-  it("leaves the change-watch slot empty unless the next piece fills it", () => {
+  it("puts the change watch under the flow and the stage panel after the grid", () => {
     expect(html).not.toContain("바꾼 것 지켜보기");
-    const filled = renderToStaticMarkup(<ConsoleHome data={consoleFixtureRead()} csrf={null} changeWatch={<section id="watch">바꾼 것 지켜보기</section>} />);
+    const filled = renderToStaticMarkup(<ConsoleHome data={consoleFixtureRead()} csrf={null} changeWatch={<section id="watch">바꾼 것 지켜보기</section>}
+      panel={<aside id="panel">패널</aside>} />);
     expect(filled.indexOf('id="ch-flow-title"')).toBeLessThan(filled.indexOf('id="watch"'));
+    expect(filled.indexOf('id="watch"')).toBeLessThan(filled.indexOf('id="panel"'));
+    // 흐름 표의 줄은 단계 패널을 연다 — 공개 뒤 단계도
+    expect(html).toContain('href="/admin/flow?stage=second">AI 2차</a>');
+    expect(html).toContain('href="/admin/flow?stage=intro-check">소개 검수</a>');
+    expect(plain).toContain("단계를 누르면 패널");
   });
 
   it("says there is nothing to do with the last check time", () => {

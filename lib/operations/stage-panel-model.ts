@@ -157,16 +157,18 @@ export function trendText(found: TrendBreak): string {
 // ── 칸 ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * 모델 하나의 지금 칸 — 「supa는 3칸 중 3칸을 쓰고 있고, 쓰는 쪽은 키워드 검수입니다.」 장비를 여러 연결이 나눠 쓰면 주어는 「…이 있는 장비」.
- * ownRoutes 는 이 단계의 route — 이 단계가 쥔 칸은 「이 단계」로 적는다. 장비 관측이 없으면 null.
+ * 장비 하나의 지금 칸 — 「supa-direct는 3칸 중 3칸을 쓰고 있고, 쓰는 쪽은 키워드 검수입니다.」 이 단계가 그 장비의 연결을 여럿 쓰면(같은 장비의 두 모델)
+ * 주어는 「m3-gpt-oss·m3-deepseek가 있는 장비」. ownRoutes 는 이 단계의 route — 이 단계가 쥔 칸은 「이 단계」로 적는다. 장비 관측이 없으면 null.
  */
-export function slotSentence(connection: ConsoleConnection, connections: readonly ConsoleConnection[], devices: readonly ConsoleDevice[] | null,
+export function slotSentence(used: readonly ConsoleConnection[], connections: readonly ConsoleConnection[], devices: readonly ConsoleDevice[] | null,
   ownRoutes: readonly string[]): string | null {
-  if (!devices) return null;
-  const device = devices.find(row => row.deviceId === connection.deviceId);
-  const shared = connections.filter(row => row.deviceId === connection.deviceId).length > 1;
-  const subject = shared ? `${connection.label}이(가) 있는 장비` : connection.label;
-  const limit = device?.limit ?? connection.capacitySlots;
+  if (!devices || !used.length) return null;
+  const deviceId = used[0].deviceId;
+  const device = devices.find(row => row.deviceId === deviceId);
+  const shared = connections.filter(row => row.deviceId === deviceId).length > 1;
+  const names = used.map(row => row.label).join("·");
+  const subject = shared ? `${josa(names, "이/가")} 있는 장비` : names;
+  const limit = device?.limit ?? Math.max(...used.map(row => row.capacitySlots));
   const active = device?.active ?? 0;
   if (active === 0) return `${josa(subject, "은/는")} ${formatCount(limit)}칸이 모두 비어 있습니다.`;
   const users = (device?.routes ?? []).filter(row => row.active > 0)
@@ -225,7 +227,7 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
   for (const job of jobs.filter(entry => entry.paused)) {
     explained = true;
     why.push({ label: "사람이 멈춤", text: job.pause
-      ? `${job.label} 작업을 ${job.pause.actor}이(가) ${formatKst(job.pause.at)}에 멈췄습니다 — 사유: ${job.pause.reason || "(적지 않음)"}`
+      ? `${job.label} 작업을 ${josa(job.pause.actor, "이/가")} ${formatKst(job.pause.at)}에 멈췄습니다 — 사유: ${job.pause.reason || "(적지 않음)"}`
       : input.pauses ? `${job.label} 작업이 멈춰 있습니다 — 멈춘 기록(작업 로그)을 찾지 못했습니다.` : `${job.label} 작업이 멈춰 있습니다 — 멈춘 기록을 읽지 못했습니다.` });
   }
   if (def.tasks.length && inputs.admission && inputs.admission.mode !== "open") {
@@ -299,15 +301,21 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
         archived: mode === "workload_pool" && ranks.length ? ranks.map(entry => `${entry.rank}순위 ${name(entry.connectionId)}`).join(" → ") : null };
     });
   }) : null;
-  // 배정된 모델마다 지금 칸과 그 칸을 쓰는 단계 — 같은 연결은 한 번만
+  // 배정된 모델마다 지금 칸과 그 칸을 쓰는 단계 — 장비마다 한 줄(같은 장비의 두 연결은 함께), 이름표는 그 장비를 쓰는 순위(작업이 여럿이면 작업 이름을 붙인다)
   if (models) {
-    const seen = new Set<string>();
+    const byDevice = new Map<string, { tags: string[]; used: ConsoleConnection[] }>();
     for (const line of models) for (const member of line.members) {
       const connection = connectionOf(member.connectionId);
-      if (!connection || seen.has(connection.id)) continue;
-      seen.add(connection.id);
-      const sentence = slotSentence(connection, connections, inputs.devices, routes);
-      if (sentence) why.push({ label: member.tag, text: sentence });
+      if (!connection) continue;
+      const entry = byDevice.get(connection.deviceId) ?? { tags: [], used: [] };
+      const tag = def.tasks.length > 1 || line.slot > 1 ? `${def.tasks.length > 1 ? taskStageLabel(line.task) : `투표자 ${line.slot}`} ${member.tag}` : member.tag;
+      if (!entry.tags.includes(tag)) entry.tags.push(tag);
+      if (!entry.used.some(row => row.id === connection.id)) entry.used.push(connection);
+      byDevice.set(connection.deviceId, entry);
+    }
+    for (const entry of byDevice.values()) {
+      const sentence = slotSentence(entry.used, connections, inputs.devices, routes);
+      if (sentence) why.push({ label: entry.tags.join(" · "), text: sentence });
     }
   }
   const slotsUnknown = !!models && !inputs.devices;
@@ -315,7 +323,7 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
   // 추이 — 꺾인 시각(까닭은 말하지 않는다)
   const hours = input.conveyor?.hours?.slice(0, -1) ?? null;
   const found = spark && hours ? trendBreak(hours, spark) : null;
-  if (found) why.push({ label: "추이", text: trendText(found) });
+  if (found) why.push({ label: "추이", text: waiting === 0 ? trendText(found).replace(/ 원인 미확인\.$/, " 지금 대기 0건. 원인 미확인.") : trendText(found) });
   const tone = row?.tone ?? "off";
   if (!explained && !found && (tone === "bad" || tone === "warn")) why.push({ label: "원인", text: "원인 미확인 — 위의 값 말고 까닭을 읽지 못했습니다." });
 

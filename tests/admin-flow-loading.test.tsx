@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const read = vi.hoisted(() => ({
   admin: vi.fn(), conveyor: vi.fn(), sharedDesk: vi.fn(), away: vi.fn(), changes: vi.fn(), diagnostics: vi.fn(),
-  jobs: vi.fn(), versions: vi.fn(), editor: vi.fn(), reactions: vi.fn(), home: vi.fn(),
+  jobs: vi.fn(), versions: vi.fn(), editor: vi.fn(), reactions: vi.fn(), home: vi.fn(), panel: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: (href: string) => { throw new Error(`redirect:${href}`); } }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ has: () => false }) }));
@@ -25,6 +25,9 @@ vi.mock("@/app/(operator)/admin/flow/PrototypeFlow", () => ({ PrototypeFlow: () 
 // 운영 홈(할 일 + 흐름) — 읽기 하나로 모은다. 이 시험은 어느 탭이 무엇을 읽는지만 본다
 vi.mock("@/lib/operations/console-home-read", () => ({ readConsoleHome: read.home }));
 vi.mock("@/app/(operator)/admin/flow/ConsoleHome", () => ({ ConsoleHome: () => null }));
+// 단계 패널(?stage=)의 덧읽기 — 패널이 열렸을 때만 부른다
+vi.mock("@/lib/operations/stage-panel-read", () => ({ readStagePanelExtra: read.panel }));
+vi.mock("@/app/(operator)/admin/flow/ChangeWatch", () => ({ ChangeWatch: () => null }));
 
 import Page from "@/app/(operator)/admin/flow/page";
 import { ConsoleHome } from "@/app/(operator)/admin/flow/ConsoleHome";
@@ -58,6 +61,7 @@ beforeEach(() => {
   read.editor.mockResolvedValue(null);
   read.reactions.mockResolvedValue({ count: 0, items: [] });
   read.home.mockResolvedValue({ checkedAt: at, inputs: { now: at }, conveyor: null, jobControls: {} });
+  read.panel.mockResolvedValue({ pauses: [], degraded: [], runtime: [], editor: null, limits: null, limitRows: [], limitImpact: {}, changes: null });
 });
 
 describe("flow loading isolation", () => {
@@ -68,6 +72,22 @@ describe("flow loading isolation", () => {
     expect(read.home).toHaveBeenCalledWith(false);
     for (const work of [read.sharedDesk, read.away, read.changes, read.diagnostics, read.editor, read.reactions]) expect(work).not.toHaveBeenCalled();
     expect((await view("home")).type).toBe(ConsoleHome);
+    // 모르는 탭은 운영 홈(메뉴와 같은 homeTab), 바꾼 것 지켜보기는 홈의 자리에 끼운다
+    expect((await view("unknown")).type).toBe(ConsoleHome);
+    expect(result.props).toMatchObject({ changeWatch: expect.anything(), panel: undefined });
+    expect(read.panel).not.toHaveBeenCalled();
+  });
+  it("opens the stage panel from the address alone, reading its extras only then", async () => {
+    const result = await view(undefined, { stage: "first" });
+    expect(result.type).toBe(ConsoleHome);
+    const panel = (result.props as { panel?: ReactElement<{ fallback: ReactElement<{ label: string }> }> }).panel;
+    expect(panel?.type).toBe(Suspense);
+    expect(panel?.props.fallback.props.label).toBe("AI 1차");
+    expect(read.panel).toHaveBeenCalledWith(expect.objectContaining({ key: "first", tasks: ["first-review"] }), false);
+    // 모르는 단계는 패널 없이 홈만
+    read.panel.mockClear();
+    expect(((await view(undefined, { stage: "nope" })).props as { panel?: unknown }).panel).toBeUndefined();
+    expect(read.panel).not.toHaveBeenCalled();
   });
   it("keeps the previous live board as the flow detail tab, old ?tab=flow included, and opens the asked stage", async () => {
     for (const tab of ["detail", "flow"]) expect((await view(tab)).type).toBe(PrototypeFlow);
