@@ -23,11 +23,13 @@ const link = (draft: Draft): FeedLinkRule => draft.linkKind === "entry-link" ? {
   : { kind: "page-title", titleClass: draft.titleClass.trim(), linkClass: draft.linkClass.trim(), bodyId: draft.bodyId.trim() || null };
 
 /**
- * 수집원 추가 세 걸음(2026-11-12 최종 시안 흐름 4, 조각 4a) — ① 종류 ② 주소와 규칙 ③ 미리 보고 켜기(저장 전 확인).
+ * 수집원 추가 세 단계(2026-11-12 최종 시안 흐름 4, 조각 4a · 「1인 운영 콘솔 시안」 화면 4 — 세 칸을 나란히) — ① 종류 ② 주소와 규칙 ③ 미리 보고 켜기(저장 전 확인).
  * 「글 목록(RSS·Atom)」만 화면에서 끝까지 된다: 미리 보기는 주소를 한 번 읽어 세기만 하고(쓰지 않음), 켜기는 크롤 설정의 글 목록 수집원 한 줄을 더한다
  * (saveFeedSourceAction — 감사 crawl-source-save). GitHub 검색어는 기존 수집 설정 화면으로 잇고, 사이트 목록·그 밖의 API 는 아직 코드가 없다(개발 필요).
  */
-export function FeedSourceAdd({ kind, taken, jobIntervalMs, readOnly }: { kind: FeedAddKind | null; taken: readonly string[]; jobIntervalMs: number | null; readOnly: boolean }) {
+export function FeedSourceAdd({ kind, taken, jobIntervalMs, readOnly, embedded = false }: { kind: FeedAddKind | null; taken: readonly string[]; jobIntervalMs: number | null; readOnly: boolean;
+  /** 수집원 표 아래에 붙인 세 단계(시안 화면 4 는 표 아래에 둔다) — 제목만 한 단계 낮추고 「목록으로」를 뺀다 */
+  embedded?: boolean }) {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(kind === "feed" ? 2 : 1);
   const [draft, setDraft] = useState<Draft>(EMPTY);
@@ -74,25 +76,29 @@ export function FeedSourceAdd({ kind, taken, jobIntervalMs, readOnly }: { kind: 
     router.refresh();
   });
 
-  return <div className="sources-console" data-dirty={step > 1 ? "true" : undefined}>
-    <div className="sc-head"><h2>수집원 추가</h2><span className="sc-right"><Link prefetch={false} className="text-button" href="/admin/sources">수집원 목록으로</Link></span></div>
-    <ol className="sc-steps" aria-label="걸음">
-      {(["종류", "주소와 규칙", "미리 보고 켜기"] as const).map((label, index) => <li key={label} aria-current={step === index + 1 ? "step" : undefined}><b>{index + 1}</b>{label}</li>)}
-    </ol>
+  return <div className="sources-console" id={embedded ? "source-add" : undefined} data-dirty={step > 1 ? "true" : undefined}>
+    <div className="sc-head">{embedded ? <h3>수집원 추가</h3> : <h2>수집원 추가</h2>}<span className="sc-count">세 단계 · 켜기 전까지 수집에는 영향이 없습니다</span>
+      {!embedded && <span className="sc-right"><Link prefetch={false} className="text-button" href="/admin/sources">수집원 목록으로</Link></span>}</div>
     {readOnly && <p className="sc-notice">읽기 전용 화면입니다 — 미리 보기와 저장을 할 수 없습니다.</p>}
-
-    {step === 1 && <section className="sc-card" aria-label="종류">
-      <ul className="sc-pick">
-        <li><button type="button" onClick={() => setStep(2)}><span>글 목록(RSS·Atom)</span><span>화면에서</span></button></li>
-        <li><Link prefetch={false} href="/admin#signals"><span>GitHub 검색어</span><span>수집 설정 화면에서</span></Link></li>
-        <li data-off="true"><div><span>사이트 목록</span><span>개발 필요</span></div></li>
-        <li data-off="true"><div><span>그 밖의 API</span><span>개발 필요</span></div></li>
+    {/* 시안 화면 4 「수집원 추가」 — 세 칸이 나란히(1 종류 · 2 주소와 규칙 · 3 미리 보고 켜기). 지금 단계 칸에서만 고친다 */}
+    <ol className="cs-steps" aria-label="수집원 추가 단계">
+    <li className="cs-step" data-state={step > 1 ? "done" : "now"} aria-current={step === 1 ? "step" : undefined} aria-label="종류">
+      <span className="cs-k">1 종류</span>
+      <ul className="cs-pick sc-kinds">
+        <li data-on={step > 1 ? "true" : undefined}><button type="button" aria-pressed={step > 1} onClick={() => setStep(step > 1 ? step : 2)}><i aria-hidden="true" />
+          <span>글 목록(RSS·Atom)</span><span>코드 없이</span></button></li>
+        <li><Link prefetch={false} href="/admin#signals"><i aria-hidden="true" /><span>GitHub 검색어</span><span>코드 없이 · 수집 설정에서</span></Link></li>
+        <li data-off="true"><div><i aria-hidden="true" /><span>사이트 목록</span><span>개발 필요</span></div></li>
+        <li data-off="true"><div><i aria-hidden="true" /><span>그 밖의 API</span><span>개발 필요</span></div></li>
       </ul>
       <p className="sc-hint">GitHub 검색어는 크롤 설정의 검색 신호에서 더합니다 — 저장하면 GitHub 검색 주기가 처음부터 다시 돕니다(1~2시간 발견이 멈출 수 있음).
         사이트 목록·그 밖의 API 는 받는 코드가 아직 없어 이 화면에서 더할 수 없습니다.</p>
-    </section>}
+    </li>
 
-    {step >= 2 && <section className="sc-card" aria-label="주소와 규칙">
+    <li className="cs-step" data-state={step > 2 ? "done" : step === 2 ? "now" : "next"} aria-current={step === 2 ? "step" : undefined} aria-label="주소와 규칙">
+    <span className="cs-k">2 주소와 규칙</span>
+    {step === 1 && <p className="sc-hint">이름 · 피드 주소 · 고를 글(제목이 무엇으로 시작하는지) · 제품 링크를 찾는 방법 · 주기를 적고 미리 봅니다.</p>}
+    {step >= 2 && <div aria-label="주소와 규칙">
       <form className="sc-form" onSubmit={event => { event.preventDefault(); runPreview(); }}>
         <label><span>이름</span><input type="text" value={draft.name} maxLength={40} onChange={event => set({ name: event.target.value })} placeholder="예: Show GN"
           autoComplete="off" aria-invalid={nameTaken || undefined} /></label>
@@ -124,17 +130,21 @@ export function FeedSourceAdd({ kind, taken, jobIntervalMs, readOnly }: { kind: 
         <div className="sc-acts"><button type="submit" className="button small primary" disabled={pending || readOnly}>{pending && step === 2 ? "읽는 중…" : "미리 보기"}</button>
           <button type="button" className="button small" onClick={() => { setStep(1); setPreview(null); setIssues([]); }}>종류로</button></div>
       </form>
-    </section>}
+    </div>}
+    </li>
 
-    {step === 3 && preview && <section className="sc-card" aria-label="미리 보고 켜기">
+    <li className="cs-step" data-state={step === 3 ? "now" : "next"} aria-current={step === 3 ? "step" : undefined} aria-label="미리 보고 켜기">
+    <span className="cs-k">3 미리 보고 켜기</span>
+    {!(step === 3 && preview) && <p className="sc-hint">주소를 한 번 읽어 읽은 범위 · 고른 글 · 저장소 · 사이트만을 세어 보고(쓰지 않음), 저장 전 확인을 거쳐 켭니다.</p>}
+    {step === 3 && preview && <div aria-label="미리 보고 켜기">
       {!preview.ok ? <p role="alert" className="sc-msg">{reasonText(preview.reason)}</p> : <>
-        <dl className="sc-dl">
-          <dt>읽은 범위</dt><dd className="num">{preview.spanHours === null ? "" : `${preview.spanHours.toFixed(1)}시간 · `}글 {preview.entries}개</dd>
-          <dt>고른 글</dt><dd className="num">{preview.selected}개{preview.perDay !== null ? ` (하루 약 ${preview.perDay.toFixed(preview.perDay < 10 ? 1 : 0)}개)` : ""}
+        <dl className="cs-f">
+          <dt>읽은 범위</dt><dd className="t num">{preview.spanHours === null ? "" : `${preview.spanHours.toFixed(1)}시간 · `}글 {preview.entries}개</dd>
+          <dt>고른 글</dt><dd className="t num">{preview.selected}개{preview.perDay !== null ? ` (하루 약 ${preview.perDay.toFixed(preview.perDay < 10 ? 1 : 0)}개)` : ""}
             {preview.skipped ? <span className="sc-muted"> · 주소 없음·다른 사이트 {preview.skipped}개 건너뜀</span> : null}</dd>
-          <dt>저장소</dt><dd className="num">{preview.repos}개 → 심사 줄로</dd>
-          <dt>사이트만</dt><dd className="num">{preview.siteOnly}개 → 받지 않음(받는 경로 필요)</dd>
-          {preview.failed > 0 && <><dt>읽지 못함</dt><dd className="num">{preview.failed}개 — 수집 때 다음 회차에 다시 읽습니다</dd></>}
+          <dt>저장소</dt><dd className="t num">{preview.repos}개 → 심사 줄로</dd>
+          <dt>사이트만</dt><dd className="t num">{preview.siteOnly}개 → 받지 않음(받는 경로 필요)</dd>
+          {preview.failed > 0 && <><dt>읽지 못함</dt><dd className="t num">{preview.failed}개 — 수집 때 다음 회차에 다시 읽습니다</dd></>}
         </dl>
         {preview.unchecked > 0 && <p className="sc-hint">글 페이지는 최근 {preview.checked}개만 읽었습니다(나머지 {preview.unchecked}개는 켠 뒤 수집 작업이 읽습니다).</p>}
         {preview.samples.length > 0 && <ul className="sc-samples">{preview.samples.map(sample => <li key={sample.page}><span>{sample.title || sample.page}</span>
@@ -160,7 +170,9 @@ export function FeedSourceAdd({ kind, taken, jobIntervalMs, readOnly }: { kind: 
             <button type="button" className="button small" disabled={pending} onClick={() => setConfirming(null)}>취소</button></div>
         </div>}
       </>}
-    </section>}
+    </div>}
+    </li>
+    </ol>
     {issues.map(text => <p key={text} role="alert" className="sc-msg">{text}</p>)}
   </div>;
 }

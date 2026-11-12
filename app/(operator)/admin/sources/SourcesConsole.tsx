@@ -7,6 +7,7 @@ import { YIELD_MIN_FOUND, type CronRowView, type FunnelCounts, type JobStatus, t
 import { JobControl } from "../status/JobControl";
 import { JOB_HOW } from "../status/work-owners";
 import { FeedSettingsForm, JobIntervalForm } from "./IntervalForms";
+import { FeedSourceAdd } from "./new/FeedSourceAdd";
 import "./sources.css";
 
 /** 수집원 화면 주소 — ?source=<열쇠> 는 그 수집원의 상세를 연다 */
@@ -22,6 +23,9 @@ export type SourcesConsoleProps = { view: SourcesView; settings: CrawlSettings |
   /** ?job= — 주기 작업 표에서 조치를 연 줄 */
   openJob?: string | null };
 
+/** 이미 쓰는 신호 이름 — 수집원 추가가 겹치는 이름을 미리 알린다(수집원 추가 화면 FeedSourceAddSlot 과 같은 계산) */
+export const feedAddTaken = (view: SourcesView, settings: CrawlSettings | null) =>
+  settings ? [...new Set([...settings.discover.queries.map(query => query.label), ...view.sources.map(source => source.label)])] : [];
 const ago = (value: string | null, now: string) => value ? `${formatDuration(Math.max(0, (Date.parse(now) - Date.parse(value)) / 60_000))} 전` : "—";
 const Status = ({ status }: { status: JobStatus }) => <span className="sc-st" data-tone={status.tone} title={status.why ?? undefined}><i aria-hidden="true" />{status.label}</span>;
 
@@ -68,6 +72,9 @@ export function SourcesConsole({ view, settings, selected, readOnly, csrf, jobs,
       마지막 성공은 그 수집원을 도는 작업의 마지막 성공입니다(글 목록 수집원은 한 작업을 함께 씁니다).</p>
     {selected && !row && <p role="alert" className="sc-notice">고른 수집원을 찾지 못했습니다(지워졌거나 설정을 읽지 못함).</p>}
     {row && <SourceDetail row={row} view={view} settings={settings} readOnly={readOnly} csrf={csrf} control={row.job ? jobs[row.job] ?? null : null} />}
+    {/* 시안 화면 4 — 수집원 표 아래 「수집원 추가」 세 단계(수집원 추가 화면과 같은 구성 요소). 상세를 연 동안은 접어 둔다 */}
+    {!selected && !readOnly && <FeedSourceAdd kind={null} readOnly={readOnly} embedded taken={feedAddTaken(view, settings)}
+      jobIntervalMs={view.sources.find(source => source.feed?.legacy)?.intervalMs ?? null} />}
     <CronTable view={view} readOnly={readOnly} csrf={csrf} openJob={openJob} />
   </div>;
 }

@@ -39,13 +39,14 @@ beforeEach(() => {
 });
 
 describe("홈 · 바꾼 것 지켜보기 표", () => {
-  it("때 · 바꾼 것 · 전 → 후 · 판정 — 열 폭 고정, 대표 사례는 「다시 떨어짐」", () => {
+  it("때 · 바꾼 것 · 바꾸기 전 · 바꾼 뒤 · 판정(「1인 운영 콘솔 시안」 화면 1) — 열 폭 고정, 대표 사례는 「다시 떨어짐」", () => {
     const html = renderToStaticMarkup(<ChangeWatchTable watch={snapshot()} now={new Date(WATCH_NOW)} />);
     const plain = text(html);
-    expect(html).toContain("table-fixed");
-    expect(plain).toMatch(/때 바꾼 것 전 → 후 판정/);
+    // 열 폭 고정은 운영 홈 표(.ch-table — table-layout: fixed)
+    expect(html).toContain('class="ch-table ch-watch-table"');
+    expect(plain).toMatch(/때 바꾼 것 바꾸기 전 바꾼 뒤 판정/);
     expect(plain).toContain("1차 AI 검수 1순위를 supa로");
-    expect(plain).toContain("시간당 17건 → 첫 1시간 86건 → 지금 3건");
+    expect(html).toMatch(/<td class="q">시간당 17건<\/td><td><span class="ch-after">첫 1시간 86건 → 지금 3건<\/span>/);
     expect(plain).toContain("다시 떨어짐");
     expect(plain).toContain("모델 M1max 추가 · 키 바꿈");
     expect(plain).toContain("호출 0건 · 쓰는 단계 없음");
@@ -53,10 +54,10 @@ describe("홈 · 바꾼 것 지켜보기 표", () => {
     expect(plain).toContain("접수 중단 → 다시 열림 (18분)");
     expect(plain).toContain("판정 못 함");
     expect(plain).toContain("잰 구간에서 접수 중단·작업 멈춤 15분을 빼고 시간당으로 견줬습니다");
-    // 상태는 점 + 짧은 말, 바꾼 때는 오늘이면 「07:10」 아래에 「2시간 전」(좁은 때 칸 — 시안 열 폭 100px)
-    expect(html).toMatch(/data-state="failed"/);
-    expect(plain).toContain("07:10 2시간 전");
-    expect(html).toContain('<col class="w-[100px]"/><col/><col class="w-[34%]"/><col class="w-[112px]"/>');
+    // 상태는 점 + 짧은 말, 바꾼 때는 시안처럼 「11-12 07:10」 한 줄(지난 시간은 마우스를 올린 말)
+    expect(html).toMatch(/data-tone="bad" data-state="failed"/);
+    expect(html).toMatch(/title="[^"]*2시간 전[^"]*">11-12 07:10<\/td>/);
+    expect(html).toContain('<col style="width:112px"/><col/><col style="width:220px"/><col style="width:220px"/><col style="width:132px"/>');
     // 바꾼 것은 잘라 내지 않고 줄을 바꾼다
     expect(html).not.toMatch(/class="block truncate font-semibold"/);
     // 쓰기 수단이 없다

@@ -1,20 +1,24 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
 /* 운영 콘솔 「수집·작업」(2026-11-12 최종 시안 화면 5 · 흐름 4 · 흐름 6의 4, 조각 4a) — 구조·정렬만 시안에서 가져오고 색·글꼴은 관리자 토큰(prototype.css).
    표는 열 폭 고정, 숫자는 오른쪽 정렬·tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만. */
 .admin-prototype .sources-console {
   display: grid;
-  gap: 16px;
+  gap: calc(16px / .8);
   min-width: 0;
 }
 .admin-prototype .sc-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px 10px;
+  gap: calc(6px / .8) calc(10px / .8);
 }
 .admin-prototype .sc-head h2,
 .admin-prototype .sc-head h3 {
-  font-size: calc(15px + var(--admin-font-delta, 0px));
-  font-weight: 700;
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .sc-count {
+  font-family: var(--f-mono);
 }
 .admin-prototype .sc-count,
 .admin-prototype .sc-muted,
@@ -27,10 +31,10 @@
   margin-left: auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: calc(6px / .8);
 }
 .admin-prototype .sc-notice {
-  padding: 8px 14px;
+  padding: calc(8px / .8) calc(14px / .8);
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-2);
@@ -46,12 +50,12 @@
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-size: calc(13px + var(--admin-font-delta, 0px));
   line-height: 1.45;
 }
 .admin-prototype .sc-table th,
 .admin-prototype .sc-table td {
-  padding: 8px 12px;
+  padding: calc(8px / .8) calc(12px / .8);
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: middle;
@@ -86,6 +90,7 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  font-family: var(--f-mono);
 }
 .admin-prototype .sc-table .q,
 .admin-prototype .sc-table small {
@@ -110,24 +115,27 @@
   display: grid;
   grid-template-columns: minmax(40px, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px / .8);
 }
+/* 시안 .use — 8px 막대(sunken·테두리), 쓴 만큼 먹색. 남는 모델(.use.idle)은 초록 */
 .admin-prototype .sc-use > span {
-  height: 6px;
-  border-radius: 3px;
+  height: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
   background: var(--surface-2);
   overflow: hidden;
 }
 .admin-prototype .sc-use > span > i {
   display: block;
   height: 100%;
-  background: var(--green);
+  background: var(--ink);
 }
 .admin-prototype .sc-use b {
   min-width: 4.5em;
   text-align: right;
-  font-weight: 500;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
 }
 .admin-prototype .sc-none {
   color: var(--muted);
@@ -135,7 +143,7 @@
 .admin-prototype .sc-st {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px / .8);
   white-space: nowrap;
 }
 .admin-prototype .sc-st > i {
@@ -143,7 +151,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--soft);
+  background: var(--faint);
 }
 .admin-prototype .sc-st[data-tone="ok"] > i { background: var(--green); }
 .admin-prototype .sc-st[data-tone="warn"] > i { background: var(--amber); }
@@ -158,7 +166,7 @@
   white-space: normal;
 }
 .admin-prototype .sc-mark {
-  margin-left: 4px;
+  margin-left: calc(4px / .8);
   color: var(--muted);
   font-size: calc(11px + var(--admin-font-delta, 0px));
 }
@@ -174,8 +182,8 @@
 }
 .admin-prototype .sc-detail > section {
   display: grid;
-  gap: 8px;
-  padding: 14px 16px;
+  gap: calc(8px / .8);
+  padding: calc(14px / .8) calc(16px / .8);
   border-bottom: 1px solid var(--line);
   min-width: 0;
 }
@@ -190,24 +198,25 @@
 .admin-prototype .sc-kv {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 24px;
+  gap: calc(4px / .8) calc(24px / .8);
   color: var(--muted);
 }
 .admin-prototype .sc-kv b {
-  margin-left: 6px;
+  margin-left: calc(6px / .8);
   color: var(--ink);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
 }
 .admin-prototype .sc-fun {
   display: grid;
-  gap: 4px;
+  gap: calc(4px / .8);
 }
 .admin-prototype .sc-fun > div {
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr) 72px;
   align-items: center;
-  gap: 10px;
+  gap: calc(10px / .8);
 }
 .admin-prototype .sc-fun .b {
   height: 8px;
@@ -218,7 +227,7 @@
 .admin-prototype .sc-fun .b > i {
   display: block;
   height: 100%;
-  background: var(--soft);
+  background: var(--faint);
 }
 .admin-prototype .sc-fun > div[data-key="published"] .b > i {
   background: var(--green);
@@ -230,7 +239,7 @@
 .admin-prototype .sc-dl {
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr);
-  gap: 4px 12px;
+  gap: calc(4px / .8) calc(12px / .8);
   margin: 0;
 }
 .admin-prototype .sc-dl dt {
@@ -243,12 +252,13 @@
 .admin-prototype .sc-dl .num,
 .admin-prototype .sc-num {
   font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
 }
 .admin-prototype .sc-acts {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
+  gap: calc(6px / .8) calc(8px / .8);
 }
 .admin-prototype .sc-acts details {
   min-width: 0;
@@ -267,18 +277,18 @@
 /* 폼·저장 전 확인 */
 .admin-prototype .sc-form {
   display: grid;
-  gap: 8px;
+  gap: calc(8px / .8);
   min-width: 0;
 }
 .admin-prototype .sc-form label {
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: calc(10px / .8);
 }
 .admin-prototype .sc-form label.sc-check {
   display: flex;
-  gap: 8px;
+  gap: calc(8px / .8);
 }
 .admin-prototype .sc-form label > span:first-child {
   color: var(--muted);
@@ -289,7 +299,7 @@
 .admin-prototype .sc-form select {
   min-width: 0;
   width: 100%;
-  padding: 6px 9px;
+  padding: calc(6px / .8) calc(9px / .8);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -300,23 +310,24 @@
   max-width: 120px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
 }
 .admin-prototype .sc-form fieldset {
   display: grid;
-  gap: 6px;
+  gap: calc(6px / .8);
   margin: 0;
-  padding: 10px 12px;
+  padding: calc(10px / .8) calc(12px / .8);
   border: 1px solid var(--line);
   border-radius: 10px;
 }
 .admin-prototype .sc-form fieldset legend {
-  padding: 0 4px;
+  padding: 0 calc(4px / .8);
   color: var(--muted);
 }
 .admin-prototype .sc-dlg {
   display: grid;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: calc(8px / .8);
+  padding: calc(12px / .8) calc(14px / .8);
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-2);
@@ -327,7 +338,7 @@
 }
 .admin-prototype .sc-diff {
   display: grid;
-  gap: 4px;
+  gap: calc(4px / .8);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -335,13 +346,13 @@
 .admin-prototype .sc-diff li {
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr);
-  gap: 10px;
+  gap: calc(10px / .8);
 }
 .admin-prototype .sc-diff li > span:first-child {
   color: var(--muted);
 }
 .admin-prototype .sc-diff s {
-  margin-right: 6px;
+  margin-right: calc(6px / .8);
   color: var(--muted);
 }
 .admin-prototype .sc-msg[role="alert"] {
@@ -350,88 +361,11 @@
 .admin-prototype .sc-msg[data-warn="true"] {
   color: var(--amber);
 }
-
-/* 수집원 추가 세 걸음 */
-.admin-prototype .sc-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--muted);
-}
-.admin-prototype .sc-steps li b {
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  margin-right: 6px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  font-size: calc(11px + var(--admin-font-delta, 0px));
-}
-.admin-prototype .sc-steps li[aria-current="step"] {
-  color: var(--ink);
-  font-weight: 600;
-}
-.admin-prototype .sc-steps li[aria-current="step"] b {
-  border-color: var(--ink);
-}
-.admin-prototype .sc-card {
-  display: grid;
-  gap: 10px;
-  max-width: 760px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-}
-.admin-prototype .sc-pick {
-  display: grid;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.admin-prototype .sc-pick li + li {
-  border-top: 1px solid var(--line);
-}
-.admin-prototype .sc-pick li > * {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  width: 100%;
-  padding: 9px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  text-decoration: none;
-}
-.admin-prototype .sc-pick li > button {
-  cursor: pointer;
-}
-.admin-prototype .sc-pick li > *:hover {
-  background: var(--surface-2);
-}
-.admin-prototype .sc-pick li[data-off="true"] > * {
-  color: var(--muted);
-  cursor: default;
-}
-.admin-prototype .sc-pick li > * > span:last-child {
-  color: var(--muted);
-  font-size: calc(12px + var(--admin-font-delta, 0px));
-}
 .admin-prototype .sc-samples {
   display: grid;
   gap: 2px;
   margin: 0;
-  padding-left: 18px;
+  padding-left: calc(18px / .8);
 }
 @media (max-width: 640px) {
   .admin-prototype .sc-form label,

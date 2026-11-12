@@ -1,3 +1,4 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
 /* 단계 패널(운영 콘솔 개편 조각 2a) — 2026-11-12 최종 시안 「화면 2 단계 패널」의 구조. 오른쪽에 붙는 칸(넓은 화면 560px, 좁은 화면은 전체 폭).
    색·글꼴은 관리자 시안 토큰(prototype.css)만 쓴다. 숫자는 tabular-nums, 상태는 점 하나 + 짧은 말(console-home.css 의 .ch-st), 색은 상태에만. */
 .admin-prototype .sp-backdrop {
@@ -23,9 +24,9 @@
 }
 .admin-prototype .sp-sec {
   display: grid;
-  gap: 8px;
+  gap: calc(8px / .8);
   min-width: 0;
-  padding: 14px 18px;
+  padding: calc(14px / .8) calc(18px / .8);
   border-bottom: 1px solid var(--line);
 }
 .admin-prototype .sp-top {
@@ -38,11 +39,11 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  gap: calc(6px / .8) calc(12px / .8);
 }
 .admin-prototype .sp-h-row h2 {
-  font-size: calc(17px + var(--admin-font-delta, 0px));
-  font-weight: 700;
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
   outline: none;
 }
 .admin-prototype .sp-close {
@@ -57,28 +58,29 @@
 }
 .admin-prototype .sp-close:hover {
   color: var(--ink);
-  border-color: var(--blue);
+  border-color: var(--ink);
 }
+/* 시안 .drawer .lab — 12/500 muted */
 .admin-prototype .sp-lab {
   color: var(--muted);
   font-size: calc(12px + var(--admin-font-delta, 0px));
-  font-weight: 650;
-  letter-spacing: .02em;
+  font-weight: 500;
 }
 .admin-prototype .sp-kv {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 20px;
+  gap: calc(4px / .8) calc(20px / .8);
   color: var(--muted);
 }
 .admin-prototype .sp-kv > span {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: calc(6px / .8);
 }
 .admin-prototype .sp-kv b {
   color: var(--ink);
-  font-weight: 600;
+  font-family: var(--f-mono);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 .admin-prototype .sp-kv .sp-kv-head {
@@ -100,13 +102,16 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 6px;
+  gap: calc(6px / .8);
 }
 .admin-prototype .sp-cause > li {
   display: grid;
-  grid-template-columns: 86px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 5.2em minmax(0, 1fr);
+  gap: calc(10px / .8);
   align-items: baseline;
+}
+.admin-prototype .sp-when > li {
+  grid-template-columns: 7.6em minmax(0, 1fr);
 }
 .admin-prototype .sp-cause > li > span:first-child {
   color: var(--muted);
@@ -124,13 +129,14 @@
   font-variant-numeric: tabular-nums;
 }
 .admin-prototype .sp-num {
+  font-family: var(--f-mono);
   font-variant-numeric: tabular-nums;
 }
 .admin-prototype .sp-acts {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 6px;
+  gap: calc(6px / .8);
 }
 /* 작업(주기·마지막 성공·멈춤) */
 .admin-prototype .sp-jobs {
@@ -138,14 +144,14 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 8px;
+  gap: calc(8px / .8);
 }
 .admin-prototype .sp-jobs > li {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 6px 12px;
+  gap: calc(6px / .8) calc(12px / .8);
 }
 .admin-prototype .sp-jobs > li > div {
   display: grid;
@@ -160,11 +166,11 @@
 /* 모델 — 방식(순위대로 · 동시에)과 순위 목록 */
 .admin-prototype .sp-models {
   display: grid;
-  gap: 14px;
+  gap: calc(14px / .8);
 }
 .admin-prototype .sp-line {
   display: grid;
-  gap: 8px;
+  gap: calc(8px / .8);
   min-width: 0;
 }
 .admin-prototype .sp-line h4 {
@@ -178,8 +184,8 @@
   overflow: hidden;
 }
 .admin-prototype .sp-seg > button {
-  min-height: 32px;
-  padding: 4px 14px;
+  min-height: 0;
+  padding: calc(3px / .8) calc(14px / .8);
   border: 0;
   border-right: 1px solid var(--line);
   background: var(--surface);
@@ -188,42 +194,47 @@
 .admin-prototype .sp-seg > button:last-child {
   border-right: 0;
 }
+/* 시안 .seg .on — 켜진 쪽만 먹색 */
 .admin-prototype .sp-seg > button[aria-pressed="true"] {
-  background: var(--surface-2);
-  color: var(--ink);
-  font-weight: 650;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 500;
 }
 .admin-prototype .sp-seg > button:disabled {
   cursor: not-allowed;
   opacity: .55;
 }
+/* 시안 .rank — 줄마다 sunken 칸(테두리 r7): 「1순위」 · 이름(mono) · 오른쪽 사실(mono 12). 「＋ 모델 붙이기」는 점선 */
 .admin-prototype .sp-rank {
+  display: grid;
+  gap: calc(6px / .8);
   margin: 0;
   padding: 0;
   list-style: none;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
 }
 .admin-prototype .sp-rank > li {
   display: grid;
-  grid-template-columns: 52px minmax(0, 150px) minmax(0, 1fr);
-  gap: 10px;
-  align-items: baseline;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
+  grid-template-columns: 3.4em minmax(0, 1fr) minmax(0, max-content);
+  gap: calc(10px / .8);
+  align-items: center;
+  padding: calc(6px / .8) calc(10px / .8);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
 }
-.admin-prototype .sp-rank > li:last-child {
-  border-bottom: 0;
+.admin-prototype .sp-rank > li > .sp-facts {
+  color: var(--ink);
+  font-family: var(--f-mono);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  text-align: right;
 }
 .admin-prototype .sp-tag {
   color: var(--muted);
-  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .sp-name {
   display: grid;
   min-width: 0;
-  font-weight: 600;
+  font-family: var(--f-mono);
   overflow-wrap: anywhere;
 }
 .admin-prototype .sp-name small {
@@ -231,26 +242,31 @@
   font-weight: 400;
   font-size: calc(12px + var(--admin-font-delta, 0px));
 }
-.admin-prototype .sp-rank > .sp-add {
-  background: var(--surface-2);
+.admin-prototype .sp-rank > .sp-add,
+.admin-prototype .sp-rank > .sp-empty {
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+}
+.admin-prototype .sp-rank > .sp-add > .sp-facts {
+  color: var(--muted);
 }
 .admin-prototype .sp-rank > .sp-add .text-button {
   justify-self: start;
-  font-weight: 600;
 }
 .admin-prototype .sp-edit,
 .admin-prototype .sp-dlg,
 .admin-prototype .sp-done {
   display: grid;
-  gap: 8px;
+  gap: calc(8px / .8);
   min-width: 0;
-  padding: 12px;
+  padding: calc(12px / .8);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
 }
 .admin-prototype .sp-dlg h4 {
-  font-weight: 650;
+  font-weight: 600;
 }
 .admin-prototype .sp-diff,
 .admin-prototype .sp-impact {
@@ -258,22 +274,22 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 4px;
+  gap: calc(4px / .8);
 }
 .admin-prototype .sp-diff > li {
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr);
-  gap: 10px;
+  gap: calc(10px / .8);
 }
 .admin-prototype .sp-diff > li > span:first-child {
   color: var(--muted);
 }
 .admin-prototype .sp-diff s {
-  margin-right: 6px;
+  margin-right: calc(6px / .8);
   color: var(--muted);
 }
 .admin-prototype .sp-impact > li {
-  padding-left: 12px;
+  padding-left: calc(12px / .8);
   border-left: 2px solid var(--line);
   overflow-wrap: anywhere;
 }
@@ -290,7 +306,7 @@
 }
 .admin-prototype .sp-ack {
   display: inline-flex;
-  gap: 6px;
+  gap: calc(6px / .8);
   align-items: center;
 }
 /* 한도 고치기 — 실시간 한도 편집기를 패널 폭에 맞춰 두 칸으로 쌓는다(화면 폭 기준 6칸 표를 쓰지 않는다) */
@@ -301,16 +317,16 @@
   font-weight: 600;
 }
 .admin-prototype .sp-fold[open] > summary {
-  margin-bottom: 8px;
+  margin-bottom: calc(8px / .8);
 }
 .admin-prototype .sp .sp-lim .lim-thead {
   display: none;
 }
 .admin-prototype .sp .sp-lim .lim-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 12px;
-  padding-left: 12px;
-  padding-right: 12px;
+  column-gap: calc(12px / .8);
+  padding-left: calc(12px / .8);
+  padding-right: calc(12px / .8);
 }
 .admin-prototype .sp .sp-lim .lim-row .lim-lbl {
   display: block;
@@ -330,7 +346,7 @@
 }
 @media (max-width: 620px) {
   .admin-prototype .sp-sec {
-    padding: 12px 16px;
+    padding: calc(12px / .8) calc(16px / .8);
   }
   .admin-prototype .sp-rank > li {
     grid-template-columns: 44px minmax(0, 1fr);
@@ -343,30 +359,30 @@
    한 자리 = 왼쪽 이름(1순위·모델 1) + 오른쪽 고르기, 그 밑에 지금 칸·추론 강도 */
 .admin-prototype .sp-edit .fr-rank-rows {
   display: grid;
-  gap: 8px;
+  gap: calc(8px / .8);
   min-width: 0;
 }
 .admin-prototype .sp-edit .fr-rank-row {
   display: grid;
-  gap: 4px;
+  gap: calc(4px / .8);
   min-width: 0;
 }
 .admin-prototype .sp-edit .fr-rank-row-label {
   display: grid;
   grid-template-columns: 4.6em minmax(0, 1fr);
-  gap: 4px 10px;
+  gap: calc(4px / .8) calc(10px / .8);
   align-items: start;
   min-width: 0;
 }
 .admin-prototype .sp-edit .fr-rank-row-name {
-  padding-top: 8px;
+  padding-top: calc(8px / .8);
   color: var(--muted);
   font-weight: 500;
 }
 .admin-prototype .sp-edit .fr-rank-row-model,
 .admin-prototype .sp-edit .fr-rank-row-effort {
   display: grid;
-  gap: 4px;
+  gap: calc(4px / .8);
   min-width: 0;
 }
 .admin-prototype .sp-edit .fr-rank-row-model > .text-fg-2:first-child {
@@ -376,6 +392,6 @@
   grid-column: 2;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  column-gap: 8px;
+  column-gap: calc(8px / .8);
   color: var(--muted);
 }

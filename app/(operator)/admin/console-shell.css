@@ -1,12 +1,13 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
 /* 운영 콘솔 개편 조각 4b — 머리줄의 접수 표시와 ⌘K 찾기·바꾸기의 갈래. 상태는 점 하나 + 짧은 말, 색은 상태에만(prototype.css 토큰). */
 
 .admin-prototype .top-admission {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px / .8);
   min-width: 0;
   max-width: 340px;
-  padding: 4px 10px;
+  padding: calc(4px / .8) calc(10px / .8);
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);

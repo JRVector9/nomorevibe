@@ -41,7 +41,8 @@ describe("console home", () => {
     expect(html).toContain('href="/admin/flow?stage=keywords#sp-models">모델 붙이기</a>');
     // 재개 — 운영센터와 같은 작업 제어 폼(사유 필수)
     expect(html).toMatch(/<details class="ch-job"><summary class="button small primary">재개<\/summary><form[^>]*>.*재개 사유.*이 작업 재개<\/button>/);
-    expect(html).toContain('href="/admin/review/batches">묶음 보기</a>');
+    expect(html).toContain('href="/admin/review/batches">묶어서 결정</a>');
+    expect(html).toContain('href="/admin/review/batches#threshold">문턱 보기</a>');
     // 감사 거절은 묶음 화면이 없다 — 사람 확인 화면의 「요청과 감사」와 같은 목록을 바로 연다(운영 콘솔 통합)
     expect(html).toContain('href="/admin/audit?tab=audit">거절 목록 보기</a>');
     // 「쉬게 하기」·「단계에 붙이기」는 모델 화면(3a)의 상세와 추가 ③으로

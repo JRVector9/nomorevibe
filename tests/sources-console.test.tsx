@@ -132,9 +132,12 @@ describe("수집·작업 화면(시안 화면 5)", () => {
     expect(html).toContain("읽기 전용 화면입니다.");
   });
 
-  it("수집원 추가 — 첫 걸음은 종류 넷(글 목록만 화면에서, 검색어는 기존 설정으로, 나머지는 개발 필요)", async () => {
+  it("수집원 추가 — 세 칸이 나란히, 첫 칸은 종류 넷(글 목록만 화면에서, 검색어는 기존 설정으로, 나머지는 개발 필요)", async () => {
     const first = renderToStaticMarkup(await FeedSourceAddSlot({ kind: null, readOnly: false }));
-    expect(text(first)).toContain("글 목록(RSS·Atom) 화면에서 GitHub 검색어 수집 설정 화면에서 사이트 목록 개발 필요 그 밖의 API 개발 필요");
+    expect(text(first)).toContain("글 목록(RSS·Atom) 코드 없이 GitHub 검색어 코드 없이 · 수집 설정에서 사이트 목록 개발 필요 그 밖의 API 개발 필요");
+    // 시안 화면 4 — 1 종류 · 2 주소와 규칙 · 3 미리 보고 켜기, 지금 칸은 첫 칸
+    expect(first.match(/class="cs-k">[^<]+</g)).toEqual(['class="cs-k">1 종류<', 'class="cs-k">2 주소와 규칙<', 'class="cs-k">3 미리 보고 켜기<']);
+    expect(first).toMatch(/<li class="cs-step" data-state="now" aria-current="step" aria-label="종류">/);
     expect(first).toContain('href="/admin#signals"');
     const second = renderToStaticMarkup(await FeedSourceAddSlot({ kind: "feed", readOnly: false }));
     expect(text(second)).toContain("제품 링크를 찾는 방법");

@@ -108,7 +108,9 @@ describe("저장 전 확인(다섯 걸음의 4)", () => {
 describe("모델 추가 세 걸음(시안 흐름 3)", () => {
   it("① 넣기 — 방식·주소·키", async () => {
     const html = renderToStaticMarkup(await ModelAddSlot({ id: null, step: 1, readOnly: false }));
-    expect(html).toMatch(/<li aria-current="step"><b>1<\/b>넣기<\/li>/);
+    // 시안 화면 3 — 세 칸이 나란히(1 넣기 · 2 이름과 한도 · 3 쓸 단계), 지금 칸은 첫 칸
+    expect(html.match(/class="cs-k">[^<]+</g)).toEqual(['class="cs-k">1 넣기<', 'class="cs-k">2 이름과 한도<', 'class="cs-k">3 쓸 단계<']);
+    expect(html).toMatch(/<li class="cs-step" data-state="now" aria-current="step" aria-label="넣기">/);
     expect(text(html)).toContain("넣고 응답 확인");
   });
 

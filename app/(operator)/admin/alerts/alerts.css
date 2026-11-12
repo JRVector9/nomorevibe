@@ -1,7 +1,8 @@
+/* 간격은 「시안 px / .8」로 적는다 — 빌드의 site-density(scripts/styles/site-density.cjs)가 간격에 0.8 을 곱하므로 화면에는 시안 값 그대로 나온다. */
 /* 홈 › 알림(운영 콘솔 개편 조각 4b) — 표는 열 폭 고정, 때는 tabular-nums, 상태는 점 하나 + 짧은 말, 색은 상태에만(prototype.css 토큰). */
 .admin-prototype .al-page {
   display: grid;
-  gap: 14px;
+  gap: calc(14px / .8);
   min-width: 0;
 }
 .admin-prototype .al-page > *,
@@ -12,8 +13,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 12px;
-  padding-bottom: 10px;
+  gap: calc(4px / .8) calc(12px / .8);
+  padding-bottom: calc(10px / .8);
   border-bottom: 1px solid var(--line);
 }
 .admin-prototype .al-head h1 {
@@ -28,23 +29,24 @@
 .admin-prototype .al-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 28px;
-  padding: 10px 16px;
+  gap: calc(4px / .8) calc(28px / .8);
+  padding: calc(10px / .8) calc(16px / .8);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--muted);
 }
 .admin-prototype .al-strip b {
-  margin-left: 6px;
+  margin-left: calc(6px / .8);
   color: var(--ink);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  font-family: var(--f-mono);
 }
 .admin-prototype .al-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
+  gap: calc(14px / .8);
 }
 @media (min-width: 1100px) {
   .admin-prototype .al-grid {
@@ -54,48 +56,48 @@
 .admin-prototype .al-card {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: calc(10px / .8);
   min-width: 0;
-  padding: 14px 16px;
+  padding: calc(14px / .8) calc(16px / .8);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
 }
 .admin-prototype .al-card h2,
 .admin-prototype .al-list h2 {
-  font-size: calc(15px + var(--admin-font-delta, 0px));
-  font-weight: 700;
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
 }
 .admin-prototype .al-form {
   display: grid;
-  gap: 10px;
+  gap: calc(10px / .8);
 }
 .admin-prototype .al-check {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px / .8);
   font-weight: 600;
 }
 .admin-prototype .al-quiet {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: calc(8px / .8) calc(16px / .8);
   margin: 0;
   padding: 0;
   border: 0;
 }
 .admin-prototype .al-quiet legend {
-  margin-bottom: 4px;
+  margin-bottom: calc(4px / .8);
   color: var(--muted);
   font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .al-quiet label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(6px / .8);
 }
 .admin-prototype .al-quiet input {
-  padding: 4px 8px;
+  padding: calc(4px / .8) calc(8px / .8);
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -105,23 +107,23 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px / .8);
 }
 .admin-prototype .al-confirm {
   display: grid;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: calc(8px / .8);
+  padding: calc(12px / .8) calc(14px / .8);
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface-2);
 }
 .admin-prototype .al-confirm h3 {
   font-size: calc(14px + var(--admin-font-delta, 0px));
-  font-weight: 700;
+  font-weight: 600;
 }
 .admin-prototype .al-diff {
   display: grid;
-  gap: 4px;
+  gap: calc(4px / .8);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -129,41 +131,41 @@
 .admin-prototype .al-diff li {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
-  gap: 8px;
+  gap: calc(8px / .8);
 }
 .admin-prototype .al-diff li > span:first-child {
   color: var(--muted);
 }
 .admin-prototype .al-diff s {
-  margin-right: 6px;
+  margin-right: calc(6px / .8);
   color: var(--muted);
 }
 .admin-prototype .al-route {
   display: grid;
-  gap: 6px;
+  gap: calc(6px / .8);
   margin: 0;
-  padding-left: 18px;
+  padding-left: calc(18px / .8);
 }
 .admin-prototype .al-route b {
-  margin-right: 6px;
+  margin-right: calc(6px / .8);
 }
 .admin-prototype .al-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 14px;
+  gap: calc(4px / .8) calc(14px / .8);
 }
 .admin-prototype .al-list {
   display: grid;
-  gap: 10px;
+  gap: calc(10px / .8);
 }
 .admin-prototype .al-list-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 10px;
+  gap: calc(4px / .8) calc(10px / .8);
 }
 .admin-prototype .al-empty {
-  padding: 24px 16px;
+  padding: calc(24px / .8) calc(16px / .8);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -188,7 +190,7 @@
 }
 .admin-prototype .al-table th,
 .admin-prototype .al-table td {
-  padding: 9px 12px;
+  padding: calc(9px / .8) calc(12px / .8);
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
@@ -214,6 +216,7 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  font-family: var(--f-mono);
 }
 .admin-prototype .al-title,
 .admin-prototype .al-fact {
@@ -227,14 +230,14 @@
 .admin-prototype .al-st {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: calc(7px / .8);
 }
 .admin-prototype .al-st > i {
   flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--soft);
+  background: var(--faint);
 }
 .admin-prototype .al-st[data-tone="ok"] > i {
   background: var(--green);
