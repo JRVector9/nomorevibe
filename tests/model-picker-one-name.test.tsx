@@ -6,6 +6,7 @@ vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiTaskRanksA
 vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTaskExecutionAction: vi.fn() }));
 
 import { RankSelects } from "@/app/(operator)/admin/models/RankSelects";
+import { TaskExecutionForm } from "@/app/(operator)/admin/models/tasks/TaskExecutionForm";
 import { ModelAttachForm } from "@/app/(operator)/admin/models/console/ModelAttachForm";
 import { modelPickerChoiceKey, modelPickerOptionName, presentPickerOptions } from "@/app/(operator)/admin/models/model-picker-display";
 import { aiTask } from "@/lib/llm/ai-tasks";
@@ -173,5 +174,27 @@ describe("모델에서 바로 붙이기 — 단계 고르기 · 순위대로 / �
     expect(pooled).toContain("함께(동시에)로 붙입니다");
     expect(pooled).toContain("방식 순위대로 동시에");
     expect(pooled).toContain("실행 방식 저장");
+  });
+});
+
+describe("「동시에」 폼의 설명 — #925 도움말과 같은 말(같은 모델 두 줄 대신 칸 수)", () => {
+  it("작업 배정 실행 방식 폼과 고르는 상자 밑 줄에 「반복 선택」을 권하는 말이 없다", () => {
+    const view = { task: "product-translate", slot: 1, mode: "workload_pool", revision: 3, updatedAt: null, reserveRanks: false,
+      members: [{ memberId: "11111111-1111-4111-8111-111111111111", position: 1, connectionId: GEMMA.id, model: "m1-gemma", options: {}, canonicalModel: "m1-gemma",
+        deviceId: "m1-qwen", engineKey: "e".repeat(64), maxSlots: null }] } as unknown as AiTaskExecutionAdminView;
+    const html = text(renderToStaticMarkup(<TaskExecutionForm view={view} label="공개 번역" options={aiTaskRankOptions(task, CONNECTIONS, [])} connections={CONNECTIONS} />));
+    expect(html).toContain("같은 모델은 한 줄만 넣고 동시에 여러 개는 칸 수로 정하세요. 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다.");
+    expect(html).toContain("같은 모델은 한 줄만 넣으세요 — 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다.");
+    expect(html).not.toMatch(/반복 선택|반복해도/);
+    // 칸 수를 받지 않는 작업(발행 분류)은 칸 수를 말하지 않는다
+    const classify = { ...view, task: "publish-classify", members: [] } as unknown as AiTaskExecutionAdminView;
+    const plain = text(renderToStaticMarkup(<TaskExecutionForm view={classify} label="발행 분류" options={[]} connections={CONNECTIONS} />));
+    expect(plain).toContain("같은 모델은 한 줄만 넣으세요. 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다.");
+    expect(plain).not.toContain("칸 수로 정하세요");
+    // 순위대로 상자 밑 줄
+    const ranks = text(renderToStaticMarkup(<RankSelects stage={{ id: "t", label: "공개 번역", slots: 1 }} options={aiTaskRankOptions(task, CONNECTIONS, [])} connections={CONNECTIONS}
+      value={[null]} onChange={() => {}} slotNames={AI_RANK_SLOT_NAMES} showProvider={false} validate={() => []} />));
+    expect(ranks).toContain("같은 모델을 여러 순위에 넣어도 동시 처리 수는 늘지 않습니다.");
+    expect(ranks).not.toMatch(/반복 선택해도/);
   });
 });

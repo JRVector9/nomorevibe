@@ -185,7 +185,7 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
         : <>
           <p className="sp-note">{line.features.slotCaps
             ? "고른 모델이 함께 처리합니다. 모델마다 이 단계에 내줄 칸 수를 적으면 그 합만큼 함께 돌고, 한 모델이 서도 남은 모델이 계속합니다."
-            : "고른 모델이 일을 나눠 처리합니다. 같은 모델을 두 번 고르면 그 모델이 더 많이 맡습니다. 동시 실행 수는 장비 칸이 정합니다(이 작업은 아직 모델별 칸 수·예비를 따르지 않습니다)."}</p>
+            : "고른 모델이 일을 나눠 처리합니다. 같은 모델은 한 줄만 넣으세요 — 두 줄로 넣으면 그 모델을 고를 차례만 늘고 동시 처리 수는 늘지 않습니다(이 작업은 아직 모델별 칸 수·예비를 따르지 않습니다)."}</p>
           {/* 좁은 패널에서는 순위 고르기와 같은 가로 줄(rows) — 화면 폭 기준 네 칸 격자를 쓰지 않는다 */}
           <RankSelects<AiRankChoice> stage={{ id: `sp-pool-${line.key}`, label: line.label, slots: 4 }} selectionKind="pool" options={poolChoices}
             connections={editor.connections} value={draft.members} onChange={members => setDraft(current => ({ ...current, members }))} slotNames={POOL_SLOTS}

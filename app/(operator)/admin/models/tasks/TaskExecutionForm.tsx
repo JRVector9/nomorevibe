@@ -114,8 +114,12 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
         className="min-h-9 self-end rounded-lg bg-fg px-3 text-[13px] text-bg disabled:opacity-40">{saving ? "저장 중…" : "실행 방식 저장"}</button>
       </div>
       {mode === "workload_pool" ? <>
-        <p className="text-[13px] text-fg-3">같은 모델도 반복 선택할 수 있습니다. <Link href="/admin/models/limits" prefetch={false} className="text-accent-ink underline">동시 실행 수</Link>는 단계·장비 공유 한도를 따릅니다.</p>
-        {["first-review", "second-review"].includes(view.task) && <p className="text-[13px] text-fg-3">같은 연결·모델을 반복하면 추론 강도도 같게 설정하세요.</p>}
+        {/* #925 도움말과 같은 말 — 같은 모델 두 줄은 동시 처리 수를 늘리지 않는다(고를 차례만 는다) */}
+        <p className="text-[13px] text-fg-3" data-pool-rule="true">{features.slotCaps
+          ? "같은 모델은 한 줄만 넣고 동시에 여러 개는 칸 수로 정하세요. 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다."
+          : "같은 모델은 한 줄만 넣으세요. 두 줄로 넣으면 고를 차례만 늘고 동시 처리 수는 늘지 않습니다."}{" "}
+          <Link href="/admin/models/limits" prefetch={false} className="text-accent-ink underline">실시간 한도</Link>에서 작업의 동시 호출을 봅니다.</p>
+        {["first-review", "second-review"].includes(view.task) && <p className="text-[13px] text-fg-3">같은 연결·모델이 두 줄이면 추론 강도도 같게 설정하세요.</p>}
         <RankSelects<AiRankChoice> stage={{ id: `pool-${view.task}-${view.slot}`, label, slots: 4 }} selectionKind="pool"
           options={choices} connections={connections} value={value} onChange={setValue} slotNames={MEMBER_FIELDS}
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
