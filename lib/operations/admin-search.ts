@@ -1,5 +1,6 @@
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { qualifiedColumn } from "@/lib/db/qualified-column";
 import { aiConnections, aiTaskExecutionConfigs, aiTaskModels, aiTaskPoolMembers, crawlCandidates, operationsAudit, products } from "@/lib/db/schema";
 import { listJobStates } from "@/lib/jobs/runner";
 import { isPausedJob } from "@/lib/jobs/status";
@@ -72,12 +73,13 @@ export async function adminGlobalSearch(raw: string): Promise<AdminSearchResult>
       deviceId: aiConnections.deviceId, enabled: aiConnections.enabled,
       contextTokens: sql<string | null>`${aiConnections.options}->>'contextTokens'`,
       // 이 모델을 쓰는 작업 수 — 켜진 순위와, 작업 분산으로 도는 칸의 구성원(모델 상세의 「쓰는 단계」와 같은 셈)
+      // select 목록 안의 상관 서브쿼리 — 칸을 표 이름까지 적는다(drizzle 은 한 표 select 목록에서 칸을 표 이름 없이 그려 안쪽 표에 묶인다: uuid = bigint)
       stages: sql<number>`(select count(distinct used.task)::int from (
-        select ${aiTaskModels.task} as task from ${aiTaskModels} where ${aiTaskModels.connectionId} = ${aiConnections.id} and ${aiTaskModels.enabled}
-        union select ${aiTaskPoolMembers.task} from ${aiTaskPoolMembers} join ${aiTaskExecutionConfigs}
-          on ${aiTaskExecutionConfigs.task} = ${aiTaskPoolMembers.task} and ${aiTaskExecutionConfigs.slot} = ${aiTaskPoolMembers.slot}
-          and ${aiTaskExecutionConfigs.mode} = 'workload_pool'
-         where ${aiTaskPoolMembers.connectionId} = ${aiConnections.id}) used)` })
+        select ${qualifiedColumn(aiTaskModels.task)} as task from ${aiTaskModels} where ${qualifiedColumn(aiTaskModels.connectionId)} = ${qualifiedColumn(aiConnections.id)} and ${qualifiedColumn(aiTaskModels.enabled)}
+        union select ${qualifiedColumn(aiTaskPoolMembers.task)} from ${aiTaskPoolMembers} join ${aiTaskExecutionConfigs}
+          on ${qualifiedColumn(aiTaskExecutionConfigs.task)} = ${qualifiedColumn(aiTaskPoolMembers.task)} and ${qualifiedColumn(aiTaskExecutionConfigs.slot)} = ${qualifiedColumn(aiTaskPoolMembers.slot)}
+          and ${qualifiedColumn(aiTaskExecutionConfigs.mode)} = 'workload_pool'
+         where ${qualifiedColumn(aiTaskPoolMembers.connectionId)} = ${qualifiedColumn(aiConnections.id)}) used)` })
       .from(aiConnections)
       .where(or(sql`${allConnections}`, engineKind ? eq(aiConnections.kind, engineKind) : undefined,
         context ? eq(aiConnections.kind, "api") : undefined,

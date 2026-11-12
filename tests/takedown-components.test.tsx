@@ -34,11 +34,11 @@ describe("심사 큐 한 줄", () => {
 });
 
 describe("메뉴 배지", () => {
-  // 2026-11-12 메뉴 여섯: 요청함은 「사람 확인」 메뉴(주소 /admin/review)의 탭이다
+  // 2026-11-12 메뉴 여섯: 요청함은 「사람 확인」 메뉴(주소 /admin/review/batches — 묶음이 기본 화면)의 탭이다
   it("사람 확인 옆에만 붙고 색을 단다", () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/review" badges={{ "/admin/audit": { label: "요청 14", tone: "critical" } }} />);
     expect(html).toContain('class="nav-badge" data-tone="critical">요청 14</b>');
     expect(html.match(/class="nav-badge"/g)).toHaveLength(1);
-    expect(html).toMatch(/<a[^>]*href="\/admin\/review"[^]*?요청 14<\/b><\/a>/);
+    expect(html).toMatch(/<a[^>]*href="\/admin\/review\/batches"[^]*?요청 14<\/b><\/a>/);
   });
 });
