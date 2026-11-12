@@ -282,6 +282,44 @@ class MonitorRolloutTests(unittest.TestCase):
         with self.assertRaises(monitor.git.shared.ReleaseStopped): self.check()
         self.assertEqual(self.client.mutations, 0)
 
+    def test_an_empty_or_unreadable_runtime_reply_during_the_update_is_polled_again_until_the_deadline(self):
+        # 2026-11-12: while Swarm replaced (and rolled back) the task, `docker inspect` answered nothing and the
+        # verifier crashed with JSONDecodeError instead of reading again. An unreadable reply is not a result.
+        unreadable = [json.JSONDecodeError('Expecting value', '', 0), RuntimeError('command_failed:ssh:1'),
+                      ValueError('monitor-m3_runtime_unknown'), subprocess.TimeoutExpired('ssh', 90)]
+        reads = []
+        def inspect_runtime(*_, **__):
+            reads.append(1)
+            if unreadable:
+                raise unreadable.pop(0)
+            return copy.deepcopy(self.current)
+        self.inspect.stop()
+        with patch.object(monitor.git, 'inspect_runtime', side_effect=inspect_runtime), redirect_stdout(io.StringIO()) as output:
+            result = monitor.check_monitor_deployed(self.client, 'monitor-m3', self.target, self.original,
+                'old-deployment', self.manifest, self.previous, timeout=5, pause=0)
+        self.assertEqual((result['deploymentId'], result['pushReceipts']), ('new-deployment', {'primary': True, 'external': True}))
+        self.assertNotIn('verification', result)
+        self.assertEqual(len(reads), 6)  # four unreadable polls, the proven one and the unchanged-window readback
+        self.assertEqual(output.getvalue(), '')
+        # Never readable inside the window: the deadline stops it as an unproven deployment, never a crash or a hand-over.
+        with patch.object(monitor.git, 'inspect_runtime', side_effect=json.JSONDecodeError('Expecting value', '', 0)):
+            with self.assertRaisesRegex(TimeoutError, '^monitor-m3_source_health_or_push_verification_timeout$'):
+                self.check()
+        # A proven poll followed by an unreadable last poll is not handed over either.
+        self.push.stop()
+        down = {'verified': False, 'primary': True, 'external': True, 'fresh': True, 'stateUp': False}
+        replies = iter([copy.deepcopy(self.current)])
+        def flapping(*_, **__):
+            value = next(replies, None)
+            if value is None:
+                raise json.JSONDecodeError('Expecting value', '', 0)
+            return value
+        with patch.object(monitor, 'read_push_receipts', return_value=down), \
+                patch.object(monitor.git, 'inspect_runtime', side_effect=flapping):
+            with self.assertRaises(TimeoutError): self.check()
+        self.push.start(); self.inspect.start()
+        self.assertEqual(self.client.mutations, 0)
+
     def test_container_replacement_during_receipt_readback_is_rejected(self):
         changed = copy.deepcopy(self.current)
         changed['containers'][0]['id'] = 'e' * 64
