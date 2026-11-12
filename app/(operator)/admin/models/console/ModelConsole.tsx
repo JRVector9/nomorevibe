@@ -17,7 +17,7 @@ import type { PoolHelpContext } from "@/lib/operations/pool-help";
 import { ModelAddFlow, type ModelAddStep } from "../new/ModelAddFlow";
 import { aiModelDisplayName } from "@/lib/operations/admin-ai-tasks";
 import { ModelDrawer } from "./ModelDrawer";
-import { modelDuplicateAssignments, modelRowsFor, modelStatusForUses, type ModelSort } from "./model-console-view";
+import { modelDuplicateAssignments, modelRowsFor, modelStatusForUses, modelUsageText, type ModelSort } from "./model-console-view";
 import "./model-console.css";
 
 /** Safe reads used by both the standalone attachment form and the shared task editor. */
@@ -104,7 +104,7 @@ export function ModelConsole({ data, selected, readOnly, attach = null, taskUses
             <td className="n">{formatCount(entry.limit)}</td>
             <td className="n">{entry.active === null ? "—" : `${formatCount(entry.active)} / ${formatCount(entry.limit)}`}</td>
             <td><span className="mc-use" data-idle={entry.utilization !== null && entry.utilization < 0.06 ? "true" : undefined}>
-              <span aria-hidden="true"><i style={{ width: `${entry.bar}%` }} /></span><b>{entry.utilizationText}</b></span></td>
+              <span aria-hidden="true"><i style={{ width: `${entry.bar}%` }} /></span><b>{modelUsageText(entry)}</b></span></td>
             <td className="n">{entry.calls === null ? "—" : formatCount(entry.calls)}</td>
             <td className="n">{formatSeconds(entry.avgSeconds)}</td>
             <td className="n">{!usesKnown ? "—" : onModelScope ? <button type="button" className="mc-count-link" aria-label={`${entry.name}의 쓰는 작업 보기`}
@@ -199,9 +199,18 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
       </section>
     </div>
     <div id="model-settings-panel" role="tabpanel" aria-labelledby="model-settings-tab" hidden={tab !== "settings"}>
-      <section aria-label="설정">
-        <dl className="mc-dl">
+      <section aria-label="설정" className="mc-settings-overview">
+        <dl className="mc-dl mc-settings-summary">
           <dt>이름</dt><dd>{row.name}</dd><dt>장비</dt><dd>{row.machine}</dd>
+          <dt>연결 방식</dt><dd>{connection.kind === "api" ? "OpenAI 호환 API" : "CLI 도구"}</dd>
+          <dt>서버 목록</dt><dd>{connection.kind === "api" ? <>{connection.modelsReadAt ? `마지막 확인 ${formatKst(connection.modelsReadAt)}` : "아직 확인하지 않음"}
+            {connection.modelsError ? " · 모델 목록 확인 실패" : connection.models ? " · 모델 목록 확인" : ""}</> : connection.cliVersion ? `CLI ${connection.cliVersion}` : "CLI 버전 미확인"}</dd>
+          <dt>공유 한도</dt><dd>{formatCount(row.limit)}칸</dd>
+        </dl>
+        <div className="mc-settings-editor"><h3>연결과 한도 고치기</h3>
+          <ModelSettingsForm row={row} device={device} secretBox={secretBox} readOnly={readOnly} siblings={siblings} compact
+            revealAdvanced={hash === "#model-actions"} advancedDetails={<div className="mc-settings-diagnostics">
+        <section aria-label="연결 세부 값"><dl className="mc-dl">
           <dt>방식</dt><dd>{connection.kind === "api" ? "API 주소" : `CLI · ${connection.cliTool ? AI_CLI_TOOL_LABELS[connection.cliTool] : "도구 미확인"}`}</dd>
           {connection.host && <><dt>주소</dt><dd className="num">{connection.host}</dd></>}
           <dt>동시 한도</dt><dd className="num">{formatCount(row.limit)} <span className="mc-muted">· {LIMIT_SOURCE[row.limitSource]}{row.sharedWith.length ? ` · 같은 장비: ${row.sharedWith.join(" · ")}` : ""}</span></dd>
@@ -211,9 +220,7 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
           <dt>쓸 단계</dt><dd>{connection.allowedTasks?.length ? `${connection.allowedTasks.length}개만 허용` : "모든 단계"}</dd>
           {connection.kind === "api" && <><dt>키</dt><dd className="num">{keyText ?? "없음"}</dd></>}
         </dl>
-        <h3>연결과 한도 고치기</h3>
-        <ModelSettingsForm row={row} device={device} secretBox={secretBox} readOnly={readOnly} siblings={siblings} />
-      </section>
+        <Link prefetch={false} className="text-button" href="/admin/models/contracts">서빙 계약·등록부 열기 ↗</Link></section>
       <section aria-label="문제">
         <h3>상태와 호출</h3>
         <p className="mc-st" data-tone={status.tone}><i aria-hidden="true" />{status.text}</p>
@@ -231,6 +238,7 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
             {group.maxModelLen ? ` (최대 ${formatCount(group.maxModelLen)})` : ""}</span>)}
           {connection.modelsReadAt ? ` · ${formatKst(connection.modelsReadAt)} 읽음` : ""}{` · 장비 id ${row.deviceId}`}{connection.note ? ` · 메모: ${connection.note}` : ""}</p>
       </section>
+      </div>} /></div></section>
     </div>
   </article>;
 }

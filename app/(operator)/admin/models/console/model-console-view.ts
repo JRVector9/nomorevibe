@@ -5,6 +5,12 @@ import type { ModelConsoleRow } from "@/lib/operations/model-console";
 
 export type ModelSort = "usage" | "calls" | "name";
 
+/** Compact table wording from the approved view; underlying ratios and the shared home formatter stay unchanged. */
+export function modelUsageText(row: Pick<ModelConsoleRow, "utilization" | "utilizationText">): string {
+  return row.utilization === null ? "—" : row.utilization === 0 ? "0%"
+    : row.utilization > 0 && row.utilization < 0.01 ? "<1%" : row.utilizationText;
+}
+
 /** Assignment failures cannot establish that a model has no tasks or that its tasks are all stopped. */
 export function modelStatusForUses(row: ModelConsoleRow, readable: boolean): ModelConsoleRow["status"] {
   return !readable && row.status.text.startsWith("쓰는 단계") ? { tone: "warn", text: "쓰는 작업 미확인" } : row.status;

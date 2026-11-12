@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { AI_TASK_GROUP_LABELS, AI_TASKS } from "@/lib/llm/ai-tasks";
 import { connectionFormEntries, deviceRowFormEntries, MODEL_CONSOLE_LIMITS, modelSavePlan, modelSettingsOf, type ModelConsoleRow, type ModelDeviceState,
   type ModelSavePlan, type ModelSettings } from "@/lib/operations/model-console";
@@ -40,38 +40,48 @@ export function settingsFromDraft(draft: Draft, kind: "api" | "cli"): { settings
  * - 저장은 기존 서버 동작 둘을 차례로 부른다: 연결 저장(saveAiConnectionAction — 감사 ai-connection-save) → (한도가 장비에도 걸리면) 장비 한 줄 저장
  *   (saveDeviceRowAction — 같은 장비의 모델 한도 합 검증·감사). 새 쓰기 경로는 없다.
  */
-export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings = [] }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
+export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings = [], compact = false, advancedDetails, revealAdvanced = false }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
   /** 같은 장비를 쓰는 다른 모델(사용자가 정한 이름과 그 서버 이름들) — 저장 전 확인이 장비의 다른 모델 한도를 이름으로 적는다 */
-  siblings?: readonly { name: string; models: readonly string[] }[] }) {
+  siblings?: readonly { name: string; models: readonly string[] }[];
+  /** The unified drawer starts with the approved name/limit fields; existing controls remain in its expandable details. */
+  compact?: boolean; advancedDetails?: ReactNode; revealAdvanced?: boolean }) {
   const router = useRouter();
   const base = useMemo(() => draftOf(modelSettingsOf(row)), [row]);
-  const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
-  const [draft, setDraft] = useState<Draft>(base);
+  const [mode, setMode] = useState<"view" | "edit" | "confirm">(compact ? "edit" : "view");
+  const [draftValue, setDraft] = useState<Draft | null>(null);
+  const draft = draftValue ?? base;
+  const [advancedChoice, setAdvancedChoice] = useState<{ reveal: boolean; open: boolean } | null>(null);
+  const advancedOpen = advancedChoice?.reveal === revealAdvanced ? advancedChoice.open : revealAdvanced;
   const [plan, setPlan] = useState<ModelSavePlan | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [messages, setMessages] = useState<{ text: string; tone: "ok" | "warn" | "bad" }[]>([]);
   const [pending, start] = useTransition();
   const keyField = useRef<HTMLInputElement>(null);
+  const reviewedConnection = useRef(row.connection);
   const { connection } = row;
   const api = connection.kind === "api";
   const tasks = AI_TASKS.filter(task => api ? task.api : (task.cliTools as readonly string[]).includes(connection.cliTool ?? ""));
-  const set = (patch: Partial<Draft>) => setDraft(current => ({ ...current, ...patch }));
+  const set = (patch: Partial<Draft>) => setDraft(current => ({ ...(current ?? base), ...patch }));
 
   const review = (next: Draft) => {
+    if (readOnly || pending) return;
     const parsed = settingsFromDraft(next, connection.kind);
     setIssues(parsed.issues);
     if (!parsed.settings) return;
     const made = modelSavePlan(row, device, parsed.settings, model => siblings.find(entry => entry.models.includes(model))?.name ?? null);
     if (!made.changed) { setIssues(["바뀐 값이 없습니다."]); return; }
+    reviewedConnection.current = connection;
     setDraft(next); setPlan(made); setMode("confirm");
   };
-  const cancel = () => { setDraft(base); setPlan(null); setIssues([]); setMode("view"); };
-  const apply = () => start(async () => {
+  const cancel = () => { setDraft(null); setPlan(null); setIssues([]); setMode(compact ? "edit" : "view"); };
+  const apply = () => {
+    if (readOnly || pending) return;
+    start(async () => {
     const parsed = settingsFromDraft(draft, connection.kind);
     if (!parsed.settings || !plan) return;
     const out: { text: string; tone: "ok" | "warn" | "bad" }[] = [];
     const form = new FormData();
-    for (const [name, value] of connectionFormEntries(connection, { ...parsed.settings, newKey: draft.newKey.trim() || null })) form.append(name, value);
+    for (const [name, value] of connectionFormEntries(reviewedConnection.current, { ...parsed.settings, newKey: draft.newKey.trim() || null })) form.append(name, value);
     const saved = await saveAiConnectionAction(null, form);
     if (!saved?.ok) {
       setMessages((saved?.issues ?? ["저장 결과를 확인하지 못했습니다. 새로고침해 상태를 확인하세요."]).map(text => ({ text, tone: "bad" })));
@@ -86,35 +96,68 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings =
         ...(deviceSaved.changes ?? []).map(text => ({ text, tone: "ok" as const })), ...(deviceSaved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
       else out.push(...(deviceSaved?.issues ?? ["저장 결과를 확인하지 못했습니다."]).map(text => ({ text: `연결은 저장했지만 장비 한도는 저장하지 못했습니다: ${text}`, tone: "bad" as const })));
     }
-    setMessages(out); setPlan(null); setMode("view");
+    setMessages(out); setPlan(null); setDraft(null); setMode(compact ? "edit" : "view");
     router.refresh();
-  });
+    });
+  };
 
-  return <div className="mc-form" data-dirty={mode !== "view" ? "true" : undefined}>
+  const extraFields = <>
+    {api && <>
+      <label><span>최대 토큰</span><input className="num" type="number" min={1} step={1} value={draft.maxTokens} placeholder="서버가 알려 주면 비움"
+        disabled={readOnly || pending} onChange={event => set({ maxTokens: event.target.value })} /></label>
+      <label><span>추론 토큰 여유</span><input className="num" type="number" min={1} step={1} value={draft.reasoningReserve} placeholder="일반 모델은 비움"
+        disabled={readOnly || pending} onChange={event => set({ reasoningReserve: event.target.value })} /></label>
+      <label><span>키 유효 기간(일)</span><input className="num" type="number" min={1} step={1} value={draft.keyValidDays} placeholder="만료 없으면 비움"
+        disabled={readOnly || pending} onChange={event => set({ keyValidDays: event.target.value })} /></label>
+      <label><span>새 키</span><input ref={keyField} type="password" value={draft.newKey} disabled={!secretBox || readOnly || pending} autoComplete="off"
+        placeholder={secretBox ? (connection.hasKey ? "비워 두면 저장된 키 그대로" : "없으면 비워 둡니다") : "이 서버에는 키 암호화 설정이 없습니다"}
+        onChange={event => set({ newKey: event.target.value })} /></label>
+    </>}
+    <fieldset><legend>쓸 수 있는 단계 — 아무것도 고르지 않으면 모든 단계</legend>
+      <div className="mc-tasks">{tasks.map(task => <label key={task.id}><input type="checkbox" checked={draft.allowedTasks.includes(task.id)} disabled={readOnly || pending}
+        onChange={event => set({ allowedTasks: event.target.checked ? [...draft.allowedTasks, task.id] : draft.allowedTasks.filter(id => id !== task.id) })} />
+        {AI_TASK_GROUP_LABELS[task.group]} · {task.label}</label>)}</div></fieldset>
+    <p className="mc-hint">동시 한도는 이 칸 하나로 받아 연결 칸 수와, 장비에 모델별 한도가 있으면 그 줄 · 없으면 장비 한도에 함께 씁니다. 어긋나는 곳은 저장 전 확인에서 보입니다.</p>
+  </>;
+
+  return <div className={compact ? "mc-form mc-compact-settings" : "mc-form"}
+    data-dirty={(compact ? mode === "confirm" || JSON.stringify(draft) !== JSON.stringify(base) : mode !== "view") ? "true" : undefined}>
     {mode === "edit" && <form className="mc-form" onSubmit={event => { event.preventDefault(); review(draft); }}>
+      {compact ? <>
+        <div className="mc-settings-fields">
+          <label><span>화면에서 부를 이름</span><input type="text" value={draft.name} maxLength={80} disabled={readOnly || pending}
+            onChange={event => set({ name: event.target.value })} autoComplete="off" /></label>
+          <label><span>동시 한도</span><input className="num" type="number" min={1} max={MODEL_CONSOLE_LIMITS.limitMax} step={1} value={draft.limit}
+            disabled={readOnly || pending} onChange={event => set({ limit: event.target.value })} /></label>
+        </div>
+        <p className="mc-settings-help">같은 장비를 쓰는 작업들이 이 한도를 나눠 씁니다.</p>
+        <div id="model-connection-details" className="mc-settings-advanced" hidden={!advancedOpen}>
+          <label><span>장비</span><input type="text" value={draft.machine} maxLength={80} disabled={readOnly || pending}
+            onChange={event => set({ machine: event.target.value })} autoComplete="off" placeholder={row.deviceId} /></label>
+          {extraFields}
+          {!readOnly && <div id="model-actions" className="mc-acts" aria-label="조치">
+            <button type="button" className="button small" onClick={() => { setMessages([]); review({ ...base, enabled: !connection.enabled }); }}>{connection.enabled ? "쉬게 하기" : "다시 켜기"}</button>
+            {api && <button type="button" className="button small" disabled={!secretBox} onClick={() => { setMessages([]); setTimeout(() => keyField.current?.focus(), 0); }}>키 바꾸기</button>}
+          </div>}
+          <p className="mc-hint">쉬게 하기는 모델을 지우지 않고 모든 단계에서 잠시 뺍니다. 순위는 그대로 남고, 다시 켜면 돌아옵니다.</p>
+          {advancedDetails}
+        </div>
+        <div className="mc-settings-foot">
+          <button type="button" className="text-button" aria-expanded={advancedOpen} aria-controls="model-connection-details"
+            onClick={() => setAdvancedChoice({ reveal: revealAdvanced, open: !advancedOpen })}>
+            {advancedOpen ? "연결 세부 설정 접기 ↑" : "주소·키·서빙 계약 보기 →"}</button>
+          <button type="submit" className="button primary" disabled={readOnly || pending}>변경 확인</button>
+        </div>
+      </> : <>
       <label><span>이름</span><input type="text" value={draft.name} maxLength={80} onChange={event => set({ name: event.target.value })} autoComplete="off" /></label>
       <label><span>장비</span><input type="text" value={draft.machine} maxLength={80} onChange={event => set({ machine: event.target.value })} autoComplete="off"
         placeholder={row.deviceId} /></label>
       <label><span>동시 한도</span><input className="num" type="number" min={1} max={MODEL_CONSOLE_LIMITS.limitMax} step={1} value={draft.limit}
         onChange={event => set({ limit: event.target.value })} /></label>
-      {api && <>
-        <label><span>최대 토큰</span><input className="num" type="number" min={1} step={1} value={draft.maxTokens} placeholder="서버가 알려 주면 비움"
-          onChange={event => set({ maxTokens: event.target.value })} /></label>
-        <label><span>추론 토큰 여유</span><input className="num" type="number" min={1} step={1} value={draft.reasoningReserve} placeholder="일반 모델은 비움"
-          onChange={event => set({ reasoningReserve: event.target.value })} /></label>
-        <label><span>키 유효 기간(일)</span><input className="num" type="number" min={1} step={1} value={draft.keyValidDays} placeholder="만료 없으면 비움"
-          onChange={event => set({ keyValidDays: event.target.value })} /></label>
-        <label><span>새 키</span><input ref={keyField} type="password" value={draft.newKey} disabled={!secretBox} autoComplete="off"
-          placeholder={secretBox ? (connection.hasKey ? "비워 두면 저장된 키 그대로" : "없으면 비워 둡니다") : "이 서버에는 키 암호화 설정이 없습니다"}
-          onChange={event => set({ newKey: event.target.value })} /></label>
-      </>}
-      <fieldset><legend>쓸 수 있는 단계 — 아무것도 고르지 않으면 모든 단계</legend>
-        <div className="mc-tasks">{tasks.map(task => <label key={task.id}><input type="checkbox" checked={draft.allowedTasks.includes(task.id)}
-          onChange={event => set({ allowedTasks: event.target.checked ? [...draft.allowedTasks, task.id] : draft.allowedTasks.filter(id => id !== task.id) })} />
-          {AI_TASK_GROUP_LABELS[task.group]} · {task.label}</label>)}</div></fieldset>
-      <p className="mc-hint">동시 한도는 이 칸 하나로 받아 연결 칸 수와, 장비에 모델별 한도가 있으면 그 줄 · 없으면 장비 한도에 함께 씁니다. 어긋나는 곳은 저장 전 확인에서 보입니다.</p>
+      {extraFields}
       <div className="mc-acts"><button type="submit" className="button small primary">저장 전 확인</button>
         <button type="button" className="button small" onClick={cancel}>그만두기</button></div>
+      </>}
     </form>}
     {mode === "confirm" && plan && <SavePlanDialog title={`${row.name}${draft.enabled !== connection.enabled ? (draft.enabled ? "을(를) 다시 켭니다" : "을(를) 쉬게 합니다") : " 설정을 바꿉니다"}`}
       plan={plan} pending={pending} disabled={readOnly} onApply={apply} onCancel={cancel} />}

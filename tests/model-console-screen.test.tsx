@@ -23,7 +23,7 @@ import { SavePlanDialog } from "@/app/(operator)/admin/models/console/ModelSetti
 import { modelSavePlan, modelSettingsOf } from "@/lib/operations/model-console";
 import { modelFixtureDevices } from "./fixtures/model-console";
 
-const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ");
+const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/\s+/g, " ");
 /** 라디오 값 — React 가 checked 를 value 앞에 둘 수 있어 속성 차례를 보지 않는다 */
 const radios = (html: string, name: string) => [...html.matchAll(new RegExp(`<input[^>]*name="${name}"[^>]*>`, "g"))].map(match => /value="([^"]+)"/.exec(match[0])![1]);
 const table = (html: string) => html.match(/<table class="mc-table"[^]*?<\/table>/)![0];
@@ -47,7 +47,7 @@ describe("모델 목록(시안 화면 4)", () => {
     for (const served of ["Inferact/Qwen3.8-27B-NVFP4", "gpt-oss-120b", "qwen3.8-flash-next", "k-exaone_v2.5"]) expect(list).not.toContain(served);
     const supa = list.match(/<tr data-model="conn-supa-direct"[^]*?<\/tr>/)![0];
     expect(text(supa)).toContain("supa-direct supa-direct 3 3 / 3 49% 8,404 15.5초 3 미확정 19");
-    expect(text(list)).toContain("LG EXAONE Exaone 1 0 / 1 1% 미만 135 2.2초 1 거절 57");
+    expect(text(list)).toContain("LG EXAONE Exaone 1 0 / 1 <1% 135 2.2초 1 거절 57");
     expect(list).toContain('href="/admin/models?model=conn-supa-direct#model-detail"');
     expect(html).toContain(">＋ 모델 추가</button>");
     expect(html).not.toContain('id="model-add"');
@@ -76,7 +76,7 @@ describe("모델 목록(시안 화면 4)", () => {
     expect(text(detail)).toContain("미확정 24시간 안에 결과를 모르는 호출이 19건 있습니다.");
     expect(detail).toContain("<code>supa = Inferact/Qwen3.8-27B-NVFP4</code>");
     expect(text(detail)).toMatch(/서버가 알려 준 이름 ?: supa = Inferact\/Qwen3\.8-27B-NVFP4 \(최대 131,072\) · 11-12 07:00 읽음 · 장비 id supa-direct/);
-    for (const label of ["고치기", "쉬게 하기", "키 바꾸기"]) expect(detail).toContain(`>${label}</button>`);
+    for (const label of ["변경 확인", "쉬게 하기", "키 바꾸기"]) expect(detail).toContain(`>${label}</button>`);
     expect(detail).toContain('href="/admin/models/compare?task=product-tagline-ko&amp;candidate=conn-supa-direct&amp;model=supa"');
   });
 
