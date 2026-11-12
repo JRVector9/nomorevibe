@@ -6,17 +6,17 @@ import { actionLabel, targetLabel } from "../../activity/labels";
 import { summaryLine } from "../../activity/summary";
 import { UnifiedOperationsControls } from "./UnifiedOperationsControls";
 
-type Data = Pick<ModelUnifiedRead, "now" | "assist" | "concurrency" | "importPreview" | "retired" | "retiredReadable" | "retiredError" | "changes">;
+type Data = Pick<ModelUnifiedRead, "now" | "assist" | "concurrency" | "importPreview" | "retired" | "retiredReadable" | "retiredError" | "changes" | "assignments" | "taskUsesReadable" | "ranksReadable">;
 export type UnifiedRecentChange = { id: number; at: string; title: string; detail: string; ok: boolean };
 
 export function UnifiedOperations({ data, readOnly, recent, openImport = false }: { data: Data; readOnly: boolean; recent?: readonly UnifiedRecentChange[]; openImport?: boolean }) {
-  const { assist, concurrency, retired, retiredReadable, retiredError, importPreview, changes } = data;
+  const { assist, concurrency, retired, retiredReadable, retiredError, importPreview, changes, assignments, taskUsesReadable, ranksReadable } = data;
   const rows: readonly UnifiedRecentChange[] = recent ?? changes.rows.map(row => ({ id: row.id, at: new Date(row.createdAt).toISOString(),
     title: `${targetLabel(row.target).text} · ${actionLabel(row.action)}`, detail: `${row.ok ? summaryLine(row) : row.error ?? "저장 거절"} · ${row.actor}`, ok: row.ok }));
   return <div id="operations" className="mu-lower">
     <section aria-labelledby="operations-title">
       <div className="mu-section-head"><h2 id="operations-title">운영 설정</h2><span>필요할 때 열기</span></div>
-      <UnifiedOperationsControls data={{ assist, concurrency, retired, retiredReadable, retiredError, importPreview }} readOnly={readOnly} openImport={openImport} />
+      <UnifiedOperationsControls data={{ assist, concurrency, retired, retiredReadable, retiredError, importPreview, assignments, taskUsesReadable, ranksReadable }} readOnly={readOnly} openImport={openImport} />
     </section>
     <section id="audit" aria-labelledby="history-title">
       <div className="mu-section-head"><h2 id="history-title">최근 변경</h2><Link prefetch={false} href={llmHistoryHref()}>기록 전체 →</Link></div>

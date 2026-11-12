@@ -3,21 +3,39 @@
 import Link from "next/link";
 import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { aiTask, aiTaskSlotLabel } from "@/lib/llm/ai-tasks";
-import { AI_TASK_IMPORT_CONFIRM } from "@/lib/operations/admin-ai-tasks";
+import { aiTask, aiTaskSlotLabel, isRetiredAiTask } from "@/lib/llm/ai-tasks";
+import { AI_TASK_IMPORT_CONFIRM, type AiImportPlan } from "@/lib/operations/admin-ai-tasks";
 import type { ModelUnifiedRead } from "@/lib/operations/model-unified-read";
 import type { AssistControlView } from "@/lib/operations/llm-assist-controls";
 import type { SettingsControlView } from "@/lib/operations/admin-runtime-settings";
+import type { TaskAssignRow, TaskAssignView } from "@/lib/operations/llm-task-assign-view";
 import { unifiedAssistDraft, unifiedAssistForm, unifiedAssistModeLabel, unifiedConcurrencyForm, type UnifiedAssistDraft } from "@/lib/operations/model-unified-controls";
 import { saveAssistControlAction } from "../tasks/assist-actions";
 import { applyAiTaskImportAction, clearUnreadAiTaskRanksAction, type AiTaskActionState } from "../tasks/actions";
 import { saveRuntimeSettingsGroup } from "../limits/actions";
 import { ModelDrawer } from "../console/ModelDrawer";
 
-type Data = Pick<ModelUnifiedRead, "assist" | "concurrency" | "importPreview" | "retired" | "retiredReadable" | "retiredError">;
+type Data = Pick<ModelUnifiedRead, "assist" | "concurrency" | "importPreview" | "retired" | "retiredReadable" | "retiredError" | "assignments" | "taskUsesReadable" | "ranksReadable">;
 type Panel = { kind: "assist"; task: string } | { kind: "limits" | "import" | "cleanup" } | null;
 type Step = "edit" | "confirm" | "done";
 type Save = (previous: AiTaskActionState, form: FormData) => Promise<AiTaskActionState>;
+
+/** Consume only this drawer's bookmark so a later data refresh cannot reopen an explicitly closed panel. */
+export function unifiedOperationsClosedHref(href: string, kind: NonNullable<Panel>["kind"] | undefined, retiredSlots: Data["retired"] = []): string {
+  const url = new URL(href);
+  let fragment = url.hash;
+  try { fragment = decodeURIComponent(fragment); } catch { /* unrelated malformed fragments stay untouched */ }
+  if (kind === "import") {
+    const planned = url.searchParams.getAll("import").includes("plan");
+    url.searchParams.delete("import", "plan");
+    if (fragment === "#import" || !fragment && planned) url.hash = "operations";
+  } else if (kind === "cleanup") {
+    const retired = /^#execution-(.+)-([1-9]\d*)$/.exec(fragment);
+    if (fragment === "#retired-records" || retired && isRetiredAiTask(retired[1])
+      || retiredSlots.some(entry => fragment === `#execution-${entry.task}-${entry.slot}`)) url.hash = "cleanup";
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
 
 function useControlSave(action: Save, readOnly: boolean) {
   const router = useRouter();
@@ -128,7 +146,18 @@ export function UnifiedConcurrencyDrawer({ control, readOnly, onClose }: { contr
   </ModelDrawer>;
 }
 
-function ImportDrawer({ preview, readOnly, onClose }: { preview: Data["importPreview"]; readOnly: boolean; onClose: () => void }) {
+/** Empty means no importable source ranks. Neither it nor an optional slot/display note proves the destination is unused. */
+export function unifiedImportAssignmentsFilled(plan: AiImportPlan, assignments: TaskAssignView, readable: boolean): boolean {
+  if (!readable || !assignments.readable || assignments.errors.length || !assignments.rows.length || !plan.slots.length) return false;
+  const filled = (row: TaskAssignRow) => row.mode !== null && row.choices.some(choice => choice.model.trim());
+  return assignments.rows.every(filled) && plan.slots.every(slot => {
+    const row = assignments.rows.find(row => row.task === slot.task && row.slot === slot.slot);
+    return !!row && filled(row);
+  });
+}
+
+function ImportDrawer({ preview, assignments, assignmentsReadable, readOnly, onClose }: { preview: Data["importPreview"]; assignments: TaskAssignView;
+  assignmentsReadable: boolean; readOnly: boolean; onClose: () => void }) {
   const [snapshot, setSnapshot] = useState(preview), [received, setReceived] = useState(preview), [confirm, setConfirm] = useState("");
   const result = useControlSave(applyAiTaskImportAction, readOnly);
   if (received !== preview) {
@@ -137,13 +166,14 @@ function ImportDrawer({ preview, readOnly, onClose }: { preview: Data["importPre
   }
   const plan = snapshot?.plan, writes = plan ? plan.connections.filter(row => row.action !== "existing").length + plan.slots.filter(row => row.action === "create").length : 0;
   const unchanged = plan?.slots.filter(row => row.action === "unchanged") ?? [], empty = plan?.slots.filter(row => row.action === "empty") ?? [];
+  const filled = !!plan && unifiedImportAssignmentsFilled(plan, assignments, assignmentsReadable);
   const apply = () => { const form = new FormData(); form.set("planHash", snapshot?.hash ?? ""); form.set("confirm", confirm); result.save(form); };
   return <ModelDrawer title="옛 설정 가져오기" eyebrow="옛 설정 정리" titleId="mu-import-title" onClose={() => { if (!result.pending) onClose(); }}>
     <div className="mu-control-drawer"><p className="mu-drawer-lead">현재 순위가 없는 작업에만 옛 설정을 옮깁니다. 기존 배정은 유지합니다.</p>
       {!snapshot && <div className="mu-callout">가져오기 계획을 아직 읽지 않았습니다. <Link prefetch={false} href="/admin/models?import=plan#import">계획 읽기 →</Link><p>저장하지 않고 현재 설정과 필요한 서버 모델 목록만 읽습니다.</p></div>}
       {snapshot?.error && <p role="alert" className="mu-callout mu-warn">계획을 만들지 못했습니다: {snapshot.error} <Link prefetch={false} href="/admin/models?import=plan#import">계획 다시 읽기 →</Link></p>}
       {plan && <>
-        <div className="mu-callout"><b>{writes ? `가져올 항목 ${writes}개` : "가져올 항목 없음"}</b><p>{writes ? "계획의 대상과 경고를 확인한 뒤 적용하세요." : "현재 사용할 작업의 배정이 이미 채워져 있습니다."}</p></div>
+        <div className="mu-callout"><b>{writes ? `가져올 항목 ${writes}개` : "가져올 항목 없음"}</b><p>{writes ? "계획의 대상과 경고를 확인한 뒤 적용하세요." : filled ? "현재 사용할 작업의 배정이 이미 채워져 있습니다." : "옮길 연결이나 작업 순위가 없습니다."}</p></div>
         {plan.connections.map(row => <div className="mu-manage-row" key={row.key}><span>{row.label}<small>{row.kind === "api" ? row.baseUrl : row.cliTool} · {row.deviceId} {row.capacitySlots}칸</small>
           {row.keyFrom && <small>계약 {row.keyFrom.routeId}의 저장 키를 옮깁니다.</small>}{row.keyEnv && <small>환경변수 {row.keyEnv}의 키를 옮깁니다.</small>}</span>
           <span className="mu-pill">{row.action === "create" ? "연결 만들기" : row.action === "update" ? "모델 이름 더하기" : "유지"}</span></div>)}
@@ -151,8 +181,8 @@ function ImportDrawer({ preview, readOnly, onClose }: { preview: Data["importPre
           <small>{row.ranks.map(rank => `${rank.rank}순위 ${snapshot?.connectionLabels[rank.connectionKey] ?? rank.model}`).join(" → ") || "옮길 순위 없음"}</small></span>
           <span className="mu-pill">{row.action === "create" ? "빈 칸 채우기" : row.action === "differs" ? "다름 · 건너뜀" : "유지"}</span></div>; })}
         {unchanged.length > 0 && <div className="mu-manage-row"><span>기존 배정 {unchanged.length}개<small>빈 칸만 채우므로 건너뜁니다.</small></span><span className="mu-pill">유지</span></div>}
-        {empty.length > 0 && <div className="mu-manage-row"><span>{empty.every(row => row.task === "second-review" && row.slot > 1) ? `선택하지 않은 2차 투표자 ${empty.length}칸` : `옮길 순위 없는 작업 ${empty.length}개`}
-          <small>사용하지 않는 칸은 자동으로 채우지 않습니다.</small></span><span className="mu-pill">유지</span></div>}
+        {empty.length > 0 && <div className="mu-manage-row"><span>옮길 순위 없는 작업 {empty.length}개
+          <small>옛 설정에서 가져올 순위를 찾지 못했습니다.</small></span><span className="mu-pill">유지</span></div>}
         {plan.warnings.map(warning => <p role="note" className="mu-callout mu-warn" key={warning}>{warning}</p>)}
         {snapshot?.servers.map(server => <p className="mu-help" key={server.baseUrl}>{server.host ?? server.baseUrl} · {server.error ? `모델 목록 읽기 실패(${server.error})` : `모델 ${server.count}개`}</p>)}
         {writes > 0 && !result.state?.ok && <><p className="mu-scope-note">계획이 그 사이 바뀌었으면 아무것도 쓰지 않습니다. 계약·용량 경로·장비는 만들지 않습니다.</p>
@@ -185,7 +215,11 @@ export function UnifiedOperationsControls({ data, readOnly, openImport = false }
   const { assist, concurrency, retired, retiredReadable, retiredError } = data;
   const sending = assist.controls.filter(control => control.mode !== "off" && control.dispatchEnabled).length;
   const selected = panel?.kind === "assist" ? assist.controls.find(control => control.task === panel.task) : null;
-  const close = () => setPanel(null);
+  const close = () => {
+    const next = unifiedOperationsClosedHref(window.location.href, panel?.kind, data.retired);
+    if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.replaceState(null, "", next);
+    setPanel(null);
+  };
   return <>
     <div className="mu-folds">
       <details id="assist-controls"><summary>LLM 보강 제어 <span>{assist.error ? "읽지 못함" : `보내기 ${sending} / ${assist.controls.length}개`}</span></summary>
@@ -215,7 +249,7 @@ export function UnifiedOperationsControls({ data, readOnly, openImport = false }
     </div>
     {selected && <UnifiedAssistDrawer key={selected.task} control={selected} readOnly={readOnly} onClose={close} />}
     {panel?.kind === "limits" && <UnifiedConcurrencyDrawer control={concurrency} readOnly={readOnly} onClose={close} />}
-    {panel?.kind === "import" && <ImportDrawer preview={data.importPreview} readOnly={readOnly} onClose={close} />}
+    {panel?.kind === "import" && <ImportDrawer preview={data.importPreview} assignments={data.assignments} assignmentsReadable={data.taskUsesReadable && data.ranksReadable} readOnly={readOnly} onClose={close} />}
     {panel?.kind === "cleanup" && <ModelDrawer title={retired.length ? "쓰지 않는 순위 기록 정리" : "옛 순위 기록"} eyebrow="옛 설정 정리" titleId="mu-cleanup-title" onClose={close}>
       <div className="mu-control-drawer"><p className="mu-drawer-lead">없앤 작업의 기록입니다. 현재 모델 호출과 배정에는 쓰이지 않습니다.</p>
         {!retiredReadable ? <p role="alert" className="mu-callout mu-warn">옛 순위 기록을 읽지 못했습니다. 현재 기록을 확인할 때까지 정리할 수 없습니다.</p>

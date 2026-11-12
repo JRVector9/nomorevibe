@@ -2,12 +2,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { buildModelUnifiedFixture } from "@/lib/operations/model-unified-fixture";
 import { unifiedAssistDraft, unifiedAssistForm, unifiedConcurrencyForm } from "@/lib/operations/model-unified-controls";
+import { buildAiImportPlan } from "@/lib/operations/admin-ai-tasks";
+import { UnifiedOperations } from "@/app/(operator)/admin/models/unified/UnifiedOperations";
 const save = vi.hoisted(() => ({ assist: vi.fn(), concurrency: vi.fn(), apply: vi.fn(), clear: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/tasks/assist-actions", () => ({ saveAssistControlAction: save.assist }));
 vi.mock("@/app/(operator)/admin/models/limits/actions", () => ({ saveRuntimeSettingsGroup: save.concurrency }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ applyAiTaskImportAction: save.apply, clearUnreadAiTaskRanksAction: save.clear }));
-import { UnifiedAssistDrawer, UnifiedConcurrencyDrawer, UnifiedOperationsControls, UnifiedRetiredRecord } from "@/app/(operator)/admin/models/unified/UnifiedOperationsControls";
+import { UnifiedAssistDrawer, UnifiedConcurrencyDrawer, UnifiedOperationsControls, UnifiedRetiredRecord, unifiedImportAssignmentsFilled, unifiedOperationsClosedHref } from "@/app/(operator)/admin/models/unified/UnifiedOperationsControls";
 
 describe("통합 운영 설정의 기존 저장 계약", () => {
   it("보강 방식·보내기·반영의 의존 관계를 보존하고 기존 판으로 CAS폼을 보낸다", () => {
@@ -74,13 +76,60 @@ describe("통합 운영 설정의 기존 저장 계약", () => {
     const data = buildModelUnifiedFixture();
     const planned = renderToStaticMarkup(<UnifiedOperationsControls data={data} readOnly openImport />);
     expect(planned).toContain('aria-labelledby="mu-import-title"'); expect(planned).toContain("가져올 항목 없음");
-    expect(planned).toContain("현재 사용할 작업의 배정이 이미 채워져 있습니다.");
+    expect(planned).toContain("옮길 연결이나 작업 순위가 없습니다.");
     expect(planned).toMatch(/<button[^>]*class="button small primary"[^>]*>확인<\/button>/);
     expect(planned).not.toContain("적용(쓰기"); expect(planned).toContain("읽기 전용 미리보기");
     const missing = renderToStaticMarkup(<UnifiedOperationsControls data={{ ...data, importPreview: null }} readOnly openImport />);
     expect(missing).toContain("계획을 아직 읽지 않았습니다"); expect(missing).not.toContain("가져올 항목 없음");
     const failed = renderToStaticMarkup(<UnifiedOperationsControls data={{ ...data, importPreview: { ...data.importPreview!, error: "read_failed", plan: null } }} readOnly openImport />);
     expect(failed).toContain('role="alert"'); expect(failed).toContain("계획을 만들지 못했습니다: read_failed");
+  });
+  it.each([
+    ["주요 작업 빈 배정", "first-review", 1, "bad"],
+    ["필요한 투표자 빈 배정", "second-review", 2, "bad"],
+    ["투표자 사용 여부 모름", "second-review", 2, "unknown"],
+  ] as const)("옛 출처가 없어도 %s를 배정 완료나 미사용으로 단정하지 않는다", (_case, task, slot, level) => {
+    const data = buildModelUnifiedFixture();
+    const plan = buildAiImportPlan({ current: [{ task, slot, uses: [], source: "legacy settings", error: null, skip: null, notes: [] }],
+      connections: [], rows: [], deviceSlots: new Map(), hostEquipment: new Map() });
+    expect(plan.slots).toEqual([{ task, slot, action: "empty", ranks: [] }]);
+    const assignments = { ...data.assignments, rows: data.assignments.rows.map(row => row.task === task && row.slot === slot
+      ? { ...row, choices: [], status: { level, text: "배정 확인 필요", reason: "필요한 작업의 순위 없음", detail: null } } : row) };
+    expect(unifiedImportAssignmentsFilled(plan, assignments, true)).toBe(false);
+    const html = renderToStaticMarkup(<UnifiedOperationsControls data={{ ...data, assignments, importPreview: { ...data.importPreview!, plan } }} readOnly openImport />);
+    expect(html).toContain("옮길 연결이나 작업 순위가 없습니다.");
+    expect(html).not.toContain("배정이 이미 채워져 있습니다"); expect(html).not.toContain("선택하지 않은 2차 투표자");
+    expect(html).toContain("옛 설정에서 가져올 순위를 찾지 못했습니다.");
+  });
+  it("실제 현재 배정이 모두 확인된 때만 채워졌다고 쓰고 조회 실패·불명 상태에는 일반 문구를 쓴다", () => {
+    const data = buildModelUnifiedFixture(), plan = data.importPreview!.plan!;
+    // Fixture's presentation-only unused note is insufficient proof to ignore the empty optional slots.
+    expect(unifiedImportAssignmentsFilled(plan, data.assignments, true)).toBe(false);
+    const assignments = { ...data.assignments, rows: data.assignments.rows.map(row => row.choices.length ? row
+      : { ...row, choices: [data.assignments.rows[0].choices[0]] }) };
+    expect(unifiedImportAssignmentsFilled(plan, assignments, true)).toBe(true);
+    const html = renderToStaticMarkup(<UnifiedOperationsControls data={{ ...data, assignments }} readOnly openImport />);
+    expect(html).toContain("현재 사용할 작업의 배정이 이미 채워져 있습니다.");
+    expect(renderToStaticMarkup(<UnifiedOperations data={{ ...data, assignments }} readOnly openImport />)).toContain("현재 사용할 작업의 배정이 이미 채워져 있습니다.");
+    expect(unifiedImportAssignmentsFilled(plan, assignments, false)).toBe(false);
+    expect(renderToStaticMarkup(<UnifiedOperationsControls data={{ ...data, assignments, taskUsesReadable: false }} readOnly openImport />)).not.toContain("배정이 이미 채워져 있습니다");
+    expect(renderToStaticMarkup(<UnifiedOperationsControls data={{ ...data, assignments, ranksReadable: false }} readOnly openImport />)).not.toContain("배정이 이미 채워져 있습니다");
+    expect(unifiedImportAssignmentsFilled(plan, { ...assignments, readable: false }, true)).toBe(false);
+    expect(unifiedImportAssignmentsFilled(plan, { ...assignments, rows: assignments.rows.map((row, index) => index ? row : { ...row, mode: null }) }, true)).toBe(false);
+    expect(unifiedImportAssignmentsFilled(plan, { ...assignments, errors: ["current unreadable"] }, true)).toBe(false);
+  });
+  it("운영 서랍을 닫을 때 자기 조각·import=plan만 소비하고 모델·작업·다른 조회값을 보존한다", () => {
+    const href = (query: string, kind: "import" | "cleanup") => unifiedOperationsClosedHref(`https://nomorevibe.example/admin/models${query}`, kind);
+    expect(href("?import=plan&preview=fixture&task=first-review%231#import", "import")).toBe("/admin/models?preview=fixture&task=first-review%231#operations");
+    expect(href("?import=plan&import=other&mode=keep#import", "import")).toBe("/admin/models?import=other&mode=keep#operations");
+    expect(href("?import=plan&model=connection#model-detail", "import")).toBe("/admin/models?model=connection#model-detail");
+    expect(href("?import=plan#execution-first-review-1", "import")).toBe("/admin/models#execution-first-review-1");
+    expect(href("?preview=fixture#retired-records", "cleanup")).toBe("/admin/models?preview=fixture#cleanup");
+    expect(href("?task=first-review%231#execution-korean-translation-direct-1", "cleanup")).toBe("/admin/models?task=first-review%231#cleanup");
+    expect(href("?task=first-review%231#execution-first-review-1", "cleanup")).toBe("/admin/models?task=first-review%231#execution-first-review-1");
+    expect(href("?import=other#tasks", "import")).toBe("/admin/models?import=other#tasks");
+    const retired = buildModelUnifiedFixture().retired[0];
+    expect(unifiedOperationsClosedHref(`https://nomorevibe.example/admin/models#execution-${retired.task}-${retired.slot}`, "cleanup", [retired])).toBe("/admin/models#cleanup");
   });
   it("옛 순위 조회가 실패하면 없음으로 꾸미지 않고 기록 정리 버튼을 잠근다", () => {
     const html = renderToStaticMarkup(<UnifiedOperationsControls data={{ ...buildModelUnifiedFixture(), retired: [], retiredReadable: false, retiredError: "read_failed" }} readOnly={false} />);

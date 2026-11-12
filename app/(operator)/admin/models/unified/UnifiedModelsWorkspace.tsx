@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ModelUnifiedRead } from "@/lib/operations/model-unified-read";
 import { unifiedTaskDuplicate } from "@/lib/operations/model-unified-task-view";
 import { ModelConsole } from "../console/ModelConsole";
@@ -18,6 +18,7 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
   const [detail, setDetail] = useState<Detail>(selected ? { kind: "model", id: selected } : null);
   const [scope, setScope] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const addressRevealed = useRef(false);
   const updateAddress = useCallback((next: Detail) => {
     const url = new URL(window.location.href);
     url.searchParams.delete("model"); url.searchParams.delete("task");
@@ -34,7 +35,7 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
   const close = useCallback(() => { setDetail(null); updateAddress(null); }, [updateAddress]);
 
   useEffect(() => {
-    const reveal = () => {
+    const reveal = (navigation: boolean) => {
       const url = new URL(window.location.href);
       const hash = unifiedSectionHash(url.hash);
       if (url.hash && hash !== url.hash) {
@@ -45,6 +46,8 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
       const task = keys.includes(url.searchParams.get("task") ?? "") ? url.searchParams.get("task") : unifiedTaskKey(url.hash, keys);
       if (task) setDetail(current => current?.kind === "task" && current.key === task ? current : { kind: "task", key: task });
       else if (url.searchParams.get("model")) setDetail({ kind: "model", id: url.searchParams.get("model")! });
+      // A data refresh synchronizes selection while preserving the user's scroll and fold choices.
+      if (!navigation) return;
       let id: string;
       try { id = decodeURIComponent(url.hash.slice(1)); } catch { return; }
       const target = document.getElementById(id);
@@ -52,9 +55,10 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
       for (let fold = target.closest("details"); fold; fold = fold.parentElement?.closest("details") ?? null) fold.open = true;
       if (!task && !url.searchParams.get("model")) target.scrollIntoView();
     };
-    reveal();
-    window.addEventListener("hashchange", reveal); window.addEventListener("popstate", reveal);
-    return () => { window.removeEventListener("hashchange", reveal); window.removeEventListener("popstate", reveal); };
+    reveal(!addressRevealed.current); addressRevealed.current = true;
+    const navigate = () => reveal(true);
+    window.addEventListener("hashchange", navigate); window.addEventListener("popstate", navigate);
+    return () => { window.removeEventListener("hashchange", navigate); window.removeEventListener("popstate", navigate); };
   }, [data.assignments.rows]);
   const reviewDuplicates = () => {
     setDetail(null); setScope(null); setFilter("duplicate");
