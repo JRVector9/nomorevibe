@@ -9,7 +9,7 @@ import { UnifiedTaskEditor } from "./tasks/UnifiedTaskEditor";
 import { unifiedSectionHash, unifiedTaskKey } from "./legacy-navigation";
 import "./unified.css";
 
-export type UnifiedModelsWorkspaceData = Pick<ModelUnifiedRead, "models" | "assignments" | "editor" | "devices" | "poolHelp" | "lockReason" | "taskUses" | "ranksReadable">;
+export type UnifiedModelsWorkspaceData = Pick<ModelUnifiedRead, "models" | "assignments" | "editor" | "devices" | "poolHelp" | "lockReason" | "taskUses" | "ranksReadable" | "taskUsesReadable">;
 type Detail = { kind: "model"; id: string } | { kind: "task"; key: string; attachConnectionId?: string } | null;
 type Filter = "all" | "attention" | "duplicate";
 
@@ -63,7 +63,7 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
   };
   return <div className="models-unified" data-models-unified="true">
     <ModelConsole data={data.models} selected={detail?.kind === "model" ? detail.id : null} readOnly={readOnly}
-      attach={{ editor: data.editor, poolHelp: data.poolHelp }} taskUses={data.taskUses}
+      attach={{ editor: data.editor, poolHelp: data.poolHelp }} taskUses={data.taskUses} taskUsesReadable={data.taskUsesReadable}
       duplicateCount={data.ranksReadable ? data.assignments.rows.filter(unifiedTaskDuplicate).length : null}
       onModelOpen={openModel} onModelClose={close} onTaskOpen={openTask} onReviewDuplicates={reviewDuplicates}
       onModelScope={id => { setDetail(null); updateAddress(null); setScope(id); setFilter("all"); document.getElementById("tasks")?.scrollIntoView({ behavior: "smooth" }); }} />

@@ -90,6 +90,7 @@ describe("옛 작업 즐겨찾기", () => {
   const id = "12345678-1234-1234-1234-123456789abc";
   it.each([
     [{}, "", "/admin/models#tasks"],
+    [{ tab: "tasks" }, "", "/admin/models#tasks"],
     [{ import: "plan" }, "", "/admin/models?import=plan#import"],
     [{ edit: id }, "", `/admin/models?model=${id}#model-detail`],
     [{ id }, "", `/admin/models?model=${id}#model-detail`],

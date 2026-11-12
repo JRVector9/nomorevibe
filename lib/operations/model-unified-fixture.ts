@@ -102,8 +102,11 @@ export function buildModelUnifiedFixture(): ModelUnifiedRead {
     concurrency: { revision: 1, rowError: null, fields: [
       { path: "jobs.second-review.consumerConcurrency", label: "2차 심사 동시 업무", kind: "int", value: 2, defaultValue: 2, input: "2", defaultInput: "2", overridden: true },
       { path: "jobs.crawl-publish.classifierConcurrency", label: "발행 분류 묶음", kind: "int", value: 1, defaultValue: 1, input: "1", defaultInput: "1", overridden: true },
-    ] }, importPreview: null, retired: [{ task: "legacy-product-tagline-ko", slot: 1, count: 1, revision, label: "한국어 소개 번역 · 직접 경로" }],
-    changes: { rows: [], more: false, error: null }, taskUses, ranksReadable: true,
+    ] }, importPreview: { hash: revision, error: null, servers: [], keyWarnings: [], connectionLabels: {},
+      plan: { connections: [], warnings: [], slots: preview.task.map(task => ({ task: task.id, slot: task.slot,
+        action: task.id === "second-review" && task.slot > 1 ? "empty" : "unchanged", ranks: [] })) } },
+    retired: [{ task: "legacy-product-tagline-ko", slot: 1, count: 1, revision, label: "한국어 소개 번역 · 직접 경로" }],
+    changes: { rows: [], more: false, error: null }, taskUses, ranksReadable: true, taskUsesReadable: true, retiredReadable: true, retiredError: null,
     lockReason: "읽기 전용 미리보기 — 여기서는 저장할 수 없습니다." };
 }
 

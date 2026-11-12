@@ -15,14 +15,13 @@ describe("통합 화면 운영 설정과 최근 변경", () => {
     for (const id of ["operations", "assist-controls", "concurrency", "cleanup", "import", "retired-records", "audit"]) expect(html).toContain(`id="${id}"`);
     expect(html).not.toMatch(/<details[^>]+open=/);
     expect(text(html)).toContain("보내기 0 / 4개");
-    expect(html).toContain('name="task" value="uptime"');
-    expect(html).toContain('name="revision" value="1"');
-    expect(text(html)).toContain("확인 필수(끌 수 없음)");
-    expect(html).toContain('value:jobs.second-review.consumerConcurrency');
-    expect(html).toContain('value:jobs.crawl-publish.classifierConcurrency');
-    expect(html).toContain('href="/admin/models/limits"');
-    expect(html).toContain('href="/admin/models?import=plan#import"');
-    expect(html).toContain('aria-label="한국어 소개 번역 · 직접 경로 옛 순위 기록 1개 지우기"');
+    expect(html.match(/class="mu-assist-row"/g)).toHaveLength(4);
+    expect(html).toContain('aria-label="연결 확인 보강 제어 설정"');
+    expect(html).toContain('한도 보기 →');
+    expect(html).toContain('계획 보기 →');
+    expect(html).toContain('기록 정리 →');
+    expect(html).not.toContain('<input');
+    expect(html).not.toContain('<dialog');
     expect(html).toContain('href="/admin/models/history#audit"');
     expect(html.match(/class="mu-recent-row"/g)).toHaveLength(3);
     expect(text(html)).toContain("gpu3090-qwen · 쓰는 작업 변경");
@@ -32,9 +31,9 @@ describe("통합 화면 운영 설정과 최근 변경", () => {
     const html = renderToStaticMarkup(<UnifiedOperations data={buildModelUnifiedFixture()} readOnly recent={[]} />);
     expect(html).not.toContain('name="dispatch"');
     expect(html).not.toContain('name="apply"');
-    expect(html).toContain('<fieldset disabled="" class="mu-import">');
+    expect(html).not.toContain("<form");
     expect(html).not.toContain('옛 순위 기록 1개 지우기"');
-    expect(text(html)).toContain("읽기 전용");
+    expect(html).not.toContain("<input");
   });
   it("기록 읽기 실패를 기록 없음으로 보이지 않고 저장 실패의 사유와 실제 시각을 보인다", () => {
     const fixture = buildModelUnifiedFixture();

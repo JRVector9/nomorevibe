@@ -34,6 +34,7 @@ describe("통합 모델 서버 조회", () => {
     expect(mocks.changes).toHaveBeenCalledWith({ kind: null, failedOnly: false, before: null }, 3);
     expect(mocks.observation).toHaveBeenCalledWith({ throughput: false });
     expect(data.ranksReadable).toBe(true);
+    expect(data.taskUsesReadable).toBe(true); expect(data.retiredReadable).toBe(true); expect(data.retiredError).toBeNull();
     expect(data.lockReason).toBeNull();
     expect(data.assignments.rows).toHaveLength(28);
   });
@@ -42,6 +43,7 @@ describe("통합 모델 서버 조회", () => {
     mocks.observation.mockRejectedValue(new Error("unavailable")); mocks.help.mockRejectedValue(new Error("unavailable"));
     const data = await readModelUnified({ readOnly: false });
     expect(data.lockReason).toContain("실행 방식을 읽지 못했습니다");
+    expect(data.ranksReadable).toBe(false); expect(data.taskUsesReadable).toBe(false);
     expect(data.devices).toBeNull(); expect(data.poolHelp).toBeNull();
     expect(data.assignments.rows.find(row => row.task === "first-review")?.actual.settled).toBeNull();
   });
@@ -50,7 +52,14 @@ describe("통합 모델 서버 조회", () => {
     mocks.tasks.mockResolvedValue({ ...fixture.tasks, errors: { rows: "unavailable" } });
     const failed = await readModelUnified({ readOnly: false });
     expect(failed.ranksReadable).toBe(false); expect(failed.lockReason).toContain("확인할 때까지 저장할 수 없습니다");
+    expect(failed.taskUsesReadable).toBe(false); expect(failed.retiredReadable).toBe(false); expect(failed.retiredError).toBe("unavailable");
     const preview = await readModelUnified({ readOnly: true, importPlan: true });
     expect(preview.lockReason).toContain("읽기 전용"); expect(mocks.preview).toHaveBeenCalledOnce();
+  });
+  it("실제 적용 설정 읽기 실패는 모델의 쓰는 작업 수를 모름으로 두되 성공한 옛 순위 조회는 보존한다", async () => {
+    const fixture = buildModelUnifiedFixture();
+    mocks.tasks.mockResolvedValue({ ...fixture.tasks, errors: { current: "unavailable" } });
+    const data = await readModelUnified({ readOnly: false });
+    expect(data.taskUsesReadable).toBe(false); expect(data.retiredReadable).toBe(true); expect(data.ranksReadable).toBe(true);
   });
 });

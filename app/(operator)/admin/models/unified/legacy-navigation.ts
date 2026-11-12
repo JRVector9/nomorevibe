@@ -8,6 +8,7 @@ export const unifiedSectionHash = (hash: string) => { const id = hash.replace(/^
 export function legacyTasksHref(params: Params = {}, hash = ""): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
+    // 옛 tasks/page는 edit·import만 읽었다. tab은 /models의 옛 대시보드 라우터 값이므로 다시 전달해 통합 화면을 이탈시키지 않는다.
     if (["edit", "id", "tab"].includes(key)) continue;
     for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) query.append(key, item);
   }

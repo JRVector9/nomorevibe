@@ -14,8 +14,8 @@ export async function UnifiedModelsSlot({ selected, readOnly, fixture = false, i
     {isFixture && <p role="status" className="mu-preview-note">고정 데이터 미리보기 · 저장과 모델 호출을 사용할 수 없습니다.</p>}
     {Object.entries(data.tasks.errors).map(([key, error]) => <p key={key} role="alert" className="notice">작업 설정 {key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
     <UnifiedModelsWorkspace data={{ models: data.models, assignments: data.assignments, editor: data.editor, devices: data.devices,
-      poolHelp: data.poolHelp, lockReason: data.lockReason, taskUses: data.taskUses, ranksReadable: data.ranksReadable }} selected={selected} readOnly={readOnly}>
-      <UnifiedOperations data={data} readOnly={readOnly} recent={isFixture ? MODEL_UNIFIED_FIXTURE_RECENT : undefined} />
+      poolHelp: data.poolHelp, lockReason: data.lockReason, taskUses: data.taskUses, ranksReadable: data.ranksReadable, taskUsesReadable: data.taskUsesReadable }} selected={selected} readOnly={readOnly}>
+      <UnifiedOperations data={data} readOnly={readOnly} recent={isFixture ? MODEL_UNIFIED_FIXTURE_RECENT : undefined} openImport={importPlan} />
     </UnifiedModelsWorkspace>
   </>;
 }
