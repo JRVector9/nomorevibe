@@ -5,7 +5,7 @@ import { aiTaskPoolCappedLanes } from "@/lib/llm/ai-task-execution-config";
 import { aiModelDisplayName } from "@/lib/operations/admin-ai-tasks";
 import type { FlowRankEditor, RankDeviceLimit } from "@/lib/operations/flow-rank-editor";
 import { ledgerModelText, type TaskAssignChoice, type TaskAssignRow, type TaskAssignView } from "@/lib/operations/llm-task-assign-view";
-import { UNIFIED_TASK_GROUPS, unifiedTaskDuplicate, unifiedTaskIsExternal, unifiedTaskNeedsAttention, unifiedTaskRows,
+import { UNIFIED_TASK_GROUPS, unifiedTaskActualNote, unifiedTaskDuplicate, unifiedTaskIsExternal, unifiedTaskNeedsAttention, unifiedTaskRows,
   type UnifiedTaskFilter, type UnifiedTaskGroup } from "@/lib/operations/model-unified-task-view";
 import type { PoolHelpContext } from "@/lib/operations/pool-help";
 import { modelPickerOptionName, modelPickerVisibleText } from "../../model-picker-display";
@@ -30,37 +30,34 @@ function choiceName(choice: TaskAssignChoice, editor: FlowRankEditor) {
 function ModelChain({ row, editor, onModelOpen }: { row: TaskAssignRow; editor: FlowRankEditor; onModelOpen?: (id: string) => void }) {
   return <>
     <div className="ut-model-chain">{row.choices.length ? row.choices.map((choice, index) => <Fragment key={`${choice.position}:${choice.connectionId}:${choice.model}`}>
-      {index > 0 && <span className="ut-chain-arrow" aria-hidden="true">{row.mode === "fallback" ? "→" : "+"}</span>}
+      {index > 0 && row.mode === "fallback" && <span className="ut-chain-arrow" aria-hidden="true">→</span>}
       <button type="button" className="ut-model-chip" disabled={!choice.connectionId || !onModelOpen}
         onClick={() => { if (choice.connectionId) onModelOpen?.(choice.connectionId); }} data-off={choice.off ? "true" : undefined}
+        aria-label={[choiceName(choice, editor), choice.effort ? `추론 ${choice.effort}` : null, choice.off].filter(Boolean).join(" · ")}
         title={[choice.off, choice.effort ? `추론 ${choice.effort}` : null].filter(Boolean).join(" · ") || undefined}>
-        {row.mode === "fallback" && <span className="ut-rank-number">{choice.position}</span>}{choiceName(choice, editor)}
-        {choice.effort && <small className="ut-choice-effort">{choice.effort}</small>}
-        {choice.off && <small className="ut-choice-off">{choice.off}</small>}
+        <span className="ut-rank-number">{row.mode === "workload_pool" ? "+" : choice.position}</span>{choiceName(choice, editor)}
       </button>
     </Fragment>) : <span className="ut-muted">{row.mode === "workload_pool" ? "함께 쓰는 모델 없음" : "모델 설정 없음"}</span>}</div>
-    {row.archived.length > 0 && <details className="ut-archived"><summary>보관된 순위 {row.archived.length}개</summary>
-      <p>{row.archived.map(choice => `${choice.position}순위 ${choiceName(choice, editor)}`).join(" → ")}</p></details>}
-    {row.source && row.mode === "effective" && <span className="ut-task-subtitle">출처: {modelPickerVisibleText(row.source, editor.connections)}</span>}
+    {unifiedTaskDuplicate(row) && <div className="ut-task-subtitle ut-choice-warning">같은 모델이 두 번 배정됨</div>}
   </>;
 }
 
 export function UnifiedTaskActual({ row, editor, onModelOpen }: { row: TaskAssignRow; editor: FlowRankEditor; onModelOpen?: (id: string) => void }) {
   const { actual } = row;
+  const note = unifiedTaskActualNote(row);
   return <div className="ut-actual">
     {actual.calls.map(call => {
       const connection = editor.connections.find(entry => entry.id === call.connectionId);
       const name = connection ? modelPickerOptionName(connection, call.model) : ledgerModelText(call.model);
       return <div className="ut-actual-call" key={call.key}>
         {connection && onModelOpen ? <button type="button" className="ut-actual-model" onClick={() => onModelOpen(connection.id)}>{name}</button> : <span>{name}</span>}
-        {" "}<b className="ut-num">{fmt(call.settled)}건</b>{call.failed > 0 && <small className="ut-failed">실패 {fmt(call.failed)}건 포함</small>}
+        {" "}<b className="ut-num">{fmt(call.settled)}건</b>
       </div>;
     })}
     {actual.empty && <span className="ut-muted">{actual.empty}</span>}
     {!actual.calls.length && !actual.empty && <span className="ut-muted">{actual.settled === null ? "관측 불가" : `${fmt(actual.settled)}건`}</span>}
-    {actual.note && <small>{actual.note}</small>}
-    {actual.shared && actual.tracked && actual.readable && actual.calls.length > 0 && <small>투표자 구분 없이 작업 전체 장부</small>}
-    {actual.warnings.map(warning => <small key={warning} className="ut-actual-warning">설정과 다름 · {warning}</small>)}
+    {note && <small className={actual.warnings.includes(note) ? "ut-actual-warning" : undefined}>{actual.warnings.includes(note) ? "설정과 다름 · " : ""}{note}</small>}
+    {actual.shared && actual.tracked && actual.readable && actual.calls.length > 0 && <span className="admin-vh">투표자 구분 없이 작업 전체 장부</span>}
   </div>;
 }
 
@@ -117,12 +114,13 @@ export function UnifiedTaskSection({ view, editor, devices, lockReason, poolHelp
           return <tr key={row.key} id={row.anchor} data-task={row.key}>
             <th scope="row">{row.label}<div className="ut-task-subtitle">{UNIFIED_TASK_GROUPS[row.group]}</div></th>
             <td><span className={`ut-pill${row.mode === "workload_pool" ? " ut-ok" : ""}`}>{row.mode === "workload_pool" ? "동시에" : row.mode === "fallback" ? "순위대로" : row.mode === "classifier" ? "기존 CLI 분류" : row.mode === "effective" ? "실제 적용 설정" : "관측 불가"}</span>
-              {row.mode === "workload_pool" && <div className="ut-task-subtitle">모델 {row.choices.length}개{capped !== null ? ` · 최대 ${fmt(capped)}건` : ""}</div>}</td>
+              {row.mode === "workload_pool" && <div className="ut-task-subtitle">모델 {row.choices.length}개 · {capped !== null ? `최대 ${fmt(capped)}건` : "장비 한도에 따름"}</div>}</td>
             <td><ModelChain row={row} editor={editor} onModelOpen={onModelOpen} /></td>
             <td><UnifiedTaskActual row={row} editor={editor} onModelOpen={onModelOpen} /></td>
-            <td><div className="ut-task-status"><span className="ut-dot" data-tone={duplicate ? "warn" : row.status.level} title={row.status.detail ?? undefined}>
+            <td><div className="ut-task-status"><span className="ut-dot" data-tone={duplicate ? "warn" : row.status.level}
+              title={[duplicate ? row.status.text : null, duplicate ? row.status.reason : null, row.status.detail].filter(Boolean).join(" · ") || undefined}>
               {duplicate ? "반복 배정" : row.status.text}</span><small>{duplicate ? "앞 순위와 같은 모델" : row.status.reason ? modelPickerVisibleText(row.status.reason, editor.connections) : null}</small>
-              {duplicate && row.status.level !== "ok" && <small>{row.status.text}{row.status.reason ? ` · ${modelPickerVisibleText(row.status.reason, editor.connections)}` : ""}</small>}</div></td>
+            </div></td>
             <td className="ut-right"><button type="button" className="ut-task-action" aria-label={`${row.label} ${unifiedTaskIsExternal(row) ? "설정 보기" : "배정 변경"}`}
               onClick={() => open(row.key)}>{unifiedTaskIsExternal(row) ? "설정 보기" : "배정 변경"} →</button></td>
           </tr>;

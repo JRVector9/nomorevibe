@@ -7,7 +7,7 @@ import { aiTaskRanksInputFromForm, type AiTaskRankRow } from "@/lib/operations/a
 import { buildTaskRankEditor, type FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import { buildTaskAssignView, type TaskAssignInput, type TaskAssignRow } from "@/lib/operations/llm-task-assign-view";
 import { attachSaveForms, savedAssignment } from "@/lib/operations/model-attach";
-import { UNIFIED_MAIN_TASKS, unifiedTaskDuplicate, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
+import { UNIFIED_MAIN_TASKS, unifiedTaskActualNote, unifiedTaskDuplicate, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
   unifiedTaskNeedsAttention, unifiedTaskPoolOptions, unifiedTaskRows, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
 import { poolMemberIssues } from "@/lib/operations/task-pool-form";
 import { GPU, LLM_NOW, llmConnections, llmJobs, llmObservation, llmRankRows, MLX, OPENCODE } from "./fixtures/llm-ops";
@@ -71,7 +71,7 @@ describe("unified model task overview", () => {
     expect(html).toContain(`전체 ${view.rows.length}개 펼치기`);
     const first = html.match(/<tr id="execution-first-review-1"[^]*?<\/tr>/)![0];
     expect(text(first)).toContain("86건");
-    expect(text(first)).toContain("실패 2건 포함");
+    expect(text(first)).toContain("1시간 실패 2건 / 정산 179");
     expect(text(first)).toContain("93건");
     expect(text(first)).toContain("1순위가 아닌 모델이 52%를 처리");
     expect(first).toContain('aria-label="1차 AI 검수 배정 변경"');
@@ -79,6 +79,16 @@ describe("unified model task overview", () => {
     const unknownHtml = renderToStaticMarkup(<UnifiedTaskSection view={unknown} editor={editorOf()} devices={null} lockReason={null} poolHelp={null} />);
     expect(text(unknownHtml)).toContain("확인 불가 · 장부를 읽지 못함");
     expect(unknownHtml).not.toContain("0건");
+  });
+
+  it("keeps one distinct overview annotation and leaves shared-voter and repeated status detail in the drawer", () => {
+    const row = viewOf().rows[0];
+    expect(unifiedTaskActualNote({ ...row, actual: { ...row.actual, note: "변경 전 설정의 호출 포함", warnings: [], failed: 0 },
+      status: { ...row.status, reason: "변경 전 설정의 호출 포함" } })).toBeNull();
+    expect(unifiedTaskActualNote({ ...row, actual: { ...row.actual, note: "독립 메모", warnings: ["첫 경고", "둘째 경고"], failed: 2 },
+      status: { ...row.status, reason: "다른 사유" } })).toBe("독립 메모");
+    expect(unifiedTaskActualNote({ ...row, actual: { ...row.actual, note: null, warnings: [], failed: 2 },
+      status: { ...row.status, reason: "실패 2건 포함" } })).toBeNull();
   });
 
   it("keeps non-LLM/search slots available when all rows are filtered, with actual settings as the action", () => {

@@ -10,7 +10,7 @@ import { flowOptionBlocked, flowRankIssues, needsAcknowledge, rankDeviceImpact, 
   type FlowRankEditor, type FlowRankLine, type RankDeviceLimit } from "@/lib/operations/flow-rank-editor";
 import { ledgerModelText, type TaskAssignRow } from "@/lib/operations/llm-task-assign-view";
 import { attachPreviewContext, attachSaveForms, savedAssignment } from "@/lib/operations/model-attach";
-import { UNIFIED_TASK_GROUPS, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
+import { UNIFIED_TASK_GROUPS, unifiedTaskActualNote, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
   unifiedTaskPoolOptions, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
 import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
 import { assignmentPreview, type AssignmentState } from "@/lib/operations/stage-panel-model";
@@ -162,7 +162,7 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
           <p className="ut-help-text">{pool ? "서로 다른 업무를 모델들에 나눕니다. 모델별 칸 수 안에서 함께 처리합니다."
             : apiOnly ? "현재 기존 CLI 분류를 사용합니다. API·OpenCode 모델을 쓰려면 「동시에」로 전환하세요."
               : "1순위 모델을 먼저 쓰고, 호출할 수 없을 때 다음 순위로 전환합니다."}</p>
-          {pool ? <div className="ut-editor-rows ut-pool-rows">
+          {pool ? <div className="ut-editor-rows ut-pool-rows" data-caps={features.slotCaps ? "true" : undefined}>
             <RankSelects<AiRankChoice> stage={{ id: `unified-pool-${snapshot.key}`, label: snapshot.label, slots: 4 }} selectionKind="pool" layout="rows"
               value={draft.members} onChange={value => setDraft({ ...draft, members: value })} options={unifiedTaskPoolOptions(editor, snapshot)} connections={editor.connections}
               slotNames={MEMBER_FIELDS} disabled={busy || !!locked || !supported} showProvider={false} note={null} validate={issuesOf}
@@ -178,7 +178,7 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
             <p className="ut-help-text">{lanes === null ? "칸 수를 모두 비우면 단계의 동시 처리 수를 모델들이 나눠 씁니다." : `함께 최대 ${fmt(lanes)}건`} · 실제 호출은 장비 한도를 함께 따릅니다.</p>
             {!features.slotCaps && <p className="ut-help-text">이 작업은 아직 모델별 상한·예비를 따르지 않습니다. 업무마다 모델 하나를 고릅니다.</p>}
             {snapshot.task === "second-review" && <p className="ut-help-text">후보별 모델 하나를 고르며 투표 수는 늘리지 않습니다.</p>}
-            <details className="ut-archived"><summary>보관된 예비 순위 보기</summary><p>{chain({ ...draft, mode: "fallback" })}</p></details>
+            {features.reserve && draft.reserve && <details className="ut-archived"><summary>보관된 예비 순위 보기</summary><p>{chain({ ...draft, mode: "fallback" })}</p></details>}
           </div> : !apiOnly && <div className="ut-editor-rows">
             <RankSelects<AiRankChoice> stage={{ id: `unified-ranks-${snapshot.key}`, label: snapshot.label, slots: 3 }} layout="rows"
               value={draft.ranks} onChange={value => setDraft({ ...draft, ranks: value })} options={snapshot.options} connections={editor.connections}
@@ -193,14 +193,15 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
           {!pool && draftDuplicate && <div className="ut-callout ut-warn ut-duplicate-note">현재 같은 모델이 두 순위에 있습니다. 다른 모델을 고르면 대체 경로가 생깁니다.</div>}
           {warnings.map(warning => <p className="ut-callout ut-warn" key={`${warning.code}:${warning.line}`}>{warning.text}</p>)}
         </>}
-        <section className="ut-recent-execution"><h3>최근 실행</h3><dl className="ut-key-values"><dt>상태</dt><dd>{row ? <span className="ut-dot" data-tone={row.status.level}>{row.status.text}</span> : "관측 불가"}</dd>
-          {row?.status.reason && <><dt>상태 사유</dt><dd>{modelPickerVisibleText(row.status.reason, editor.connections)}</dd></>}
+        <section className="ut-recent-execution"><h3>최근 실행</h3><dl className="ut-key-values"><dt>상태</dt><dd>{row ? <span className="ut-dot" data-tone={row.status.level}
+          title={[row.status.reason, row.status.detail].filter(Boolean).join(" · ") || undefined}>{row.status.text}</span> : "관측 불가"}</dd>
+          {row?.status.reason && row.status.level !== "ok" && <><dt>상태 사유</dt><dd>{modelPickerVisibleText(row.status.reason, editor.connections)}</dd></>}
           <dt>최근 1시간</dt><dd>{row ? <>{row.actual.calls.map(call => {
             const connection = editor.connections.find(entry => entry.id === call.connectionId);
-            return <p key={call.key}>{connection && onModelOpen ? <button type="button" className="ut-text-btn" onClick={() => onModelOpen(connection.id)}>{modelPickerOptionName(connection, call.model)}</button>
-              : connection ? modelPickerOptionName(connection, call.model) : ledgerModelText(call.model)} · {fmt(call.settled)}건{call.failed ? ` · 실패 ${fmt(call.failed)}건 포함` : ""}</p>;
+            return <p key={call.key}>{fmt(call.settled)}건 · {connection && onModelOpen ? <button type="button" className="ut-text-btn" onClick={() => onModelOpen(connection.id)}>{modelPickerOptionName(connection, call.model)}</button>
+              : connection ? modelPickerOptionName(connection, call.model) : ledgerModelText(call.model)}{call.failed ? ` · 실패 ${fmt(call.failed)}건 포함` : ""}</p>;
           })}{row.actual.empty}{!row.actual.calls.length && !row.actual.empty ? row.actual.settled === null ? "관측 불가" : `${fmt(row.actual.settled)}건` : null}
-            {row.actual.note && <p className="ut-help-text">{row.actual.note}</p>}{row.actual.shared && row.actual.calls.length > 0 && <p className="ut-help-text">투표자 구분 없이 작업 전체 장부</p>}
+            {row.actual.note && unifiedTaskActualNote(row) === row.actual.note && <p className="ut-help-text">{row.actual.note}</p>}{row.actual.shared && row.actual.calls.length > 0 && <p className="ut-help-text">투표자 구분 없이 작업 전체 장부</p>}
             {row.actual.warnings.map(warning => <p className="ut-actual-warning" key={warning}>{warning}</p>)}</> : "최근 실행을 읽지 못했습니다."}</dd></dl></section>
         {row?.manage && <p className="ut-scope-note"><Link href={row.manage.href} prefetch={false} className="ut-text-btn" onClick={close}>{row.manage.label} →</Link></p>}
         <div className="ut-editor-foot"><p>홈의 단계 패널과 같은 배정을 사용합니다.</p><div className="ut-buttons"><button type="button" className="ut-btn" onClick={close}>취소</button>

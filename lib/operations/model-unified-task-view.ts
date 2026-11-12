@@ -29,6 +29,21 @@ export function unifiedTaskDuplicate(row: Pick<TaskAssignRow, "mode" | "choices"
 
 export const unifiedTaskNeedsAttention = (row: TaskAssignRow) => unifiedTaskDuplicate(row) || row.status.level === "warn" || row.status.level === "bad";
 
+/** One overview annotation; the drawer retains every call, failure, shared-voter and mismatch detail. */
+export function unifiedTaskActualNote(row: TaskAssignRow): string | null {
+  const normalize = (value: string | null) => (value ?? "").replace(/\s+/g, " ").trim().replace(/[.。]$/, "");
+  const reason = normalize(row.status.reason);
+  const empty = normalize(row.actual.empty);
+  const distinct = (value: string) => {
+    const text = normalize(value);
+    return !!text && text !== empty && (!reason || !reason.includes(text));
+  };
+  const note = [row.actual.note, ...row.actual.warnings].find((value): value is string => !!value && distinct(value));
+  if (note) return note;
+  const failed = row.actual.failed;
+  return failed && !reason.includes(`실패 ${failed.toLocaleString("ko-KR")}`) ? `실패 ${failed.toLocaleString("ko-KR")}건 포함` : null;
+}
+
 export function unifiedTaskRows(rows: readonly TaskAssignRow[], input: {
   filter: UnifiedTaskFilter; group: UnifiedTaskGroup; search: string; modelScope: string | null; showAll: boolean;
   /** Names in the model picker are the same names the model table uses. */
