@@ -29,6 +29,20 @@ export function unifiedTaskDuplicate(row: Pick<TaskAssignRow, "mode" | "choices"
 
 export const unifiedTaskNeedsAttention = (row: TaskAssignRow) => unifiedTaskDuplicate(row) || row.status.level === "warn" || row.status.level === "bad";
 
+/** The applied draft is confirmed only when every reviewed action returned success, in its original order. */
+export function unifiedTaskSavesConfirmed(results: readonly Readonly<{ kind: "execution" | "ranks"; ok: boolean; issues?: readonly string[] }>[], expected: readonly ("execution" | "ranks")[]): boolean {
+  return expected.length > 0 && results.length === expected.length && expected.every((kind, index) => results[index].kind === kind && results[index].ok && !results[index].issues?.length);
+}
+
+/** Keep the capacity warning visible; the full sharing inventory remains in the expandable impact detail. */
+export function unifiedTaskImpactSummary(text: string): string {
+  const sharing = [" · 같은 모델을 쓰는 다른 단계", " · 다른 단계는 이 모델을 쓰지 않습니다"].map(marker => text.indexOf(marker)).filter(index => index >= 0);
+  if (!sharing.length) return text;
+  const at = Math.min(...sharing);
+  const limit = text.indexOf(" — 장비 한도", at);
+  return text.slice(0, at) + (limit < 0 ? "" : text.slice(limit));
+}
+
 /** One overview annotation; the drawer retains every call, failure, shared-voter and mismatch detail. */
 export function unifiedTaskActualNote(row: TaskAssignRow): string | null {
   const normalize = (value: string | null) => (value ?? "").replace(/\s+/g, " ").trim().replace(/[.。]$/, "");

@@ -158,6 +158,15 @@
 .admin-prototype .ut-preview-chain.ut-after { background: var(--surface-2); }
 .admin-prototype .ut-confirm-arrow { text-align: center; color: var(--muted); margin-bottom: calc(10px / .8); }
 .admin-prototype .ut-scope-note { color: var(--muted); font-size: calc(12px + var(--admin-font-delta, 0px)); line-height: 1.8; margin: calc(14px / .8) 0; }
+.admin-prototype .ut-confirm-impact { position: relative; }
+.admin-prototype .ut-impact-label { display: block; padding-right: 80px; }
+.admin-prototype .ut-impact-details > summary { position: absolute; top: 0; right: 0; color: var(--link); cursor: pointer; font-size: calc(11px + var(--admin-font-delta, 0px)); }
+.admin-prototype .ut-impact-details > div { display: grid; gap: calc(10px / .8); margin-top: calc(12px / .8); padding: calc(12px / .8); border: 1px solid var(--line); border-radius: 6px; }
+.admin-prototype .ut-impact-details p { margin: 0; }
+.admin-prototype .ut-success { display: flex; align-items: center; gap: calc(10px / .8); font-size: calc(15px + var(--admin-font-delta, 0px)); font-weight: 600; margin-bottom: calc(10px / .8); }
+.admin-prototype .ut-success i { display: grid; flex: none; place-items: center; font-style: normal; width: 26px; height: 26px; background: var(--green-soft); color: var(--green); border-radius: 50%; }
+.admin-prototype .ut-save-receipts { margin-top: calc(18px / .8); color: var(--muted); font-size: calc(11px + var(--admin-font-delta, 0px)); }
+.admin-prototype .ut-save-receipts > summary { cursor: pointer; }
 .admin-prototype .unified-task-editor .cs-pool-warn { display: block; color: var(--amber); font-size: calc(10px + var(--admin-font-delta, 0px)); margin-top: calc(5px / .8); }
 
 @media (max-width: 680px) {
