@@ -5,6 +5,11 @@ import type { ModelConsoleRow } from "@/lib/operations/model-console";
 
 export type ModelSort = "usage" | "calls" | "name";
 
+/** Assignment failures cannot establish that a model has no tasks or that its tasks are all stopped. */
+export function modelStatusForUses(row: ModelConsoleRow, readable: boolean): ModelConsoleRow["status"] {
+  return !readable && row.status.text.startsWith("쓰는 단계") ? { tone: "warn", text: "쓰는 작업 미확인" } : row.status;
+}
+
 /** Count affected task/slot rows, ignoring retired rows and inactive rank entries. */
 export function modelDuplicateAssignments(editor: FlowRankEditor | null): number | null {
   if (!editor) return null;

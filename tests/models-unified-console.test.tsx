@@ -12,6 +12,7 @@ vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTa
 
 import { ModelConsole, ModelDetail } from "@/app/(operator)/admin/models/console/ModelConsole";
 import { ModelAttachForm } from "@/app/(operator)/admin/models/console/ModelAttachForm";
+import { ModelAddFlow } from "@/app/(operator)/admin/models/new/ModelAddFlow";
 
 describe("unified model inventory", () => {
   it("orders real observations and keeps missing metrics last without changing the source rows", () => {
@@ -80,6 +81,20 @@ describe("unified model inventory", () => {
     expect(html).not.toContain("쓰는 작업 없는 모델 9개");
   });
 
+  it("does not infer unused models from an unreadable empty unified association map", () => {
+    const data = modelFixtureRead();
+    const html = renderToStaticMarkup(<ModelConsole data={data} selected="conn-m1max" readOnly={false} taskUses={{}} taskUsesReadable={false} />);
+    expect(html).toContain('disabled="" aria-pressed="false">쓰는 작업 없는 모델 —</button>');
+    expect(html).toContain("일부 배정을 읽지 못해 쓰는 작업 전체를 확인할 수 없습니다.");
+    expect(html).toContain("쓰는 작업 미확인");
+    expect(html).not.toContain("쓰는 단계 없음");
+    expect(html).not.toContain("어느 단계에도 붙어 있지 않습니다.");
+    expect(html).not.toContain("아직 쓰는 작업이 없습니다.");
+    expect(html).not.toContain("쓰는 작업 없는 모델 9개");
+    const empty = renderToStaticMarkup(<ModelConsole data={data} selected={null} readOnly={false} taskUses={{}} taskUsesReadable={true} />);
+    expect(empty).toContain('aria-pressed="false">쓰는 작업 없는 모델 9개</button>');
+  });
+
   it("keeps fallback links on the unified route when a shared editor callback is absent", () => {
     const data = modelFixtureRead();
     const html = renderToStaticMarkup(<ModelDetail row={data.view.rows[0]} device={null} secretBox={true} readOnly={false} now={data.view.checkedAt}
@@ -90,5 +105,32 @@ describe("unified model inventory", () => {
     const unavailable = renderToStaticMarkup(<ModelAttachForm connectionId="missing" editor={null} devices={null} poolHelp={null} readOnly={false} />);
     expect(unavailable).toContain('href="/admin/models#tasks"');
     expect(unavailable).not.toContain('href="/admin/models/tasks');
+  });
+
+  it("renders the real add form in drawer steps and waits for authoritative row/device reads", () => {
+    const props = { recommendations: [], secretBox: true, readOnly: false, taken: [], missing: false, drawer: true,
+      onCreated: () => {}, onStep: () => {}, onReadAgain: () => {}, onClose: () => {}, onAttachModel: () => {} };
+    const first = renderToStaticMarkup(<ModelAddFlow {...props} step={1} row={null} />);
+    expect(first).toContain('class="mc-add-steps" aria-label="모델 추가 단계"');
+    expect(first).toContain("OpenAI 호환 API");
+    expect(first).toContain('type="password"');
+    expect(first).toContain("연결 확인 후 다음 →");
+    expect(first).not.toContain('class="cs-step"');
+    const waiting = renderToStaticMarkup(<ModelAddFlow {...props} step={2} row={null} />);
+    expect(waiting).toContain("저장한 모델을 다시 읽는 중입니다.");
+    expect(waiting).not.toContain("추가했습니다");
+    const read = modelFixtureRead();
+    const row = read.view.rows.find(entry => entry.id === "conn-m3-gpt-oss")!;
+    const noDevice = renderToStaticMarkup(<ModelAddFlow {...props} step={2} row={{ ...row, limitSource: "connection" }} />);
+    expect(noDevice).toContain('disabled="">다음: 쓸 작업 →</button>');
+    expect(noDevice).toContain("저장하면 장비 칸이 생겨 한 번 불러 볼 수 있습니다.");
+    const withDevice = renderToStaticMarkup(<ModelAddFlow {...props} step={2} row={row} />);
+    expect(withDevice).toContain('class="button small">다음: 쓸 작업 →</button>');
+    expect(withDevice).toContain("시험 호출");
+    expect(withDevice).toContain("최대 토큰");
+    const done = renderToStaticMarkup(<ModelAddFlow {...props} step={3} row={{ ...row, stageCount: 0 }} />);
+    expect(done).toContain(`${row.name}을(를) 추가했습니다.`);
+    expect(done).toContain("쓸 작업 고르기 →");
+    expect(done).not.toContain('action="/admin/models/compare"');
   });
 });

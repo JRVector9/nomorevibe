@@ -766,6 +766,48 @@
 .admin-prototype .mc-add-content .cs-step:not([data-state="now"]) > p {
   display: none;
 }
+.admin-prototype .mc-add-flow {
+  display: grid;
+  gap: calc(16px / .8);
+}
+.admin-prototype .mc-add-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(8px / .8);
+  margin: 0 0 calc(3px / .8);
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .mc-add-steps li + li::before {
+  content: "→";
+  margin-right: calc(8px / .8);
+  color: var(--faint);
+  font-weight: 400;
+}
+.admin-prototype .mc-add-steps [aria-current="step"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+.admin-prototype .mc-add-flow .mc-form > label {
+  grid-template-columns: minmax(0, 1fr);
+}
+.admin-prototype .mc-add-flow .mc-form > label > input,
+.admin-prototype .mc-add-flow .mc-form > label > select {
+  width: 100%;
+  max-width: none;
+  padding: calc(8px / .8) calc(10px / .8);
+}
+.admin-prototype .mc-add-flow .mc-form > label > span:first-child {
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+.admin-prototype .mc-add-success {
+  color: var(--ok);
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
 .admin-prototype .mc-drawer .mc-muted,
 .admin-prototype .mc-drawer .mc-hint {
   font-size: calc(12px + var(--admin-font-delta, 0px));
