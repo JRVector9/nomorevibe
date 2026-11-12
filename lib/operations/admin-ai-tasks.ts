@@ -311,13 +311,52 @@ export const aiModelDisplayName = (connection: Pick<AiConnectionView, "label"> &
 /** 모델이 도는 장비 묶음 이름 — 사용자가 적은 이름(options.machine), 없으면 용량 장비 id. 용량 판정은 늘 장비 id 로 한다 */
 export const aiModelMachine = (connection: Pick<AiConnectionView, "deviceId"> & Partial<Pick<AiConnectionView, "machine">>): string =>
   connection.machine?.trim() || connection.deviceId;
+/**
+ * 연결이 내놓는 서로 다른 모델 묶음 수 — 서버가 같은 root 로 알려 준 이름(별칭)은 한 묶음(모델 목록 3a 의 servedModelGroups 와 같은 기준).
+ * extra 는 목록 밖에서 부르는 이름(저장된 순위·구성원).
+ */
+export function aiConnectionModelGroupCount(connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog" | "manualModels">>,
+  extra: readonly string[] = []): number {
+  const listed = connection.kind === "api" ? connection.models ?? [] : [];
+  const keys = new Set<string>();
+  for (const id of [...aiConnectionModelIds(connection), ...extra]) {
+    const root = listed.find(model => model.id === id)?.root ?? null;
+    keys.add(root ?? (listed.some(model => model.root === id) ? id : `id:${id}`));
+  }
+  return keys.size;
+}
+/**
+ * 순위·「동시에」에서 고른 모델 하나를 부르는 말(운영 콘솔 통합 — 「내가 정한 이름 하나만」). 연결이 모델 하나(별칭 포함)만 내놓으면 사용자가 정한 이름뿐,
+ * 서로 다른 모델을 여럿 내놓는 연결(CLI 의 sonnet·opus, OpenCode 의 여러 모델)에서만 가를 수 있게 서버 이름을 덧붙인다.
+ * short 는 이름 칸(optgroup 이 이미 연결 이름을 보일 때)에 쓸 짧은 말 — 모델 하나면 사용자가 정한 이름, 여럿이면 서버 이름.
+ */
+export function aiModelChoiceName(connection: Pick<AiConnectionView, "label" | "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "displayName" | "cliTool" | "cliCatalog" | "manualModels">>,
+  model?: string | null, options: { short?: boolean } = {}): string {
+  const name = aiModelDisplayName(connection);
+  if (!model || aiConnectionModelGroupCount(connection, [model]) <= 1) return name;
+  return options.short ? model : `${name} · ${model}`;
+}
+/**
+ * 기록에 남은 서버 모델 이름(투표·장부의 model) → 사용자가 정한 이름. 그 이름을 내놓는 연결이 하나로 정해질 때만 바꾸고(장부의 `<모델>@<연결 앞 8자>` 꼴 포함),
+ * 정해지지 않으면(연결이 지워졌거나 여러 연결이 같은 이름을 냄) null — 화면은 기록 그대로 둔다.
+ */
+export function aiModelNameOfServed(connections: readonly (Pick<AiConnectionView, "id" | "label" | "kind" | "models" | "cliModels">
+  & Partial<Pick<AiConnectionView, "displayName" | "cliTool" | "cliCatalog" | "manualModels">>)[], model: string | null | undefined): string | null {
+  if (!model) return null;
+  const at = /^(.*)@([0-9a-f]{8})$/.exec(model);
+  const id = at ? at[1] : model;
+  const found = connections.filter(connection => (!at || connection.id.startsWith(at[2]))
+    && (aiConnectionModelIds(connection).includes(id) || connection.cliModels.includes(id)));
+  const names = [...new Set(found.map(connection => aiModelChoiceName(connection, id)))];
+  return names.length === 1 ? names[0] : null;
+}
 export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool">) => {
   return connection.kind === "cli" && connection.cliTool && !connection.label.toLowerCase().includes("cli")
     ? `${connection.label}(${AI_CLI_TOOL_LABELS[connection.cliTool]})` : connection.label;
 };
 
 /**
- * 한 작업의 선택지: 이 작업이 받는 켜진 연결마다 그 연결이 실제로 내놓는 모델 하나씩 — 「연결 이름 · 모델」. 지금 저장된 값이 목록에 없으면
+ * 한 작업의 선택지: 이 작업이 받는 켜진 연결마다 그 연결이 실제로 내놓는 모델 하나씩 — 사용자가 정한 이름(모델이 여럿인 연결만 「이름 · 모델」). 지금 저장된 값이 목록에 없으면
  * 「(저장된 값 · 지금 목록에 없음)」으로 남긴다(저장 누락으로 지우지 않는다). 순서: API 연결 먼저, 그다음 CLI, 같은 쪽은 이름순.
  */
 export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConnectionView[], saved: readonly Pick<AiTaskRankRow, "connectionId" | "model">[]): AiRankOption[] {
@@ -330,14 +369,17 @@ export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConne
       const key = `${connection.id}\u0000${model}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: aiConnectionLabel(connection), text: model, reasoningEfforts: aiRankReasoningEfforts(task.id, connection, model) });
+      // 운영 콘솔 통합: 보이는 이름은 사용자가 정한 이름 하나 — 서로 다른 모델을 여럿 내놓는 연결에서만 서버 이름으로 가른다(aiModelChoiceName)
+      options.push({ provider: connection.id, model, label: aiModelChoiceName(connection, model), group: aiModelDisplayName(connection),
+        text: aiModelChoiceName(connection, model, { short: true }), reasoningEfforts: aiRankReasoningEfforts(task.id, connection, model) });
     }
   }
   for (const row of saved) {
     const key = `${row.connectionId}\u0000${row.model}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const connection = connections.find(entry => entry.id === row.connectionId), group = connection ? aiConnectionLabel(connection) : "지워진 연결";
+    const connection = connections.find(entry => entry.id === row.connectionId), group = connection ? aiModelDisplayName(connection) : "지워진 연결";
+    // 지금 목록에 없는 저장된 값은 어느 이름이 사라졌는지 알아야 고칠 수 있다 — 서버 이름을 그대로 둔다
     options.push({ provider: row.connectionId, model: row.model, saved: true, group, text: `${row.model} (목록에 없음)`,
       label: `${group} · ${row.model} (저장된 값 · 지금 목록에 없음)`, reasoningEfforts: connection ? aiRankReasoningEfforts(task.id, connection, row.model) : [] });
   }

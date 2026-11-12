@@ -63,6 +63,9 @@ export function stagePanelKeyOf(stage: string): StagePanelKey | null {
   return stagePanel(stage)?.key ?? STAGE_PANELS.find(panel => panel.progress.includes(stage))?.key ?? null;
 }
 
+/** AI 작업 id → 그 작업이 배정된 단계 패널(같은 작업이 여러 패널에 없다). 패널이 없는 작업(사람 몫 AI 위임·감사 등)은 null */
+export const stagePanelKeyOfTask = (taskId: string): StagePanelKey | null => STAGE_PANELS.find(panel => panel.tasks.includes(taskId))?.key ?? null;
+
 /** 단계 패널 주소 — 새로고침·공유해도 같은 패널이 열린다. part 는 패널 안의 구역(#sp-models 등) */
 export function stagePanelHref(stage: string, part?: "models" | "limits"): string {
   const key = stagePanelKeyOf(stage) ?? stage;

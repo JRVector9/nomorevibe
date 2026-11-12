@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 /** 운영 콘솔 3a 의 이름 둘(모델 이름·장비 묶음 이름)과 서버 root — 연결 읽기·연결 폼 읽기·/models 읽기. DB 는 쓰지 않는다 */
 vi.mock("@/lib/db", () => ({ db: {}, onPrimary: (run: () => unknown) => run() }));
-import { aiConnectionInputFromForm } from "@/lib/operations/admin-ai-tasks";
+import { aiConnectionInputFromForm, aiConnectionModelGroupCount, aiModelChoiceName, aiModelNameOfServed } from "@/lib/operations/admin-ai-tasks";
+import { humanBatchCardNames } from "@/lib/operations/human-batches-read";
 import { aiConnectionView } from "@/lib/operations/admin-ai-tasks-repository";
 import { readConnectionModels } from "@/lib/operations/ai-connection-key-fill";
 
@@ -35,5 +36,32 @@ describe("모델 이름·장비 묶음 이름(options.displayName · options.mac
       { status: 200, headers: { "content-type": "application/json" } }));
     expect(await readConnectionModels("https://supa.example/v1", null, request as unknown as typeof fetch)).toEqual({ ok: true, models: [
       { id: "supa", maxModelLen: 131072, root: "Inferact/Qwen3.8-27B-NVFP4" }, { id: "plain", maxModelLen: null }] });
+  });
+});
+
+describe("모델을 부르는 말 하나(운영 콘솔 통합 — 작업 배정·단계 패널·사람 확인)", () => {
+  const supa = { ...aiConnectionView(record({ displayName: "supa" }, [{ id: "supa", maxModelLen: 131072, root: "Inferact/Qwen3.8-27B-NVFP4" },
+    { id: "Inferact/Qwen3.8-27B-NVFP4", maxModelLen: 131072 }]) as never) };
+  const cli = { ...supa, id: "5e5e5e5e-0000-4000-8000-000000000000", label: "Claude CLI", displayName: null, kind: "cli" as const, cliTool: "claude" as const,
+    models: null, cliModels: ["sonnet", "opus"] };
+
+  it("별칭(같은 root)뿐인 연결은 사용자가 정한 이름만, 서로 다른 모델을 여럿 내놓는 연결만 서버 이름으로 가른다", () => {
+    expect(aiConnectionModelGroupCount(supa)).toBe(1);
+    expect([aiModelChoiceName(supa, "supa"), aiModelChoiceName(supa, "Inferact/Qwen3.8-27B-NVFP4")]).toEqual(["supa", "supa"]);
+    expect([aiModelChoiceName(cli, "opus"), aiModelChoiceName(cli, "opus", { short: true }), aiModelChoiceName(cli)]).toEqual(["Claude CLI · opus", "opus", "Claude CLI"]);
+    // 목록 밖의 이름(저장된 옛 값)은 다른 모델이다 — 가를 수 있게 덧붙인다
+    expect(aiModelChoiceName(supa, "old-model")).toBe("supa · old-model");
+  });
+
+  it("기록의 서버 모델 이름(2차 투표·장부)은 그 이름을 내놓는 연결이 하나일 때만 사용자가 정한 이름으로 바꾼다", () => {
+    expect(aiModelNameOfServed([supa, cli], "Inferact/Qwen3.8-27B-NVFP4")).toBe("supa");
+    expect(aiModelNameOfServed([supa, cli], `supa@${ID.slice(0, 8)}`)).toBe("supa");
+    expect(aiModelNameOfServed([supa, cli], "sonnet")).toBe("Claude CLI · sonnet");
+    expect(aiModelNameOfServed([supa, cli], "gone-model")).toBeNull();
+    expect(aiModelNameOfServed([supa, { ...supa, id: "6f6f6f6f-0000-4000-8000-000000000000", displayName: "supa 2" }], "supa")).toBeNull();
+    const card = { id: 1, repo: "a/b", name: "b", productUrl: null, intro: null, state: "needs_review", reason: null, first: null, delegate: null, stopped: null,
+      seconds: [{ model: "Inferact/Qwen3.8-27B-NVFP4", decision: "approve", reason: null }, { model: "gone-model", decision: "reject", reason: null }] };
+    expect(humanBatchCardNames([card], [supa, cli])[0].seconds.map(vote => vote.model)).toEqual(["supa", "gone-model"]);
+    expect(humanBatchCardNames([card], null)[0].seconds.map(vote => vote.model)).toEqual(["Inferact/Qwen3.8-27B-NVFP4", "gone-model"]);
   });
 });

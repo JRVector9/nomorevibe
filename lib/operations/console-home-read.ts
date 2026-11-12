@@ -8,6 +8,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { listJobStates } from "@/lib/jobs/runner";
 import { isPausedJob } from "@/lib/jobs/status";
 import { logger } from "@/lib/observability/logger";
+import { aiConnectionModelGroupCount, aiModelDisplayName } from "./admin-ai-tasks";
 import { listAiConnections, listAiTaskRows } from "./admin-ai-tasks-repository";
 import { readAiTaskExecutionAdminViews, type AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import { adminJobControlVersions } from "./admin-job-control";
@@ -149,8 +150,9 @@ export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
       takedown: takedown?.ok ? { count: takedown.data.count, overdue: takedown.data.overdue ?? 0 } : null,
       agreed: agreed ? { approve: agreed.approve, reject: agreed.reject } : null,
       audit,
-      connections: connections?.map((row): ConsoleConnection => ({ id: row.id, label: row.label, kind: row.kind, cliTool: row.cliTool, deviceId: row.deviceId,
-        capacitySlots: row.capacitySlots, enabled: row.enabled,
+      // 이름은 사용자가 정한 이름 하나(운영 콘솔 3a aiModelDisplayName) — 할 일·흐름·단계 패널이 모두 이 이름으로 모델을 부른다
+      connections: connections?.map((row): ConsoleConnection => ({ id: row.id, label: aiModelDisplayName(row), kind: row.kind, cliTool: row.cliTool, deviceId: row.deviceId,
+        capacitySlots: row.capacitySlots, enabled: row.enabled, modelGroups: aiConnectionModelGroupCount(row),
         models: [...new Set([...(row.models ?? []).map(model => model.id), ...row.cliModels, ...(row.manualModels ?? [])])],
         allowedTasks: [...(row.allowedTasks ?? [])], keySetAt: row.keySetAt ?? null, keyValidDays: row.keyValidDays ?? null, updatedAt: row.updatedAt })) ?? null,
       ranks: ranks?.map((row): ConsoleRank => ({ task: row.task, slot: row.slot, rank: row.rank, connectionId: row.connectionId, model: row.model, enabled: row.enabled })) ?? null,

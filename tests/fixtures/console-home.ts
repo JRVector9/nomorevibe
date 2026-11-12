@@ -26,7 +26,8 @@ export function consoleFixtureInputs(): ConsoleTaskInputs {
     takedown: copy.takedown,
     agreed: copy.agreed,
     audit: copy.audit,
-    connections: copy.connections.map(row => ({ ...row, kind: row.kind as "api" | "cli" })),
+    // supa 의 두 이름은 같은 root(별칭) — 모델 묶음 하나. M1max 는 목록 이름과 직접 적은 이름이 달라 둘(model-console fixture 와 같은 사실)
+    connections: copy.connections.map(row => ({ ...row, kind: row.kind as "api" | "cli", modelGroups: row.id === "conn-supa-direct" ? 1 : row.models.length })),
     ranks: copy.ranks,
     pools: copy.pools,
     devices: copy.observation.devices,

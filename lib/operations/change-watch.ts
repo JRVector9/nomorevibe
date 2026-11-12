@@ -8,6 +8,7 @@ import { aiAssistRouteId, aiTask, aiTaskSlotLabel, AI_TASKS, AUDIT_DIRECT_ROUTE,
 import { CHANGE_ACTIONS, CHANGE_UNDO, type DeskUndo } from "./operator-desk-model";
 import { JOB_CALL_ROUTES, JOB_LABELS, runtimeSettingLabel } from "./runtime-settings-schema";
 import { sharedLoader } from "./shared-cache";
+import { aiModelDisplayName } from "./admin-ai-tasks";
 
 /**
  * 바꾼 것 지켜보기(운영 콘솔 개편 조각 1c, 2026-11-12 최종 시안 「홈 · 바꾼 것 지켜보기」·「기록 · 그 뒤」).
@@ -213,8 +214,9 @@ function rankTitle(stage: string, detail: Readonly<Record<string, unknown>>, lab
   });
   if (!changed.length) return `${stage} 순위 다시 저장`;
   const rank = changed[0];
-  const was = before.find(row => row.rank === rank), now = after.find(row => row.rank === rank);
-  const name = !now ? null : was?.connectionId === now.connectionId ? now.model : labels.get(now.connectionId) ?? now.model;
+  const now = after.find(row => row.rank === rank);
+  // 모델은 사용자가 정한 이름으로만 부른다(운영 콘솔 통합) — 서버가 알려 준 모델 이름은 제목에 넣지 않는다(기록의 전·후에 남는다)
+  const name = !now ? null : labels.get(now.connectionId) ?? "지워진 연결";
   const head = name ? `${stage} ${rank}순위를 ${name}로` : `${stage} ${rank}순위 뺌`;
   return changed.length > 1 ? `${head} 외 ${changed.length - 1}` : head;
 }
@@ -242,8 +244,9 @@ function draftOf(row: WatchAuditRow, ctx: WatchContext, label: (action: string) 
       if (!task) return { ...base, title: `${label(row.action)} · ${row.target}`, why: "모르는 작업입니다" };
       const stage = aiTaskSlotLabel(task, Number(slotText) || 1);
       if (row.action === "ai-task-execution-save") {
-        const mode = row.detail.mode === "workload_pool" ? "작업 분산" : "순위대로";
-        return withTasks({ ...base, title: `${stage} 실행 방식을 ${mode}로` }, [task], stage);
+        // 시안 흐름 1의 4번 「AI 1차 배정을 「동시에」로」 — 방식 이름은 단계 패널·작업 배정과 같은 말
+        const mode = row.detail.mode === "workload_pool" ? "동시에" : "순위대로";
+        return withTasks({ ...base, title: `${stage} 배정을 「${mode}」로` }, [task], stage);
       }
       const title = rankTitle(stage, row.detail, ctx.connectionLabels);
       // 실행 쪽이 읽지 않는 옛 순위 행을 지운 것 — 처리에 영향이 없다
@@ -256,7 +259,8 @@ function draftOf(row: WatchAuditRow, ctx: WatchContext, label: (action: string) 
     }
     case "ai-connection-save": {
       const id = text(row.detail.id);
-      const name = text(row.detail.label) ?? text(record(row.detail.after).label) ?? row.target;
+      // 지금 이름(사용자가 정한 이름)이 있으면 그것 — 저장 때의 이름표는 지운 연결에만 쓴다
+      const name = (id ? ctx.connectionLabels.get(id) : undefined) ?? text(row.detail.label) ?? text(record(row.detail.after).label) ?? row.target;
       const title = `모델 ${name} ${row.detail.created ? "추가" : "고침"}${row.detail.keyChanged ? " · 키 바꿈" : ""}`;
       const tasks = (id ? ctx.connectionTasks.get(id) ?? [] : []).map(aiTask).filter((task): task is AiTaskDef => !!task);
       if (!tasks.length) return { ...base, title, noStage: true, why: "이 모델을 쓰는 단계가 없습니다" };
@@ -504,11 +508,13 @@ async function readConnections(reader: Reader, ids: readonly string[]): Promise<
     await reader.select({ id: aiTaskPoolMembers.connectionId, task: aiTaskPoolMembers.task }).from(aiTaskPoolMembers)
       .innerJoin(aiTaskExecutionConfigs, and(eq(aiTaskExecutionConfigs.task, aiTaskPoolMembers.task), eq(aiTaskExecutionConfigs.slot, aiTaskPoolMembers.slot)))
       .where(and(inArray(aiTaskPoolMembers.connectionId, [...ids]), eq(aiTaskExecutionConfigs.mode, "workload_pool"))),
-    await reader.select({ id: aiConnections.id, label: aiConnections.label }).from(aiConnections).where(inArray(aiConnections.id, [...ids])),
+    await reader.select({ id: aiConnections.id, label: aiConnections.label, options: aiConnections.options }).from(aiConnections).where(inArray(aiConnections.id, [...ids])),
   ];
   const connectionTasks = new Map<string, string[]>();
   for (const row of [...ranks, ...pool]) connectionTasks.set(row.id, [...new Set([...(connectionTasks.get(row.id) ?? []), row.task])]);
-  return { connectionTasks, connectionLabels: new Map(labels.map(row => [row.id, row.label])) };
+  // 이름은 사용자가 정한 이름 하나(운영 콘솔 3a aiModelDisplayName — options.displayName, 없으면 이름표)
+  return { connectionTasks, connectionLabels: new Map(labels.map(row => [row.id, aiModelDisplayName({ label: row.label,
+    displayName: typeof (row.options as Record<string, unknown> | null)?.displayName === "string" ? (row.options as Record<string, unknown>).displayName as string : null })])) };
 }
 
 /** 장부 settled 를 route × 5분 칸으로 — settled_at 부분 색인 범위 + route 조건 */

@@ -86,9 +86,15 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
     expect(all.find(task => task.id === "pile:stage:keyword-verify")!.actions[0]).toMatchObject({ href: "/admin/flow?stage=keywords#sp-models" });
     expect(all.find(task => task.id === "pile:human")!.actions[0]).toMatchObject({ label: "묶음 보기", href: "/admin/review/batches" });
     expect(all.find(task => task.id === "tidy:no-result:conn-lg-exaone")).toMatchObject({ tone: "off", notify: false,
-      actions: [{ label: "쉬게 하기", href: "/admin/models/llm?edit=conn-lg-exaone#conn-conn-lg-exaone" },
+      actions: [{ label: "쉬게 하기", href: "/admin/models?model=conn-lg-exaone#model-detail" },
         { kind: "keep", label: "그대로 두기", taskId: "tidy:no-result:conn-lg-exaone" }] });
     expect(board.marks).toEqual({ stopped: ["first"], piling: ["reason-translate", "keyword-verify", "product-translate"] });
+    // 정리: 쓰는 단계 없는 모델은 모델 추가 ③(쓸 단계)·상세로, 순위에 같은 모델이 두 번이면 그 단계 패널의 모델 구역으로(운영 콘솔 통합)
+    expect(all.find(task => task.id === "tidy:unused:conn-m1max")!.actions).toEqual([
+      { kind: "link", label: "단계에 붙이기", href: "/admin/models/new?id=conn-m1max&step=3" },
+      { kind: "link", label: "모델 상세", href: "/admin/models?model=conn-m1max#model-detail" }]);
+    expect(all.find(task => task.id === "tidy:duplicate-ranks")!.actions[0]).toMatchObject({ label: "순위 고치기", href: expect.stringMatching(/^\/admin\/flow\?stage=[a-z-]+#sp-models$/) });
+    expect(all.find(task => task.id === "pile:audit")!.actions[0]).toMatchObject({ label: "거절 목록 보기", href: "/admin/audit?tab=audit" });
   });
 
   it("draws the strip and the flow table from the same reads", () => {
@@ -104,6 +110,21 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
     expect(flow.main.find(row => row.key === "first")!.spark).toHaveLength(23);
     expect(flow.post.map(row => [row.label, row.tone, row.status, row.waiting])).toEqual([
       ["한국어 소개", "off", "일감 없음", 0], ["공개 번역", "warn", "쌓임", 187380], ["사유 번역", "warn", "쌓임", 78863], ["소개 검수", "bad", "멈춤", 2143]]);
+  });
+});
+
+describe("console tasks — 한국어 소개 쌓임은 표본 비교로 먼저 보는 길을 함께", () => {
+  it("adds 「표본 비교」 next to 「모델 붙이기」 only for a task the sample comparison runs (3a), with the first idle model", () => {
+    const inputs = consoleFixtureInputs();
+    // 한국어 소개 대기를 늘려(24시간 1,188건 처리 → 3일 넘게) 쌓임으로 올린다
+    const progress = { ...inputs.progress!, stages: inputs.progress!.stages.map(stage => stage.stage === "tagline-ko" ? { ...stage, reason: "ok", waiting: 50_000 } : stage) };
+    const board = buildConsoleTasks({ ...inputs, progress });
+    const tagline = board.groups.flatMap(group => group.tasks).find(task => task.id === "pile:stage:tagline-ko")!;
+    expect(tagline.actions).toEqual([
+      { kind: "link", label: "모델 붙이기", href: "/admin/flow?stage=tagline-ko#sp-models" },
+      { kind: "link", label: "표본 비교", href: "/admin/models/compare?task=product-tagline-ko&candidate=conn-gpu3090-qwen" }]);
+    // 공개 번역(표본 비교 지원 안 함)은 「모델 붙이기」 하나
+    expect(board.groups.flatMap(group => group.tasks).find(task => task.id === "pile:stage:product-translate")!.actions).toHaveLength(1);
   });
 });
 
@@ -156,7 +177,7 @@ describe("console tasks — rules and their limits", () => {
     expect(titles(buildConsoleTasks(quiet({ admission: { mode: "draining", since: at(30 * MIN) } })))).toEqual([]);
     const board = buildConsoleTasks(quiet({ admission: { mode: "draining", since: at(30 * MIN + 1000) } }));
     expect(board.groups[0].tasks[0]).toMatchObject({ title: "접수가 30분째 멈춰 있습니다", fact: "모델 접수 중단 · 11-12 08:29부터",
-      actions: [{ kind: "link", label: "접수 열기", href: "/admin/models" }] });
+      actions: [{ kind: "link", label: "접수 열기", href: "/admin/models/dashboard#admission" }] });
     expect(titles(buildConsoleTasks(quiet({ admission: { mode: "open", since: at(9 * HOUR) } })))).toEqual([]);
     expect(unknowns(buildConsoleTasks(quiet({ admission: null })))).toEqual(["접수 상태"]);
   });

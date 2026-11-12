@@ -18,6 +18,8 @@ import { readHumanAssistProgress, type HumanAssistProgress } from "./human-assis
 import { sharedInbox, type InboxSnapshot } from "./inbox";
 import { readDelegateThresholdPreview, type DelegateThresholdPreview } from "./delegate-threshold-preview";
 import { readDelegateRejectSamples, type DelegateRejectSamples } from "./delegate-threshold-samples";
+import { aiModelNameOfServed, type AiConnectionView } from "./admin-ai-tasks";
+import { listAiConnections } from "./admin-ai-tasks-repository";
 
 /**
  * 사람 확인 · 묶음 화면(/admin/review/batches, 운영 콘솔 개편 조각 3b)의 읽기 — 기존 읽기를 모은다. 칸마다 따로 실패한다(그 칸만 「셀 수 없음」).
@@ -86,6 +88,15 @@ export function humanBatchSampleCard(entry: AdminReviewEntry): HumanBatchSampleC
   };
 }
 
+/**
+ * 표본 카드의 2차 투표 모델을 사용자가 정한 이름으로(운영 콘솔 통합 — 서버가 알려 준 모델 이름을 따로 적지 않는다).
+ * 그 이름을 내놓는 연결이 하나로 정해지지 않으면(지운 연결의 옛 투표 등) 기록 그대로 둔다.
+ */
+export function humanBatchCardNames(cards: readonly HumanBatchSampleCard[], connections: readonly AiConnectionView[] | null): HumanBatchSampleCard[] {
+  if (!connections) return [...cards];
+  return cards.map(card => ({ ...card, seconds: card.seconds.map(vote => ({ ...vote, model: aiModelNameOfServed(connections, vote.model) ?? vote.model })) }));
+}
+
 /** 표본 카드 — 기존 상세와 같은 읽기(listAdminReviewEntries). 다른 곳에서 처리됐어도 보이게 모든 상태에서 */
 async function sampleCards(settings: CrawlSettings, ids: readonly number[]): Promise<HumanBatchSampleCard[]> {
   if (!ids.length) return [];
@@ -99,10 +110,10 @@ export async function readHumanBatches(actor: string): Promise<HumanBatchesRead>
   const settings = await getSettings();
   const overviewRead = settle("overview", humanQueueOverview(settings));
   const repoDeletedRead = settle("repo_deleted", readRepoDeletedIds());
-  const [overview, repoDeleted, holds, delegate, assist, inbox, audit, gates, runs] = await Promise.all([
+  const [overview, repoDeleted, holds, delegate, assist, inbox, audit, gates, runs, connections] = await Promise.all([
     overviewRead, repoDeletedRead, settle("holds", readHoldCounts()), settle("delegate", readHumanDelegateSummary()), settle("assist", readHumanAssistProgress()),
     settle("inbox", sharedInbox()), settle("audit", openBacklogStats()), settle("gates", latestHumanBatchGates(actor)),
-    settle("runs", recentHumanBatchRuns(10)),
+    settle("runs", recentHumanBatchRuns(10)), settle("connections", listAiConnections()),
   ]);
   const members = overview && repoDeleted ? humanBatchMembers(overview, repoDeleted) : null;
   const panels = await Promise.all(HUMAN_BATCH_KEYS.map(async (key): Promise<HumanBatchPanel> => {
@@ -112,7 +123,7 @@ export async function readHumanBatches(actor: string): Promise<HumanBatchesRead>
       settle(`preview:${key}`, batchPreview(ids ?? [])),
       gate && !gate.executedAt ? settle(`cards:${key}`, sampleCards(settings, gate.sampleIds)) : Promise.resolve([]),
     ]);
-    return { key, members: ids, preview: preview ?? [], gate, cards: cards ?? [] };
+    return { key, members: ids, preview: preview ?? [], gate, cards: humanBatchCardNames(cards ?? [], connections) };
   }));
   return { measuredAt, overview, holds: holds?.holds ?? null, delegate, assist, inbox, panels, runs,
     audit: audit ? { open: audit.open, overdue: audit.overdue, oldestWaitDays: audit.oldestWaitDays } : null };

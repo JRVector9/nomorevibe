@@ -2,7 +2,8 @@ import { HUMAN_BACKLOG_LIMIT } from "@/lib/crawl/human-queue";
 import { AI_TASKS, aiTaskAccepts, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import type { ChangeWatchTask } from "./change-watch";
 import type { Conveyor } from "./conveyor-model";
-import { stagePanelHref } from "./stage-panel-catalog";
+import { SAMPLE_COMPARE_SUPPORTED } from "./model-sample-compare";
+import { stagePanelHref, stagePanelKeyOfTask } from "./stage-panel-catalog";
 
 /**
  * 운영 콘솔 홈의 「지금 할 일」 규칙(2026-11-12 최종 시안 「할 일이 생기는 조건」 11줄).
@@ -141,9 +142,21 @@ export type ConsoleJob = { name: string; paused: boolean; lastRunAt: string | nu
   controlVersion?: number };
 /** listAiConnections 의 쓰는 칸 — models 는 서버 목록·직접 적은 모델·CLI 모델을 합친 것 */
 export type ConsoleConnection = {
+  /** label = 사용자가 정한 모델 이름(aiModelDisplayName — 운영 콘솔 3a). 화면은 서버가 알려 준 이름·장비 id 를 따로 적지 않는다 */
   id: string; label: string; kind: "api" | "cli"; cliTool: string | null; deviceId: string; capacitySlots: number; enabled: boolean;
   models: readonly string[]; allowedTasks: readonly string[]; keySetAt: string | null; keyValidDays: number | null; updatedAt: string;
+  /** 서로 다른 모델 묶음 수(같은 root 의 별칭은 하나 — aiConnectionModelGroupCount). 옛 담긴 값에는 없다(그때는 이름 수로 센다) */
+  modelGroups?: number;
 };
+/**
+ * 순위·「동시에」의 모델 하나를 부르는 말 — 사용자가 정한 이름(label) 하나. 서로 다른 모델을 여럿 내놓는 연결이거나 목록에 없는 이름을 부를 때만
+ * 가를 수 있게 서버 이름을 덧붙인다(작업 배정의 aiModelChoiceName 과 같은 규칙).
+ */
+export function consoleModelName(connection: Pick<ConsoleConnection, "label" | "models" | "modelGroups">, model?: string | null): string {
+  if (!model) return connection.label;
+  const groups = connection.modelGroups ?? connection.models.length;
+  return groups <= 1 && (connection.models.includes(model) || !connection.models.length) ? connection.label : `${connection.label} · ${model}`;
+}
 export type ConsoleRank = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean };
 /** 작업 분산(workload_pool)으로 묶은 구성원 */
 export type ConsolePoolMember = { task: string; slot: number; connectionId: string; model: string };
@@ -252,8 +265,22 @@ export const CONSOLE_STAGE_LABELS: Readonly<Record<string, string>> = Object.fre
 /** 「단계 열기」가 여는 단계 패널(운영 홈 ?stage=, 조각 2a) — 흐름 칸 열쇠나 워커 진행 단계 열쇠를 받는다 */
 export const consoleStageHref = (stage: string) => stagePanelHref(stage);
 const jobHref = (job: string) => `/admin/status?tab=jobs&job=${encodeURIComponent(job)}`;
-const connectionHref = (id: string) => `/admin/models/llm?edit=${encodeURIComponent(id)}#conn-${encodeURIComponent(id)}`;
+/**
+ * 모델 상세(운영 콘솔 3a 「모델」 — model-console.ts modelHref 와 같은 주소). 「쉬게 하기」·「키 바꾸기」는 상세의 조치가 저장 전 확인을 거쳐 한다.
+ * model-console.ts 는 이 파일의 기준값을 모듈을 읽을 때 쓰므로 거꾸로 가져오지 않는다(순환 import 의 초기화 순서).
+ */
+const modelDetailHref = (id: string) => `/admin/models?model=${encodeURIComponent(id)}#model-detail`;
+/** 모델 추가 ③ 쓸 단계(3a) — 넣어 두고 아직 붙이지 않은 모델을 밀린 단계부터 권한다 */
+const modelStagesHref = (id: string) => `/admin/models/new?id=${encodeURIComponent(id)}&step=3`;
+/** 표본 비교(3a) — 붙이기 전에 결과를 나란히 본다. 지금 실행까지 붙은 작업만(SAMPLE_COMPARE_SUPPORTED) */
+const compareHref = (task: string, candidate: string) => `/admin/models/compare?task=${encodeURIComponent(task)}&candidate=${encodeURIComponent(candidate)}`;
+/** 모델 접수 칸 — 3a 가 옮긴 대시보드의 접수 칸(#admission). 여닫는 것은 사람이 그 칸에서 한다 */
+export const ADMISSION_HREF = "/admin/models/dashboard#admission";
+/** 감사 거절 목록 — 사람 확인 묶음 화면(3b)의 「요청과 감사」가 여는 곳과 같은 주소(inbox AUDIT_TAB_HREF) */
+const AUDIT_REJECTS_HREF = "/admin/audit?tab=audit";
 const taskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
+/** 순위·배정을 고치는 곳 — 그 작업의 단계 패널 모델 구역(조각 2a), 패널이 없는 작업은 작업 배정의 그 줄 */
+const taskStageHref = (task: string, slot = 1) => { const key = stagePanelKeyOfTask(task); return key ? stagePanelHref(key, "models") : taskHref(task, slot); };
 const link = (label: string, href: string): ConsoleAction => ({ kind: "link", label, href });
 
 /** 보류 사유가 생긴 칸 → 심사 큐의 그 칸(심사 큐 ?cause= 가 없는 사유) */
@@ -351,7 +378,6 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
   const taskForJob = (job: string | null | undefined) => job ? tasks.find(task => task.routeId && task.jobs.includes(job)) ?? null : null;
   const progressOf = (stage: string) => inputs.progress?.stages.find(row => row.stage === stage) ?? null;
   const name = (stat: ModelStat) => stat.connection.label;
-  const idleText = (taskId: string) => idleModelsText(idleModels(inputs, taskId, stats));
   const rankStats = (taskId: string) => {
     const seen = new Set<string>();
     return (inputs.ranks ?? []).filter(row => row.task === taskId && row.enabled).sort((a, b) => a.slot - b.slot || a.rank - b.rank)
@@ -413,7 +439,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     else if (now - since > limits.admissionPausedMs) add("stop", {
       id: "stop:admission", rule: "admission-paused",
       title: `접수가 ${formatDuration((now - since) / MINUTE)}째 멈춰 있습니다`,
-      fact: `모델 접수 중단 · ${formatKst(since)}부터`, why: null, actions: [link("접수 열기", "/admin/models")],
+      fact: `모델 접수 중단 · ${formatKst(since)}부터`, why: null, actions: [link("접수 열기", ADMISSION_HREF)],
     });
   }
 
@@ -463,14 +489,17 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
       if (days <= limits.backlogDays) continue;
       const label = CONSOLE_STAGE_LABELS[stage.stage] ?? def.label;
       const models = rankStats(def.id);
-      const why = [models.length === 1 ? `쓰는 모델이 ${name(models[0])} 하나입니다.` : null, idleText(def.id)].filter(Boolean).join(" ");
+      const idle = idleModels(inputs, def.id, stats);
+      const why = [models.length === 1 ? `쓰는 모델이 ${name(models[0])} 하나입니다.` : null, idleModelsText(idle)].filter(Boolean).join(" ");
       piling.push(stage.stage);
       eta.push({
         id: `pile:stage:${stage.stage}`, group: "pile", rule: "backlog-eta", tone: "warn", notify: groups.pile.notify, days, stageTask: def.id,
         title: `${josa(label, "이/가")} 쌓입니다`,
         fact: settled > 0 ? `대기 ${formatCount(waiting)}건 · 하루 ${formatCount(settled)}건 처리 · 지금 속도로 ${formatDays(days)}`
           : `대기 ${formatCount(waiting)}건 · 24시간 처리 0건 · 지금 속도로는 줄지 않음`,
-        why: why || null, actions: [link("모델 붙이기", stagePanelHref(stage.stage, "models"))],
+        // 모델 붙이기는 단계 패널의 모델 구역에서 — 표본 비교를 받는 작업(한국어 소개)은 남는 모델로 결과를 먼저 나란히 보는 길을 함께(시안 흐름 2)
+        why: why || null, actions: [link("모델 붙이기", stagePanelHref(stage.stage, "models")),
+          ...(SAMPLE_COMPARE_SUPPORTED.includes(def.id) && idle.length ? [link("표본 비교", compareHref(def.id, idle[0].connection.id))] : [])],
       });
     }
     groups.pile.tasks.push(...eta.sort((a, b) => b.days - a.days));
@@ -497,7 +526,8 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     id: "pile:audit", rule: "human-or-audit", title: "감사 거절이 쌓여 있습니다",
     fact: [`열린 거절 ${formatCount(inputs.audit.open)}건`, `${limits.auditOverdueDays}일 넘은 것 ${formatCount(inputs.audit.overdue)}건`,
       inputs.audit.oldestWaitDays !== null ? `가장 오래된 것 ${formatCount(inputs.audit.oldestWaitDays)}일` : null].filter(Boolean).join(" · "),
-    why: null, actions: [link("묶음 보기", "/admin/audit")],
+    // 감사 거절에는 묶음 화면이 없다(3b 는 심사 보류만 묶는다) — 사람 확인 화면의 「요청과 감사」와 같은 목록을 바로 연다
+    why: null, actions: [link("거절 목록 보기", AUDIT_REJECTS_HREF)],
   });
 
   // ── 정리 1: 결과 없이 끝난 호출이 하루 10건 이상인 모델
@@ -508,7 +538,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     add("tidy", {
       id: `tidy:no-result:${stat.connection.id}`, rule: "no-result", title: `${josa(name(stat), "이/가")} 자주 거절합니다`,
       fact: `24시간 ${formatCount(stat.calls ?? 0)}건 중 ${formatCount(stat.noResult)}건이 결과 없이 끝남`, why: null,
-      actions: [link("쉬게 하기", connectionHref(stat.connection.id)), { kind: "keep", label: "그대로 두기", taskId: `tidy:no-result:${stat.connection.id}` }],
+      actions: [link("쉬게 하기", modelDetailHref(stat.connection.id)), { kind: "keep", label: "그대로 두기", taskId: `tidy:no-result:${stat.connection.id}` }],
     });
   }
 
@@ -519,7 +549,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     add("tidy", {
       id: `tidy:unused:${stat.connection.id}`, rule: "unused-or-duplicate", title: `${josa(name(stat), "을/를")} 아직 안 씁니다`,
       fact: [`${formatKst(stat.connection.updatedAt)} 저장`, stat.calls === null ? "호출 셀 수 없음" : `호출 ${formatCount(stat.calls)}건`, "쓰는 단계 없음"].join(" · "),
-      why: null, actions: [link("단계에 붙이기", "/admin/models/tasks")],
+      why: null, actions: [link("단계에 붙이기", modelStagesHref(stat.connection.id)), link("모델 상세", modelDetailHref(stat.connection.id))],
     });
   }
   if (inputs.ranks) {
@@ -538,7 +568,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     if (repeats.length) add("tidy", {
       id: "tidy:duplicate-ranks", rule: "unused-or-duplicate", title: "순위에 같은 모델이 두 번 들어 있습니다",
       fact: repeats.map(row => row.text).join(" · "), why: "같은 모델을 다시 부르는 순위는 앞 순위가 못 할 때 대신하지 못합니다.",
-      actions: [link("순위 고치기", taskHref(repeats[0].task, repeats[0].slot))],
+      actions: [link("순위 고치기", taskStageHref(repeats[0].task, repeats[0].slot))],
     });
   }
 
@@ -551,7 +581,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     add("tidy", {
       id: `tidy:key:${stat.connection.id}`, rule: "key-expiry",
       title: expires > now ? `${name(stat)} 키가 ${Math.ceil((expires - now) / DAY)}일 뒤 만료됩니다` : `${name(stat)} 키가 만료됐습니다`,
-      fact: `${formatKst(keySetAt, true)} 넣음 · ${formatKst(expires, true)} 만료`, why: null, actions: [link("키 바꾸기", connectionHref(stat.connection.id))],
+      fact: `${formatKst(keySetAt, true)} 넣음 · ${formatKst(expires, true)} 만료`, why: null, actions: [link("키 바꾸기", modelDetailHref(stat.connection.id))],
     });
   }
 

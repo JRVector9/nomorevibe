@@ -258,7 +258,8 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
     const changed = renderToStaticMarkup(<RankDrawer editor={editor} lines={editor.lines.filter(line => line.task === "crawl-tagline")} title="수집 소개 짓기" secondWaiting={null}
       onClose={() => {}} fullViewHref={null} devices={devices} initial={{ step: "confirm", drafts: { "crawl-tagline#1": [{ provider: GPU, model: "qwen3.8-flash-next" }] } }} />);
     expect(changed).toContain("1순위 m3-mlx (2) · gpt-oss-120b");
-    expect(changed).toContain("1순위 gpu3090-qwen · qwen3.8-flash-next");
+    expect(changed).toContain("1순위 gpu3090-qwen");
+    expect(changed).not.toContain("1순위 gpu3090-qwen · qwen3.8-flash-next");
     expect(changed).toContain("장비 한도 · 함께 쓰는 작업");
     expect(text(changed)).toContain("gpu3090-qwen 2 / 5칸 사용 중 1차 AI 검수");
     const resave = renderToStaticMarkup(<RankDrawer editor={editor} lines={editor.lines.filter(line => line.task === "crawl-tagline")} title="수집 소개 짓기" secondWaiting={null}
@@ -295,7 +296,9 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
       onClose={() => {}} fullViewHref={null} />);
     expect(html.match(/aria-label="2차 AI 검수 · 투표자 [123] [123]순위"/g)).toHaveLength(9);
     // 투표자 2 칸에서는 투표자 1의 supa 를, 투표자 1 칸에서는 투표자 2의 gpt-oss 를 고를 수 없다(같은 모델 두 표 금지)
-    expect(html).toContain(`<option value="${SUPA}/supa" disabled="">Inferact/Qwen3.8-27B-NVFP4 — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
+    // supa 의 두 이름은 한 모델(같은 root) — 사용자가 정한 이름 하나로 보인다(운영 콘솔 통합)
+    expect(html).toContain(`<option value="${SUPA}/supa" disabled="">supa-direct — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
+    expect(html).not.toContain("Inferact/Qwen3.8-27B-NVFP4 —");
     expect(html).toContain(`<option value="${MLX}/gpt-oss-120b" disabled="">gpt-oss-120b — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
     expect(html).toContain('<optgroup label="supa-direct · API">');
     // 작업 분산 칸의 링크는 작업 배정의 실행 방식 접힘으로

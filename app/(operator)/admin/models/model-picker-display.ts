@@ -90,6 +90,9 @@ function withPickerGroup<T extends Option>(option: T, connection: PickerConnecti
   return group ? { ...option, group } : option;
 }
 
+/** 선택지의 보이는 글자가 서버 이름이 아니라 사용자가 정한 이름인가(운영 콘솔 통합 — aiModelChoiceName 이 만든 선택지) */
+const named = (option: Option) => !!option.text && option.text !== option.model && !option.text.startsWith(`${option.model} (`);
+
 export function presentPickerOptions<T extends Option>(options: readonly T[], connections: readonly PickerConnection[], current: Choice | null): T[] {
   const result: T[] = [], seen = new Set<string>();
   for (const option of options) {
@@ -109,7 +112,8 @@ export function presentPickerOptions<T extends Option>(options: readonly T[], co
       if (seen.has(key)) continue;
       seen.add(key);
       const grouped = withPickerGroup(selected, connection, connections, true);
-      result.push({ ...grouped, text: GEMMA_DISPLAY, label: `${modelPickerConnectionLabel(connection)} · ${GEMMA_DISPLAY}` });
+      // 선택지가 이미 사용자가 정한 이름이면(aiTaskRankOptions — 모델 하나인 연결) 그 이름을 둔다. 서버 이름이면 Gemma 이름으로
+      result.push(named(selected) ? grouped : { ...grouped, text: GEMMA_DISPLAY, label: `${modelPickerConnectionLabel(connection)} · ${GEMMA_DISPLAY}` });
       continue;
     }
     if (supa(connection) && (option.model === "supa" || option.model === SUPA)) {
@@ -122,7 +126,7 @@ export function presentPickerOptions<T extends Option>(options: readonly T[], co
       if (seen.has(key)) continue;
       seen.add(key);
       const grouped = withPickerGroup(selected, connection, connections, Boolean(option.group));
-      result.push({ ...grouped, text: SUPA, label: `${modelPickerConnectionLabel(connection)} · ${SUPA}` });
+      result.push(named(selected) ? grouped : { ...grouped, text: SUPA, label: `${modelPickerConnectionLabel(connection)} · ${SUPA}` });
       continue;
     }
     result.push(withPickerGroup(option, connection, connections));
