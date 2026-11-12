@@ -1,114 +1,63 @@
-import { XMLParser, XMLValidator } from "fast-xml-parser";
-import { parseEntities } from "parse-entities";
 import { setTimeout as sleep } from "node:timers/promises";
-import { SHOW_GN_SIGNAL } from "@/lib/crawl/settings-schema";
 import { getSettings } from "@/lib/crawl/settings";
 import { enqueueDiscoveryBatch } from "@/lib/crawl/shared-discovery";
 import { recordDiscoveryProgress } from "@/lib/crawl/discovery-progress";
+import { entryRepository, feedArticleUrl, feedDiscoverySource, feedSources, GEEKNEWS_FEED, pageRepository, parseFeedEntries, selectFeedArticles,
+  SHOW_GN_FEED, type FeedSource } from "@/lib/crawl/feed-sources";
+import type { FeedPageTitleRule } from "@/lib/crawl/feed-source-schema";
 import { fetchCapped, type CappedRequest } from "@/lib/net/fetch";
-import { repoFromUrl } from "./hn-show";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import type { JobContext, JobDegraded, JobOutcome } from "@/lib/jobs/runner";
 
-export const GEEKNEWS_FEED = "https://news.hada.io/rss/news";
+/**
+ * 글 목록 수집(잡 gn-show-seed) — 켜진 글 목록 수집원(lib/crawl/feed-sources.ts)을 차례로 읽어 저장소가 있는 글만 공통 관문으로 프론티어에 넣는다.
+ * 첫 수집원은 GeekNews Show GN 이다(2026-11-11). Show GN 만 켜져 있으면 요청·커서·신호·로그가 예전과 같다(tests/crawl-gn-show.test.ts).
+ * 화면에서 더한 수집원의 상태는 커서의 feeds.<id> 에 따로 있다 — Show GN 의 칸(seenUntil·pending)을 건드리지 않는다.
+ */
+export { GEEKNEWS_FEED };
 export const MAX_TOPICS_PER_TICK = 20;
 const REQUEST_INTERVAL_MS = 1_000;
 const MAX_BYTES = 512 * 1024;
-const topicUrl = (id: string) => `https://news.hada.io/topic?id=${id}`;
+/** 화면에서 더한 수집원이 기억하는 본 글 주소 — 피드는 200개를 넘지 않는다 */
+const SEEN_MAX = 500;
 type PendingTopic = { id: string; repo?: string };
+/** 화면에서 더한 수집원 하나의 상태 — 본 글 주소·아직 넣지 못한 글·마지막으로 피드를 읽은 시각 */
+export type FeedCursorState = { seen: string[]; pending: PendingTopic[]; readAt?: string };
 export type ShowGnCursor = {
   /** RSS에서 확인한 번호의 상한. 실패·상한 초과·수용 대기는 pending에 따로 남긴다 */
   seenUntil: number;
   pending: PendingTopic[];
+  /** 화면에서 더한 글 목록 수집원의 상태(수집원 열쇠마다). 그런 수집원이 없으면 칸이 없다 */
+  feeds?: Record<string, FeedCursorState>;
 };
 
 /** RSS에는 제품 주소가 없다. 외부 주소를 따라가지 않고 GeekNews 번호만 읽는다 */
 export function showGnTopicIds(xml: string): string[] {
-  const markup = xml.replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "");
-  if (/<!DOCTYPE|<!ENTITY/i.test(markup) || XMLValidator.validate(xml) !== true) throw new Error("invalid_feed");
-  const data = new XMLParser({ ignoreAttributes: false, processEntities: false, parseTagValue: false,
-    removeNSPrefix: true, trimValues: true }).parse(xml);
-  if (data.feed === "") return [];
-  if (!data.feed || typeof data.feed !== "object") throw new Error("invalid_feed");
-  const entries = data.feed.entry ? [data.feed.entry].flat() : [];
-  // 잘린 피드를 정상 완료로 오해하지 않는다.
-  if (entries.length > 200) throw new Error("feed_entries_limit");
-  const ids: string[] = [];
-  for (const entry of entries) {
-    const title = typeof entry.title === "string" ? entry.title : entry.title?.["#text"];
-    if (typeof title !== "string" || !/^Show GN\s*:/i.test(parseEntities(title).trim())) continue;
-    const links = [entry.id, ...[entry.link ?? []].flat().map(link => link?.["@_href"])];
-    const id = links.flatMap(value => {
-      try {
-        const url = new URL(value);
-        const id = url.searchParams.get("id");
-        return url.origin === "https://news.hada.io" && url.pathname === "/topic" && /^\d{1,12}$/.test(id ?? "") ? [id!] : [];
-      } catch { return []; }
-    })[0];
-    if (!id) throw new Error("invalid_topic_id");
-    ids.push(id);
-  }
-  return [...new Set(ids)].sort((a, b) => Number(a) - Number(b));
-}
-
-function attribute(tag: string, name: string): string | null {
-  // 속성값 속의 class/href 글자를 다른 속성으로 읽지 않는다.
-  const attrs = /([^\s=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
-  for (const match of tag.matchAll(attrs)) if (match[1].toLowerCase() === name)
-    return parseEntities(match[2] ?? match[3] ?? match[4] ?? "");
-  return null;
-}
-function httpUrl(value: string | null): URL | null {
-  try {
-    const url = new URL(value ?? "");
-    return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url : null;
-  } catch { return null; }
+  return selectFeedArticles(parseFeedEntries(xml), SHOW_GN_FEED).articles.map(article => article.id);
 }
 
 /** 제목 영역과 작성자 본문만 본다. 댓글/추천/스크립트의 GitHub 링크는 후보 근거가 아니다 */
 export function showGnRepository(html: string): { ok: true; repo: string | null } | { ok: false; reason: string } {
-  const clean = html.replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
-  const stack: { title: boolean; contents: boolean }[] = [];
-  const bodyRepos = new Map<string, string>();
-  let product: URL | null = null;
-  for (const match of clean.matchAll(/<\/?[a-z][^>]*>/gi)) {
-    const tag = match[0];
-    if (/^<\/(?:div|section)\b/i.test(tag)) { stack.pop(); continue; }
-    if (/^<(?:div|section)\b/i.test(tag)) {
-      const classes = (attribute(tag, "class") ?? "").split(/\s+/);
-      const parent = stack.at(-1);
-      stack.push({ title: parent?.title === true || classes.includes("topictitle") && classes.includes("link"),
-        contents: parent?.contents === true || attribute(tag, "id") === "topic_contents" });
-    }
-    if (!/^<a\b/i.test(tag)) continue;
-    const area = stack.at(-1);
-    const href = httpUrl(attribute(tag, "href"));
-    if (!href) continue;
-    if (area?.title && (attribute(tag, "class") ?? "").split(/\s+/).includes("topic-title-link")) product = href;
-    if (area?.contents) {
-      const repo = repoFromUrl(href.href);
-      if (repo) bodyRepos.set(repo.toLowerCase(), repo);
-    }
-  }
-  if (!product) return { ok: false, reason: "title_link_missing" };
-  const direct = repoFromUrl(product.href);
-  if (direct) return { ok: true, repo: direct };
-  const pagesOwner = /^([a-z0-9-]+)\.github\.io$/i.exec(product.hostname)?.[1];
-  const project = product.pathname.split("/").filter(Boolean)[0];
-  if (pagesOwner && project) return { ok: true, repo: bodyRepos.get(`${pagesOwner}/${project}`.toLowerCase()) ?? null };
-  // 일반 사이트는 제목 링크의 호스트/프로젝트명과 같은 저장소 하나만 택한다.
-  const hostName = product.hostname.replace(/^www\./, "").split(".")[0].toLowerCase();
-  const related = [...bodyRepos.values()].filter(repo => repo.split("/")[1].toLowerCase() === hostName);
-  return { ok: true, repo: related.length === 1 ? related[0] : null };
+  return pageRepository(html, SHOW_GN_FEED.link as FeedPageTitleRule);
 }
+
+const failedEvent = (source: FeedSource) => source.legacy ? "crawl.show_gn_failed" : "crawl.feed_failed";
+const seededEvent = (source: FeedSource) => source.legacy ? "crawl.show_gn_seeded" : "crawl.feed_seeded";
+/** 화면에서 더한 수집원은 로그에 열쇠를 싣는다(관측 누적은 수만 더한다) */
+const tagged = (source: FeedSource, fields: Record<string, unknown>) => source.legacy ? fields : { source: source.id, ...fields };
 
 /** Show HN과 같은 job cursor/설정/프론티어. 수용 한도는 한국어 발굴과 같은 원자적 관문을 쓴다 */
 export async function seedFromShowGN(ctx: JobContext<ShowGnCursor>, request?: CappedRequest): Promise<JobOutcome<ShowGnCursor>> {
   const settings = await getSettings();
-  if (!settings.enabled || !settings.discover.showGn.enabled) return { done: true };
+  const sources = settings.enabled ? feedSources(settings.discover).filter(source => source.enabled) : [];
+  if (!sources.length) return { done: true };
   const cursor: ShowGnCursor = ctx.cursor ? structuredClone(ctx.cursor) : { seenUntil: 0, pending: [] };
-  let requests = 0, examined = 0, discovered = 0, existing = 0, skippedNoRepo = 0, failed = 0;
-  let lastFailure: string | undefined;
-  let blockedBy: "queue_cap" | "rate_cap" | "measurement_unknown" | undefined;
+  // 지운 수집원의 상태는 버린다 — 남은 것이 없으면 칸을 없앤다(Show GN 만 있으면 커서 모양이 예전과 같다)
+  if (cursor.feeds) {
+    const configured = new Set((settings.discover.feeds ?? []).map(feed => feed.id));
+    for (const id of Object.keys(cursor.feeds)) if (!configured.has(id)) delete cursor.feeds[id];
+    if (!Object.keys(cursor.feeds).length) delete cursor.feeds;
+  }
+  let requests = 0;
   const load = async (url: string) => {
     if (requests) await sleep(REQUEST_INTERVAL_MS, undefined, { signal: ctx.signal });
     requests++;
@@ -116,60 +65,113 @@ export async function seedFromShowGN(ctx: JobContext<ShowGnCursor>, request?: Ca
       signal: ctx.signal, request });
   };
   if (!ctx.hasBudget() || ctx.signal?.aborted) return { done: false, cursor };
-  const feed = await load(GEEKNEWS_FEED);
-  if (!feed.ok || feed.status !== 200) {
-    const reason = feed.ok ? `http_${feed.status}` : feed.reason === "http" ? `http_${feed.status}` : feed.reason;
-    ctx.log("crawl.show_gn_failed", { reason });
-    return { done: false, cursor, degraded: { code: "feed_fetch_failed", cause: reason } };
+  const stateOf = (source: FeedSource): { pending: PendingTopic[] } => source.legacy ? cursor
+    : ((cursor.feeds ??= {})[source.id] ??= { seen: [], pending: [] });
+  const readAt = (source: FeedSource) => source.legacy ? null : cursor.feeds?.[source.id]?.readAt ?? null;
+  // Show GN 이 먼저, 그다음 오래 읽지 않은 수집원부터(같으면 우선순위)
+  const ordered = [...sources].sort((a, b) => Number(b.legacy) - Number(a.legacy)
+    || (Date.parse(readAt(a) ?? "") || 0) - (Date.parse(readAt(b) ?? "") || 0) || b.priority - a.priority);
+  let feedFailure: JobDegraded | undefined;
+  let failed = 0, lastFailure: string | undefined;
+  let blocked = false, unfinished = false;
+  for (const source of ordered) {
+    if (blocked || !ctx.hasBudget() || ctx.signal?.aborted) { unfinished = true; break; }
+    const result = await readSource(source);
+    if (result.feedFailure) feedFailure ??= result.feedFailure;
+    failed += result.failed; lastFailure = result.lastFailure ?? lastFailure;
+    if (result.blocked) blocked = true;
   }
-  let ids: string[];
-  try { ids = showGnTopicIds(feed.body.toString("utf8")); }
-  catch {
-    ctx.log("crawl.show_gn_failed", { reason: "invalid_feed" });
-    return { done: false, cursor, degraded: { code: "invalid_feed" } };
-  }
-  const pendingIds = new Set(cursor.pending.map(item => item.id));
-  cursor.pending.push(...ids.filter(id => Number(id) > cursor.seenUntil && !pendingIds.has(id)).map(id => ({ id })));
-  cursor.seenUntil = Math.max(cursor.seenUntil, ...ids.map(Number));
-  await ctx.save(cursor);
-  // 실패한 글 하나가 뒤 글을 막지 않는다. RSS에서 사라진 실패 글도 다음 틱에 재시도한다.
-  for (const item of [...cursor.pending].slice(0, MAX_TOPICS_PER_TICK)) {
-    if (!ctx.hasBudget() || ctx.signal?.aborted || ctx.deadlineAt !== undefined && Date.now() + REQUEST_INTERVAL_MS >= ctx.deadlineAt) break;
-    if (!item.repo) {
-      const page = await load(topicUrl(item.id));
-      const parsed = page.ok && page.status === 200 ? showGnRepository(page.body.toString("utf8")) : null;
-      const reason = parsed && !parsed.ok ? parsed.reason : !page.ok
-        ? page.reason === "http" ? `http_${page.status}` : page.reason : page.status !== 200 ? `http_${page.status}` : undefined;
-      if (!parsed?.ok) {
-        failed++; lastFailure = reason;
-        ctx.log("crawl.show_gn_failed", { topicId: item.id, reason });
-        cursor.pending = [...cursor.pending.filter(row => row.id !== item.id), item];
-        await ctx.save(cursor);
-        continue;
+  const drained = sources.every(source => stateOf(source).pending.length === 0);
+  if (feedFailure) return { done: false, cursor, degraded: feedFailure };
+  return { done: drained && !unfinished, cursor, ...(failed ? { degraded: { code: "topic_failed", cause: lastFailure } } : {}) };
+
+  async function readSource(source: FeedSource): Promise<{ feedFailure?: JobDegraded; failed: number; lastFailure?: string; blocked: boolean }> {
+    const state = stateOf(source);
+    const before = requests;
+    let examined = 0, discovered = 0, existing = 0, skippedNoRepo = 0, sourceFailed = 0, returned = 0;
+    let sourceLastFailure: string | undefined;
+    let blockedBy: "queue_cap" | "rate_cap" | "measurement_unknown" | undefined;
+    const last = readAt(source);
+    const due = source.intervalMinutes === null || !last || Date.now() - Date.parse(last) >= source.intervalMinutes * 60_000 - 60_000;
+    if (due) {
+      const feed = await load(source.url);
+      if (!feed.ok || feed.status !== 200) {
+        const reason = feed.ok ? `http_${feed.status}` : feed.reason === "http" ? `http_${feed.status}` : feed.reason;
+        ctx.log(failedEvent(source), tagged(source, { reason }));
+        return { feedFailure: { code: "feed_fetch_failed", cause: reason }, failed: 0, blocked: false };
       }
-      examined++;
-      if (!parsed.repo) {
-        skippedNoRepo++;
-        cursor.pending = cursor.pending.filter(row => row.id !== item.id);
-        await ctx.save(cursor);
-        continue;
+      let articles: ReturnType<typeof selectFeedArticles>["articles"];
+      try { articles = selectFeedArticles(parseFeedEntries(feed.body.toString("utf8")), source).articles; }
+      catch {
+        ctx.log(failedEvent(source), tagged(source, { reason: "invalid_feed" }));
+        return { feedFailure: { code: "invalid_feed" }, failed: 0, blocked: false };
       }
-      item.repo = parsed.repo;
-      // 수용 대기나 중단에도 이미 읽은 페이지를 다시 요청하지 않는다.
+      returned = articles.length;
+      const pendingIds = new Set(state.pending.map(item => item.id));
+      if (source.legacy) {
+        cursor.pending.push(...articles.filter(article => Number(article.id) > cursor.seenUntil && !pendingIds.has(article.id)).map(article => ({ id: article.id })));
+        cursor.seenUntil = Math.max(cursor.seenUntil, ...articles.map(article => Number(article.id)));
+      } else {
+        const own = state as FeedCursorState;
+        const seen = new Set(own.seen);
+        for (const article of articles) {
+          if (seen.has(article.id) || pendingIds.has(article.id)) continue;
+          seen.add(article.id); own.seen.push(article.id);
+          if (source.link.kind === "page-title") { own.pending.push({ id: article.id }); continue; }
+          // 피드 항목의 링크가 제품 링크면 글 페이지를 읽지 않는다 — 항목을 읽을 때 저장소를 정한다
+          examined++;
+          const repo = entryRepository(article);
+          if (repo) own.pending.push({ id: article.id, repo }); else skippedNoRepo++;
+        }
+        own.seen = own.seen.slice(-SEEN_MAX);
+        own.readAt = new Date().toISOString();
+      }
       await ctx.save(cursor);
     }
-    const result = await enqueueDiscoveryBatch([{ repo: item.repo, signal: SHOW_GN_SIGNAL, builder: null,
-      priority: settings.discover.showGn.priority, discoverySource: { source: "geeknews", topicId: item.id, url: topicUrl(item.id) } }], settings.discover, ctx.lease);
-    if (!result.processed) { blockedBy = result.blockedBy; break; }
-    discovered += result.added; existing += result.processed - result.added;
-    cursor.pending = cursor.pending.filter(row => row.id !== item.id);
-    await ctx.save(cursor);
+    // 실패한 글 하나가 뒤 글을 막지 않는다. RSS에서 사라진 실패 글도 다음 틱에 재시도한다.
+    for (const item of [...state.pending].slice(0, MAX_TOPICS_PER_TICK)) {
+      if (!ctx.hasBudget() || ctx.signal?.aborted || ctx.deadlineAt !== undefined && Date.now() + REQUEST_INTERVAL_MS >= ctx.deadlineAt) break;
+      if (!item.repo) {
+        if (source.link.kind !== "page-title") { state.pending = state.pending.filter(row => row.id !== item.id); continue; }
+        const page = await load(feedArticleUrl(source, item.id));
+        const parsed = page.ok && page.status === 200 ? pageRepository(page.body.toString("utf8"), source.link) : null;
+        const reason = parsed && !parsed.ok ? parsed.reason : !page.ok
+          ? page.reason === "http" ? `http_${page.status}` : page.reason : page.status !== 200 ? `http_${page.status}` : undefined;
+        if (!parsed?.ok) {
+          sourceFailed++; sourceLastFailure = reason;
+          ctx.log(failedEvent(source), tagged(source, { topicId: item.id, reason }));
+          state.pending = [...state.pending.filter(row => row.id !== item.id), item];
+          await ctx.save(cursor);
+          continue;
+        }
+        examined++;
+        if (!parsed.repo) {
+          skippedNoRepo++;
+          state.pending = state.pending.filter(row => row.id !== item.id);
+          await ctx.save(cursor);
+          continue;
+        }
+        item.repo = parsed.repo;
+        // 수용 대기나 중단에도 이미 읽은 페이지를 다시 요청하지 않는다.
+        await ctx.save(cursor);
+      }
+      const result = await enqueueDiscoveryBatch([{ repo: item.repo, signal: source.name, builder: null,
+        priority: source.priority, discoverySource: feedDiscoverySource(source, item.id) }], settings.discover, ctx.lease);
+      if (!result.processed) { blockedBy = result.blockedBy; break; }
+      discovered += result.added; existing += result.processed - result.added;
+      state.pending = state.pending.filter(row => row.id !== item.id);
+      await ctx.save(cursor);
+    }
+    const drained = state.pending.length === 0;
+    const sourceRequests = requests - before;
+    if (due || sourceRequests || discovered || existing) {
+      await recordDiscoveryProgress({ worker: process.env.SERVICE_INSTANCE_ID ?? "home-crawler", lane: source.legacy ? "geeknews" : "feed", signal: source.name,
+        // RSS는 과거 구간 전체의 완료를 보장하지 않으므로 completedThrough를 쓰지 않는다.
+        counts: { searchRequests: sourceRequests, pagesVisited: examined, returned, examined, discovered, existing, incomplete: sourceFailed },
+        blockedBy: blockedBy ?? (sourceFailed ? "api_wait" : null) });
+      ctx.log(seededEvent(source), tagged(source, { discovered, existing, examined, skippedNoRepo, failed: sourceFailed, requests: sourceRequests,
+        pending: state.pending.length, drained }));
+    }
+    return { failed: sourceFailed, lastFailure: sourceLastFailure, blocked: blockedBy !== undefined };
   }
-  const drained = cursor.pending.length === 0;
-  await recordDiscoveryProgress({ worker: process.env.SERVICE_INSTANCE_ID ?? "home-crawler", lane: "geeknews", signal: SHOW_GN_SIGNAL,
-    // RSS는 과거 구간 전체의 완료를 보장하지 않으므로 completedThrough를 쓰지 않는다.
-    counts: { searchRequests: requests, pagesVisited: examined, returned: ids.length, examined, discovered, existing, incomplete: failed },
-    blockedBy: blockedBy ?? (failed ? "api_wait" : null) });
-  ctx.log("crawl.show_gn_seeded", { discovered, existing, examined, skippedNoRepo, failed, requests, pending: cursor.pending.length, drained });
-  return { done: drained, cursor, ...(failed ? { degraded: { code: "topic_failed", cause: lastFailure } } : {}) };
 }

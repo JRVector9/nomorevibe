@@ -114,6 +114,11 @@ const ADDRESSES: readonly (readonly [url: string, menu: WorkspaceId, tab: string
   ['/admin/models/contracts', 'models', 'advanced', 'contracts'],
   ['/admin/models/search', 'models', 'advanced', 'search'],
   // 수집·작업
+  // 운영 콘솔 조각 4a: 기본은 수집원·주기 작업(?source= 상세, ?job= 줄의 조치), 수집원 추가 세 걸음
+  ['/admin/sources', 'sources', 'sources', null],
+  ['/admin/sources?source=show-hn', 'sources', 'sources', null],
+  ['/admin/sources/new', 'sources', 'sources', null],
+  ['/admin/sources/new?kind=feed', 'sources', 'sources', null],
   ['/admin', 'sources', 'collection', null],
   ['/admin/settings', 'sources', 'collection', null],
   ['/admin/settings?tab=collection', 'sources', 'collection', null],

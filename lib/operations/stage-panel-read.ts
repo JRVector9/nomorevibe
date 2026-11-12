@@ -42,8 +42,8 @@ const quiet = (event: string) => (error: unknown) => {
 };
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-/** 잡마다 마지막 멈춤·재개 — 마지막이 멈춤이면 그 기록(누가·언제·사유), 재개면 없음 */
-async function readPauses(jobs: readonly string[]): Promise<StagePauseRecord[]> {
+/** 잡마다 마지막 멈춤·재개 — 마지막이 멈춤이면 그 기록(누가·언제·사유), 재개면 없음. 수집·작업 화면(조각 4a)도 쓴다 */
+export async function readPauses(jobs: readonly string[]): Promise<StagePauseRecord[]> {
   if (!jobs.length) return [];
   const rows = await db.select({ id: operationsAudit.id, action: operationsAudit.action, target: operationsAudit.target, actor: operationsAudit.actor,
     at: operationsAudit.createdAt, detail: operationsAudit.detail }).from(operationsAudit)
@@ -60,7 +60,7 @@ async function readPauses(jobs: readonly string[]): Promise<StagePauseRecord[]> 
 }
 
 /** 잡 관측의 지금 degraded(막 끝난 틱이 제 일을 못 했을 때만 있다 — 다음 성공 틱이 lastDegraded 로 옮긴다) */
-async function readDegraded(jobs: readonly string[]): Promise<StageJobDegraded[]> {
+export async function readDegraded(jobs: readonly string[]): Promise<StageJobDegraded[]> {
   if (!jobs.length) return [];
   const rows = await onPrimary(() => db.select({ key: operationsObservations.key, value: operationsObservations.value, observedAt: operationsObservations.observedAt })
     .from(operationsObservations).where(inArray(operationsObservations.key, jobs.map(job => `job:${job}`))));

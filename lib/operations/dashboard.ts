@@ -336,7 +336,8 @@ export async function signalYields(settings: CrawlSettings, days = 7, options: C
   return rows.map((row) => ({ ...row, requireEvidence: row.signal === SHOW_HN_SIGNAL
     ? settings.discover.showHn.requireEvidence === true
     : row.signal === SHOW_GN_SIGNAL ? settings.discover.showGn.requireEvidence === true
-    : settings.discover.queries.find((query) => query.label === row.signal)?.requireEvidence === true }));
+    : (settings.discover.feeds ?? []).find((feed) => feed.name === row.signal)?.requireEvidence === true
+    || settings.discover.queries.find((query) => query.label === row.signal)?.requireEvidence === true }));
 }
 
 async function loadSignals(now: Date, days: number): Promise<Omit<SignalYield, "requireEvidence">[]> {

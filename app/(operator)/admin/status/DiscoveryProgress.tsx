@@ -4,7 +4,7 @@ import type { DiscoveryProgressReport } from "@/lib/operations/discovery-progres
 import { formatListTime } from "@/lib/format/time";
 import { ScrollTable } from "../components/ScrollTable";
 
-const LANES = { latest: "최신", full: "전체", korean: "한국어 전체기간", geeknews: "GeekNews Show GN" };
+const LANES = { latest: "최신", full: "전체", korean: "한국어 전체기간", geeknews: "GeekNews Show GN", feed: "글 목록 수집원" };
 const BLOCKERS: Record<string, string> = { queue_cap: "대기열 상한", rate_cap: "신규 적재 한도", api_wait: "외부 요청 재시도 대기", auth: "GitHub 인증 확인", incomplete: "불완전 구간 재시도", measurement_unknown: "대기열 집계 미확인" };
 const n = (v: number) => v.toLocaleString("ko-KR");
 const date = (v: string | null) => v ? v.replace("T", " ").replace(/\.\d{3}Z$/, " UTC") : "미확인";

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-category";
 import { underlyingReviewModel } from "./review-model-identity";
+import { feedSourcesSchema } from "./feed-source-schema";
 
 /**
  * 크롤 기준.
@@ -91,6 +92,11 @@ const discoverSchema = z.object({
     /** 검색 신호의 requireEvidence 와 같다 — Show GN 게시물 자체는 AI 제작 근거가 아니다 */
     requireEvidence: z.boolean().optional(),
   }).strict().default({ enabled: true, priority: 120 }),
+  /**
+   * 화면에서 더한 글 목록(RSS·Atom) 수집원(2026-11-12 운영 콘솔 조각 4a) — Show GN 과 같은 잡(gn-show-seed)이 차례로 읽는다(lib/crawl/feed-sources.ts).
+   * 저장은 수집원 화면만 한다(lib/crawl/feed-source-store.ts — 이 칸만 바꾸고 검색 신호·주기는 건드리지 않는다). 없으면 빈 목록.
+   */
+  feeds: feedSourcesSchema.default([]),
 });
 
 const judgeSchema = z.object({
@@ -687,6 +693,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     maxReviewBacklog: 1_000_000,
     showHn: { enabled: true, priority: 120 },
     showGn: { enabled: true, priority: 120 },
+    feeds: [],
   },
   judge: {
     autoApproveMinStars: 500,

@@ -83,6 +83,8 @@ export type JobHealthInput = {
   batch: { mode: string; writerContractVersion: number };
   /** 워커 관측이 끊긴 역할 — 그 역할의 잡은 생존 경보가 먼저 말한다 */
   silentRoles?: ReadonlySet<string>;
+  /** 운영 설정이 덮어쓴 잡 주기(lib/jobs/job-intervals.ts) — 없는 잡은 카탈로그 주기로 잰다. 주기를 늘린 잡이 성공 끊김으로 잘못 울리지 않게 */
+  intervals?: ReadonlyMap<string, number>;
   now: Date;
 };
 
@@ -97,7 +99,8 @@ export function jobHealthIssues(input: JobHealthInput): JobHealthIssue[] {
     const state = states.get(entry.name);
     if (!state || !state.lastRunAt || state.lastError || isPausedJob(state, now)) continue;
     if (input.silentRoles?.has(entry.role)) continue;
-    const limits = jobHealthThresholds(entry.intervalMs);
+    const intervalMs = input.intervals?.get(entry.name) ?? entry.intervalMs;
+    const limits = jobHealthThresholds(intervalMs);
     const lastSuccess = state.lastSuccessAt?.getTime() ?? null;
     // 지금 이어지는 제 일 못 함 — 제대로 끝난 틱은 러너가 이 칸을 lastDegraded 로 옮기므로 있으면 마지막 틱이 못 한 것이다
     const degraded = readJobDegraded(observations.get(`job:${entry.name}`)).current;
@@ -110,7 +113,7 @@ export function jobHealthIssues(input: JobHealthInput): JobHealthIssue[] {
     // 스케줄러가 끊기면 모든 잡의 성공이 함께 끊긴다 — 그것은 스케줄러 경보가 말한다
     if (input.deferrals !== null && !input.silentRoles?.has("scheduler") && !(deferredSince && DELIBERATE_DEFERRALS.has(deferredSince.reason))) {
       // 성공한 적이 없으면 틱 수로 잰다 — 주기 6번(짧은 잡은 30분어치) 넘게 돌고도 한 번도 성공하지 못했다
-      const measure = lastSuccess === null ? state.runs * entry.intervalMs : now - lastSuccess;
+      const measure = lastSuccess === null ? state.runs * intervalMs : now - lastSuccess;
       staleLevel = measure >= limits.staleCriticalMs ? "critical" : measure >= limits.staleHoldMs ? "hold" : null;
     }
     const level = degradedLevel === "critical" || staleLevel === "critical" ? "critical" : degradedLevel ?? staleLevel;

@@ -50,6 +50,8 @@ export const modelsAdvancedEditor = (id: ModelsAdvancedEditorId) => MODELS_ADVAN
  * 모델 메뉴의 고급 설정 2차 메뉴는 이것을 뺀 편집기 일곱 개다.
  */
 const PEOPLE_DELEGATE_EDITOR = modelsAdvancedEditor("human");
+/** 수집·작업 · 수집원과 주기 작업(운영 콘솔 개편 조각 4a) — 메뉴 「수집·작업」의 기본 화면. 수집원 추가는 그 아래 /new */
+export const SOURCES_HREF = "/admin/sources";
 /** 사람 확인 · 묶음(운영 콘솔 개편 조각 3b) — 메뉴 「사람 확인」의 기본 화면. lib/crawl/human-batch-model.ts HUMAN_BATCHES_HREF 와 같다 */
 export const PEOPLE_BATCHES_HREF = "/admin/review/batches";
 const MODELS_MENU_EDITORS = MODELS_ADVANCED_EDITORS.filter(editor => editor.id !== PEOPLE_DELEGATE_EDITOR.id);
@@ -117,7 +119,9 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "tasks", label: "작업 배정", href: "/admin/models/tasks" },
     { id: "advanced", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
   ] },
-  { id: "sources", label: "수집·작업", href: "/admin/settings", icon: "pulse", tabs: [
+  // 운영 콘솔(2026-11-12 조각 4a): 기본은 수집원·주기 작업(/admin/sources) — 모델을 쓰지 않는 들어오는 곳과 주기 작업. 옛 설정·작업 흐름 탭은 그대로
+  { id: "sources", label: "수집·작업", href: SOURCES_HREF, icon: "pulse", tabs: [
+    { id: "sources", label: "수집원·주기 작업", href: SOURCES_HREF },
     { id: "collection", label: "수집·판정", href: "/admin/settings?tab=collection" },
     { id: "crawlers", label: "크롤러 활동", href: "/admin/status?tab=crawlers" },
     { id: "jobs", label: "작업 흐름", href: "/admin/status?tab=jobs" },
@@ -277,6 +281,7 @@ function place(pathname: string, search: Search): Place {
     case "/admin/models/history": return { id: "log", tab: "llm" };
     case "/admin/settings": return tab === "history" ? { id: "log", tab: "history" } : { id: "sources", tab: pick(SETTINGS_SOURCE_TABS, tab, "collection") };
     case "/admin": return { id: "sources", tab: "collection" };
+    case SOURCES_HREF: case "/admin/sources/new": return { id: "sources", tab: "sources" };
     case "/admin/categories": case "/admin/evidence": return { id: "sources", tab: "evidence", secondary: WORKSPACE_SECONDARY.evidence };
     case "/admin/github-accounts": case "/admin/github-integrations": return { id: "sources", tab: "integrations", secondary: WORKSPACE_SECONDARY.integrations };
   }
