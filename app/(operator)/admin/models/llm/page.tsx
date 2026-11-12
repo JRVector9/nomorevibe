@@ -17,7 +17,7 @@ const one = (value: string | string[] | undefined) => typeof value === "string" 
 /**
  * LLM 운영 — 연결(서버)과 CLI 도구 한 줄씩(2026-11-07 승인 시안 PR 2). ?edit=<연결 id> 는 그 행을 펼치고, ?add=1 은 「+ 연결 추가」를 연다.
  * ?fix=<칸>(limit·context·key·address·version·enabled)은 펼친 연결 폼의 그 칸에 초점을 둔다 — 행의 문제 표시가 이 주소로 온다.
- * 예전 /admin/models/tasks#connections 와 ?tab=connections·capacity 는 그대로 살아 있거나 여기로 온다.
+ * 예전 /admin/models#connections 와 ?tab=connections·capacity 는 그대로 살아 있거나 여기로 온다.
  */
 export default async function LlmOpsPage({ searchParams }: Props) {
   if (!await currentAdmin()) redirect("/admin/login");

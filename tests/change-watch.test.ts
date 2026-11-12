@@ -26,7 +26,7 @@ describe("바꾼 것 지켜보기 — 대표 사례(11-12 07:10 1차 AI 검수 �
     expect(row.measure!.firstRate).toBeCloseTo(86 / (55 / 60));
     expect(row.measure!.lastRate).toBeCloseTo(3 / (50 / 60));
     expect(row.notes).toEqual(["잰 구간에서 접수 중단·작업 멈춤 15분을 빼고 시간당으로 견줬습니다"]);
-    expect(row.undo).toEqual(expect.objectContaining({ href: "/admin/models/tasks" }));
+    expect(row.undo).toEqual(expect.objectContaining({ href: "/admin/models#tasks" }));
     expect(row.recordHref).toBe("/admin/activity?target=first-review%231");
   });
 
@@ -74,7 +74,7 @@ describe("바꾼 것 지켜보기 — 대표 사례(11-12 07:10 1차 AI 검수 �
     expect(tasks[0]).toMatchObject({
       key: "change-watch:28853", verdict: "fell_back", notify: true,
       title: "1차 AI 검수 처리가 바꾼 뒤 다시 줄었습니다",
-      actions: [{ label: "되돌리러 가기", href: "/admin/models/tasks" }, { label: "기록 보기", href: "/admin/activity?target=first-review%231" }],
+      actions: [{ label: "되돌리러 가기", href: "/admin/models#tasks" }, { label: "기록 보기", href: "/admin/activity?target=first-review%231" }],
     });
     expect(tasks[0].fact).toContain("1차 AI 검수 1순위를 supa로");
     expect(tasks[0].fact).toContain("시간당 17건 → 첫 1시간 86건 → 지금 3건");

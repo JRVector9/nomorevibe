@@ -219,6 +219,6 @@ describe("4차 카드에서 바꾸기 (A안: 카드 유지)", () => {
   it("without the rank read there is no 바꾸기 — only the link to 작업 ↔ AI 모델", () => {
     const plain = renderToStaticMarkup(<FlowBoard data={data} />);
     expect(plain).not.toContain("처리 LLM 바꾸기");
-    expect(plain).toContain('href="/admin/models/tasks#tasks"');
+    expect(plain).toContain('href="/admin/models#tasks"');
   });
 });

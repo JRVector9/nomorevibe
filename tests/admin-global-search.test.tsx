@@ -58,7 +58,7 @@ describe("전역 검색 — 찾는 말과 가는 곳", () => {
     expect(sections.map(section => section.group)).toEqual(["엔진·연결", "모델", "작업·설정"]);
     expect(sections[0].items[0].extra).toEqual([{ label: "컨텍스트 상한", href: contextHref }]);
     expect(sections[1].items[0]).toMatchObject({ title: "gemma", detail: "M1 Max · m1max", href });
-    expect(searchAdminDestinations("crawl-agent-review")).toContainEqual(expect.objectContaining({ href: "/admin/models/tasks#execution-first-review-1" }));
+    expect(searchAdminDestinations("crawl-agent-review")).toContainEqual(expect.objectContaining({ href: "/admin/models#execution-first-review-1" }));
     expect(searchAdminDestinations("컨텍스트상한")[0]).toMatchObject({ id: "context", href: "/admin/models/llm" });
   });
 

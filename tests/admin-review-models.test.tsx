@@ -46,7 +46,7 @@ describe("관리자 단계별 검수 모델 — 1차·2차는 「작업 ↔ 모�
         fallbacks: [{ provider: "local-direct" as const, model: "qwen" }] } };
     const html = renderToStaticMarkup(createElement(ReviewModelsForm, { settings, version: "v1" }));
     expect(html).toContain('data-task-ranks-pointer="true"');
-    expect(html).toContain('href="/admin/models/tasks#tasks"');
+    expect(html).toContain('href="/admin/models#tasks"');
     for (const rank of ["1순위", "2순위", "3순위"]) expect(html).not.toContain(`aria-label="1차 AI 검수 ${rank}"`);
     for (const name of ["primaryModel0", "firstAdditionalModel0", "voterModel0", "fallbackModel0"]) expect(html, name).not.toContain(`name="${name}"`);
     expect(html).not.toContain("[MLX] gpt-oss-120b");

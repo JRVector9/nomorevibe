@@ -122,7 +122,7 @@ describe("stage panel — other cases", () => {
     expect(text(locked)).toContain("읽기 전용 미리보기 — 여기서는 저장할 수 없습니다.");
     const unread = render("first", { withEditor: false });
     expect(text(unread)).toContain("순위를 읽지 못해 여기서 바꿀 수 없습니다.");
-    expect(unread).toContain('href="/admin/models/tasks">작업 배정 →</a>');
+    expect(unread).toContain('href="/admin/models#tasks">작업 배정 →</a>');
   });
 
   it("keeps 소개 검수 locked like the flow drawer and shows a pooled stage as 「동시에」", () => {

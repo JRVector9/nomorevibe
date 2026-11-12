@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { WorkspaceLocation } from "../workspace-navigation";
+import "./workspace-tabs.css";
 
 /**
  * Navigation is derived from URL state. The content continues using each existing server read and action.
@@ -12,6 +13,10 @@ export function WorkspaceTabs({ location, onNavigate }: { location: WorkspaceLoc
       {location.workspace.tabs.map(tab => <Link key={tab.id} href={tab.href} prefetch={false}
         onNavigate={onNavigate ? () => onNavigate(tab.href) : undefined}
         aria-current={location.tab === tab.id ? "page" : undefined}>{tab.label}</Link>)}
+      {location.workspace.id === "models" && location.tab === "list" && <span className="admin-model-section-jumps" role="group" aria-label="모델 화면 바로가기">
+        {[["models", "모델 목록"], ["tasks", "작업별 적용 현황"], ["operations", "운영 설정"]].map(([id, label]) => <Link key={id}
+          href={`/admin/models#${id}`} prefetch={false} onNavigate={onNavigate ? () => onNavigate(`/admin/models#${id}`) : undefined}>{label}</Link>)}
+      </span>}
     </nav>
     {location.secondary.length > 0 && <nav className="admin-workspace-secondary" aria-label={`${tabLabel} 상세 기능`}>
       {location.secondary.map(link => <Link key={link.id} href={link.href} prefetch={false}

@@ -29,14 +29,14 @@ export const FLOW_MODEL_STAGES: readonly FlowModelStage[] = Object.freeze([
   stage("discover", "발굴", "수집", STATION_TASKS.discover, "/admin/flow?tab=diagnostics"),
   stage("fetch", "원본 수집", "수집", STATION_TASKS.fetch, "/admin/flow?tab=diagnostics"),
   stage("judge", "규칙 판정", "검수", STATION_TASKS.judge, "/admin/flow?tab=diagnostics"),
-  stage("first", "AI 1차", "검수", STATION_TASKS.first, "/admin/models/tasks#execution-first-review-1"),
-  stage("second", "AI 2차", "검수", STATION_TASKS.second, "/admin/models/tasks#execution-second-review-1"),
+  stage("first", "AI 1차", "검수", STATION_TASKS.first, "/admin/models#execution-first-review-1"),
+  stage("second", "AI 2차", "검수", STATION_TASKS.second, "/admin/models#execution-second-review-1"),
   stage("human", "사람 확인 · AI 보조", "검수", STATION_TASKS.human, "/admin/models/human#human-review"),
-  stage("profile", "프로필 준비", "발행 준비", profileTasks.filter(id => id === "crawl-tagline"), "/admin/models/tasks#execution-crawl-tagline-1"),
-  stage("publish", "발행", "공개", STATION_TASKS.publish, "/admin/models/tasks#execution-publish-classify-1"),
+  stage("profile", "프로필 준비", "발행 준비", profileTasks.filter(id => id === "crawl-tagline"), "/admin/models#execution-crawl-tagline-1"),
+  stage("publish", "발행", "공개", STATION_TASKS.publish, "/admin/models#execution-publish-classify-1"),
   stage("public", "공개 완료", "결과", [], "/admin/products"),
-  stage("keywords", "검색·후처리", "공개 후", STATION_TASKS.keywords, "/admin/models/tasks#execution-product-search-profile-1"),
-  stage("support", "공개 후 소개·번역", "공개 후", profileTasks.filter(id => id !== "crawl-tagline"), "/admin/models/tasks#execution-product-tagline-ko-1"),
+  stage("keywords", "검색·후처리", "공개 후", STATION_TASKS.keywords, "/admin/models#execution-product-search-profile-1"),
+  stage("support", "공개 후 소개·번역", "공개 후", profileTasks.filter(id => id !== "crawl-tagline"), "/admin/models#execution-product-tagline-ko-1"),
 ]);
 
 export function flowModelStage(id: string): FlowModelStage | null {
@@ -55,9 +55,9 @@ export function flowModelTaskStage(taskId: string): FlowModelStage | null {
  */
 export function flowModelTaskHref(taskId: string): string {
   if (HUMAN_TASKS.has(taskId)) return `/admin/models/human#${taskId}`;
-  if (taskId === "publish-classify") return "/admin/models/tasks#execution-publish-classify-1";
+  if (taskId === "publish-classify") return "/admin/models#execution-publish-classify-1";
   if (taskId === "product-intro-check") return "/admin/models/advanced#model-settings";
-  if (isAiLiveTask(taskId)) return `/admin/models/tasks#execution-${taskId}-1`;
+  if (isAiLiveTask(taskId)) return `/admin/models#execution-${taskId}-1`;
   if (SEARCH_VECTOR_TASKS.has(taskId) || aiTask(taskId)?.kind === "embedding" || aiTask(taskId)?.kind === "rerank") return "/admin/models/search";
   if (aiTask(taskId)?.group === "audit") return "/admin/audit";
   return "/admin/models/advanced#model-settings";

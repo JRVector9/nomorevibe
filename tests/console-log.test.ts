@@ -47,7 +47,7 @@ describe("log lines", () => {
     // 순위 저장 되돌리기 — 첫 저장 전과 마지막 저장 뒤의 순위, 그 순위를 고치는 곳(기존 화면)
     const ranks = lines[2];
     expect(ranks.rankUndo).toEqual({ now: "supa → gpu3090-qwen", back: "OpenCode deepseek → gpu3090-qwen" });
-    expect(ranks.undo).toMatchObject({ href: "/admin/models/tasks" });
+    expect(ranks.undo).toMatchObject({ href: "/admin/models#tasks" });
     expect(ranks.ids).toHaveLength(2);
     expect(logRawHref(ranks)).toBe(`/admin/activity?before=${ranks.ids[1] + 1}`);
   });

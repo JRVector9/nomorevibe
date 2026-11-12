@@ -109,7 +109,7 @@ export function ModelAddFlow({ step, row, missing, recommendations, secretBox, r
             <Link prefetch={false} className="text-button" href={modelHref(row.id)}>모델 상세</Link></div>
         </form> : <>
           <p className="mc-muted">지금 속도로 3일 넘게 밀린 단계 가운데 이 모델을 받을 수 있는 단계가 없습니다(또는 쌓임을 셀 수 없음).</p>
-          <div className="mc-acts"><Link prefetch={false} className="button small primary" href="/admin/models/tasks">작업 배정에서 고르기</Link>
+          <div className="mc-acts"><Link prefetch={false} className="button small primary" href="/admin/models#tasks">작업 배정에서 고르기</Link>
             <Link prefetch={false} className="button small" href="/admin/flow">나중에</Link></div>
         </> : <p className="mc-hint">밀린 단계부터 권합니다. 붙이기 전에 표본을 지금 모델과 나란히 돌려 결과를 비교합니다.</p>}
       </li>

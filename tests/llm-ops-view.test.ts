@@ -68,7 +68,7 @@ describe("대시보드 화면 모형", () => {
   it("멈춘 단계가 있으면 그 단계가 할 일 맨 앞이고 판단 띠는 멈춤이다", () => {
     const view = dashboard({ conveyor: llmConveyor({ second: ["jam", "모델 없음 — 멈춤", "2차 AI 검수: 순위를 채우세요"] }) });
     expect(view.banner.level).toBe("bad");
-    expect(view.todos[0]).toMatchObject({ id: "stage-second", level: "bad", title: "AI 2차 모델 없음 — 멈춤", href: "/admin/models/tasks#execution-second-review-1" });
+    expect(view.todos[0]).toMatchObject({ id: "stage-second", level: "bad", title: "AI 2차 모델 없음 — 멈춤", href: "/admin/models#execution-second-review-1" });
   });
   it("단계 띠: 현재 모델·상태를 보이고, 잡이 멈춘 작업은 의도적 중지(일부면 단계 안에 적는다)", () => {
     const stages = Object.fromEntries(dashboard().stages.map(stage => [stage.id, stage]));
@@ -190,7 +190,7 @@ describe("connect 에이전트 관측 읽기", () => {
 describe("옛 주소 → 새 화면", () => {
   it.each([
     // 운영 콘솔 조각 3a: 대시보드는 /admin/models/dashboard 로 옮겼다(/admin/models 는 모델 목록)
-    ["tab=live", "/admin/models/dashboard"], ["tab=tasks", "/admin/models/tasks"], ["tab=connections", "/admin/models/llm"],
+    ["tab=live", "/admin/models/dashboard"], ["tab=tasks", "/admin/models#tasks"], ["tab=connections", "/admin/models/llm"],
     ["tab=capacity", "/admin/models/llm"], ["tab=history", "/admin/models/history"], ["tab=unknown", "/admin/models"],
   ])("/admin/models?%s → %s", (search, href) => expect(modelsLegacyTabHref(query(search))).toBe(href));
   it("tab 이 없으면 넘기지 않고, advanced=1 은 tab 과 상관없이 고급 설정 화면으로 넘긴다(#조각은 브라우저가 지킨다)", () => {
@@ -202,7 +202,7 @@ describe("옛 주소 → 새 화면", () => {
   it.each([
     ["/admin/models", "", "list"], ["/admin/models", "tab=capacity", "advanced"], ["/admin/models/dashboard", "", "advanced"],
     ["/admin/models", "advanced=1", "advanced"], ["/admin/models", "tab=live&advanced=1", "advanced"],
-    ["/admin/models/llm", "", "advanced"], ["/admin/models/tasks", "", "tasks"], ["/admin/models/new", "", "list"], ["/admin/models/compare", "", "list"],
+    ["/admin/models/llm", "", "advanced"], ["/admin/models/tasks", "", "list"], ["/admin/models/new", "", "list"], ["/admin/models/compare", "", "list"],
     ["/admin/models/devices", "", "advanced"], ["/admin/models/limits", "", "advanced"], ["/admin/models/helpers", "", "advanced"],
     ["/admin/models/assignments", "", "advanced"], ["/admin/models/contracts", "", "advanced"],
     ["/admin/models/search", "", "advanced"], ["/admin/models/advanced", "", "advanced"],

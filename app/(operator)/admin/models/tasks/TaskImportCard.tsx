@@ -23,7 +23,7 @@ export function TaskImportCard({ preview, confirmWord }: { preview: AiImportPrev
   const label = (key: string) => preview?.connectionLabels[key] ?? key.replace(/^api:|^cli:/, "");
   return <div className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px]">
     <div className="flex flex-wrap items-center gap-3">
-      <Link href="/admin/models/tasks?import=plan#import" prefetch={false} className="rounded border border-line px-3 py-2 font-semibold">{preview ? "계획 다시 보기" : "계획 보기"}</Link>
+      <Link href="/admin/models?import=plan#import" prefetch={false} className="rounded border border-line px-3 py-2 font-semibold">{preview ? "계획 다시 보기" : "계획 보기"}</Link>
       <span className="text-[13px] text-fg-3">지금 잡이 고르는 모델(설정·단계 풀·등록부·env·배정 표·연결 계약)을 연결과 1·2·3순위로 옮기는 계획입니다. 보기만으로는 아무것도 쓰지 않습니다.
         서버 주소는 지금 쓰는 연결 계약·등록부·env 의 주소만 씁니다(지어내지 않습니다).</span>
     </div>

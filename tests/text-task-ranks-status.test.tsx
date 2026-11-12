@@ -28,5 +28,5 @@ it("일한 순위·아래 순위를 쓴 까닭·순위 없음을 보인다", () 
   expect(html).toContain("아래 순위를 쓴 까닭 — 1순위: 이 연결·모델의 엔진 직접 계약이 없음");
   expect(html).toContain("순위 없음 — 이 작업은 돌지 않습니다(no_task_models)");
   expect(html).toContain("제 일 못 함 <code>no_task_models</code>");
-  expect(html).toContain('href="/admin/models/tasks#tasks"');
+  expect(html).toContain('href="/admin/models#tasks"');
 });

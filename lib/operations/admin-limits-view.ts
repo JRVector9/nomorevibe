@@ -58,7 +58,7 @@ export type LimitsTaskSpec = Readonly<{
 }>;
 
 const DEVICES_HREF = "/admin/models/devices";
-const TASKS_HREF = "/admin/models/tasks#concurrency";
+const TASKS_HREF = "/admin/models#concurrency";
 const knob = (job: string, name: JobKnobName): DetailSpec => ({ kind: "knob", job, knob: name });
 const byDevice: ConcurrencySpec = { kind: "text", text: "장비 한도가 정함", href: DEVICES_HREF };
 const ladderCap: CapSpec = { kind: "route", route: REVIEW_LADDER_ROUTE, label: "심사 호출 상한" };

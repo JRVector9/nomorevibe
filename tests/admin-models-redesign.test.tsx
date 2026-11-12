@@ -112,7 +112,7 @@ describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
     const html = renderToStaticMarkup(createElement(ReviewModelsForm, { settings, version: "fixture-cas", models: redesignModels }));
     expect(html).not.toContain('name="primaryModel0"');
     expect(html).not.toContain('name="firstAdditionalModel0"');
-    expect(html).toContain('data-task-ranks-pointer="true"'); expect(html).toContain('href="/admin/models/tasks#tasks"');
+    expect(html).toContain('data-task-ranks-pointer="true"'); expect(html).toContain('href="/admin/models#tasks"');
     expect(html).toContain('name="stageModelPools"');
     expect(html).toContain("설정 바꾸기"); expect(html).toContain("저장된 설정과 같습니다");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>모델 설정 저장<\/button>/);

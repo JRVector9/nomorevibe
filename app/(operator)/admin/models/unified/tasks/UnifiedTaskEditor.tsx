@@ -11,7 +11,7 @@ import { flowOptionBlocked, flowRankIssues, needsAcknowledge, rankDeviceImpact, 
 import { ledgerModelText, type TaskAssignRow } from "@/lib/operations/llm-task-assign-view";
 import { attachPreviewContext, attachSaveForms, savedAssignment } from "@/lib/operations/model-attach";
 import { UNIFIED_TASK_GROUPS, unifiedTaskActualNote, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
-  unifiedTaskPoolOptions, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
+  unifiedTaskPoolMembers, unifiedTaskPoolOptions, unifiedTaskSavesConfirmed, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
 import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
 import { assignmentPreview, type AssignmentState } from "@/lib/operations/stage-panel-model";
 import { poolMemberIssues, poolMembersInput } from "@/lib/operations/task-pool-form";
@@ -19,13 +19,14 @@ import { RankSelects } from "../../RankSelects";
 import { modelPickerModelCount, modelPickerOptionName, modelPickerVisibleText } from "../../model-picker-display";
 import { saveAiTaskRanksAction, type AiTaskActionState } from "../../tasks/actions";
 import { saveTaskExecutionAction } from "../../tasks/execution-actions";
-import { PoolHelpTip, PoolMemberWarnings } from "../../tasks/PoolHelp";
+import { PoolHelpContent, PoolMemberWarnings } from "../../tasks/PoolHelp";
+import { UnifiedTaskImpact, UnifiedTaskResult, type UnifiedTaskSaveResult } from "./UnifiedTaskFeedback";
+import { UnifiedTaskEmptyPoolSlot } from "./UnifiedTaskEmptyPoolSlot";
 import "./unified-tasks.css";
 
 const MEMBER_FIELDS = Array.from({ length: 4 }, (_, index) => ({ provider: `pool${index + 1}Connection`, model: `pool${index + 1}Model`, reasoningEffort: `pool${index + 1}ReasoningEffort` }));
 const fmt = (value: number) => value.toLocaleString("ko-KR");
 type Step = "edit" | "confirm" | "saving" | "done";
-type SaveResult = { kind: "execution" | "ranks"; ok: boolean; message: string; issues: readonly string[]; warnings: readonly string[] };
 
 export type UnifiedTaskEditorProps = {
   taskKey: string; editor: FlowRankEditor; devices: readonly RankDeviceLimit[] | null;
@@ -50,7 +51,7 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
   const [step, setStep] = useState<Step>("edit");
   const [ack, setAck] = useState(false);
   const [resave, setResave] = useState(false);
-  const [results, setResults] = useState<SaveResult[]>([]);
+  const [results, setResults] = useState<UnifiedTaskSaveResult[]>([]);
   const [pending, startTransition] = useTransition();
   const busy = pending || step === "saving";
   useEffect(() => {
@@ -105,12 +106,16 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
   };
   const deviceImpact = editableLine && draft && saves.includes("ranks") ? rankDeviceImpact(editor,
     [{ line: editableLine, before: editableLine.saved, after: [...draft.ranks], beforeText: "", afterText: "" }], devices) : [];
+  const deviceNotes = deviceImpact.map(device => `${device.connections.join(" · ")} · ${device.create !== null ? `저장하면 장비 한도 ${device.create}칸을 만듭니다`
+    : device.limit === null ? "장비 한도 관측 불가" : `장비 한도 ${device.limit}칸 · ${device.held === null ? "사용 중인 칸 관측 불가" : `${device.held}칸 사용 중`}`}`
+    + (device.sharing.length ? ` · 함께 쓰는 다른 작업: ${device.sharing.join(" · ")}` : ""));
+  const confirmed = step === "done" && unifiedTaskSavesConfirmed(results, saves);
 
   const submit = () => {
     if (!snapshot || !draft || !canSave || busy || mustAck && !ack) return;
     setStep("saving");
     startTransition(async () => {
-      const done: SaveResult[] = [];
+      const done: UnifiedTaskSaveResult[] = [];
       for (const { kind, form } of attachSaveForms({ line: snapshot, after: draft, features, saves })) {
         let answer: AiTaskActionState;
         try {
@@ -133,8 +138,8 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
       const rect = event.currentTarget.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
     } }}>
-    <header className="ut-drawer-head"><div><span className="ut-eyebrow">{step === "confirm" || step === "saving" ? "저장 전 확인" : step === "done" ? "저장 결과" : target ? "실제 적용 설정" : "작업 배정"}</span>
-      <h2 id="ut-drawer-title">{snapshot?.label ?? "작업을 찾을 수 없습니다"}{(step === "confirm" || step === "saving") && " 배정을 바꿉니다"}</h2></div>
+    <header className="ut-drawer-head"><div><span className="ut-eyebrow">{confirmed ? snapshot?.label : step === "confirm" || step === "saving" ? "저장 전 확인" : step === "done" ? "저장 결과" : target ? "실제 적용 설정" : "작업 배정"}</span>
+      <h2 id="ut-drawer-title">{confirmed ? "배정을 반영했습니다" : <>{snapshot?.label ?? "작업을 찾을 수 없습니다"}{(step === "confirm" || step === "saving") && " 배정을 바꿉니다"}</>}</h2></div>
       <button type="button" className="ut-icon-btn" aria-label="닫기" onClick={close} disabled={busy}>×</button></header>
     <div className="ut-drawer-content">
       {!snapshot || !before || !draft ? <><p className="ut-callout ut-warn" role="alert">이 작업 설정을 읽지 못했습니다. 새로고침 후 다시 확인하세요.</p>
@@ -153,7 +158,7 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
           <Link className="ut-btn ut-primary" href={target.href} prefetch={false}>{target.label} →</Link>
           {!!snapshot.saved.length && <p className="ut-help-text">남아 있는 옛 순위는 이 작업의 실행에 사용되지 않습니다.</p>}
         </> : <>
-          <div className="ut-mode-title"><h3>실행 방식</h3>{help && supported && <PoolHelpTip view={help} label="「동시에」" />}</div>
+          <div className="ut-mode-title"><h3>실행 방식</h3></div>
           <div className="ut-mode-picker" role="group" aria-label="실행 방식"><button type="button" aria-pressed={!pool} disabled={busy || !!locked}
             onClick={() => setDraft(unifiedTaskSwitchMode(draft, "fallback", snapshot))}>순위대로</button>
             <button type="button" aria-pressed={!!pool} disabled={busy || !!locked || !supported}
@@ -164,9 +169,10 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
               : "1순위 모델을 먼저 쓰고, 호출할 수 없을 때 다음 순위로 전환합니다."}</p>
           {pool ? <div className="ut-editor-rows ut-pool-rows" data-caps={features.slotCaps ? "true" : undefined}>
             <RankSelects<AiRankChoice> stage={{ id: `unified-pool-${snapshot.key}`, label: snapshot.label, slots: 4 }} selectionKind="pool" layout="rows"
-              value={draft.members} onChange={value => setDraft({ ...draft, members: value })} options={unifiedTaskPoolOptions(editor, snapshot)} connections={editor.connections}
+              value={draft.members} onChange={value => setDraft(unifiedTaskPoolMembers(draft, value, features))} options={unifiedTaskPoolOptions(editor, snapshot)} connections={editor.connections}
               slotNames={MEMBER_FIELDS} disabled={busy || !!locked || !supported} showProvider={false} note={null} validate={issuesOf}
               blocked={option => !editor.connections.some(connection => connection.id === option.provider && connection.enabled)}
+              renderAfterEmptySlot={features.slotCaps ? index => <UnifiedTaskEmptyPoolSlot index={index} /> : undefined}
               renderAfterSlot={(choice, index) => <>
                 {features.slotCaps && <label className="ut-slot"><input type="number" inputMode="numeric" min={1} max={AI_TASK_POOL_MEMBER_SLOTS_MAX} step={1} value={draft.slots?.[index] ?? ""}
                   placeholder="자동" aria-label={`모델 ${index + 1} 동시 칸 수`} disabled={busy || !!locked}
@@ -215,25 +221,16 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
         {resave && !rankChanged && <p className="ut-scope-note">배정은 그대로 두고 빠진 계약·경로·장비를 다시 준비합니다.</p>}
         {pool && <p className="ut-scope-note">{lanes !== null ? <>함께 최대 <b className="ut-num">{fmt(lanes)}건</b>을 처리합니다. </> : "단계·장비 한도 안에서 나눠 처리합니다. "}
           예비 순위 {features.reserve && draft.reserve ? "사용" : "사용 안 함"}.</p>}
-        {preview?.impact.map(impact => <p className={`ut-scope-note${impact.tone === "warn" || impact.tone === "bad" ? " ut-actual-warning" : ""}`} key={impact.text}>{impact.text}</p>)}
-        {deviceImpact.map(device => <p className="ut-scope-note" key={device.deviceId}>{device.connections.join(" · ")} · {device.create !== null ? `저장하면 장비 한도 ${device.create}칸을 만듭니다`
-          : device.limit === null ? "장비 한도 관측 불가" : `장비 한도 ${device.limit}칸 · ${device.held === null ? "사용 중인 칸 관측 불가" : `${device.held}칸 사용 중`}`}
-          {device.sharing.length ? ` · 함께 쓰는 다른 작업: ${device.sharing.join(" · ")}` : ""}</p>)}
         {!pool && draftDuplicate && <div className="ut-callout ut-warn">같은 모델을 반복 배정했습니다. 앞 순위가 실패하면 같은 모델로 다시 요청하게 됩니다.</div>}
         {warnings.map(warning => <p className="ut-callout ut-warn" key={`${warning.code}:${warning.line}`}>{warning.text}</p>)}
-        <p className="ut-scope-note">영향을 받는 작업: <b>{snapshot.label}</b><br />진행 중인 호출은 유지됩니다. 새 업무부터 반영되며 모델 목록과 홈의 작업 배정도 같은 값으로 바뀝니다.</p>
+        <UnifiedTaskImpact taskLabel={snapshot.label} impact={preview?.impact ?? []} deviceNotes={deviceNotes}
+          help={help && supported ? <PoolHelpContent view={help} /> : null} />
         {mustAck && <label className="ut-check-label"><input type="checkbox" checked={ack} disabled={busy} onChange={event => setAck(event.target.checked)} />작업이 멈추는 경고를 읽었습니다. 그래도 저장합니다.</label>}
         {locked && <p className="ut-callout ut-warn" role="alert">{locked}</p>}
         <div className="ut-editor-foot"><p>변경 전·후가 최근 기록에 남습니다.</p><div className="ut-buttons"><button type="button" className="ut-btn" disabled={busy} onClick={() => setStep("edit")}>다시 고르기</button>
           <button type="button" className="ut-btn ut-primary" disabled={busy || !canSave || mustAck && !ack} onClick={submit}>{busy ? "저장 중…" : "변경 저장"}</button></div></div>
       </>}
-      {step === "done" && <div role="status" className="ut-save-results">
-        {results.map((result, index) => <div key={`${index}:${result.kind}`} className={`ut-callout${result.ok ? "" : " ut-warn"}`}><b>{result.kind === "ranks" ? "순위" : "실행 방식"} {result.ok ? "저장함" : "저장 못 함"}</b>
-          {result.message && <p>{result.message}</p>}{result.issues.map(issue => <p key={issue}>{issue}</p>)}{result.warnings.map(warning => <p key={warning}>{warning}</p>)}</div>)}
-        {results.some(result => result.ok) && results.some(result => !result.ok) && <p className="ut-callout ut-warn">일부 변경만 저장됐습니다. 최근 기록과 현재 적용 값을 확인한 뒤 다시 편집하세요.</p>}
-        <p className="ut-scope-note">현재 적용 값과 최근 변경 기록을 다시 읽습니다. 다시 편집하려면 이 창을 닫고 해당 작업을 여세요.</p>
-        <div className="ut-editor-foot"><p>새 업무부터 반영됩니다.</p><button type="button" className="ut-btn ut-primary" onClick={close}>확인</button></div>
-      </div>}
+      {step === "done" && <UnifiedTaskResult results={results} expected={saves} mode={draft.mode} chain={chain(draft)} homeHref={unifiedTaskHomeHref(snapshot.task)} onClose={close} />}
       </>}
     </div>
   </dialog>;

@@ -230,7 +230,7 @@ describe("empty ranks stop the job (no_task_models, 2026-11-02 21:13Z)", () => {
     const conveyor = buildConveyor(conveyorInputs({ models: buildStationLlm(cleared) }));
     const response = stationResponse("first", conveyor, null);
     expect(response.checks[0]).toContain("순위가 비어 있어 이 작업이 돌지 않습니다(no_task_models)");
-    expect(response.steps[0]).toMatchObject({ kind: "link", href: "/admin/models/tasks", risk: "careful" });
+    expect(response.steps[0]).toMatchObject({ kind: "link", href: "/admin/models#tasks", risk: "careful" });
     expect(response.steps).toContainEqual(expect.objectContaining({ kind: "link", href: "/admin/activity?group=settings" }));
     // 새 쓰기 길은 없다 — 링크 둘이 모델 쪽 조치 전부
     for (const step of response.steps) if (step.kind === "link") expect(step.href.startsWith("/admin")).toBe(true);
@@ -412,13 +412,13 @@ describe("card and detail", () => {
     expect(cleared).toContain('<span class="cv-llmd-state" data-state="none">모델 없음 — 멈춤</span>');
   });
 
-  it("links the model rows of the open detail to /admin/models/tasks and shows set vs actual per task", () => {
+  it("links the model rows of the open detail to /admin/models#tasks and shows set vs actual per task", () => {
     // 1차가 막혀(처리 0) 자세히가 1차로 열린다
     const stalled = buildConveyor(conveyorInputs({ models: buildStationLlm(healthy()),
       throughput: { measuredAt: NOW, stages: [stage("fetch"), stage("judge"), stage("first", { status: "stalled", waiting: 40, oldestMinutes: 50, completed5m: 0 }), stage("second"), stage("publish")] } }));
     const page = renderToStaticMarkup(<FlowBoard data={stalled} />);
     expect(page).toContain('class="cv-llmd"');
-    expect(page).toContain('href="/admin/models/tasks#tasks"');
+    expect(page).toContain('href="/admin/models#tasks"');
     expect(page).toContain("작업 ↔ AI 모델에서 순위 보기·바꾸기");
     // Rows separate current calls, saved ranks, and historical completed calls.
     expect(page).toMatch(/<dt class="cv-llmd-k">현재 호출<\/dt><dd class="cv-llmd-v">[^]*?현재 호출 일부 미확인<\/span><\/span><\/dd>/);

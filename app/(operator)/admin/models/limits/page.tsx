@@ -74,7 +74,7 @@ export default async function RuntimeLimitsPage() {
           <ul><li>원문 글자 상한 · 묶음 글자 · 요청 보류 한도</li><li>최대 시도 (4보다 크게 해도 4회까지만 보냄)</li><li>묶음 최대 건수 4 (코드에 고정)</li></ul></div>
         <div className="lim-card"><h3><Link href="/admin/audit?tab=recheck" prefetch={false} className="lim-link">감사 › 변경 재판정 →</Link></h3>
           <ul><li>훑는 수 · 하루 상한 · 묻는 수</li><li>닮음 기준 · 1차 양보 시간</li></ul></div>
-        <div className="lim-card" id="assignments"><h3><Link href="/admin/models/tasks#concurrency" prefetch={false} className="lim-link">작업 배정 › 동시 업무 →</Link></h3>
+        <div className="lim-card" id="assignments"><h3><Link href="/admin/models#concurrency" prefetch={false} className="lim-link">작업 배정 › 동시 업무 →</Link></h3>
           <ul><li>2차 심사 소비자 동시 업무</li><li>발행 분류 동시 묶음</li></ul>
           <p className="lim-muted lim-small">배정 표 읽기 스위치는 <Link href={modelsAdvancedEditor("assignments").href} prefetch={false} className="lim-link">{modelsAdvancedEditor("assignments").label}</Link>에 있습니다.</p></div>
       </div></div>

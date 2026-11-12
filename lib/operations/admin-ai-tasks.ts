@@ -104,7 +104,7 @@ export function aiConnectionVisibleModels<T extends { id: string }>(models: read
   return models.filter(model => !!model && typeof model.id === "string" && !hidden.has(model.id));
 }
 export const AI_TASK_IMPORT_CONFIRM = "가져오기";
-export const AI_TASKS_PAGE = "/admin/models/tasks";
+export const AI_TASKS_PAGE = "/admin/models#tasks";
 /** 키 암호문의 AAD — 행 id 에 묶는다(다른 행으로 옮긴 암호문은 열리지 않는다). */
 export const aiConnectionKeyAad = (id: string) => `ai_connections\n${id}`;
 

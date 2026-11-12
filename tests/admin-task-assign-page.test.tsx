@@ -6,7 +6,7 @@ import { aiTaskSlots, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import type { AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
 import type { AiTasksAdminView, AiTaskSlotView } from "@/lib/operations/admin-ai-tasks-repository";
 import { unavailableAdminModels } from "@/lib/operations/admin-models-observation";
-import { GPU, LLM_NOW, llmConnections, llmObservation, llmRankRows, llmRuntime, M1, MLX, SUPA } from "./fixtures/llm-ops";
+import { GPU, LLM_NOW, llmConnections, llmObservation, llmRankRows, llmRuntime, MLX, SUPA } from "./fixtures/llm-ops";
 
 const mocks = vi.hoisted(() => ({
   observation: vi.fn(), jobs: vi.fn(), view: vi.fn(), executions: vi.fn(), preview: vi.fn(),
@@ -152,80 +152,10 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     expect(html).toContain("실행 방식 미확인");
   });
 
-  it("화면: #tasks 표 · 실행 방식 접힘(#modes, #mode-<작업>-<칸>) · #connections 는 LLM 운영으로 가는 짧은 안내 · #import · #audit 그대로", async () => {
-    vi.doMock("@/app/(operator)/admin/models/tasks/task-assign-slot", () => ({ TaskAssignSlot: () => <p data-slot="task-assign">표</p> }));
-    vi.resetModules();
-    const { default: Page } = await import("@/app/(operator)/admin/models/tasks/page");
-    mocks.executions.mockResolvedValue([{ task: "first-review", slot: 1, mode: "workload_pool", revision: 2, updatedAt: "2026-11-07T06:00:00.000Z",
-      members: [{ memberId: "m1", position: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {} }] },
-      { task: "crawl-tagline", slot: 1, mode: "fallback", revision: null, updatedAt: null, members: [] },
-      { task: "human-review", slot: 1, mode: "fallback", revision: null, updatedAt: null, members: [] }]);
-    mocks.view.mockResolvedValue(adminView({ keyConflicts: [], connections: llmConnections }));
-    const html = renderToStaticMarkup(await Page({ searchParams: Promise.resolve({}) }));
-    vi.doUnmock("@/app/(operator)/admin/models/tasks/task-assign-slot");
-    for (const id of ["tasks", "modes", "connections", "import", "audit"]) expect(html, id).toContain(`id="${id}"`);
-    expect(html).toContain('data-slot="task-assign"');
-    // 실행 방식은 작업 분산을 받는 작업만(사람 몫 위임 검수는 아직 지원하지 않는다)
-    expect(html).toContain('id="mode-first-review-1"');
-    expect(html).toContain('id="mode-crawl-tagline-1"');
-    expect(html).not.toContain('id="mode-human-review-1"');
-    expect(html).toContain("분산 1개");
-    // 연결 관리는 LLM 운영에서 — 이 화면에 연결 폼·「칸 수」가 없다
-    expect(html).toContain('href="/admin/models/llm"');
-    // 장비 칸을 작업마다 나누는 곳(칸 배분, step 3)
-    expect(html).toContain('href="/admin/models/allocation">장비 칸을 작업별로 나누기(칸 배분) →</a>');
-    expect(html).not.toContain('name="baseUrl"');
-    // 연결의 동시 실행 칸(연결 폼)은 없다 — 「칸 수」는 「동시에」로 저장된 1차의 모델별 칸 수·예비 칸뿐이다(2026-11-12 1·2차도 칸 수·예비를 따름)
-    const connections = html.slice(html.indexOf('id="connections"'));
-    expect(connections).not.toContain("칸 수");
-    const firstMode = html.slice(html.indexOf('id="mode-first-review-1"'), html.indexOf('id="mode-crawl-tagline-1"'));
-    expect(firstMode).toContain('data-pool-slots="true"');
-    expect(firstMode).toContain('aria-label="함께 1 칸 수"');
-    expect(firstMode).toContain('data-pool-reserve="true"');
-    expect(firstMode).not.toContain("아직 모델별 상한·예비를 따르지 않습니다");
-    expect(html).not.toContain('id="connection-form"');
-    // 목록을 못 읽은 서버는 LLM 운영의 그 행으로 보낸다
-    expect(html).toContain(`href="/admin/models/llm?edit=${M1}#conn-${M1}"`);
-    // 최근 기록(#audit)은 그대로
-    expect(html).toContain("LLM 운영 › 기록에서 전체 보기 →");
-  });
-
-  it("2026-11-11: LLM 보강 제어 접힘(#assist-controls)·없앤 작업의 옛 순위 기록(지우기)·보강 줄의 「보강 켜기·끄기 →」", async () => {
-    vi.doMock("@/app/(operator)/admin/models/tasks/task-assign-slot", () => ({ TaskAssignSlot: () => <p data-slot="task-assign">표</p> }));
-    vi.doMock("@/lib/operations/llm-assist-controls", () => ({ readAssistControls: async () => ({ error: null, controls: [
-      { task: "uptime", mode: "confirm", confirmationRequired: true, dispatchEnabled: false, applyEnabled: false, revision: 7, updatedAt: null, label: "연결 확인",
-        aiTask: "assist-review", aiTaskLabel: "LLM 보강", queue: { queued: 24055 } }] }) }));
-    vi.doMock("@/app/(operator)/admin/models/tasks/assist-actions", () => ({ saveAssistControlAction: vi.fn() }));
-    vi.resetModules();
-    const { default: Page } = await import("@/app/(operator)/admin/models/tasks/page");
-    mocks.view.mockResolvedValue(adminView({ rows: [...llmRankRows, { task: "korean-translation-direct", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next",
-      options: {}, enabled: true }] }));
-    const html = renderToStaticMarkup(await Page({ searchParams: Promise.resolve({}) }));
-    vi.doUnmock("@/app/(operator)/admin/models/tasks/task-assign-slot");
-    vi.doUnmock("@/lib/operations/llm-assist-controls");
-    vi.doUnmock("@/app/(operator)/admin/models/tasks/assist-actions");
-    // 보강 제어: 일마다 단계·보내기·반영, 확인 필수는 끌 수 없다고 적는다, 대기 수
-    const assist = html.match(/<details id="assist-controls"[^]*?<\/details>/)![0];
-    expect(text(assist)).toContain("LLM 보강 제어");
-    expect(text(assist)).toContain("연결 확인 uptime · LLM 보강");
-    expect(text(assist)).toContain("대기 24,055");
-    expect(text(assist)).toContain("확인 후 반영 · 보내기 꺼짐 · 반영 꺼짐");
-    expect(text(assist)).toContain("확인 필수(끌 수 없음) — 옛 자동 내림이 보강 확인을 기다립니다");
-    expect(assist).toContain('name="mode"');
-    expect(assist).toContain('name="revision" value="7"');
-    // 없앤 작업의 옛 순위 행 — LLM 운영 칩이 거는 앵커로, 지우기만
-    expect(html).toContain('id="execution-korean-translation-direct-1"');
-    expect(text(html)).toContain("한국어 소개 번역 · 직접 경로(없앤 작업) · 순위 1개");
-    expect(html).toContain('aria-label="한국어 소개 번역 · 직접 경로(없앤 작업) 옛 순위 기록 1개 지우기"');
-    // 보강 표 줄의 링크(표 자체)
-    const table = renderToStaticMarkup(await TaskAssignSlot({ view: adminView(), executions: [], readOnly: false }));
-    expect(table.match(/<tr id="execution-assist-review-1"[^]*?<\/tr>/)![0]).toContain('href="#assist-controls"');
-    expect(table.match(/<tr id="execution-assist-audit-1"[^]*?<\/tr>/)![0]).toContain("보강 켜기·끄기 →");
-    expect(table.match(/<tr id="execution-crawl-tagline-1"[^]*?<\/tr>/)![0]).not.toContain("#assist-controls");
-  });
-
-  it("옛 「연결 고치기」 주소(?edit=<연결>)는 LLM 운영의 그 행으로 넘긴다", async () => {
-    await expect(AiTasksPage({ searchParams: Promise.resolve({ edit: MLX }) })).rejects.toThrow(`NEXT_REDIRECT:/admin/models/llm?edit=${MLX}#conn-${MLX}`);
+  it("옛 작업 주소는 인증 뒤 통합 화면 이동 구성 요소만 그린다", async () => {
+    const page = await AiTasksPage({ searchParams: Promise.resolve({ edit: MLX }) });
+    expect(page.props.params).toEqual({ edit: MLX });
+    expect(renderToStaticMarkup(page)).toContain(`href="/admin/models?model=${MLX}#model-detail"`);
     expect(mocks.view).not.toHaveBeenCalled();
   });
 
@@ -258,7 +188,7 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
     // 운영 홈에서 열면 링크가 있다
     const flow = renderToStaticMarkup(<RankDrawer editor={editor} lines={editor.lines.filter(line => line.task === "crawl-tagline")} title="프로필 준비" secondWaiting={null}
       onClose={() => {}} />);
-    expect(flow).toContain('<a class="fr-link" href="/admin/models/tasks#tasks">작업 배정에서 전체 보기 →</a>');
+    expect(flow).toContain('<a class="fr-link" href="/admin/models#tasks">작업 배정에서 전체 보기 →</a>');
   });
 
   it("확인: 바뀌는 작업(전→후)과 장비 한도·함께 쓰는 작업, 다시 저장은 「순위 그대로」로 보인다", () => {
@@ -315,7 +245,7 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
     const pooled = buildTaskRankEditor(llmConnections, llmRankRows, () => "a".repeat(64), [{ task: "first-review", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null,
       members: [{ memberId: "m1", position: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {} }] } as never]);
     const pool = renderToStaticMarkup(<RankDrawer editor={pooled} lines={pooled.lines.filter(line => line.task === "first-review")} title="1차" secondWaiting={null} onClose={() => {}} />);
-    expect(pool).toContain('href="/admin/models/tasks#mode-first-review-1"');
+    expect(pool).toContain('href="/admin/models#mode-first-review-1"');
     expect(pooled.lines.find(line => line.task === "first-review")?.lock).toContain("「작업 배정」의 실행 방식에서");
   });
 });

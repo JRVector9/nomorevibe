@@ -8,8 +8,8 @@ import { buildTaskRankEditor, type FlowRankEditor } from "@/lib/operations/flow-
 import { buildTaskAssignView, type TaskAssignInput, type TaskAssignRow } from "@/lib/operations/llm-task-assign-view";
 import { attachSaveForms, savedAssignment } from "@/lib/operations/model-attach";
 import { UNIFIED_MAIN_TASKS, unifiedTaskActualNote, unifiedTaskDuplicate, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
-  unifiedTaskNeedsAttention, unifiedTaskPoolOptions, unifiedTaskRows, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
-import { poolMemberIssues } from "@/lib/operations/task-pool-form";
+  unifiedTaskNeedsAttention, unifiedTaskPoolMembers, unifiedTaskPoolOptions, unifiedTaskRows, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
+import { poolMemberIssues, poolMembersInput } from "@/lib/operations/task-pool-form";
 import { GPU, LLM_NOW, llmConnections, llmJobs, llmObservation, llmRankRows, MLX, OPENCODE } from "./fixtures/llm-ops";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -18,6 +18,8 @@ vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTa
 
 import { UnifiedTaskSection } from "@/app/(operator)/admin/models/unified/tasks/UnifiedTaskSection";
 import { UnifiedTaskEditor } from "@/app/(operator)/admin/models/unified/tasks/UnifiedTaskEditor";
+import { UnifiedTaskEmptyPoolSlot } from "@/app/(operator)/admin/models/unified/tasks/UnifiedTaskEmptyPoolSlot";
+import { RankSelects } from "@/app/(operator)/admin/models/RankSelects";
 
 const revision = () => "a".repeat(64);
 const editorOf = (rows: readonly AiTaskRankRow[] = llmRankRows, executions: readonly AiTaskExecutionAdminView[] = []) => buildTaskRankEditor(llmConnections, rows, revision, executions);
@@ -81,6 +83,30 @@ describe("unified model task overview", () => {
     expect(unknownHtml).not.toContain("0건");
   });
 
+  it("shows a member-slot cap only for tasks whose runtime consumes those slots", () => {
+    const pool = (task: string, maxSlots: number | null): AiTaskExecutionAdminView => ({ ...pooled(task), reserveRanks: false,
+      members: [
+        { ...pooled().members[0], maxSlots },
+        { ...pooled().members[0], memberId: "11111111-0000-4000-8000-000000000002", position: 2,
+          connectionId: GPU, model: "qwen3.8-flash-next", maxSlots },
+      ] });
+    const capped = pool("product-tagline-ko", 1);
+    const classify = pool("publish-classify", null);
+    const render = (executions: readonly AiTaskExecutionAdminView[]) => renderToStaticMarkup(<UnifiedTaskSection
+      view={viewOf({ executions })} editor={editorOf(llmRankRows, executions)} devices={null} lockReason={null} poolHelp={null} />);
+    const taskRow = (html: string, task: string) => text(html.match(new RegExp(`<tr[^>]*data-task="${task}#1"[^]*?<\\/tr>`))![0]);
+
+    const html = render([capped, classify]);
+    expect(taskRow(html, "product-tagline-ko")).toContain("모델 2개 · 최대 2건");
+    expect(taskRow(html, "publish-classify")).toContain("모델 2개 · 장비 한도에 따름");
+
+    // Historical/preview metadata cannot enable caps that the classifier runtime does not consume.
+    const unsupportedMetadata = taskRow(render([pool("publish-classify", 1)]), "publish-classify");
+    expect(unsupportedMetadata).toContain("모델 2개 · 장비 한도에 따름");
+    expect(unsupportedMetadata).not.toContain("최대 2건");
+    expect(taskRow(render([pool("product-tagline-ko", null)]), "product-tagline-ko")).toContain("모델 2개 · 장비 한도에 따름");
+  });
+
   it("keeps one distinct overview annotation and leaves shared-voter and repeated status detail in the drawer", () => {
     const row = viewOf().rows[0];
     expect(unifiedTaskActualNote({ ...row, actual: { ...row.actual, note: "변경 전 설정의 호출 포함", warnings: [], failed: 0 },
@@ -107,6 +133,64 @@ describe("unified model task overview", () => {
 });
 
 describe("shared unified task editor", () => {
+  it("opts into visual empty cap cells without changing selected-row callbacks or default pickers", () => {
+    const choice = { provider: GPU, model: "qwen3.8-flash-next" };
+    const selected: (typeof choice)[] = [];
+    const render = (empty: boolean) => renderToStaticMarkup(<RankSelects stage={{ id: "empty-cap-contract", label: "작업", slots: 3 }} layout="rows"
+      selectionKind="pool" options={[{ ...choice, label: "선택 모델" }]} value={[choice, null, null]} connections={llmConnections}
+      onChange={() => undefined} slotNames={[1, 2, 3].map(index => ({ provider: `provider${index}`, model: `model${index}` }))}
+      validate={() => []} note={null} renderAfterSlot={row => { selected.push(row); return null; }}
+      renderAfterEmptySlot={empty ? index => <UnifiedTaskEmptyPoolSlot index={index} /> : undefined} />);
+    expect(render(false)).not.toContain("data-empty-pool-slot");
+    expect(selected).toEqual([choice]);
+    selected.length = 0;
+    const html = render(true);
+    expect(selected).toEqual([choice]);
+    const placeholders = html.match(/<input[^>]*data-empty-pool-slot="true"[^>]*>/g)!;
+    expect(placeholders).toHaveLength(2);
+    for (const input of placeholders) {
+      expect(input).toContain('disabled=""');
+      expect(input).toContain('value="1"');
+      expect(input).not.toMatch(/\bname=/);
+    }
+  });
+
+  it("shows empty caps only for supported pools, keeps the draft/save members unchanged and removes the default help control", () => {
+    const pool = pooled();
+    const editor = editorOf(llmRankRows, [pool]);
+    const line = lineOf(editor);
+    const html = renderToStaticMarkup(<UnifiedTaskEditor taskKey={line.key} editor={editor} devices={null} poolHelp={null} lockReason={null} onClose={() => undefined} />);
+    expect(html.match(/data-empty-pool-slot="true"/g)).toHaveLength(3);
+    expect(html).not.toContain("cs-help-trigger");
+    expect(html.match(/<div class="ut-mode-title">[^]*?<\/div>/)![0]).not.toContain("<button");
+    const before = savedAssignment(line);
+    expect(poolMembersInput(before.members, before.slots ?? [], pool.members, aiTaskPoolFeatures(line.task, line.slot))).toHaveLength(1);
+    expect(before.members).toHaveLength(1);
+    const classify = pooled("publish-classify");
+    const classifyEditor = editorOf(llmRankRows, [classify]);
+    const unsupported = renderToStaticMarkup(<UnifiedTaskEditor taskKey="publish-classify#1" editor={classifyEditor} devices={null} poolHelp={null} lockReason={null} onClose={() => undefined} />);
+    expect(unsupported).not.toContain("data-empty-pool-slot");
+    expect(unsupported).not.toContain("동시 칸 수");
+  });
+
+  it("starts a newly selected empty pool position at one real slot without replacing saved automatic or explicit caps", () => {
+    const before = { ...savedAssignment(lineOf(editorOf(llmRankRows, [pooled()]))), slots: ["", "3", "", ""] };
+    const second = { provider: GPU, model: "qwen3.8-flash-next" };
+    const members = [before.members[0], second, { provider: MLX, model: "gemma-4" }, null];
+    const existing = { ...before, members: [before.members[0], second, null, null] };
+    const next = unifiedTaskPoolMembers(existing, members, aiTaskPoolFeatures("first-review"));
+    expect(next.slots).toEqual(["", "3", "1", ""]);
+    const input = poolMembersInput(next.members, next.slots ?? [], [], aiTaskPoolFeatures("first-review"));
+    expect(input).toHaveLength(3);
+    expect(input[0]).not.toHaveProperty("maxSlots");
+    expect(input[1].maxSlots).toBe(3);
+    expect(input[2].maxSlots).toBe(1);
+    const replaced = unifiedTaskPoolMembers(existing, [second, before.members[0]], aiTaskPoolFeatures("first-review"));
+    expect(replaced.slots).toEqual(["", "3", "", ""]);
+    expect(unifiedTaskPoolMembers(existing, members, aiTaskPoolFeatures("publish-classify")).slots).toEqual(existing.slots);
+    expect(existing.slots).toEqual(["", "3", "", ""]);
+  });
+
   it("does not offer rank mutation for non-live or environment-locked tasks", () => {
     const editor = editorOf();
     for (const key of ["human-review#1", "product-embedding#1", "product-intro-check#1"]) {

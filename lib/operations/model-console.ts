@@ -104,7 +104,7 @@ export type ModelConsoleView = Readonly<{ rows: readonly ModelConsoleRow[]; erro
 const DAY_MS = 86_400_000;
 export const modelHref = (id: string) => `/admin/models?model=${encodeURIComponent(id)}`;
 export const MODEL_ADD_HREF = "/admin/models/new";
-export const modelTaskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
+export const modelTaskHref = (task: string, slot = 1) => `/admin/models#execution-${task}-${slot}`;
 /** 이 모델을 쓰는 단계 — 그 단계 패널의 모델 구역(운영 콘솔 2a, 순위·「동시에」를 그 자리에서 고친다). 패널이 없는 작업은 작업 배정의 그 줄 */
 export const modelStageHref = (task: string, slot = 1) => { const key = stagePanelKeyOfTask(task); return key ? stagePanelHref(key, "models") : modelTaskHref(task, slot); };
 export const modelCompareHref = (task: string, connectionId: string, model?: string | null) =>

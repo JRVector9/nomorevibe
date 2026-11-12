@@ -257,12 +257,12 @@ describe("console tasks — rules and their limits", () => {
     // 판정은 change-watch.ts judgeChange 가 한다 — 엔진은 그 결과(changeWatchTasks)를 다시 판정하지 않고 그대로 올린다
     const watched = { key: "change-watch:28853", verdict: "fell_back" as const, title: "1차 AI 검수 처리가 바꾼 뒤 다시 줄었습니다",
       fact: "1차 AI 검수 1순위를 supa로 · 07:10 · 시간당 17건 → 첫 1시간 86건 → 지금 3건", why: "바꾼 직후에는 늘었다가 지금은 바꾸기 전과 비슷하거나 낮습니다",
-      actions: [{ label: "되돌리러 가기", href: "/admin/models/tasks" }, { label: "기록 보기", href: "/admin/activity?target=first-review%231" }], notify: true };
+      actions: [{ label: "되돌리러 가기", href: "/admin/models#tasks" }, { label: "기록 보기", href: "/admin/activity?target=first-review%231" }], notify: true };
     expect(titles(buildConsoleTasks(quiet()))).toEqual([]);
     expect(titles(buildConsoleTasks(quiet({ changeWatch: [] })))).toEqual([]);
     expect(buildConsoleTasks(quiet({ changeWatch: [watched] })).groups[1].tasks[0]).toMatchObject({
       id: "odd:change-watch:28853", rule: "change-drop", tone: "warn", notify: true, title: watched.title, fact: watched.fact, why: watched.why,
-      actions: [{ kind: "link", label: "되돌리러 가기", href: "/admin/models/tasks" }, { kind: "link", label: "기록 보기", href: "/admin/activity?target=first-review%231" }] });
+      actions: [{ kind: "link", label: "되돌리러 가기", href: "/admin/models#tasks" }, { kind: "link", label: "기록 보기", href: "/admin/activity?target=first-review%231" }] });
     // 못 읽었으면 0건이 아니라 「셀 수 없음」
     expect(unknowns(buildConsoleTasks(quiet({ changeWatch: null })))).toEqual(["바꾼 뒤 처리량"]);
     expect(unknowns(buildConsoleTasks(quiet()))).toEqual([]);

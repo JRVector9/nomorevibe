@@ -36,7 +36,7 @@ describe('설정 화면의 바로 바꾸기 손잡이', () => {
     const html = renderToStaticMarkup(<TaskRanksPointer what="2차 투표 모델" />);
     expect(html).not.toMatch(/<form|name="|<select|<option/);
     expect(html).toContain('data-task-ranks-pointer="true"');
-    expect(html).toContain('href="/admin/models/tasks#tasks"');
+    expect(html).toContain('href="/admin/models#tasks"');
     expect(html).toContain('2차 투표 모델은(는)');
   });
 });

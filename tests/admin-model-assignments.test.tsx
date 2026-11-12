@@ -466,7 +466,7 @@ describe("설정 폼 — 배정 표 플래그가 켜졌을 때만 읽기 전용"
       const html = renderToStaticMarkup(createElement(SettingsForm, { settings, assignmentLocked }));
       expect(html, String(assignmentLocked)).not.toContain("배정 표로 옮겨짐");
       expect(html, String(assignmentLocked)).toContain('data-task-ranks-pointer="true"');
-      expect(html, String(assignmentLocked)).toContain('href="/admin/models/tasks#tasks"');
+      expect(html, String(assignmentLocked)).toContain('href="/admin/models#tasks"');
       expect(html, String(assignmentLocked)).not.toContain('id="firstReviewModel"');
       for (const name of ["firstReviewProvider", "firstReviewModel", "firstAdditionalProvider0", "firstAdditionalModel0", "firstAdditionalPresent", "voterProvider0",
         "voterModel0", "fallbackProvider0", "fallbackModel0"]) expect(html, `${assignmentLocked} ${name}`).not.toContain(`name="${name}"`);

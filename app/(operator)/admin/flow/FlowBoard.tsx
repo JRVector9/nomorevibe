@@ -96,7 +96,7 @@ export type FlowJobState = { paused: boolean; notBefore: string | null; version:
 export type FlowControls = { measuredAt?: string; jobs: Record<string, FlowJobState>; csrf: { token: string; expiresAt: number } | null };
 
 /** 모델 줄에서 /admin/models/tasks 로 — 순위를 바꾸는 길은 그 화면 하나뿐이다(이 화면은 읽기만 한다) */
-const TASKS_HREF = "/admin/models/tasks#tasks";
+const TASKS_HREF = "/admin/models#tasks";
 
 const STATE_TEXT: Record<TaskLlm["state"], string> = {
   ok: "최근 완료 · 설정 1순위", fallback: "최근 완료 · 대체 순위", other: "최근 완료 · 현재 설정과 다름", none: "모델 없음 — 멈춤", stuck: "쓸 수 있는 순위 없음 — 멈춤",

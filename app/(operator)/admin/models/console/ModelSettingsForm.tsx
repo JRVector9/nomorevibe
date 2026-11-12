@@ -2,6 +2,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { AI_TASK_GROUP_LABELS, AI_TASKS } from "@/lib/llm/ai-tasks";
+import { formatCount } from "@/lib/operations/console-tasks";
 import { connectionFormEntries, deviceRowFormEntries, MODEL_CONSOLE_LIMITS, modelSavePlan, modelSettingsOf, type ModelConsoleRow, type ModelDeviceState,
   type ModelSavePlan, type ModelSettings } from "@/lib/operations/model-console";
 import { saveAiConnectionAction } from "../tasks/actions";
@@ -9,6 +10,8 @@ import { saveDeviceRowAction } from "../devices/actions";
 
 type Draft = { name: string; machine: string; limit: string; maxTokens: string; reasoningReserve: string; keyValidDays: string; allowedTasks: string[];
   enabled: boolean; newKey: string };
+export type ModelSettingsConfirmationState = { pending: boolean } | null;
+export type ModelSettingsPreview = { before: { name: string; limit: number }; after: { name: string; limit: number }; taskCount: number | null };
 const draftOf = (settings: ModelSettings): Draft => ({ name: settings.name, machine: settings.machine, limit: String(settings.limit),
   maxTokens: settings.maxTokens === null ? "" : String(settings.maxTokens), reasoningReserve: settings.reasoningReserve === null ? "" : String(settings.reasoningReserve),
   keyValidDays: settings.keyValidDays === null ? "" : String(settings.keyValidDays), allowedTasks: [...settings.allowedTasks], enabled: settings.enabled, newKey: "" });
@@ -40,11 +43,14 @@ export function settingsFromDraft(draft: Draft, kind: "api" | "cli"): { settings
  * - 저장은 기존 서버 동작 둘을 차례로 부른다: 연결 저장(saveAiConnectionAction — 감사 ai-connection-save) → (한도가 장비에도 걸리면) 장비 한 줄 저장
  *   (saveDeviceRowAction — 같은 장비의 모델 한도 합 검증·감사). 새 쓰기 경로는 없다.
  */
-export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings = [], compact = false, advancedDetails, revealAdvanced = false }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
+export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings = [], compact = false, advancedDetails, revealAdvanced = false,
+  drawerConfirmation = false, onConfirmationChange, renderContent, taskCount }: { row: ModelConsoleRow; device: ModelDeviceState | null; secretBox: boolean; readOnly: boolean;
   /** 같은 장비를 쓰는 다른 모델(사용자가 정한 이름과 그 서버 이름들) — 저장 전 확인이 장비의 다른 모델 한도를 이름으로 적는다 */
   siblings?: readonly { name: string; models: readonly string[] }[];
   /** The unified drawer starts with the approved name/limit fields; existing controls remain in its expandable details. */
-  compact?: boolean; advancedDetails?: ReactNode; revealAdvanced?: boolean }) {
+  compact?: boolean; advancedDetails?: ReactNode; revealAdvanced?: boolean;
+  drawerConfirmation?: boolean; onConfirmationChange?: (state: ModelSettingsConfirmationState) => void;
+  renderContent?: (settings: ReactNode, confirmation: ReactNode | null) => ReactNode; taskCount?: number | null }) {
   const router = useRouter();
   const base = useMemo(() => draftOf(modelSettingsOf(row)), [row]);
   const [mode, setMode] = useState<"view" | "edit" | "confirm">(compact ? "edit" : "view");
@@ -53,6 +59,7 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings =
   const [advancedChoice, setAdvancedChoice] = useState<{ reveal: boolean; open: boolean } | null>(null);
   const advancedOpen = advancedChoice?.reveal === revealAdvanced ? advancedChoice.open : revealAdvanced;
   const [plan, setPlan] = useState<ModelSavePlan | null>(null);
+  const [preview, setPreview] = useState<ModelSettingsPreview | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [messages, setMessages] = useState<{ text: string; tone: "ok" | "warn" | "bad" }[]>([]);
   const [pending, start] = useTransition();
@@ -71,33 +78,46 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings =
     const made = modelSavePlan(row, device, parsed.settings, model => siblings.find(entry => entry.models.includes(model))?.name ?? null);
     if (!made.changed) { setIssues(["바뀐 값이 없습니다."]); return; }
     reviewedConnection.current = connection;
+    setPreview({ before: { name: row.name, limit: row.limit }, after: { name: parsed.settings.name, limit: parsed.settings.limit },
+      taskCount: taskCount === undefined ? row.stageCount : taskCount });
     setDraft(next); setPlan(made); setMode("confirm");
+    if (drawerConfirmation) onConfirmationChange?.({ pending: false });
   };
-  const cancel = () => { setDraft(null); setPlan(null); setIssues([]); setMode(compact ? "edit" : "view"); };
+  const cancel = () => {
+    setDraft(null); setPlan(null); setPreview(null); setIssues([]); setMode(compact ? "edit" : "view");
+    if (drawerConfirmation) onConfirmationChange?.(null);
+  };
   const apply = () => {
     if (readOnly || pending) return;
+    if (drawerConfirmation) onConfirmationChange?.({ pending: true });
     start(async () => {
-    const parsed = settingsFromDraft(draft, connection.kind);
-    if (!parsed.settings || !plan) return;
-    const out: { text: string; tone: "ok" | "warn" | "bad" }[] = [];
-    const form = new FormData();
-    for (const [name, value] of connectionFormEntries(reviewedConnection.current, { ...parsed.settings, newKey: draft.newKey.trim() || null })) form.append(name, value);
-    const saved = await saveAiConnectionAction(null, form);
-    if (!saved?.ok) {
-      setMessages((saved?.issues ?? ["저장 결과를 확인하지 못했습니다. 새로고침해 상태를 확인하세요."]).map(text => ({ text, tone: "bad" })));
-      return;
-    }
-    out.push({ text: saved.message ?? "저장했습니다.", tone: "ok" }, ...(saved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
-    if (plan.device) {
-      const deviceForm = new FormData();
-      for (const [name, value] of deviceRowFormEntries(plan.device)) deviceForm.append(name, value);
-      const deviceSaved = await saveDeviceRowAction(null, deviceForm);
-      if (deviceSaved?.ok) out.push({ text: `장비 ${row.machine}: ${deviceSaved.message ?? "저장했습니다."}`, tone: "ok" },
-        ...(deviceSaved.changes ?? []).map(text => ({ text, tone: "ok" as const })), ...(deviceSaved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
-      else out.push(...(deviceSaved?.issues ?? ["저장 결과를 확인하지 못했습니다."]).map(text => ({ text: `연결은 저장했지만 장비 한도는 저장하지 못했습니다: ${text}`, tone: "bad" as const })));
-    }
-    setMessages(out); setPlan(null); setDraft(null); setMode(compact ? "edit" : "view");
-    router.refresh();
+      let complete = false;
+      try {
+        const parsed = settingsFromDraft(draft, connection.kind);
+        if (!parsed.settings || !plan) return;
+        const out: { text: string; tone: "ok" | "warn" | "bad" }[] = [];
+        const form = new FormData();
+        for (const [name, value] of connectionFormEntries(reviewedConnection.current, { ...parsed.settings, newKey: draft.newKey.trim() || null })) form.append(name, value);
+        const saved = await saveAiConnectionAction(null, form);
+        if (!saved?.ok) {
+          setMessages((saved?.issues ?? ["저장 결과를 확인하지 못했습니다. 새로고침해 상태를 확인하세요."]).map(text => ({ text, tone: "bad" })));
+          return;
+        }
+        out.push({ text: saved.message ?? "저장했습니다.", tone: "ok" }, ...(saved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
+        if (plan.device) {
+          const deviceForm = new FormData();
+          for (const [name, value] of deviceRowFormEntries(plan.device)) deviceForm.append(name, value);
+          const deviceSaved = await saveDeviceRowAction(null, deviceForm);
+          if (deviceSaved?.ok) out.push({ text: `장비 ${row.machine}: ${deviceSaved.message ?? "저장했습니다."}`, tone: "ok" },
+            ...(deviceSaved.changes ?? []).map(text => ({ text, tone: "ok" as const })), ...(deviceSaved.warnings ?? []).map(text => ({ text, tone: "warn" as const })));
+          else out.push(...(deviceSaved?.issues ?? ["저장 결과를 확인하지 못했습니다."]).map(text => ({ text: `연결은 저장했지만 장비 한도는 저장하지 못했습니다: ${text}`, tone: "bad" as const })));
+        }
+        setMessages(out); setPlan(null); setPreview(null); setDraft(null); setMode(compact ? "edit" : "view");
+        complete = true;
+        router.refresh();
+      } finally {
+        if (drawerConfirmation) onConfirmationChange?.(complete ? null : { pending: false });
+      }
     });
   };
 
@@ -120,7 +140,11 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings =
     <p className="mc-hint">동시 한도는 이 칸 하나로 받아 연결 칸 수와, 장비에 모델별 한도가 있으면 그 줄 · 없으면 장비 한도에 함께 씁니다. 어긋나는 곳은 저장 전 확인에서 보입니다.</p>
   </>;
 
-  return <div className={compact ? "mc-form mc-compact-settings" : "mc-form"}
+  const feedback = <>
+    {issues.map(text => <p key={text} role="alert" className="mc-msg">{text}</p>)}
+    {messages.map(message => <p key={message.text} role={message.tone === "bad" ? "alert" : "status"} className="mc-msg" data-warn={message.tone === "warn" ? "true" : undefined}>{message.text}</p>)}
+  </>;
+  const settings = <div className={compact ? "mc-form mc-compact-settings" : "mc-form"}
     data-dirty={(compact ? mode === "confirm" || JSON.stringify(draft) !== JSON.stringify(base) : mode !== "view") ? "true" : undefined}>
     {mode === "edit" && <form className="mc-form" onSubmit={event => { event.preventDefault(); review(draft); }}>
       {compact ? <>
@@ -159,7 +183,7 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings =
         <button type="button" className="button small" onClick={cancel}>그만두기</button></div>
       </>}
     </form>}
-    {mode === "confirm" && plan && <SavePlanDialog title={`${row.name}${draft.enabled !== connection.enabled ? (draft.enabled ? "을(를) 다시 켭니다" : "을(를) 쉬게 합니다") : " 설정을 바꿉니다"}`}
+    {mode === "confirm" && plan && !drawerConfirmation && <SavePlanDialog title={`${row.name}${draft.enabled !== connection.enabled ? (draft.enabled ? "을(를) 다시 켭니다" : "을(를) 쉬게 합니다") : " 설정을 바꿉니다"}`}
       plan={plan} pending={pending} disabled={readOnly} onApply={apply} onCancel={cancel} />}
     {/* id — ⌘K 「쉬게 하기·다시 켜기」가 이 자리로 보낸다(조각 4b). 누르면 저장 전 확인이 열린다 */}
     {mode === "view" && !readOnly && <div id="model-actions" className="mc-acts" aria-label="조치">
@@ -170,8 +194,36 @@ export function ModelSettingsForm({ row, device, secretBox, readOnly, siblings =
       {api && <button type="button" className="button small" onClick={() => { setMessages([]); setMode("edit"); setTimeout(() => keyField.current?.focus(), 0); }}>키 바꾸기</button>}
     </div>}
     {mode === "view" && !readOnly && <p className="mc-hint">쉬게 하기는 모델을 지우지 않고 모든 단계에서 잠시 뺍니다. 순위는 그대로 남고, 다시 켜면 돌아옵니다.</p>}
-    {issues.map(text => <p key={text} role="alert" className="mc-msg">{text}</p>)}
-    {messages.map(message => <p key={message.text} role={message.tone === "bad" ? "alert" : "status"} className="mc-msg" data-warn={message.tone === "warn" ? "true" : undefined}>{message.text}</p>)}
+    {feedback}
+  </div>;
+  const confirmation = drawerConfirmation && mode === "confirm" && plan && preview
+    ? <CompactModelSavePlan plan={plan} preview={preview} pending={pending} disabled={readOnly} onApply={apply} onCancel={cancel}>{feedback}</CompactModelSavePlan> : null;
+  return renderContent ? renderContent(settings, confirmation) : confirmation ?? settings;
+}
+
+/** Same reviewed plan and actions, presented as the approved full-drawer before/after step. */
+export function CompactModelSavePlan({ plan, preview, pending, disabled, onApply, onCancel, children }: {
+  plan: ModelSavePlan; preview: ModelSettingsPreview; pending: boolean; disabled: boolean;
+  onApply?: () => void; onCancel?: () => void; children?: ReactNode;
+}) {
+  const additional = plan.lines.filter(line => line.key !== "name" && line.key !== "limit");
+  const routineImpacts = plan.impacts.filter(text => text.startsWith("이 모델을 쓰는 단계") || text.startsWith("같은 장비의 다른 모델 한도:"));
+  const criticalImpacts = plan.impacts.filter(text => !routineImpacts.includes(text));
+  return <div className="mc-settings-confirmation" role="group" aria-label="저장 전 확인" data-dirty="true">
+    <div className="mc-settings-preview"><div className="mc-preview-label">지금</div>{preview.before.name} · {formatCount(preview.before.limit)}칸</div>
+    <div className="mc-settings-preview mc-settings-after"><div className="mc-preview-label">변경 후</div>{preview.after.name} · {formatCount(preview.after.limit)}칸</div>
+    <p className="mc-settings-scope">{preview.taskCount === null ? "이 모델의 표시와 동시 한도에 적용합니다. 쓰는 작업 전체는 읽지 못했습니다."
+      : `이 모델을 쓰는 ${formatCount(preview.taskCount)}개 작업의 표시와 동시 한도에 적용합니다.`}</p>
+    {additional.length > 0 && <ul className="mc-diff">{additional.map(line => <li key={line.key}><span>{line.label}</span><span><s>{line.before}</s>{line.after}</span></li>)}</ul>}
+    {criticalImpacts.length > 0 && <ul className="mc-diff">{criticalImpacts.map(text => <li key={text}><span>영향</span><span>{text}</span></li>)}</ul>}
+    {plan.warnings.map(text => <p key={text} className="mc-msg" role="alert" data-warn="true">{text}</p>)}
+    {(plan.writes.length > 0 || routineImpacts.length > 0) && <details className="mc-settings-impact"><summary>영향 자세히</summary>
+      <div>{plan.writes.length > 0 && <ul className="mc-diff">{plan.writes.map(text => <li key={text}><span>함께 씀</span><span>{text}</span></li>)}</ul>}
+        {routineImpacts.length > 0 && <ul className="mc-diff">{routineImpacts.map(text => <li key={text}><span>영향</span><span>{text}</span></li>)}</ul>}</div>
+    </details>}
+    {children}
+    <div className="mc-settings-foot"><button type="button" className="button" disabled={pending} onClick={onCancel}>돌아가기</button>
+      <button type="button" className="button primary" disabled={pending || disabled} onClick={onApply}>{pending ? "저장 중…" : "바꾸기"}</button></div>
   </div>;
 }
 

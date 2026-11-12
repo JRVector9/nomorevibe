@@ -1,0 +1,4 @@
+.admin-prototype .admin-model-section-jumps{display:flex;align-items:center;gap:calc(18px / .8);margin-left:auto}
+.admin-prototype .tabs.admin-workspace-tabs .admin-model-section-jumps>a{min-height:0;padding:0;border:0;background:transparent;color:var(--muted);font-size:calc(11px + var(--admin-font-delta, 0px));font-weight:400;white-space:nowrap}
+.admin-prototype .tabs.admin-workspace-tabs .admin-model-section-jumps>a:hover{color:var(--ink);text-decoration:underline}
+@media(max-width:1050px){.admin-prototype .admin-model-section-jumps{display:none}}

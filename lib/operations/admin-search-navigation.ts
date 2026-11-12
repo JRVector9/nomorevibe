@@ -21,7 +21,7 @@ const PAGES: readonly Destination[] = [
   { id: "models", title: "모델 › 모델 목록", detail: "모델 상세 · 쉬게 하기 · 키 바꾸기 · 모델 추가", href: "/admin/models", keywords: "모델 목록 model 쉬게 키" },
   { id: "connections", title: "모델 › 고급 설정 › LLM 운영", detail: "API 서버·CLI 연결, 모델 목록과 연결 편집",
     href: "/admin/models/llm", keywords: "엔진 연결 모델 API CLI 서버 engine connection model llm운영" },
-  { id: "tasks", title: "모델 › 작업 배정", detail: "작업별 모델·순위·분산 실행 설정", href: "/admin/models/tasks", keywords: "모델 배정 순위 task rank" },
+  { id: "tasks", title: "모델 › 작업별 적용 현황", detail: "작업별 모델·순위·분산 실행 설정", href: "/admin/models#tasks", keywords: "모델 배정 순위 task rank" },
   { id: "devices", title: "모델 › 고급 설정 › 장비 한도", detail: "장비별 실행 한도", href: "/admin/models/devices", keywords: "장비 엔진 device capacity slots" },
   { id: "allocation", title: "모델 › 고급 설정 › 칸 배분", detail: "장비와 작업별 보장·상한", href: "/admin/models/allocation", keywords: "배분 할당 allocation quota" },
   { id: "contracts", title: "모델 › 고급 설정 › 서빙 계약·등록부", detail: "엔진 직접 계약과 CLI 계약", href: "/admin/models/contracts", keywords: "서빙 계약 engine contract" },
@@ -40,7 +40,7 @@ const compact = (value: string) => value.toLowerCase().replace(/\s+/g, "");
 export function searchAdminDestinations(term: string): AdminSearchDestination[] {
   const needle = compact(term);
   const tasks: Destination[] = AI_TASKS.map(task => ({ id: `task:${task.id}`, title: task.label,
-    detail: `모델 › 작업 배정 · ${task.id}`, href: `/admin/models/tasks#execution-${task.id}-1`,
+    detail: `모델 › 작업별 적용 현황 · ${task.id}`, href: `/admin/models#execution-${task.id}-1`,
     keywords: [task.id, task.routeId, task.description, ...task.jobs].join(" ") }));
   return [...PAGES, ...tasks].filter(item => compact(`${item.title} ${item.detail} ${item.keywords}`).includes(needle))
     .slice(0, 8).map(({ id, title, detail, href }) => ({ id, title, detail, href }));

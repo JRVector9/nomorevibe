@@ -78,8 +78,8 @@ function modelResponse(station: { llm: Station["llm"] } | undefined, steps: Resp
   }
   const needsRanks = llm.tasks.some((task) => task.state === "none" || task.state === "stuck")
     || llm.tasks.some((task) => task.state === "fallback" || task.state === "other");
-  if (needsRanks && !steps.some((step) => step.kind === "link" && step.href.startsWith("/admin/models/tasks"))) {
-    steps.unshift({ kind: "link", label: "작업 ↔ AI 모델에서 순위 고치기", href: "/admin/models/tasks#tasks", risk: "careful",
+  if (needsRanks && !steps.some((step) => step.kind === "link" && step.href.startsWith("/admin/models#"))) {
+    steps.unshift({ kind: "link", label: "작업 ↔ AI 모델에서 순위 고치기", href: "/admin/models#tasks", risk: "careful",
       why: "이 칸이 부르는 작업의 1·2·3순위를 정하는 화면입니다", undo: "「최근 기록」에 이전 순위가 남습니다 — 같은 화면에서 이전 값으로 다시 저장" });
   }
   if (llm.stopped.length && !steps.some((step) => step.kind === "link" && step.href.startsWith("/admin/activity"))) {
@@ -122,7 +122,7 @@ export function stationResponse(key: StationKey | "human", conveyor: Conveyor, d
     case "first": {
       checks.push("「작업 ↔ AI 모델」의 1차 AI 검수 1순위가 비어 있지 않은지(비면 1차가 no_task_models 로 0건)");
       checks.push("최근 바뀐 설정에 ai-task-models-save 가 있는지 — 있으면 그 시각과 1차가 0이 된 시각을 견줍니다");
-      steps.push({ kind: "link", label: "1차 모델 순위 확인·바꾸기", href: "/admin/models/tasks", risk: "careful", why: "1차를 부를 모델이 이 순위에서 정해집니다",
+      steps.push({ kind: "link", label: "1차 모델 순위 확인·바꾸기", href: "/admin/models#tasks", risk: "careful", why: "1차를 부를 모델이 이 순위에서 정해집니다",
         undo: "「최근 기록」에 이전 순위가 남습니다 — 같은 화면에서 이전 값으로 다시 저장" });
       steps.push({ kind: "link", label: "누가 언제 순위를 바꿨나", href: "/admin/activity?group=settings", risk: "read", why: "작업 로그의 설정·연결 갈래" });
       steps.push({ kind: "link", label: "1차 상세(운영센터)", href: "/admin/status#first-review-status", risk: "read", why: "1시간 실패 호출·모델별 결과" });
@@ -134,7 +134,7 @@ export function stationResponse(key: StationKey | "human", conveyor: Conveyor, d
       const total = splits.reduce((sum, hold) => sum + hold.count, 0);
       checks.push("2차 실행 설정과 실제 호출·결과 저장을 확인합니다 — 1차와 같은 모델도 쓸 수 있지만 별도 2차 결과가 필요합니다");
       checks.push("2차 진행은 잡 관측이 아니라 2차 표(second_reviews) 생성 수로 봅니다 — 이 칸 「처리량」의 숫자와 그래프가 그 수입니다");
-      steps.push({ kind: "link", label: "2차 실행 설정 확인·바꾸기", href: "/admin/models/tasks", risk: "careful",
+      steps.push({ kind: "link", label: "2차 실행 설정 확인·바꾸기", href: "/admin/models#tasks", risk: "careful",
         why: "2차가 사용할 모델과 실행 방식을 확인합니다", undo: "「최근 기록」의 이전 순위로 다시 저장" });
       if (total > 0) {
         steps.push({ kind: "link", label: `'2차 갈림' 보류 ${n(total)}건 보기`, href: "/admin/review?cause=second_review_split#review-list", risk: "read", why: "모델을 바꿔도 이미 보류된 건은 저절로 다시 돌지 않습니다" });
@@ -146,7 +146,7 @@ export function stationResponse(key: StationKey | "human", conveyor: Conveyor, d
     }
     case "profile":
       checks.push("분류 보류(1시간마다 재분류)와 소개 짓기 대기 — 소개 선이 0이면 text 워커·소개 모델 순위를 봅니다");
-      steps.push({ kind: "link", label: "소개 짓기 모델 순위", href: "/admin/models/tasks", risk: "careful", why: "소개 짓기(crawl-tagline)를 부를 모델", undo: "「최근 기록」의 이전 순위로 다시 저장" });
+      steps.push({ kind: "link", label: "소개 짓기 모델 순위", href: "/admin/models#tasks", risk: "careful", why: "소개 짓기(crawl-tagline)를 부를 모델", undo: "「최근 기록」의 이전 순위로 다시 저장" });
       steps.push({ kind: "link", label: "카테고리 기준", href: "/admin/categories", risk: "careful", why: "분류가 계속 비면 정의 문장을 봅니다", undo: "작업 로그의 이전 정의로 다시 저장" });
       steps.push({ kind: "link", label: "'소개 문구 없음' 보류", href: "/admin/review?cause=no_description#review-list", risk: "read", why: "사람이 소개를 보고 가릅니다" });
       steps.push(...jobSteps("profile", "소개 모델을 바꾸는 동안 잠시 멈춤"));

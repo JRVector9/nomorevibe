@@ -141,7 +141,7 @@ describe("작업 줄 — 실제로 읽는 칸만", () => {
       ["routes.limits.reason-translate.maxTokens", "응답 토큰 상한", "토큰", "6000"]]);
     expect(rowOf(view, "reason-translate").minCallPath).toBe("jobs.reason-translate.minCallMs");
     expect(rowOf(view, "second-review").details.map(field => field.path)).toEqual(["routes.limits.gateway-review.maxTokens"]);
-    expect(rowOf(view, "second-review").concurrency).toEqual({ kind: "text", text: "작업 배정에서 정함 (지금 소비자 동시 2)", href: "/admin/models/tasks#concurrency" });
+    expect(rowOf(view, "second-review").concurrency).toEqual({ kind: "text", text: "작업 배정에서 정함 (지금 소비자 동시 2)", href: "/admin/models#concurrency" });
     expect(rowOf(view, "human-review").concurrency).toEqual({ kind: "text", text: "장비 한도가 정함", href: "/admin/models/devices" });
     expect(rowOf(view, "reason-translate").models).toBe("1순위 m1-gemma");
     expect(rowOf(view, "product-tagline-ko").models).toBe("1순위 gpt-oss-120b · 2순위 k-exaone_v2.5");
@@ -328,7 +328,7 @@ describe("화면 — 머리·옮긴 칸·옛 닻", () => {
     expect(html).toContain('href="/admin/models/devices#unknown-hold"');
     expect(html).toContain('href="/admin/translations#limits"');
     expect(html).toContain('href="/admin/audit?tab=recheck"');
-    expect(html).toContain('href="/admin/models/tasks#concurrency"');
+    expect(html).toContain('href="/admin/models#concurrency"');
     expect(html).toContain("2차 심사 소비자 · 웹");
     expect(html).toContain("보고 안 함");
     // 경로 id 를 큰 이름으로 쓰지 않는다
