@@ -579,7 +579,7 @@
   color: var(--ink);
   box-shadow: -8px 0 36px #0000000a;
   overflow-y: auto;
-  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-size: calc(13px + var(--admin-font-delta, 0px));
   line-height: 1.6;
 }
 .admin-prototype .mc-drawer::backdrop {
@@ -601,6 +601,8 @@
 .admin-prototype .mc-drawer-head h2 {
   margin: calc(3px / .8) 0;
   font-size: calc(18px + var(--admin-font-delta, 0px));
+  font-weight: 700;
+  letter-spacing: -.25px;
   line-height: 1.6;
 }
 .admin-prototype .mc-eyebrow {
@@ -634,6 +636,10 @@
 }
 .admin-prototype .mc-detail [hidden] {
   display: none;
+}
+.admin-prototype .mc-drawer .mc-dl,
+.admin-prototype .mc-drawer .mc-form label {
+  font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .mc-drawer-stats {
   display: grid;
@@ -822,6 +828,8 @@
 }
 .admin-prototype .mc-settings-editor > h3 {
   margin-bottom: calc(12px / .8);
+  font-weight: 700;
+  letter-spacing: normal;
   line-height: 1.6;
 }
 .admin-prototype .mc-compact-settings > form {
