@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/tasks/assist-actions", () => ({ saveAssistControlAction: save.assist }));
 vi.mock("@/app/(operator)/admin/models/limits/actions", () => ({ saveRuntimeSettingsGroup: save.concurrency }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ applyAiTaskImportAction: save.apply, clearUnreadAiTaskRanksAction: save.clear }));
-import { UnifiedAssistDrawer, UnifiedConcurrencyDrawer, UnifiedOperationsControls } from "@/app/(operator)/admin/models/unified/UnifiedOperationsControls";
+import { UnifiedAssistDrawer, UnifiedConcurrencyDrawer, UnifiedOperationsControls, UnifiedRetiredRecord } from "@/app/(operator)/admin/models/unified/UnifiedOperationsControls";
 
 describe("통합 운영 설정의 기존 저장 계약", () => {
   it("보강 방식·보내기·반영의 의존 관계를 보존하고 기존 판으로 CAS폼을 보낸다", () => {
@@ -51,10 +51,31 @@ describe("통합 운영 설정의 기존 저장 계약", () => {
     expect(html).toContain("한꺼번에 맡는 후보 2건"); expect(html).toContain("한꺼번에 처리하는 묶음 1개");
     for (const action of Object.values(save)) expect(action).not.toHaveBeenCalled();
   });
+  it("동시 업무는 두 입력을 먼저 보이고 범위·기본값 복원·전문 설정은 닫힌 상세에 보존한다", () => {
+    const html = renderToStaticMarkup(<UnifiedConcurrencyDrawer control={buildModelUnifiedFixture().concurrency} readOnly={false} onClose={() => {}} />);
+    const [main, advanced] = html.split('<details class="mu-control-advanced">');
+    expect(main.match(/type="number"/g)).toHaveLength(2);
+    expect(main).toContain("발행 분류 동시 묶음 · 개"); expect(main).not.toContain("기본값으로"); expect(main).not.toContain("운영 범위");
+    expect(advanced).toContain("운영 범위 1~4 · 기본 2"); expect(advanced).toContain("기본값으로");
+    expect(advanced).toContain('href="/admin/models/limits"');
+    expect(html).not.toContain("<details open");
+  });
+  it("정리 대상은 작업 이름과 실제 미사용 기록 수를 먼저 보이고 삭제만 확인된 기존 액션에 연결한다", () => {
+    const data = buildModelUnifiedFixture();
+    const html = renderToStaticMarkup(<UnifiedRetiredRecord entry={data.retired[0]} readOnly />);
+    expect(html).toContain("<b>한국어 소개 번역 · 직접 경로</b><p>남은 순위 1개 · 실행에서 사용하지 않음</p>");
+    expect(html).toContain("읽기 전용 — 기록을 지울 수 없습니다.");
+    expect(renderToStaticMarkup(<UnifiedRetiredRecord entry={data.retired[0]} readOnly={false} />)).toContain("현재 동작에 쓰이는 순위는 지우지 않습니다.");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>이 기록 1개 지우기<\/button>/);
+    expect(html).not.toContain(">확인</button>");
+    expect(save.clear).not.toHaveBeenCalled();
+  });
   it("가져오기 deep link는 실제 계획을 서랍에서 보이고 계획 없음·읽기 실패·쓰기없음을 구분한다", () => {
     const data = buildModelUnifiedFixture();
     const planned = renderToStaticMarkup(<UnifiedOperationsControls data={data} readOnly openImport />);
     expect(planned).toContain('aria-labelledby="mu-import-title"'); expect(planned).toContain("가져올 항목 없음");
+    expect(planned).toContain("현재 사용할 작업의 배정이 이미 채워져 있습니다.");
+    expect(planned).toMatch(/<button[^>]*class="button small primary"[^>]*>확인<\/button>/);
     expect(planned).not.toContain("적용(쓰기"); expect(planned).toContain("읽기 전용 미리보기");
     const missing = renderToStaticMarkup(<UnifiedOperationsControls data={{ ...data, importPreview: null }} readOnly openImport />);
     expect(missing).toContain("계획을 아직 읽지 않았습니다"); expect(missing).not.toContain("가져올 항목 없음");

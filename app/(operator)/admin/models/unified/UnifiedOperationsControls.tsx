@@ -37,13 +37,14 @@ function Result({ state }: { state: AiTaskActionState }) {
     {state?.warnings?.map(message => <p role="note" className="mu-callout" key={message}>{message}</p>)}
     {state?.issues?.map(message => <p role="alert" className="mu-callout mu-warn" key={message}>{message}</p>)}</>;
 }
-function Footer({ children, note }: { children: ReactNode; note?: string }) {
-  return <div className="mu-editor-foot">{note && <p>{note}</p>}<div>{children}</div></div>;
+function Footer({ children, note, layout }: { children: ReactNode; note?: string; layout?: "left" | "split" }) {
+  return <div className={`mu-editor-foot${layout ? ` mu-editor-foot-${layout}` : ""}`}>{note && <p>{note}</p>}{layout ? children : <div>{children}</div>}</div>;
 }
 const button = "button small", primary = "button small primary";
-function Preview({ label, children, after = false }: { label: string; children: ReactNode; after?: boolean }) {
-  return <div className={`mu-preview-chain${after ? " mu-after" : ""}`}><small>{label}</small>{children}</div>;
+function Preview({ label, children, after = false }: { label?: string; children: ReactNode; after?: boolean }) {
+  return <div className={`mu-preview-chain${after ? " mu-after" : ""}`}>{label && <small>{label}</small>}{children}</div>;
 }
+const assistSwitches = (value: UnifiedAssistDraft) => `보내기 ${value.dispatchEnabled ? "켬" : "끔"} · 제품 반영 ${value.applyEnabled ? "켬" : "끔"}`;
 const assistText = (value: UnifiedAssistDraft) => `${unifiedAssistModeLabel(value.mode)} · 보내기 ${value.dispatchEnabled ? "켬" : "끔"} · 제품 반영 ${value.applyEnabled ? "켬" : "끔"}`;
 
 export function UnifiedAssistDrawer({ control, readOnly, onClose }: { control: AssistControlView; readOnly: boolean; onClose: () => void }) {
@@ -66,19 +67,22 @@ export function UnifiedAssistDrawer({ control, readOnly, onClose }: { control: A
         <label className="mu-switch-row">제품에 반영 <span>확인 후 반영일 때 사용</span><input type="checkbox" aria-label={`${snapshot.label} 제품에 반영`} checked={draft.applyEnabled}
           disabled={readOnly || draft.mode !== "confirm" || !draft.dispatchEnabled} onChange={event => update({ applyEnabled: event.target.checked })} /></label>
         {snapshot.confirmationRequired && <p className="mu-help">관리자 확인 필수(끌 수 없음){snapshot.task === "uptime" ? " — 옛 자동 내림이 보강 확인을 기다립니다." : "."}</p>}
-        <p className="mu-help">{snapshot.queue ? Object.entries(snapshot.queue).filter(([, count]) => count > 0).map(([state, count]) => `${state} ${count.toLocaleString("ko-KR")}건`).join(" · ") || "끝나지 않은 일 없음" : "끝나지 않은 일 수를 읽지 못했습니다."}</p>
-        <Footer note={readOnly ? "읽기 전용 미리보기 — 저장할 수 없습니다." : `현재 값: ${assistText(snapshot)}`}>
+        <Footer note={readOnly ? "읽기 전용 미리보기 — 저장할 수 없습니다." : `현재 값: 보내기 ${snapshot.dispatchEnabled ? "켬" : "끔"} · 반영 ${snapshot.applyEnabled ? "켬" : "끔"}`}>
           <button type="button" className={primary} disabled={readOnly || !changed} onClick={() => setStep("confirm")}>변경 확인</button></Footer>
       </> : !done && <>
-        <Preview label="지금">{assistText(snapshot)}</Preview><Preview label="변경 후" after>{assistText(draft)}</Preview>
+        <Preview label="지금">{assistSwitches(snapshot)}</Preview><Preview label="변경 후" after>{assistText(draft)}</Preview>
+        {draft.mode !== snapshot.mode && <p className="mu-scope-note">운영 방식: {unifiedAssistModeLabel(snapshot.mode)} → {unifiedAssistModeLabel(draft.mode)}</p>}
         {irrevocable && <p className="mu-callout mu-warn">「확인 후 반영」으로 저장하면 관리자 확인 필수가 켜지고 다시 끌 수 없습니다(DB 규칙).</p>}
-        <p className="mu-scope-note">이 일의 판이 바뀌면 진행 중이던 호출은 모델을 부르기 전에 멈춥니다. 모델 배정은 바뀌지 않습니다.</p>
       </>}
       <Result state={result.state} />
-      {done ? <Footer><button type="button" className={primary} onClick={onClose}>확인</button></Footer> : step === "confirm" && <Footer>
+      {done ? <Footer><button type="button" className={primary} onClick={onClose}>확인</button></Footer> : step === "confirm" && <Footer layout="left">
         <button type="button" className={button} disabled={result.pending} onClick={() => setStep("edit")}>돌아가기</button>
         <button type="button" className={primary} disabled={readOnly || result.pending || result.uncertain} onClick={() => result.save(unifiedAssistForm(snapshot, draft))}>{result.pending ? "저장 중…" : "저장"}</button>
       </Footer>}
+      {!done && <details className="mu-control-advanced"><summary>진행 중인 호출·모델 배정</summary>
+        <p>이 일의 판이 바뀌면 진행 중이던 호출은 모델을 부르기 전에 멈춥니다. 모델 배정은 바뀌지 않습니다.</p>
+        <p>{snapshot.queue ? Object.entries(snapshot.queue).filter(([, count]) => count > 0).map(([state, count]) => `${state} ${count.toLocaleString("ko-KR")}건`).join(" · ") || "끝나지 않은 일 없음" : "끝나지 않은 일 수를 읽지 못했습니다."}</p>
+      </details>}
     </div>
   </ModelDrawer>;
 }
@@ -91,33 +95,35 @@ export function UnifiedConcurrencyDrawer({ control, readOnly, onClose }: { contr
   const locked = readOnly || snapshot.revision === null, done = !!result.state?.ok;
   const changed = snapshot.fields.some(field => resets[field.path] || values[field.path] !== field.input);
   const valid = snapshot.fields.every(field => resets[field.path] || /^\d+$/.test(values[field.path]) && Number(values[field.path]) >= 1 && Number(values[field.path]) <= 4);
-  const after = (field: SettingsControlView["fields"][number]) => resets[field.path] ? `${field.defaultInput} (기본값)` : values[field.path];
+  const after = (field: SettingsControlView["fields"][number]) => resets[field.path] ? field.defaultInput : values[field.path];
   return <ModelDrawer title={done ? "동시 업무를 저장했습니다" : step === "confirm" ? "동시 업무를 바꿉니다" : "동시 업무·호출 한도"}
     eyebrow={step === "confirm" && !done ? "저장 전 확인" : "운영 설정"} titleId="mu-limits-title" onClose={() => { if (!result.pending) onClose(); }}>
     <div className="mu-control-drawer" data-dirty={changed && !done || undefined}>
       {!done && step === "edit" ? <>
         <p className="mu-drawer-lead">작업이 한꺼번에 맡는 업무 수입니다. 실제 모델 호출은 장비와 모델별 한도 안에서 실행됩니다.</p>
-        <div className="mu-split-fields">{snapshot.fields.map(field => <label className="mu-field" key={field.path}><span>{field.label} · {field.path.includes("second-review") ? "건" : "개"}</span>
+        <div className="mu-split-fields">{snapshot.fields.map(field => <label className="mu-field" key={field.path}><span>{field.path.includes("classifierConcurrency") ? "발행 분류 동시 묶음" : field.label} · {field.path.includes("second-review") ? "건" : "개"}</span>
           <input type="number" min={1} max={4} aria-label={field.label} value={values[field.path]} disabled={locked || !!resets[field.path]}
-            onChange={event => setValues(value => ({ ...value, [field.path]: event.target.value }))} />
-          <small>운영 범위 1~4 · 기본 {field.defaultInput}</small>
-          {field.overridden && <span className="mu-reset"><input type="checkbox" aria-label={`${field.label} 기본값으로`} checked={!!resets[field.path]} disabled={locked}
-            onChange={event => setResets(value => ({ ...value, [field.path]: event.target.checked }))} />기본값으로</span>}</label>)}</div>
+            onChange={event => setValues(value => ({ ...value, [field.path]: event.target.value }))} /></label>)}</div>
         <div className="mu-callout">개별 분산 모델의 칸 수와 예비 순위는 해당 작업의 배정 상세에서 관리합니다.</div>
-        <Link prefetch={false} href="/admin/models/limits" className="mu-control-link">작업별 호출 상한·틱 시간 보기 →</Link>
         {snapshot.rowError && <p role="alert" className="mu-callout mu-warn">설정 행을 읽지 못했습니다({snapshot.rowError}). 표시된 기본값을 저장할 수 없습니다.</p>}
         <Footer note={locked ? "읽기 전용 — 저장할 수 없습니다." : "진행 중인 호출은 유지합니다."}><button type="button" className={primary}
           disabled={locked || !changed || !valid} onClick={() => setStep("confirm")}>변경 확인</button></Footer>
       </> : !done && <>
-        <Preview label="지금">{snapshot.fields.map(field => <div key={field.path}>{field.label}: {field.input}</div>)}</Preview>
-        <Preview label="변경 후" after>{snapshot.fields.map(field => <div key={field.path}>{field.label}: {after(field)}</div>)}</Preview>
-        <p className="mu-scope-note">작업이 맡는 업무 수만 바뀝니다. 장비·모델별 동시 한도는 그대로 적용됩니다. 각 워커는 30초 안에 다음 틱부터 씁니다.</p>
+        <Preview after>{snapshot.fields.map(field => <div key={field.path}>{field.path.includes("second-review") ? `2차 심사: ${after(field)}건` : field.path.includes("classifierConcurrency") ? `발행 분류: ${after(field)}개 묶음` : `${field.label}: ${after(field)}`}{resets[field.path] ? " (기본값)" : ""}</div>)}</Preview>
+        <p className="mu-scope-note">작업이 맡는 업무 수만 바뀝니다. 장비·모델별 동시 한도는 그대로 적용됩니다.</p>
       </>}
       <Result state={result.state} />
-      {done ? <Footer><button type="button" className={primary} onClick={onClose}>확인</button></Footer> : step === "confirm" && <Footer>
+      {done ? <Footer><button type="button" className={primary} onClick={onClose}>확인</button></Footer> : step === "confirm" && <Footer layout="split">
         <button type="button" className={button} disabled={result.pending} onClick={() => setStep("edit")}>돌아가기</button>
         <button type="button" className={primary} disabled={locked || result.pending || result.uncertain} onClick={() => result.save(unifiedConcurrencyForm(snapshot, values, resets))}>{result.pending ? "저장 중…" : "저장"}</button>
       </Footer>}
+      {!done && <details className="mu-control-advanced"><summary>{step === "edit" ? "범위·기본값·호출 설정" : "변경 전 값·적용 시점"}</summary>
+        {snapshot.fields.map(field => <div className="mu-control-setting" key={field.path}><span>{field.label} · 현재 {field.input} · 운영 범위 1~4 · 기본 {field.defaultInput}</span>
+          {step === "edit" && field.overridden && <label className="mu-reset"><input type="checkbox" aria-label={`${field.label} 기본값으로`} checked={!!resets[field.path]} disabled={locked}
+            onChange={event => setResets(value => ({ ...value, [field.path]: event.target.checked }))} />기본값으로</label>}</div>)}
+        <p>각 워커는 30초 안에 다음 틱부터 씁니다.</p>
+        <Link prefetch={false} href="/admin/models/limits" className="mu-control-link">작업별 호출 상한·틱 시간 보기 →</Link>
+      </details>}
     </div>
   </ModelDrawer>;
 }
@@ -137,7 +143,7 @@ function ImportDrawer({ preview, readOnly, onClose }: { preview: Data["importPre
       {!snapshot && <div className="mu-callout">가져오기 계획을 아직 읽지 않았습니다. <Link prefetch={false} href="/admin/models?import=plan#import">계획 읽기 →</Link><p>저장하지 않고 현재 설정과 필요한 서버 모델 목록만 읽습니다.</p></div>}
       {snapshot?.error && <p role="alert" className="mu-callout mu-warn">계획을 만들지 못했습니다: {snapshot.error} <Link prefetch={false} href="/admin/models?import=plan#import">계획 다시 읽기 →</Link></p>}
       {plan && <>
-        <div className="mu-callout"><b>{writes ? `가져올 항목 ${writes}개` : "가져올 항목 없음"}</b><p>{writes ? "계획의 대상과 경고를 확인한 뒤 적용하세요." : "옮길 연결이나 빈 작업 순위가 없습니다."}</p></div>
+        <div className="mu-callout"><b>{writes ? `가져올 항목 ${writes}개` : "가져올 항목 없음"}</b><p>{writes ? "계획의 대상과 경고를 확인한 뒤 적용하세요." : "현재 사용할 작업의 배정이 이미 채워져 있습니다."}</p></div>
         {plan.connections.map(row => <div className="mu-manage-row" key={row.key}><span>{row.label}<small>{row.kind === "api" ? row.baseUrl : row.cliTool} · {row.deviceId} {row.capacitySlots}칸</small>
           {row.keyFrom && <small>계약 {row.keyFrom.routeId}의 저장 키를 옮깁니다.</small>}{row.keyEnv && <small>환경변수 {row.keyEnv}의 키를 옮깁니다.</small>}</span>
           <span className="mu-pill">{row.action === "create" ? "연결 만들기" : row.action === "update" ? "모델 이름 더하기" : "유지"}</span></div>)}
@@ -156,17 +162,17 @@ function ImportDrawer({ preview, readOnly, onClose }: { preview: Data["importPre
       <Result state={result.state} /><Footer note={readOnly ? "읽기 전용 미리보기 — 가져오기를 적용할 수 없습니다." : "가져오기 계획을 확인한 뒤 적용합니다."}>
         {writes > 0 && !result.state?.ok && <button type="button" className={primary} disabled={readOnly || result.pending || result.uncertain || confirm !== AI_TASK_IMPORT_CONFIRM || !snapshot?.hash}
           onClick={apply}>{result.pending ? "적용 중…" : `적용(쓰기 ${writes}건)`}</button>}
-        <button type="button" className={button} disabled={result.pending} onClick={onClose}>확인</button>
+        <button type="button" className={writes > 0 && !result.state?.ok ? button : primary} disabled={result.pending} onClick={onClose}>확인</button>
       </Footer></div>
   </ModelDrawer>;
 }
 
-function RetiredRecord({ entry, readOnly }: { entry: Data["retired"][number]; readOnly: boolean }) {
+export function UnifiedRetiredRecord({ entry, readOnly }: { entry: Data["retired"][number]; readOnly: boolean }) {
   const result = useControlSave(clearUnreadAiTaskRanksAction, readOnly);
   const clear = () => { const form = new FormData(); form.set("task", entry.task); form.set("slot", String(entry.slot)); form.set("revision", entry.revision); result.save(form); };
-  return <section className="mu-retired-record" id={`execution-${entry.task}-${entry.slot}`}><Preview label="실행에서 사용하지 않음"><b>{entry.label}</b><p>남은 순위 {entry.count}개</p></Preview>
-    <Result state={result.state} />{!result.state?.ok && <button type="button" className={button} disabled={readOnly || result.pending || result.uncertain} onClick={clear}
-      aria-label={`${entry.label} 옛 순위 기록 ${entry.count}개 지우기`}>{result.pending ? "지우는 중…" : `이 기록 ${entry.count}개 지우기`}</button>}</section>;
+  return <section className="mu-retired-record" id={`execution-${entry.task}-${entry.slot}`}><Preview><b>{entry.label}</b><p>남은 순위 {entry.count}개 · 실행에서 사용하지 않음</p></Preview>
+    <Result state={result.state} />{!result.state?.ok && <Footer note={readOnly ? "읽기 전용 — 기록을 지울 수 없습니다." : "현재 동작에 쓰이는 순위는 지우지 않습니다."}><button type="button" className={button} disabled={readOnly || result.pending || result.uncertain} onClick={clear}
+      aria-label={`${entry.label} 옛 순위 기록 ${entry.count}개 지우기`}>{result.pending ? "지우는 중…" : `이 기록 ${entry.count}개 지우기`}</button></Footer>}</section>;
 }
 
 export function UnifiedOperationsControls({ data, readOnly, openImport = false }: { data: Data; readOnly: boolean; openImport?: boolean }) {
@@ -213,8 +219,7 @@ export function UnifiedOperationsControls({ data, readOnly, openImport = false }
     {panel?.kind === "cleanup" && <ModelDrawer title={retired.length ? "쓰지 않는 순위 기록 정리" : "옛 순위 기록"} eyebrow="옛 설정 정리" titleId="mu-cleanup-title" onClose={close}>
       <div className="mu-control-drawer"><p className="mu-drawer-lead">없앤 작업의 기록입니다. 현재 모델 호출과 배정에는 쓰이지 않습니다.</p>
         {!retiredReadable ? <p role="alert" className="mu-callout mu-warn">옛 순위 기록을 읽지 못했습니다. 현재 기록을 확인할 때까지 정리할 수 없습니다.</p>
-          : retired.length ? retired.map(entry => <RetiredRecord key={`${entry.task}#${entry.slot}#${entry.revision}`} entry={entry} readOnly={readOnly} />) : <div className="mu-callout">정리할 기록이 없습니다.</div>}
-        <Footer note={readOnly ? "읽기 전용 — 기록을 지울 수 없습니다." : "현재 동작에 쓰이는 순위는 지우지 않습니다."}><button type="button" className={button} onClick={close}>확인</button></Footer>
+          : retired.length ? retired.map(entry => <UnifiedRetiredRecord key={`${entry.task}#${entry.slot}#${entry.revision}`} entry={entry} readOnly={readOnly} />) : <div className="mu-callout">정리할 기록이 없습니다.</div>}
       </div></ModelDrawer>}
   </>;
 }
