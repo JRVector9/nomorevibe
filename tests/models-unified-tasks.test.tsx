@@ -81,6 +81,30 @@ describe("unified model task overview", () => {
     expect(unknownHtml).not.toContain("0건");
   });
 
+  it("shows a member-slot cap only for tasks whose runtime consumes those slots", () => {
+    const pool = (task: string, maxSlots: number | null): AiTaskExecutionAdminView => ({ ...pooled(task), reserveRanks: false,
+      members: [
+        { ...pooled().members[0], maxSlots },
+        { ...pooled().members[0], memberId: "11111111-0000-4000-8000-000000000002", position: 2,
+          connectionId: GPU, model: "qwen3.8-flash-next", maxSlots },
+      ] });
+    const capped = pool("product-tagline-ko", 1);
+    const classify = pool("publish-classify", null);
+    const render = (executions: readonly AiTaskExecutionAdminView[]) => renderToStaticMarkup(<UnifiedTaskSection
+      view={viewOf({ executions })} editor={editorOf(llmRankRows, executions)} devices={null} lockReason={null} poolHelp={null} />);
+    const taskRow = (html: string, task: string) => text(html.match(new RegExp(`<tr[^>]*data-task="${task}#1"[^]*?<\\/tr>`))![0]);
+
+    const html = render([capped, classify]);
+    expect(taskRow(html, "product-tagline-ko")).toContain("모델 2개 · 최대 2건");
+    expect(taskRow(html, "publish-classify")).toContain("모델 2개 · 장비 한도에 따름");
+
+    // Historical/preview metadata cannot enable caps that the classifier runtime does not consume.
+    const unsupportedMetadata = taskRow(render([pool("publish-classify", 1)]), "publish-classify");
+    expect(unsupportedMetadata).toContain("모델 2개 · 장비 한도에 따름");
+    expect(unsupportedMetadata).not.toContain("최대 2건");
+    expect(taskRow(render([pool("product-tagline-ko", null)]), "product-tagline-ko")).toContain("모델 2개 · 장비 한도에 따름");
+  });
+
   it("keeps one distinct overview annotation and leaves shared-voter and repeated status detail in the drawer", () => {
     const row = viewOf().rows[0];
     expect(unifiedTaskActualNote({ ...row, actual: { ...row.actual, note: "변경 전 설정의 호출 포함", warnings: [], failed: 0 },
