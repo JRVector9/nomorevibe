@@ -18,7 +18,9 @@ vi.mock('@/lib/crawl/settings', () => ({ getSettings: mocks.settings }));
 vi.mock('@/lib/crawl/agent-review-repository', () => ({ chooseFirstReviewForCandidate: mocks.choose, loadFirstReviewConsumerContext: mocks.load,
   claimConsumerItemAgentReview: mocks.claim, observeAgentReviewItemDispatch: mocks.observe,
   renewAgentReviewItemOwnership: mocks.renew, recordAgentReview: mocks.record,
-  recordConsumerSuspectedSpam: mocks.spam, reviewCandidatePredicate: mocks.predicate }));
+  recordConsumerSuspectedSpam: mocks.spam, reviewCandidatePredicate: mocks.predicate,
+  // 쪽 쿼리의 「심사한 적 있음」 식 — 가짜 db 는 식을 실행하지 않으니 표시만 돌려준다
+  firstReviewSeenSql: () => ({ kind: 'first-review-seen' }) }));
 vi.mock('@/lib/crawl/agent-review-preparation', () => ({ prepareAgentReview: mocks.prepare }));
 vi.mock('@/lib/crawl/agent-review', () => ({ firstReviewer: () => ({ provider: 'abcllm', model: 'same-model' }) }));
 // 「작업 ↔ 모델」 순위 스냅숏(PR C1, 예전 3b-E 배정 표): 소비자 쪽마다 순위를 새로 받는 길목만 가짜다(고르기는 위 chooseFirstReviewForCandidate 가짜가 받는다).
