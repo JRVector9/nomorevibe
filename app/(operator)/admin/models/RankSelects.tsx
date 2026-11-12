@@ -80,7 +80,10 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
         // 고른 선택지는 이름만(관측은 상자 밑 줄), 나머지는 「이름 — 관측」 — 목록을 열면 다른 모델의 여유를 견줄 수 있다
         const item = (option: (typeof options)[number]) => {
           const off = !!blocked?.(option, index, slots);
-          const name = option.group !== undefined ? option.text ?? option.model : `${option.label}${!showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`;
+          // 연결을 아는 선택지(presentPickerOptions)는 모델 이름 하나 그대로 — 제공자 id 를 덧붙이지 않는다
+          const known = connections.some(connection => connection.id === option.provider);
+          const name = option.group !== undefined ? option.text ?? option.model
+            : `${option.label}${known || !showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`;
           const status = [rankOptionKey(option) === key ? "" : activityText(option), off ? "이 투표자/모델 조건에서 선택 불가" : ""].filter(Boolean).join(" · ");
           return <option key={rankOptionKey(option)} value={rankOptionKey(option)} disabled={off}>{status ? `${name} — ${status}` : name}</option>;
         };

@@ -9,6 +9,7 @@ import { aiModelChoiceName, aiRankReasoningEfforts, type AiConnectionView, type 
 import { poolMemberIssues, poolMembersInput, poolSlotTexts } from "@/lib/operations/task-pool-form";
 import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
 import { PoolHelpTip } from "./PoolHelp";
+import { modelPickerOptionName } from "../model-picker-display";
 import { RankSelects } from "../RankSelects";
 import type { AiTaskActionState } from "./actions";
 import { saveTaskExecutionAction } from "./execution-actions";
@@ -78,10 +79,12 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
     || reserveOn !== (features.reserve && view.reserveRanks));
   const lanes = aiTaskPoolCappedLanes({ task: view.task, slot: view.slot, mode: "workload_pool", members });
   const issuesOf = (values: readonly (AiRankChoice | null)[]) => poolMemberIssues(values, slots, connections, { apiOnly, features });
-  const nameOf = (choice: AiRankChoice) => { const connection = connections.find(row => row.id === choice.provider); return connection ? aiModelChoiceName(connection, choice.model) : "지워진 연결"; };
+  // 고르는 상자와 같은 이름 하나(modelPickerOptionName — 별칭은 한 이름)
+  const nameOf = (choice: AiRankChoice) => { const connection = connections.find(row => row.id === choice.provider); return connection ? modelPickerOptionName(connection, choice.model) : "지워진 연결"; };
   const issues = mode === "workload_pool" ? issuesOf(value) : [];
   // 「동시에」 도움말 — 지금 고른 모델·칸 수로 다시 센다(권장 칸 수 · 같은 모델 두 줄 · 장비 한도 넘김)
-  const poolHelp = buildPoolHelp({ task: view.task, slot: view.slot, taskLabel: label, members: mode === "workload_pool" ? value : [], slots, connections, context: help });
+  const poolHelp = buildPoolHelp({ task: view.task, slot: view.slot, taskLabel: label, members: mode === "workload_pool" ? value : [], slots, connections, context: help,
+    nameOf: modelPickerOptionName });
   // Keep a missing saved choice visible until the operator explicitly changes it.
   const choices = options.filter(option => !apiOnly || connections.some(connection => connection.id === option.provider && (connection.kind === "api" || connection.cliTool === "opencode")));
   for (const member of view.members) if (!choices.some(option => option.provider === member.connectionId && option.model === member.model)) {
@@ -129,7 +132,7 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
           {taskPoolRuntimeGroups(view, currentRuntime).map(group => {
             const member = group.members[0];
             const connection = connections.find(row => row.id === member.connectionId);
-            return <p key={group.key}>{group.members.map(row => `모델 ${row.position}`).join("·")} · {connection ? aiModelChoiceName(connection, member.model) : "연결 없음"}
+            return <p key={group.key}>{group.members.map(row => `모델 ${row.position}`).join("·")} · {connection ? modelPickerOptionName(connection, member.model) : "연결 없음"}
               {group.served === null ? " · 사용 집계 없음" : ` · ${group.shared ? "동일 모델 공유 업무" : "맡은 업무"} ${group.served}건`}
               {group.unusable > 0 && <span> · 사용 불가 {group.unusable}건</span>}</p>;
           })}

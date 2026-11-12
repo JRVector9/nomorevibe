@@ -429,7 +429,8 @@ export function assignmentPreview(input: { task: string; slot: number; before: A
   const modeChanged = before.mode !== after.mode;
   const reserveChanged = after.mode === "workload_pool" && features.reserve && reserveOf(before) !== reserveOf(after);
   const membersChanged = after.mode === "workload_pool" && (!sameRows(before.members, after.members) || !sameSlots(before, after));
-  const ranksChanged = after.mode === "fallback" && before.mode === "fallback" && !sameRows(before.ranks, after.ranks);
+  // 순위대로로 돌아가면서 순위도 바꾸면(모델 상세의 바로 붙이기) 그 순위도 저장한다 — 단계 패널은 돌아갈 때 순위를 그대로 두므로 전과 같다
+  const ranksChanged = after.mode === "fallback" && !sameRows(before.ranks, after.ranks);
   const rows: AssignmentPreview["rows"] = [];
   const saves: AssignmentPreview["saves"] = [];
   if (modeChanged) rows.push({ label: "방식", before: MODE_LABELS[before.mode], after: MODE_LABELS[after.mode] });
@@ -438,8 +439,8 @@ export function assignmentPreview(input: { task: string; slot: number; before: A
     rows.push({ label: "함께 쓰는 모델", before: before.mode === "workload_pool" ? together(before) : "없음", after: together(after) });
   if (reserveChanged || (modeChanged && after.mode === "workload_pool" && features.reserve))
     rows.push({ label: "예비", before: reserveOf(before) ? "순위(1·2·3)로 이어 처리" : "없음", after: reserveOf(after) ? "순위(1·2·3)로 이어 처리" : "없음" });
-  if (modeChanged && after.mode === "fallback") rows.push({ label: "순위", before: "쓰지 않음(보관)", after: chain(after.ranks) });
-  if (ranksChanged) rows.push({ label: "순위", before: chain(before.ranks), after: chain(after.ranks) });
+  if (modeChanged && after.mode === "fallback") rows.push({ label: "순위", before: ranksChanged ? `쓰지 않음(보관: ${chain(before.ranks)})` : "쓰지 않음(보관)", after: chain(after.ranks) });
+  else if (ranksChanged) rows.push({ label: "순위", before: chain(before.ranks), after: chain(after.ranks) });
   if (modeChanged || membersChanged || reserveChanged) saves.push("execution");
   if (ranksChanged) saves.push("ranks");
 

@@ -42,15 +42,16 @@ it("presents known M1 as Gemma only and collapses proven Supa aliases without to
   expect(m1.models?.map(row => row.id)).toEqual([GEMMA, "auto"]);
   expect(supa.models?.map(row => row.id)).toEqual(["supa", SUPA]);
 });
-it("renders one canonical Supa option for a selected legacy alias while preserving the exact hidden form binding", () => {
+it("renders one Supa option named like the model list for a selected legacy alias while preserving the exact hidden form binding", () => {
   const selected = { provider: supa.id, model: "supa" };
   const html = renderToStaticMarkup(<RankSelects stage={{ id: "test", label: "검수", slots: 1 }} options={options} connections={connections}
     value={[selected]} onChange={() => {}} slotNames={AI_RANK_SLOT_NAMES} showProvider={false} validate={() => []} />);
-  expect(html).toContain('label="m1-gemma · API"');
+  // 2026-11-12 소유자 「모델 목록의 이름이 바로 떠야」 — 연결 묶음 머리(optgroup) 없이 모델 이름 하나씩
+  expect(html).not.toContain("<optgroup");
   expect(html).not.toContain("m1-qwen");
   expect(html).not.toContain('>auto</option>');
   // 고른 선택지는 이름만 — 관측은 상자 밑 줄(data-model-activity)
-  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">${SUPA}</option>`);
+  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">supa-direct</option>`);
   expect(html).not.toContain(`value="${rankOptionKey({ provider: supa.id, model: SUPA })}"`);
   expect(html).toContain('name="rank1Model" value="supa"');
   expect(modelPickerChoiceKey(selected, connections)).toBe(modelPickerChoiceKey({ provider: supa.id, model: SUPA }, connections));
@@ -65,14 +66,15 @@ it("renders the same curated picker inside the flow drawer and keeps stored mode
   // 장비 id 는 연결 상태 표의 title 에만 남는다
   expect(html.replace(/title="[^"]*"/g, "")).not.toContain("m1-qwen");
   expect(html).not.toContain('>auto</option>');
-  expect(html).toContain(SUPA);
+  // 「지금」 줄도 모델 목록의 이름 — 서버 모델 이름(Gemma 4 26B · Inferact…)을 붙이지 않는다
+  expect(html).toContain("1순위 m1-gemma\n2순위 supa-direct");
   expect(html).toContain('name="rank2Model" value="supa"');
   expect(editor.connections[0].label).toBe("m1-gemma");
   expect(editor.connections[0].deviceId).toBe("m1-qwen");
   expect(editor.lines.find(row => row.task === "first-review")?.saved[1].model).toBe("supa");
 });
 
-it("2026-11-08: M1 의 새 목록 이름 m1-gemma 도 Gemma 4 26B 한 줄 — 옛 이름으로 저장된 순위는 폼 값 그대로, 새로 고르면 지금 목록 이름", () => {
+it("2026-11-08: M1 의 새 목록 이름 m1-gemma 도 한 줄(2026-11-12 이름은 모델 목록의 「m1-gemma」) — 옛 이름으로 저장된 순위는 폼 값 그대로, 새로 고르면 지금 목록 이름", () => {
   const renamed = { ...make(m1.id, "m1-qwen", "https://m1-studio.tail02799e.ts.net/v1", ["m1-gemma"]), label: "m1-gemma" };
   expect(modelPickerModelLabel(renamed, "m1-gemma")).toBe("Gemma 4 26B");
   expect(modelPickerModelLabel(renamed, GEMMA)).toBe("Gemma 4 26B");
@@ -80,8 +82,8 @@ it("2026-11-08: M1 의 새 목록 이름 m1-gemma 도 Gemma 4 26B 한 줄 — �
   const task = aiTask("product-translate")!;
   const offered = aiTaskRankOptions(task, [renamed], [{ connectionId: renamed.id, model: GEMMA }]);
   expect(offered.map(row => row.model)).toEqual(["m1-gemma", GEMMA]);
-  expect(presentPickerOptions(offered, [renamed], null).map(row => [row.model, row.text])).toEqual([["m1-gemma", "Gemma 4 26B"]]);
-  expect(presentPickerOptions(offered, [renamed], { provider: renamed.id, model: GEMMA }).map(row => [row.model, row.text])).toEqual([[GEMMA, "Gemma 4 26B"]]);
+  expect(presentPickerOptions(offered, [renamed], null).map(row => [row.model, row.text])).toEqual([["m1-gemma", "m1-gemma"]]);
+  expect(presentPickerOptions(offered, [renamed], { provider: renamed.id, model: GEMMA }).map(row => [row.model, row.text])).toEqual([[GEMMA, "m1-gemma"]]);
   expect(modelPickerChoiceKey({ provider: renamed.id, model: "m1-gemma" }, [renamed])).toBe(modelPickerChoiceKey({ provider: renamed.id, model: GEMMA }, [renamed]));
 });
 it("2026-11-08: 같은 모델의 별칭만 한 줄로 묶는다 — Supa 두 이름·M1 Gemma 두 이름, 다른 연결의 다른 모델은 그대로", () => {
@@ -111,9 +113,9 @@ it("2026-11-08: 고른 선택지는 이름만, 관측은 상자 밑 조각 — �
   const selected = { provider: supa.id, model: "supa" };
   const html = renderToStaticMarkup(<RankSelects stage={{ id: "test", label: "검수", slots: 1 }} options={options} connections={connections}
     value={[selected]} onChange={() => {}} slotNames={AI_RANK_SLOT_NAMES} showProvider={false} validate={() => []} />);
-  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">${SUPA}</option>`);
+  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">supa-direct</option>`);
   // 고르지 않은 선택지는 「이름 — 관측」(M1 은 이 관측에 없다)
-  expect(html).toContain(">Gemma 4 26B — 슬롯 확인 못함</option>");
+  expect(html).toContain(">m1-gemma — 슬롯 확인 못함</option>");
   expect(html).toContain('aria-describedby="test-rank-1-activity"');
   expect(html).toMatch(/<span id="test-rank-1-activity"[^>]*data-model-activity="true">(<span[^>]*>[^<]+<\/span>){3}<\/span>/);
   expect(html).toMatch(/data-tone="warn"[^>]*>미확정 1<\/span>/);

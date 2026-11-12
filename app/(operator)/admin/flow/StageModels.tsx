@@ -15,6 +15,7 @@ import { saveAiTaskRanksAction } from "../models/tasks/actions";
 import { saveTaskExecutionAction } from "../models/tasks/execution-actions";
 import { PoolReserveField, PoolSlotFields } from "../models/tasks/PoolSlotFields";
 import { PoolHelpTip, PoolMemberWarnings } from "../models/tasks/PoolHelp";
+import { modelPickerOptionName } from "../models/model-picker-display";
 import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
 
 /**
@@ -117,16 +118,17 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
 
   const mode = step === "view" || step === "done" ? savedMode : draft.mode;
   const poolChoices = flowLine && editor ? poolOptions(flowLine, editor.connections, line.apiOnly) : [];
-  const nameOf = (choice: AiRankChoice) => { const connection = editor?.connections.find(row => row.id === choice.provider); return connection ? aiModelChoiceName(connection, choice.model) : "지워진 연결"; };
+  // 고르는 상자와 같은 이름 하나(modelPickerOptionName — 별칭은 한 이름)
+  const nameOf = (choice: AiRankChoice) => { const connection = editor?.connections.find(row => row.id === choice.provider); return connection ? modelPickerOptionName(connection, choice.model) : "지워진 연결"; };
   const draftLanes = aiTaskPoolCappedLanes({ task: line.task, slot: line.slot, mode: "workload_pool",
     members: draft.members.flatMap((choice, index) => choice ? [{ maxSlots: poolSlotOf(draft.slots?.[index], line.features) ?? null }] : []) });
   // 「동시에」 도움말 — 고치는 중이면 고른 모델·칸 수로, 아니면 저장된 묶음으로 센다(권장 칸 수 · 같은 모델 두 줄 · 장비 한도 넘김)
   const editing = step === "edit" || step === "confirm" || step === "saving";
   const helpState = editing ? draft : before;
   const help = buildPoolHelp({ task: line.task, slot: line.slot, taskLabel: title, members: helpState.mode === "workload_pool" ? helpState.members : [],
-    slots: helpState.slots ?? [], connections: editor?.connections ?? [], context: poolHelp });
+    slots: helpState.slots ?? [], connections: editor?.connections ?? [], context: poolHelp, nameOf: modelPickerOptionName });
   const savedWarnings = savedMode === "workload_pool" ? poolHelpWarnings(buildPoolHelp({ task: line.task, slot: line.slot, taskLabel: title, members: before.members,
-    slots: before.slots ?? [], connections: editor?.connections ?? [], context: poolHelp })) : null;
+    slots: before.slots ?? [], connections: editor?.connections ?? [], context: poolHelp, nameOf: modelPickerOptionName })) : null;
   const savedLanes = aiTaskPoolCappedLanes({ task: line.task, slot: line.slot, mode: line.mode, members: line.members.map(member => ({ maxSlots: member.slots })) });
   return <section className="sp-line" data-task={line.task} data-mode={savedMode} data-dirty={step === "edit" || step === "confirm" ? true : undefined}
     aria-label={`${line.label} 배정`}>

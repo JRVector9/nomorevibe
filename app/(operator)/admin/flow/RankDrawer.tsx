@@ -6,13 +6,13 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AI_RANK_SLOT_NAMES, type AiRankChoice } from "@/lib/operations/admin-ai-tasks";
 import {
-  flowOptionBlocked, flowRankIssues, needsAcknowledge, rankChainText, rankChanges, rankDeviceImpact, rankForm, rankResaves, rankWarnings, SET_ONLY_TEXT,
+  flowOptionBlocked, flowRankIssues, needsAcknowledge, rankChanges, rankDeviceImpact, rankForm, rankResaves, rankWarnings, SET_ONLY_TEXT,
   type FlowRankEditor, type FlowRankLine, type RankChange, type RankDeviceLimit, type RankWarning,
 } from "@/lib/operations/flow-rank-editor";
 import { RankSelects } from "../models/RankSelects";
 import { SelectedModelProbe } from "../models/SelectedModelProbe";
 import { deviceDisplay } from "@/lib/operations/llm-display";
-import { modelPickerConnectionLabel, modelPickerModelLabel, modelPickerVisibleText } from "../models/model-picker-display";
+import { modelPickerConnectionLabel, modelPickerOptionName, modelPickerVisibleText } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 import { aiTaskEditTarget } from "@/lib/operations/ai-task-edit-target";
@@ -46,14 +46,14 @@ function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "li
   return { text: "실행이 이 순위를 읽음", tone: "live" };
 }
 
-/** Presentation names only; rank validation and form values retain the original connections. */
+/** Presentation names only; rank validation and form values retain the original connections. 이름은 고르는 상자와 같은 모델 이름 하나(modelPickerOptionName) */
 function displayRankChain(editor: FlowRankEditor, ranks: Ranks): string {
-  return rankChainText({ ...editor, connections: editor.connections.map(connection => ({
-    ...connection, label: modelPickerConnectionLabel(connection),
-  })) }, ranks.map(row => {
-    const connection = editor.connections.find(entry => entry.id === row?.provider);
-    return row && connection ? { ...row, model: modelPickerModelLabel(connection, row.model) } : row;
-  })).replaceAll(" → ", "\n");
+  const parts = ranks.map((row, index) => {
+    if (!row) return null;
+    const connection = editor.connections.find(entry => entry.id === row.provider);
+    return `${index + 1}순위 ${connection ? modelPickerOptionName(connection, row.model) : `지워진 연결 · ${row.model}`}${row.reasoningEffort ? ` · 추론 ${row.reasoningEffort}` : ""}`;
+  }).filter((part): part is string => !!part);
+  return parts.length ? parts.join("\n") : "비어 있음";
 }
 
 function WarningList({ warnings }: { warnings: RankWarning[] }) {
@@ -83,7 +83,8 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled, resave,
       {pool ? <>
         <ul className="fr-note">{pool.members.map(member => {
           const connection = editor.connections.find(row => row.id === member.connectionId);
-          return <li key={member.memberId}>모델 {member.position} · {connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · {connection ? modelPickerModelLabel(connection, member.model) : member.model}
+          // 모델 목록과 같은 이름 하나(서로 다른 모델을 여럿 내는 연결만 「이름 · 서버 모델 이름」) — 서버 모델 이름을 늘 붙이지 않는다
+          return <li key={member.memberId}>모델 {member.position} · {connection ? modelPickerOptionName(connection, member.model) : `연결 없음 · ${member.model}`}
             {typeof member.options.reasoningEffort === "string" && ` · 추론 ${member.options.reasoningEffort}`}
             <SelectedModelProbe key={JSON.stringify([member.connectionId, member.model, member.options.reasoningEffort])} choice={{ provider: member.connectionId, model: member.model, ...(typeof member.options.reasoningEffort === "string" ? { reasoningEffort: member.options.reasoningEffort } : {}) }} disabled={disabled || !!line.lock} /></li>;
         })}</ul>

@@ -112,7 +112,8 @@ export function recommendSlots(connection: HelpConnection | null, model: string,
  * 같은 서버를 쓰는 모델끼리 — 고른 모델의 한도와 그 서버의 다른 모델 상한(장비 줄의 모델별 상한 · 같이 고른 모델)을 합치면 서버 전체 한도를 넘을 때만 한 문장.
  * 서버 이름은 적지 않고 함께 쓰는 모델 이름만 적는다(「m3-deepseek와 함께 쓰는 서버라 둘을 합쳐 3개까지입니다.」).
  */
-function sharedServerNotes(rows: readonly PoolHelpRow[], connections: readonly HelpConnection[], devices: readonly PoolHelpDevice[] | null): string[] {
+function sharedServerNotes<C extends HelpConnection>(rows: readonly PoolHelpRow[], connections: readonly C[], devices: readonly PoolHelpDevice[] | null,
+  nameOf: (connection: C, model: string) => string): string[] {
   if (!devices) return [];
   const notes: string[] = [];
   for (const deviceId of [...new Set(rows.flatMap(row => row.deviceId && row.recommended !== null ? [row.deviceId] : []))]) {
@@ -122,9 +123,11 @@ function sharedServerNotes(rows: readonly PoolHelpRow[], connections: readonly H
     const limits = new Map<string, number>();
     for (const row of rows) if (row.deviceId === deviceId && row.recommended !== null) limits.set(row.name, row.recommended);
     for (const limit of device.modelLimits) {
-      const owner = connections.map(connection => ({ connection, model: connection.deviceId === deviceId ? connectionModelOf(connection, limit.model) : null }))
-        .find(entry => entry.model !== null);
-      const name = owner ? aiModelChoiceName(owner.connection, owner.model) : limit.model.replace(/@[0-9a-f]{8}$/i, "");
+      const owner = connections.flatMap(connection => {
+        const model = connection.deviceId === deviceId ? connectionModelOf(connection, limit.model) : null;
+        return model === null ? [] : [{ connection, model }];
+      })[0];
+      const name = owner ? nameOf(owner.connection, owner.model) : limit.model.replace(/@[0-9a-f]{8}$/i, "");
       if (!limits.has(name)) limits.set(name, Math.min(limit.maxSlots, device.limitSlots));
     }
     const total = [...limits.values()].reduce((sum, value) => sum + value, 0);
@@ -159,14 +162,16 @@ export const TWIN_WARNING = "같은 모델이 두 줄 — 칸 수로 늘리세�
  * 도움말 한 벌 — 지금 고른 모델(draft)과 칸 수로 다시 센다(고칠 때마다 바뀐다).
  * members: 자리 1~4 의 고른 모델(빈 자리 null) · slots: 자리마다 칸 수 글자.
  */
-export function buildPoolHelp(input: { task: string; slot: number; taskLabel: string; members: readonly (AiRankChoice | null)[]; slots: readonly string[];
-  connections: readonly HelpConnection[]; context: PoolHelpContext | null }): PoolHelpView {
+export function buildPoolHelp<C extends HelpConnection>(input: { task: string; slot: number; taskLabel: string; members: readonly (AiRankChoice | null)[]; slots: readonly string[];
+  connections: readonly C[]; context: PoolHelpContext | null;
+  /** 모델 이름 — 화면이 고르는 상자와 같은 이름(modelPickerOptionName)을 넘긴다. 없으면 aiModelChoiceName */
+  nameOf?: (connection: C, model: string) => string }): PoolHelpView {
   const features = aiTaskPoolFeatures(input.task, input.slot);
   const devices = input.context?.devices ?? null;
   const chosen = input.members.flatMap((choice, index) => choice ? [{ choice, index }] : []);
   const rows: PoolHelpRow[] = chosen.map(({ choice, index }, order) => {
     const connection = input.connections.find(row => row.id === choice.provider) ?? null;
-    const name = connection ? aiModelChoiceName(connection, choice.model) : "지워진 연결";
+    const name = connection ? (input.nameOf ?? aiModelChoiceName)(connection, choice.model) : "지워진 연결";
     const rec = recommendSlots(connection, choice.model, devices, name);
     const twin = chosen.slice(0, order).findIndex(entry => entry.choice.provider === choice.provider && entry.choice.model === choice.model);
     const slots = features.slotCaps ? slotNumber(input.slots[index]) : null;
@@ -185,7 +190,7 @@ export function buildPoolHelp(input: { task: string; slot: number; taskLabel: st
     ? `${sample.recommended}개를 동시에 쓰는 방법: ${sample.name}${objectParticle(sample.name)} 한 줄만 넣고 「칸 수」에 ${sample.recommended}${objectParticle(String(sample.recommended))} 적으면 됩니다.`
     : null;
   return { taskLabel: input.taskLabel, caps: features.slotCaps, reserve: features.reserve, capsState, lanes, base: input.context?.bases[input.task] ?? null,
-    rows, example, shared: features.slotCaps ? sharedServerNotes(rows, input.connections, devices) : [], devicesRead: devices !== null };
+    rows, example, shared: features.slotCaps ? sharedServerNotes(rows, input.connections, devices, input.nameOf ?? aiModelChoiceName) : [], devicesRead: devices !== null };
 }
 
 /** 자리(1~4)마다의 줄 옆 경고 — 도움말을 열지 않아도 보인다 */

@@ -317,13 +317,26 @@ export const aiModelMachine = (connection: Pick<AiConnectionView, "deviceId"> & 
  */
 export function aiConnectionModelGroupCount(connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog" | "manualModels">>,
   extra: readonly string[] = []): number {
+  return new Set([...aiConnectionModelIds(connection), ...extra].map(id => aiConnectionModelGroupKey(connection, id))).size;
+}
+/**
+ * 한 연결 안에서 같은 모델(별칭)이면 같은 열쇠 — 화면이 모델 이름 하나로 묶는 기준(2026-11-12 소유자 「모델 목록에 뜬 이름이 바로 떠야」).
+ * 1) 서버가 알려 준 root 가 같거나 다른 이름의 root 인 이름 — 한 묶음.
+ * 2) API 연결에서 운영자가 적은 이름(manualModels, 서버 목록에 없음)은, 서버 목록이 한 묶음뿐이면 그 묶음의 별칭이다 — 한 서버가 한 모델을 다른 이름으로도 받는 경우
+ *    (M1max: 서버 목록 「mlx-community/Qwen3.8-27B-4bit」 + 적은 이름 「Qwen3.8」). 서버 목록이 여러 묶음이면 어느 것의 별칭인지 모르므로 따로 둔다.
+ * 그 밖은 이름마다 따로. 표시만 — 저장된 순위·구성원의 모델 이름은 그대로다.
+ */
+export function aiConnectionModelGroupKey(connection: Pick<AiConnectionView, "kind" | "models"> & Partial<Pick<AiConnectionView, "manualModels">>, id: string): string {
   const listed = connection.kind === "api" ? connection.models ?? [] : [];
-  const keys = new Set<string>();
-  for (const id of [...aiConnectionModelIds(connection), ...extra]) {
-    const root = listed.find(model => model.id === id)?.root ?? null;
-    keys.add(root ?? (listed.some(model => model.root === id) ? id : `id:${id}`));
+  const servedKey = (name: string) => {
+    const root = listed.find(model => model.id === name)?.root ?? null;
+    return root ?? (listed.some(model => model.root === name) ? name : `id:${name}`);
+  };
+  if (connection.kind === "api" && !listed.some(model => model.id === id) && (connection.manualModels ?? []).includes(id)) {
+    const served = new Set(listed.map(model => servedKey(model.id)));
+    if (served.size === 1) return [...served][0];
   }
-  return keys.size;
+  return servedKey(id);
 }
 /**
  * 순위·「동시에」에서 고른 모델 하나를 부르는 말(운영 콘솔 통합 — 「내가 정한 이름 하나만」). 연결이 모델 하나(별칭 포함)만 내놓으면 사용자가 정한 이름뿐,
