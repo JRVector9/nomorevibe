@@ -12,6 +12,7 @@ import { JOB_CONCURRENCY_CONTROL, readSettingsControl } from "@/lib/operations/a
 import { SettingsFieldsForm } from "../limits/SettingsFieldsForm";
 import { isRetiredAiTask, RETIRED_AI_TASKS } from "@/lib/llm/ai-tasks";
 import { readAiTaskExecutionAdminViews } from "@/lib/operations/admin-ai-task-execution";
+import { readPoolHelpContext } from "@/lib/operations/pool-help-read";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { PageStamp } from "../../components/PageStamp";
 import { TaskExecutionForm, type TaskRuntimeLine } from "./TaskExecutionForm";
@@ -60,9 +61,11 @@ export default async function AiTasksPage({ searchParams }: Props) {
   const editId = one(params.edit);
   if (UUID.test(editId)) redirect(`/admin/models/llm?edit=${editId}#conn-${editId}`);
   const now = new Date();
-  const [view, preview, executionRead, assist, concurrency] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null),
+  const [view, preview, executionRead, assist, concurrency, poolHelp] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null),
     readAiTaskExecutionAdminViews().then(executions => ({ executions, failed: false }), () => ({ executions: [], failed: true })), readAssistControls(),
-    readSettingsControl(JOB_CONCURRENCY_CONTROL)]);
+    readSettingsControl(JOB_CONCURRENCY_CONTROL),
+    // 「동시에」 도움말의 숫자(장비 한도 · 실시간 한도 · 수집·판정 설정) — 읽기만, 못 읽으면 도움말이 「읽지 못함」이라고 적는다
+    readPoolHelpContext().catch(() => null)]);
   const readOnly = adminWorkspaceReadOnly();
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
@@ -111,7 +114,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
             return <section key={`${execution.task}#${execution.slot}`} id={`mode-${execution.task}-${execution.slot}`} className="mt-task-mode-item grid gap-1 scroll-mt-6">
               <h3 className="text-[14px] font-semibold">{slot.label}</h3>
               <TaskExecutionForm key={`${execution.task}#${execution.slot}#${execution.revision ?? "default"}`} view={execution} label={slot.label} options={[...slot.options]}
-                connections={view.connections} readOnly={readOnly} runtime={runtimeLine(slot, now)} />
+                connections={view.connections} readOnly={readOnly} runtime={runtimeLine(slot, now)} help={poolHelp} />
             </section>;
           })}
       </div>

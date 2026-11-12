@@ -10,11 +10,12 @@ import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
 import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 import { modelRequestBudget } from "@/lib/llm/model-registry";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { PRODUCT_TRANSLATION_SELECTION_ROUNDS } from "./translation-rounds";
 
 const JOB = "product-translate";
 
-/** 한 틱에 호출 없이 넘길 수 있는 묶음 수 상한 — 고르기·장부 요청이 틱마다 끝없이 돌지 않게 한다. */
-const MAX_SELECTION_ROUNDS = 8;
+/** 한 틱에 호출 없이 넘길 수 있는 묶음 수 상한 — 고르기·장부 요청이 틱마다 끝없이 돌지 않게 한다(관리 화면 설명과 같은 값). */
+const MAX_SELECTION_ROUNDS = PRODUCT_TRANSLATION_SELECTION_ROUNDS;
 
 /**
  * One demanded batch per lane/tick, bounded by the route concurrency (default 1). Each call still contains at most four fields.

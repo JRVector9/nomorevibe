@@ -7,6 +7,8 @@ import { aiTaskPoolCappedLanes, aiTaskPoolFeatures, aiTaskSupportsPool, aiTaskWo
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
 import { aiModelChoiceName, aiRankReasoningEfforts, type AiConnectionView, type AiRankChoice, type AiRankOption } from "@/lib/operations/admin-ai-tasks";
 import { poolMemberIssues, poolMembersInput, poolSlotTexts } from "@/lib/operations/task-pool-form";
+import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
+import { PoolHelpTip } from "./PoolHelp";
 import { RankSelects } from "../RankSelects";
 import type { AiTaskActionState } from "./actions";
 import { saveTaskExecutionAction } from "./execution-actions";
@@ -19,7 +21,9 @@ export type TaskRuntimeLine = { from: "job" | "web"; at: string; served: { rank:
 const MEMBER_FIELDS = Array.from({ length: 4 }, (_, index) => ({ provider: `pool${index + 1}Connection`, model: `pool${index + 1}Model`,
   reasoningEffort: `pool${index + 1}ReasoningEffort` }));
 type Props = { view: AiTaskExecutionAdminView; label: string; options: readonly AiRankOption[]; connections: readonly AiConnectionView[];
-  readOnly?: boolean; runtime?: TaskRuntimeLine };
+  readOnly?: boolean; runtime?: TaskRuntimeLine;
+  /** 「동시에」 도움말이 읽은 한도(장비·실시간 한도·수집·판정 설정) — 없으면 도움말이 「읽지 못함」이라고 적는다 */
+  help?: PoolHelpContext | null };
 
 /** A previous configuration's last tick must not be presented as this pool's execution. */
 export function currentTaskPoolRuntime(view: AiTaskExecutionAdminView, connections: readonly AiConnectionView[], runtime: TaskRuntimeLine | undefined) {
@@ -53,7 +57,7 @@ export function taskPoolRuntimeGroups(view: AiTaskExecutionAdminView, runtime: N
 }
 
 /** Pool members are separate settings; none of these fields are saved as rank 4. */
-export function TaskExecutionForm({ view, label, options, connections, readOnly = false, runtime }: Props) {
+export function TaskExecutionForm({ view, label, options, connections, readOnly = false, runtime, help = null }: Props) {
   const [state, action, saving] = useActionState<AiTaskActionState, FormData>(saveTaskExecutionAction, null);
   const [mode, setMode] = useState(view.mode);
   const initial = view.members.map(member => ({ provider: member.connectionId, model: member.model,
@@ -76,6 +80,8 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
   const issuesOf = (values: readonly (AiRankChoice | null)[]) => poolMemberIssues(values, slots, connections, { apiOnly, features });
   const nameOf = (choice: AiRankChoice) => { const connection = connections.find(row => row.id === choice.provider); return connection ? aiModelChoiceName(connection, choice.model) : "지워진 연결"; };
   const issues = mode === "workload_pool" ? issuesOf(value) : [];
+  // 「동시에」 도움말 — 지금 고른 모델·칸 수로 다시 센다(권장 칸 수 · 같은 모델 두 줄 · 장비 한도 넘김)
+  const poolHelp = buildPoolHelp({ task: view.task, slot: view.slot, taskLabel: label, members: mode === "workload_pool" ? value : [], slots, connections, context: help });
   // Keep a missing saved choice visible until the operator explicitly changes it.
   const choices = options.filter(option => !apiOnly || connections.some(connection => connection.id === option.provider && (connection.kind === "api" || connection.cliTool === "opencode")));
   for (const member of view.members) if (!choices.some(option => option.provider === member.connectionId && option.model === member.model)) {
@@ -92,13 +98,15 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
       <input type="hidden" name="members" value={JSON.stringify(mode === "workload_pool" ? members : [])} />
       {mode === "workload_pool" && reserveOn && <input type="hidden" name="reserveRanks" value="1" />}
       <div className="mt-task-form-toolbar">
-      <label className="grid min-w-0 gap-1 text-[13px]">실행 방식
-        <select name="mode" value={mode} disabled={saving || readOnly} className="min-h-9 min-w-0 rounded-lg border border-line bg-bg-card px-2"
+      {/* 도움말 단추는 label 밖에 둔다 — label 안에 두면 고르기의 이름에 단추 글자가 섞인다 */}
+      <div className="grid min-w-0 gap-1 text-[13px]">
+        <span className="cs-help-head"><label htmlFor={`mode-${view.task}-${view.slot}`}>실행 방식</label>{supported && <PoolHelpTip view={poolHelp} label="「동시에」" />}</span>
+        <select id={`mode-${view.task}-${view.slot}`} name="mode" value={mode} disabled={saving || readOnly} className="min-h-9 min-w-0 rounded-lg border border-line bg-bg-card px-2"
           onChange={event => setMode(event.target.value as typeof mode)}>
           <option value="fallback">{apiOnly ? "기존 CLI 분류" : "순위대로 · 앞 모델을 쓸 수 없을 때 다음 순위"}</option>
           <option value="workload_pool" disabled={!supported}>동시에 · 묶은 모델이 함께 처리</option>
         </select>
-      </label>
+      </div>
       <button type="submit" disabled={saving || readOnly || !changed || issues.length > 0 || mode === "workload_pool" && !supported}
         className="min-h-9 self-end rounded-lg bg-fg px-3 text-[13px] text-bg disabled:opacity-40">{saving ? "저장 중…" : "실행 방식 저장"}</button>
       </div>
@@ -110,7 +118,8 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
         {view.task === "second-review" && <p className="text-[13px] text-fg-3">후보별 모델 하나를 고르며, 투표 수는 늘리지 않습니다.</p>}
         {features.slotCaps && <PoolSlotFields value={value} slots={slots} disabled={saving || readOnly} nameOf={nameOf}
-          onChange={(index, raw) => setSlots(current => current.map((entry, at) => at === index ? raw : entry))} lanes={lanes} />}
+          onChange={(index, raw) => setSlots(current => current.map((entry, at) => at === index ? raw : entry))} lanes={lanes}
+          help={<PoolHelpTip view={poolHelp} label="칸 수" />} warnings={poolHelpWarnings(poolHelp)} />}
         {features.reserve && <PoolReserveField checked={reserve} disabled={saving || readOnly} onChange={setReserve} />}
         {!features.slotCaps && <p className="text-[13px] text-fg-3">이 작업은 아직 모델별 상한·예비를 따르지 않습니다. 일 하나마다 모델 하나를 고릅니다.</p>}
       </> : <p className="text-[13px] text-fg-3">{apiOnly ? "API·OpenCode 모델을 쓰려면 작업 분산으로 전환하세요." : "우선 모델 하나를 사용하고, 대체가 필요할 때만 다음 순위로 전환합니다."}</p>}

@@ -606,3 +606,145 @@
 .admin-prototype dl.cs-f a {
   color: var(--link);
 }
+
+/* ── 도움말(ⓘ) — 「동시에」·「칸 수」 옆. 올리기·포커스·누르기로 열고, 설명은 화면 맨 위(popover)에 단추에 붙여 뜬다 ── */
+.admin-prototype .cs-help-head {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / .8);
+}
+.admin-prototype .cs-help {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--faint);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--f-mono);
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  line-height: 1;
+  cursor: help;
+}
+.admin-prototype .cs-help:hover,
+.admin-prototype .cs-help[aria-expanded="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+}
+/* 손가락으로 누르는 화면은 누를 자리를 넓힌다(모양은 같다) */
+@media (pointer: coarse) {
+  .admin-prototype .cs-help {
+    width: 24px;
+    height: 24px;
+  }
+}
+.admin-prototype .cs-help-pop {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  max-width: calc(100vw - 24px);
+  overflow: auto;
+  padding: calc(14px / .8) calc(16px / .8);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ink) 16%, transparent);
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+  line-height: 1.55;
+  text-align: left;
+  font-weight: 400;
+  white-space: normal;
+}
+.admin-prototype .cs-help-body {
+  display: grid;
+  gap: calc(10px / .8);
+}
+.admin-prototype .cs-help-body h4 {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+  font-weight: 600;
+}
+.admin-prototype .cs-help-body section {
+  display: grid;
+  gap: calc(6px / .8);
+}
+.admin-prototype .cs-help-body p {
+  margin: 0;
+}
+.admin-prototype .cs-help-em {
+  padding: calc(6px / .8) calc(10px / .8);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.admin-prototype .cs-help-lab {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+}
+.admin-prototype .cs-help-q {
+  color: var(--muted);
+}
+.admin-prototype .cs-help-warn,
+.admin-prototype .cs-pool-warn {
+  color: var(--warn);
+}
+.admin-prototype .cs-help-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.admin-prototype .cs-help-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  line-height: 1.45;
+}
+/* 화면마다의 표 규칙(작업 배정의 td 테두리 없음 등)이 도움말 표에 걸리지 않게 한 단계 더 좁힌다 */
+.admin-prototype .cs-help-pop .cs-help-table :is(th, td) {
+  padding: calc(6px / .8) calc(8px / .8);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.admin-prototype .cs-help-pop .cs-help-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.admin-prototype .cs-help-pop .cs-help-table thead th {
+  font-family: var(--f-sans);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+}
+.admin-prototype .cs-help-table tbody th {
+  background: transparent;
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 600;
+}
+.admin-prototype .cs-help-pop .cs-help-table .n {
+  text-align: right;
+}
+.admin-prototype .cs-help-pop .cs-help-table td.n {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .cs-help-table .q {
+  color: var(--muted);
+}
+/* 줄 옆 경고 — 모델 이름 아래 한 줄 */
+.admin-prototype .cs-pool-warn {
+  display: block;
+  font-family: var(--f-sans);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 500;
+  white-space: normal;
+}

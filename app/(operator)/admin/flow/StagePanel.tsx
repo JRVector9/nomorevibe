@@ -10,6 +10,7 @@ import { JobControl } from "../status/JobControl";
 import { StatusDot } from "../components/StatusDot";
 import { StagePanelKeys } from "./StagePanelKeys";
 import { StageModels, type StageModelsInitial } from "./StageModels";
+import type { PoolHelpContext } from "@/lib/operations/pool-help";
 import "../models/limits/limits.css";
 import "./stage-panel.css";
 
@@ -21,7 +22,7 @@ export const STAGE_PANEL_CLOSE_HREF = "/admin/flow";
  * 다섯 구역: 머리 · 왜 이런가 · 모델 · 한도 · 최근 바뀐 것. 모델을 쓰지 않는 단계는 같은 틀에 작업(주기·마지막 성공)과 관련 설정이 나온다.
  * 이 칸이 직접 바꾸는 것은 모두 기존 서버 동작이다: 작업 멈춤·재개(JobControl), 순위·실행 방식(StageModels), 실시간 한도(LimitsEditor).
  */
-export function StagePanel({ panel, editor, context, limits, limitRows, limitImpact, changes, changesRead, csrf, jobVersions, readOnly, lockReason, now, modelsInitial }: {
+export function StagePanel({ panel, editor, context, limits, limitRows, limitImpact, changes, changesRead, csrf, jobVersions, readOnly, lockReason, now, modelsInitial, poolHelp = null }: {
   panel: StagePanelModel; editor: FlowRankEditor | null; context: PreviewContext;
   limits: LimitsView | null; limitRows: readonly string[]; limitImpact: Record<string, string[]>;
   changes: readonly ChangeWatchRow[]; changesRead: boolean;
@@ -29,6 +30,8 @@ export function StagePanel({ panel, editor, context, limits, limitRows, limitImp
   readOnly: boolean; lockReason: string | null; now: Date;
   /** 모델 구역의 처음 걸음(시험·화면 확인용) */
   modelsInitial?: StageModelsInitial;
+  /** 「동시에」 도움말이 읽은 한도(장비·실시간 한도·수집·판정 설정) */
+  poolHelp?: PoolHelpContext | null;
 }) {
   const rows = limits?.groups.flatMap(group => group.rows).filter(row => limitRows.includes(row.id)) ?? [];
   return <>
@@ -71,7 +74,7 @@ export function StagePanel({ panel, editor, context, limits, limitRows, limitImp
 
       {panel.models && <section className="sp-sec" id="sp-models" aria-labelledby="sp-models-title">
         <span className="sp-lab" id="sp-models-title">모델</span>
-        <StageModels lines={panel.models} editor={editor} context={context} lockReason={lockReason} initial={modelsInitial} stageLabel={panel.label} />
+        <StageModels lines={panel.models} editor={editor} context={context} lockReason={lockReason} initial={modelsInitial} stageLabel={panel.label} poolHelp={poolHelp} />
       </section>}
 
       {panel.models && <section className="sp-sec" id="sp-limits" aria-labelledby="sp-limits-title">
