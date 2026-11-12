@@ -92,7 +92,7 @@ it('resumes the same pending request and binds the original owner candidate and 
   const requestId = randomUUID(); mocks.pending.mockResolvedValue({ requestId, state: 'reserved' });
   expect((await claimAgentReviewItemModelCapacity(value.intent)).claim).toMatchObject({ kind: 'claimed', dispatch: value.dispatch });
   expect(mocks.request).toHaveBeenCalledExactlyOnceWith({ requestId, owner, class: 'first', pool: 'reviewer', routeId: 'crawl-agent-review',
-    provider: 'abcllm', model: 'Exact Model', workKey: `ai1:3:${value.receipt.ownership.lease.bindingHash}` }, 3);
+    provider: 'abcllm', model: 'Exact Model', workKey: `ai1:3:${value.receipt.ownership.lease.bindingHash}` }, 3, { memberCap: null });
   expect(mocks.atomic).toHaveBeenCalledExactlyOnceWith({ expected: value.intent.intent, reservation: value.reservation,
     identity: mocks.pending.mock.calls[0][0], call: value.call });
 });

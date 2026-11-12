@@ -44,6 +44,7 @@ import type { FirstReviewer } from "./agent-review";
 import { ai1WithinLiveCallWindowSql } from "./ai1-live-call";
 import { firstReviewRankState, firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer,
   type FirstReviewPoolPosition } from "./first-reviewers";
+import { firstReviewLiveLedgerSql } from "./first-review-member-cap";
 import { chooseReviewWorkloadMember, ensureReviewTaskRanks, reviewPoolCappedKeys, reviewPoolSlotCaps } from "./review-task-ranks";
 import { logger } from "@/lib/observability/logger";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
@@ -65,11 +66,15 @@ type Executor = typeof db | ProductTransaction;
  * Selection is a hint; the existing candidate/item/capacity locks still grant all authority.
  * 1차 고르기는 늘 순위 고르기다(PR C1): 「작업 ↔ 모델」 1차 AI 검수 1·2·3순위(firstReviewers). TX 밖의 첫 고르기(executor = db)는 순위·계약 스냅숏을 새로 받고,
  * 지금 쓸 수 없는 순위(계약 닫힘·CLI 계약 없음 등, firstReviewRankState().unusable)도 비켜 간다. 잠금 아래 재확인은 부르는 쪽이 준 blocked 만 본다.
+ * 「동시에」 칸 수는 TX 밖 고르기와 잠금 아래 재확인(claim, executor = tx) 모두에서 센다 — 힌트 뒤에 다른 후보가 그 구성원의 칸을 채웠으면 재확인이
+ * 그 구성원을 다시 허락하지 않는다(2026-11-12 검수 F2). 이 후보의 살아 있는 의도(대기·예약·보냄)·살아 있는 시도가 있으면 세지 않고 그 모델을 잇는다.
+ * 두 claim 이 함께 세는 경합은 예약을 만드는 장부 TX(requestAi1ModelSlot·requestCliModelSlot 의 memberCap, control 잠금 아래)가 막는다.
  */
 export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db,
   blocked: ReadonlySet<string> = new Set(),
-  /** 「동시에」 고르기가 쉬지 않은 구성원이 있는데도 줄에 설 구성원을 찾지 못해 null 을 돌려줬다(모델·장비 사정 — 후보 탓이 아니다) */
-  note?: { poolBusy?: boolean }): Promise<FirstReviewer | null> {
+  /** poolBusy: 「동시에」 고르기가 쉬지 않은 구성원이 있는데도 줄에 설 구성원을 찾지 못해 null 을 돌려줬다(모델·장비 사정 — 후보 탓이 아니다).
+   * capped: 이번 고르기가 칸 수에 닿았다고 센 구성원 열쇠(firstReviewerKey) */
+  note?: { poolBusy?: boolean; capped?: ReadonlySet<string> }): Promise<FirstReviewer | null> {
   if (executor === db) await ensureReviewTaskRanks();
   const state = firstReviewRankState(context.settings);
   const pool = state.pool;
@@ -98,10 +103,11 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
         AND ${firstReviewIdentitySql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
   // New work only: retain every existing waiting/reserved/dispatched/live binding.
   // The locked recheck below still receives exactly one selected reviewer.
-  if (executor === db && state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
+  if (state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
     // 칸 수(0179, 2026-11-12 1차도 따름): 그 모델의 살아 있는 1차 장부 행(대기·예약·보냄)이 칸 수 합에 닿은 구성원은 고르지 않는다 —
-    // 줄에 서는 것(queueWhenFull)도 칸이 남은 구성원 중에서만이다. 같은 엔진 두 자리는 한 열쇠로 함께 찬다.
+    // 줄에 서는 것(queueWhenFull)도 칸이 남은 구성원 중에서만이다. 같은 엔진 두 자리는 한 열쇠로 함께 찬다. 잠금 아래 재확인도 같다(F2).
     const capped = await firstReviewCappedKeys(state.resolution, executor);
+    if (note) note.capped = capped;
     const avoid = capped.size ? new Set([...blocked, ...capped]) : blocked;
     const chosen = await chooseReviewWorkloadMember(state.resolution, avoid);
     if (chosen) {
@@ -134,10 +140,7 @@ async function firstReviewCappedKeys(resolution: NonNullable<ReturnType<typeof f
   if (!caps?.size || currentReplayDb()) return new Set();
   const rows = await executor.execute<{ provider: string; model: string; n: number }>(sql`
     SELECT provider, model, count(*)::integer AS n FROM model_capacity_requests
-    WHERE route_id = 'crawl-agent-review' AND class = 'first' AND (
-      (state = 'waiting' AND queue_until > clock_timestamp()) OR (state = 'reserved' AND reserved_until > clock_timestamp())
-      OR (state = 'dispatched' AND ${ai1WithinLiveCallWindowSql(sql`provider`, sql`coalesce(dispatched_at, updated_at)`)}))
-    GROUP BY provider, model`);
+    WHERE ${firstReviewLiveLedgerSql()} GROUP BY provider, model`);
   return reviewPoolCappedKeys(caps, new Map(Array.from(rows, row => [firstReviewerKey(row), Number(row.n)])));
 }
 export async function loadReviewInput(
@@ -1162,8 +1165,14 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       // Under the candidate lock: pinned work must keep its model; a never-sent candidate may keep the
       // reviewer it was rerouted to (every other pool model is treated as "avoid" for this re-check only).
       const others = new Set(configuredPool.filter(row => row.provider !== input.provider || row.model !== input.model).map(firstReviewerKey));
-      const selected = await chooseFirstReviewForCandidate(locked, tx, others);
-      if (!selected || selected.provider !== input.provider || selected.model !== input.model) return { kind: "skipped", reason: "input_changed" };
+      const note: { capped?: ReadonlySet<string> } = {};
+      const selected = await chooseFirstReviewForCandidate(locked, tx, others, note);
+      if (!selected || selected.provider !== input.provider || selected.model !== input.model) {
+        // 고른 뒤 다른 후보가 그 구성원의 칸을 채웠다(2026-11-12 검수 F2) — 후보 탓이 아니라 그 모델의 일이다: 모델 범위 미룸으로 돌려 그 구성원을 이 틱에 쉬게 하고
+        // (잡·소비자는 다음 후보를 남은 구성원·예비로 고른다) 이 후보의 건너뜀으로 세지 않는다. TX 는 되감긴다.
+        if (note.capped?.has(firstReviewerKey({ provider: input.provider, model: input.model }))) throw new ModelCapacityDeferredError("model_quota");
+        return { kind: "skipped", reason: "input_changed" };
+      }
     }
     const binding = agentReviewBinding(locked.candidate.id, current, { provider: input.provider, model: input.model });
     const rows = await tx.select().from(crawlReviewAttempts).where(and(
