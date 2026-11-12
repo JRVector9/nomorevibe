@@ -51,17 +51,17 @@ export type OperatorDesk = {
  * 이전 값은 작업 로그 줄의 detail(전·후)에 있다. 되돌릴 수 없는 것은 그렇게 적는다(href null).
  */
 export const CHANGE_UNDO: Readonly<Record<string, (target: string) => DeskUndo>> = {
-  "ai-task-models-save": () => ({ text: "이전 순위로 다시 저장(「바꾸기」 되돌리기·작업 ↔ AI 모델)", href: "/admin/models/tasks" }),
-  "ai-task-execution-save": () => ({ text: "「작업 ↔ AI 모델」에서 이전 실행 방식·분산 모델로 다시 저장", href: "/admin/models/tasks" }),
-  "ai-task-models-import": () => ({ text: "「작업 ↔ AI 모델」에서 칸별로 이전 순위로 다시 저장", href: "/admin/models/tasks" }),
-  "ai-connection-save": () => ({ text: "「작업 ↔ AI 모델」 연결 편집에서 이전 값으로 저장", href: "/admin/models/tasks" }),
-  "ai-connection-delete": () => ({ text: "지운 연결은 다시 만들어야 합니다(키는 다시 넣음)", href: "/admin/models/tasks" }),
+  "ai-task-models-save": () => ({ text: "이전 순위로 다시 저장(「바꾸기」 되돌리기·작업 ↔ AI 모델)", href: "/admin/models#tasks" }),
+  "ai-task-execution-save": () => ({ text: "「작업 ↔ AI 모델」에서 이전 실행 방식·분산 모델로 다시 저장", href: "/admin/models#tasks" }),
+  "ai-task-models-import": () => ({ text: "「작업 ↔ AI 모델」에서 칸별로 이전 순위로 다시 저장", href: "/admin/models#tasks" }),
+  "ai-connection-save": () => ({ text: "「작업 ↔ AI 모델」 연결 편집에서 이전 값으로 저장", href: "/admin/models#tasks" }),
+  "ai-connection-delete": () => ({ text: "지운 연결은 다시 만들어야 합니다(키는 다시 넣음)", href: "/admin/models#tasks" }),
   "runtime-settings-save": () => ({ text: "「실시간 한도」에서 작업 로그의 이전 값으로 다시 저장", href: "/admin/models/limits" }),
   "model-capacity-device-save": () => ({ text: "「장비 한도」에서 이전 칸 수로 다시 저장", href: "/admin/models/devices" }),
   "model-capacity-route-quota-save": () => ({ text: "작업 로그의 이전 경로 몫(보장·상한·빌려주기)으로 다시 저장", href: "/admin/models/devices" }),
   "model-capacity-model-limit-save": () => ({ text: "작업 로그의 이전 모델 상한으로 다시 저장", href: "/admin/models/devices" }),
   "model-capacity-device-retire": () => ({ text: "지운 장비는 「장비 한도」에서 다시 만들고 「작업 ↔ AI 모델」 순위를 저장하면 route 가 다시 붙습니다(작업 로그의 이전 값)", href: "/admin/models/devices" }),
-  "model-capacity-routes-prune": () => ({ text: "뺀 route 는 그 모델을 「작업 ↔ AI 모델」 순위로 다시 저장하면 다시 붙습니다(DRAIN 없음)", href: "/admin/models/tasks" }),
+  "model-capacity-routes-prune": () => ({ text: "뺀 route 는 그 모델을 「작업 ↔ AI 모델」 순위로 다시 저장하면 다시 붙습니다(DRAIN 없음)", href: "/admin/models#tasks" }),
   "model-serving-contract-save": () => ({ text: "「서빙 계약·등록부」에서 이 계약을 끄면 이전 경로로 돌아갑니다", href: "/admin/models/contracts" }),
   "model-serving-contract-disable": () => ({ text: "「서빙 계약·등록부」에서 같은 계약을 다시 저장", href: "/admin/models/contracts" }),
   "model-registry-override-save": () => ({ text: "「서빙 계약·등록부」에서 덮어쓰기를 끄면 코드 기본값으로 돌아갑니다", href: "/admin/models/contracts" }),

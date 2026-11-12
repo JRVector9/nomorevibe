@@ -278,6 +278,6 @@ export function AllocationMatrix({ view, readOnly }: { view: AllocationView; rea
         </section></>}
     <p className="llm-empty">2차 AI 검수 투표자 1·2·3은 한 경로(<code>second-review</code>)라 한 줄입니다. 장비 칸 수·모델 한도는{" "}
       <Link prefetch={false} href={DEVICES_HREF} className="llm-link">장비 한도</Link>, 작업이 어느 모델로 가는지는{" "}
-      <Link prefetch={false} href="/admin/models/tasks" className="llm-link">작업 배정</Link>에서 바꿉니다.</p>
+      <Link prefetch={false} href="/admin/models#tasks" className="llm-link">작업 배정</Link>에서 바꿉니다.</p>
   </div>;
 }

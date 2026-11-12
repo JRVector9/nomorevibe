@@ -19,7 +19,7 @@ const STATUS_TEXT: Readonly<Record<TextRankResolution["status"], string>> = {
  */
 export function TextTaskRanksStatus({ lines, error }: { lines: readonly TextTaskRanksLine[]; error?: string | null }) {
   return (
-    <Panel title="작업 ↔ 모델 · text 작업 순위" actions={<Link href="/admin/models/tasks#tasks" prefetch={false} className="text-[13px] font-semibold text-accent-ink">순위 고치기 →</Link>}
+    <Panel title="작업 ↔ 모델 · text 작업 순위" actions={<Link href="/admin/models#tasks" prefetch={false} className="text-[13px] font-semibold text-accent-ink">순위 고치기 →</Link>}
       note="글 짓기·번역·검색 text 작업은 이 순위만 부릅니다. 1순위를 쓸 수 없으면 같은 일을 2순위, 그다음 3순위로 넘기고, 순위가 없거나 모두 쓸 수 없으면 기본값으로 대신 부르지 않고 멈춥니다(조치할 일에 「제 일 못 함」).">
       {error && <p role="alert" className="text-[13px] text-red-600">실행 기록을 읽지 못했습니다({error}).</p>}
       <ScrollTable label="text 작업 순위">

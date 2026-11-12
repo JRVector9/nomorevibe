@@ -309,7 +309,7 @@ describe("기록(/admin/models/history) 그리기", () => {
 });
 
 describe("옛 주소는 새 화면으로 넘긴다", () => {
-  it.each([["tasks", "/admin/models/tasks"], ["connections", "/admin/models/llm"], ["capacity", "/admin/models/llm"], ["history", "/admin/models/history"], ["live", "/admin/models/dashboard"]])(
+  it.each([["tasks", "/admin/models#tasks"], ["connections", "/admin/models/llm"], ["capacity", "/admin/models/llm"], ["history", "/admin/models/history"], ["live", "/admin/models/dashboard"]])(
     "/admin/models?tab=%s → %s", async (tab, href) => {
       const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
       await expect(ModelsPage({ searchParams: Promise.resolve({ tab }) })).rejects.toThrow(`NEXT_REDIRECT:${href}`);

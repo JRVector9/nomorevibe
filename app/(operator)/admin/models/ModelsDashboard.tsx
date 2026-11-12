@@ -77,7 +77,7 @@ export function ModelsDashboard({ view, opsStates, readOnly }: { view: Dashboard
     </div>
 
     <section className="md-panel" aria-labelledby="llm-stages-title">
-      <div className="md-panel-head"><h2 id="llm-stages-title">단계별 상태</h2><Link prefetch={false} className="md-link" href="/admin/models/tasks">작업 배정 →</Link></div>
+      <div className="md-panel-head"><h2 id="llm-stages-title">단계별 상태</h2><Link prefetch={false} className="md-link" href="/admin/models#tasks">작업 배정 →</Link></div>
       <div className="md-scroll"><table className="md-table md-stages">
         <thead><tr><th>단계</th><th>상태</th><th>모델</th><th>메모</th></tr></thead>
         <tbody>{view.stages.map(stage => <tr key={stage.id} data-stage={stage.id} data-level={stage.level}>

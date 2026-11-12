@@ -290,7 +290,7 @@ function secondStation(inputs: ConveyorInputs): Station {
   const station = queueStation(inputs, "second", {
     phase: "review", label: "AI 2차", what: "1차가 승인한 후보를 별도 2차 호출로 다시 보고 표를 냅니다",
     hour: (point) => point.secondReviews,
-    links: [{ href: "/admin/models/tasks", label: "2차 모델 정하기" }, { href: "/admin/review?stage=second#review-list", label: "2차 대기 보류 보기" }],
+    links: [{ href: "/admin/models#tasks", label: "2차 모델 정하기" }, { href: "/admin/review?stage=second#review-list", label: "2차 대기 보류 보기" }],
   });
   const splits = station.holds.filter((hold) => hold.reason.startsWith("second_review_split"));
   const recent = splits.reduce((total, hold) => total + (hold.recent24h ?? 0), 0);
@@ -404,7 +404,7 @@ export function buildConveyor(inputs: ConveyorInputs): Conveyor {
     queueStation(inputs, "first", { phase: "review", label: "AI 1차", what: "모델이 제품·개인 프로필인지 처음 판정합니다",
       hour: (point) => point.firstReviews,
       facts: inputs.hourly?.lastHour?.firstFailed ? [{ label: "1시간 실패 호출", value: `${n(inputs.hourly.lastHour.firstFailed)}건`, tone: "warn" }] : [],
-      links: [{ href: "/admin/models/tasks", label: "1차 모델 정하기" }, { href: "/admin/status#first-review-status", label: "1차 상세" }] }),
+      links: [{ href: "/admin/models#tasks", label: "1차 모델 정하기" }, { href: "/admin/status#first-review-status", label: "1차 상세" }] }),
     secondStation(inputs),
     profileStation(inputs),
     queueStation(inputs, "publish", { phase: "publish", label: "발행", what: "준비된 제품을 공개 목록에 올립니다",

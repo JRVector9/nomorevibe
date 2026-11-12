@@ -34,7 +34,7 @@ describe("LLM 운영 칩", () => {
   it("옛 순위 행은 「record」 칩(잡 고치기 없음), 실제 출처는 주소가 같은 연결에 「current」 칩 — 둘 다 같은 모델 줄에 붙는다", () => {
     const gpu = llm().rows.find(row => row.key === GPU)!;
     const record = gpu.tasks.find(chip => chip.key === "record:held-review-retry:1:1")!;
-    expect(record).toMatchObject({ source: "record", rank: 1, model: "qwen3.8-flash-next", fix: null, href: "/admin/models/tasks#execution-held-review-retry-1" });
+    expect(record).toMatchObject({ source: "record", rank: 1, model: "qwen3.8-flash-next", fix: null, href: "/admin/models#execution-held-review-retry-1" });
     expect(gpu.tasks.find(chip => chip.key === "current:held-review-retry:1:qwen3.8-flash-next")).toMatchObject({ source: "current", rank: null, label: "보류 재심사" });
     expect(gpu.modelTasks["qwen3.8-flash-next"].map(chip => chip.source)).toEqual(expect.arrayContaining(["rank", "record", "current"]));
     // 다른 연결에는 붙지 않는다

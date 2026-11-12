@@ -71,7 +71,7 @@ const MODELS_ADVANCED_PATHS: readonly string[] = [MODELS_ADVANCED_HREF, MODELS_D
  */
 const MODELS_LEGACY_TABS: Readonly<Record<string, { menu: WorkspaceId; tab: string; href: string; secondary?: "dashboard" | "llm" }>> = {
   live: { menu: "models", tab: "advanced", href: MODELS_DASHBOARD_HREF, secondary: "dashboard" },
-  tasks: { menu: "models", tab: "tasks", href: "/admin/models/tasks" },
+  tasks: { menu: "models", tab: "list", href: "/admin/models#tasks" },
   connections: { menu: "models", tab: "advanced", href: MODELS_LLM_HREF, secondary: "llm" },
   capacity: { menu: "models", tab: "advanced", href: MODELS_LLM_HREF, secondary: "llm" },
   history: { menu: "log", tab: "llm", href: "/admin/models/history" },
@@ -117,8 +117,7 @@ export const WORKSPACES: readonly Workspace[] = [
   ] },
   // 운영 콘솔(2026-11-12 조각 3a): 기본은 모델 목록(/admin/models). 옛 대시보드·LLM 운영은 「고급 설정」의 2차 메뉴. 옛 ?tab= 주소는 modelsLegacyTabHref 로 넘긴다.
   { id: "models", label: "모델", href: "/admin/models", icon: "sliders", tabs: [
-    { id: "list", label: "모델 목록", href: "/admin/models" },
-    { id: "tasks", label: "작업 배정", href: "/admin/models/tasks" },
+    { id: "list", label: "모델", href: "/admin/models" },
     { id: "advanced", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
   ] },
   // 운영 콘솔(2026-11-12 조각 4a): 기본은 수집원·주기 작업(/admin/sources) — 모델을 쓰지 않는 들어오는 곳과 주기 작업. 옛 설정·작업 흐름 탭은 그대로
@@ -283,7 +282,7 @@ function place(pathname: string, search: Search): Place {
       return !legacy ? { id: "models", tab: "list" } : legacy.secondary
         ? { id: legacy.menu, tab: legacy.tab, secondary: WORKSPACE_SECONDARY.modelsAdvanced, secondaryTab: legacy.secondary } : { id: legacy.menu, tab: legacy.tab };
     }
-    case "/admin/models/tasks": return { id: "models", tab: "tasks" };
+    case "/admin/models/tasks": return { id: "models", tab: "list" };
     case "/admin/models/history": return { id: "log", tab: "llm" };
     case "/admin/settings": return tab === "history" ? { id: "log", tab: "history" } : { id: "sources", tab: pick(SETTINGS_SOURCE_TABS, tab, "collection") };
     case "/admin": return { id: "sources", tab: "collection" };

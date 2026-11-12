@@ -291,7 +291,7 @@ const compareHref = (task: string, candidate: string) => `/admin/models/compare?
 /** 모델 접수 칸 — 3a 가 옮긴 대시보드의 접수 칸(#admission). 여닫는 것은 사람이 그 칸에서 한다 */
 /** 감사 거절 목록 — 사람 확인 묶음 화면(3b)의 「요청과 감사」가 여는 곳과 같은 주소(inbox AUDIT_TAB_HREF) */
 const AUDIT_REJECTS_HREF = "/admin/audit?tab=audit";
-const taskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
+const taskHref = (task: string, slot = 1) => `/admin/models#execution-${task}-${slot}`;
 /** 순위·배정을 고치는 곳 — 그 작업의 단계 패널 모델 구역(조각 2a), 패널이 없는 작업은 작업 배정의 그 줄 */
 const taskStageHref = (task: string, slot = 1) => { const key = stagePanelKeyOfTask(task); return key ? stagePanelHref(key, "models") : taskHref(task, slot); };
 const link = (label: string, href: string): ConsoleAction => ({ kind: "link", label, href });

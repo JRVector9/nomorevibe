@@ -352,14 +352,14 @@ export async function readAiTaskRuntime(): Promise<Record<string, AiTaskRuntimeV
 }
 
 /** 화면 한 번 그리기 — 연결·순위·현재 값·준비 상태·최근 기록. 어느 하나를 못 읽어도 화면은 뜬다(그 자리에 이유). */
-export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
+export async function readAiTasksAdminView(options: { readOnly?: boolean } = {}): Promise<AiTasksAdminView> {
   const errors: Record<string, string> = {};
   const settle = async <T>(key: string, work: () => Promise<T>, fallback: T): Promise<T> => {
     try { return await work(); } catch (error) { errors[key] = error instanceof Error ? error.message.slice(0, 160) : "read_failed"; return fallback; }
   };
   await settle("review_ranks", () => ensureReviewTaskRanks(0), undefined);
   // 키 없는 API 연결을 같은 주소의 계약 키로 채운다(프로세스마다 5분에 한 번 이하, 상자 키가 있을 때만 — 실패해도 화면은 그대로 뜬다)
-  await maybeFillConnectionKeys().catch(() => null);
+  if (!options.readOnly) await maybeFillConnectionKeys().catch(() => null);
   const [connections, rows, readiness, audit, runtime] = await Promise.all([settle("connections", () => listAiConnections(), [] as AiConnectionView[]),
     settle("rows", () => listAiTaskRows(), [] as AiTaskRankRow[]), settle("readiness", readReadinessInput, null),
     settle("audit", () => adminLog({ actions: [...AI_TASK_AUDIT_ACTIONS] }), [] as AdminLogRow[]), settle("runtime", readAiTaskRuntime, {} as Record<string, AiTaskRuntimeView>)]);

@@ -25,7 +25,7 @@ const fresh = "2026-11-07T07:15:00.000Z";
 
 describe("까닭 코드 → 고칠 곳", () => {
   const at = { connection: conn(GPU), task: "first-review", slot: 1 };
-  const rank = (label: string): LlmFix => ({ href: "/admin/models/tasks#execution-first-review-1", label });
+  const rank = (label: string): LlmFix => ({ href: "/admin/models#execution-first-review-1", label });
   const failures: LlmFix = { href: "/admin/models/history#failures", label: "실패 보기" };
   const retry: LlmFix = { href: "/admin/models/history#retry", label: "재실행 보기" };
   const contracts: LlmFix = { href: "/admin/models/contracts", label: "계약 보기" };
@@ -58,7 +58,7 @@ describe("까닭 코드 → 고칠 곳", () => {
   it("CLI 연결: 버전 문제는 CLI 버전 칸, 버전이 있는데 계약이 없으면 그 순위 다시 저장, 키·주소 까닭은 이 폼에 칸이 없어 링크 없음", () => {
     const claude = { connection: conn(CLAUDE), task: "second-review", slot: 2 };
     expect(llmReasonFix("cli_version_mismatch", claude)).toEqual(edit(CLAUDE, "version", "버전 고치기"));
-    expect(llmReasonFix("cli_contract_missing", claude)).toEqual({ href: "/admin/models/tasks#execution-second-review-2", label: "순위 다시 저장" });
+    expect(llmReasonFix("cli_contract_missing", claude)).toEqual({ href: "/admin/models#execution-second-review-2", label: "순위 다시 저장" });
     expect(llmReasonFix("cli_contract_missing", { ...claude, connection: { ...conn(CLAUDE), cliVersion: null } })).toEqual(edit(CLAUDE, "version", "버전 적기"));
     for (const code of ["connection_key_missing", "engine_network", "http_401", "endpoint_invalid"]) expect(llmReasonFix(code, claude), code).toBeNull();
     // OpenCode 는 호스트에서 읽은 버전을 쓴다 — 연결을 다시 저장(버전 칸 없음), 호스트 주소·인증은 이 화면에서 못 고친다
@@ -73,7 +73,7 @@ describe("까닭 코드 → 고칠 곳", () => {
     expect(llmReasonFix("connection_key_missing", none)).toBeNull();
     expect(llmReasonFix("cli_version_mismatch", none)).toEqual({ href: "/admin/models/contracts", label: "계약 보기" });
     expect(llmReasonFix("capacity", none)).toEqual({ href: "/admin/models/devices#devices", label: "장비 한도" });
-    expect(llmReasonFix("no_direct_contract", none)).toEqual({ href: "/admin/models/tasks#tasks", label: "순위 다시 저장" });
+    expect(llmReasonFix("no_direct_contract", none)).toEqual({ href: "/admin/models#tasks", label: "순위 다시 저장" });
   });
 
   it("?fix= 는 아는 칸만 받는다", () => {
@@ -134,7 +134,7 @@ describe("LLM 운영 행 — 문제 표시와 고칠 곳", () => {
       "first-review": { from: "job", at: fresh, served: [], unusable: [{ rank: 2, code: "connection_key_missing", text: "키 없음", count: 3 }], degraded: null },
     } });
     expect(row(view, MLX).status.reasons[0]).toEqual({ text: "계약 없음 9회(수집 소개 짓기)",
-      fix: { href: "/admin/models/tasks#execution-crawl-tagline-1", label: "순위 다시 저장" } });
+      fix: { href: "/admin/models#execution-crawl-tagline-1", label: "순위 다시 저장" } });
     expect(row(view, GPU).status).toMatchObject({ level: "bad", text: "부르지 못함" });
     expect(row(view, GPU).status.reasons).toEqual([{ text: "키 없음 3회(1차 AI 검수)", fix: edit(GPU, "key", "키 넣기") },
       { text: "재실행 대기 1건", fix: null }]);
@@ -143,7 +143,7 @@ describe("LLM 운영 행 — 문제 표시와 고칠 곳", () => {
   it("잡이 멈춘 작업: 칩 옆에 잡 상태로 가는 링크, 행의 모든 작업이 멈췄으면 상태 까닭도 그 잡으로", () => {
     const view = llm();
     const verify = row(view, SUPA).tasks.find(chip => chip.task === "product-search-verify")!;
-    expect(verify).toMatchObject({ paused: true, href: "/admin/models/tasks#execution-product-search-verify-1",
+    expect(verify).toMatchObject({ paused: true, href: "/admin/models#execution-product-search-verify-1",
       fix: { href: "/admin/status?tab=jobs&job=product-search-verify", label: "잡 보기" } });
     expect(row(view, SUPA).tasks.find(chip => chip.task === "second-review")?.fix).toBeNull();
     expect(row(view, CLAUDE).tasks.find(chip => chip.task === "product-intro-check")?.fix).toEqual({ href: "/admin/status?tab=jobs&job=product-intro-check", label: "잡 보기" });
@@ -199,9 +199,9 @@ function assertFixResolves(href: string, connections: readonly AiConnectionView[
     } else expect(hash, href).toBe(`conn-${id}`);
     return;
   }
-  if (url.pathname === "/admin/models/tasks") {
+  if (url.pathname === "/admin/models") {
     expect([...url.searchParams.keys()], href).toEqual([]);
-    if (hash === "tasks") { expect([...literalAnchors(url.pathname)], href).toContain("tasks"); return; }
+    if (hash === "tasks") { expect(source("app/(operator)/admin/models/unified/tasks/UnifiedTaskSection.tsx")).toContain('id="tasks"'); return; }
     const match = /^execution-(.+)-(\d+)$/.exec(hash);
     expect(match, `${href} — 작업 배정 줄 앵커가 아니다`).not.toBeNull();
     const task = aiTask(match![1]);
@@ -247,7 +247,7 @@ describe("고칠 곳 주소가 받는 화면에 있다", () => {
     // 검사기 자체의 확인 — 없는 칸·작업·잡·앵커는 걸러낸다
     expect(() => assertFixResolves(`/admin/models/llm?edit=${GPU}&fix=bogus#conn-${GPU}-bogus`, llmConnections)).toThrow();
     expect(() => assertFixResolves(`/admin/models/llm?edit=${CLAUDE}&fix=key#conn-${CLAUDE}-key`, llmConnections)).toThrow();
-    expect(() => assertFixResolves("/admin/models/tasks#execution-first-review-2", llmConnections)).toThrow();
+    expect(() => assertFixResolves("/admin/models#execution-first-review-2", llmConnections)).toThrow();
     expect(() => assertFixResolves("/admin/status?tab=jobs&job=no-such-job", llmConnections)).toThrow();
     expect(() => assertFixResolves("/admin/models/history#nowhere", llmConnections)).toThrow();
   });

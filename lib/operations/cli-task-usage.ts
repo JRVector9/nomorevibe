@@ -95,7 +95,7 @@ export type CliTaskUsageInput = Readonly<{
   routes: readonly Pick<ModelCapacityRoute, "routeId" | "provider" | "model" | "groupId">[] | null;
 }>;
 
-const TASKS_PAGE = "/admin/models/tasks";
+const TASKS_PAGE = "/admin/models";
 const CONNECT_PAGE = "/admin/status?tab=ai";
 const EFFORT = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 /** 어댑터 argv 에서 `--effort` 다음 값을 읽는다 — 화면이 어댑터와 다른 값을 지어내지 않게 */

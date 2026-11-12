@@ -90,7 +90,7 @@ export const llmReasonLevel = (code: string): LlmOpsLevel => HARD_REASONS.has(co
 export type LlmFix = Readonly<{ href: string; label: string }>;
 /** 고칠 곳을 고를 때 아는 것 — 그 까닭이 붙은 연결(없으면 CLI 도구 행)과 작업·칸. */
 export type LlmFixAt = Readonly<{ connection: AiConnectionView | null; task: string | null; slot: number }>;
-export const llmTaskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
+export const llmTaskHref = (task: string, slot = 1) => `/admin/models#execution-${task}-${slot}`;
 export const llmJobHref = (job: string) => `/admin/status?tab=jobs&job=${encodeURIComponent(job)}`;
 export const LLM_NEW_DEVICE_HREF = "/admin/models/devices#new";
 export const LLM_CLASSIFIER_HREF = "/admin/status?tab=ai";
@@ -112,7 +112,7 @@ export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
   const opencode = connection?.kind === "cli" && connection.cliTool === "opencode";
   const typedCli = connection?.kind === "cli" && !opencode;
   const edit = (field: LlmFixField | null, label: string): LlmFix | null => connection ? { href: llmEditHref(connection.id, field), label } : null;
-  const rank = (label: string): LlmFix => ({ href: at.task ? llmTaskHref(at.task, at.slot) : "/admin/models/tasks#tasks", label });
+  const rank = (label: string): LlmFix => ({ href: at.task ? llmTaskHref(at.task, at.slot) : "/admin/models#tasks", label });
   const http = /^http_(\d{3})$/.exec(code)?.[1];
   if (http) return !api ? null : http === "401" || http === "403" ? edit("key", "키 확인") : edit("address", "다시 읽기");
   if (CALL_FAILED.has(code)) return { href: LLM_FAILURES_HREF, label: "실패 보기" };
@@ -774,7 +774,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     const cliTool = aiCliToolOfProvider(entry.provider);
     const editLinks = [
       ...(entry.classifier || entry.provider === "codex-cli" ? [{ href: LLM_CLASSIFIER_HREF, label: "분류 모델 설정" }] : []),
-      ...(tasks.some(chip => chip.source !== "classifier") ? [{ href: "/admin/models/tasks", label: "작업 배정(순위)" }] : []),
+      ...(tasks.some(chip => chip.source !== "classifier") ? [{ href: "/admin/models#tasks", label: "작업 배정(순위)" }] : []),
       ...(cliTool && cliTool !== "codex" ? [{ href: "/admin/models/llm?add=1#connection-new", label: "CLI 연결로 등록" }] : []),
       { href: "/admin/models/contracts", label: "CLI 계약" },
       ...(devices.length ? [{ href: "/admin/models/devices", label: "장비 한도" }] : []),

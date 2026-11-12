@@ -1,0 +1,38 @@
+/* 관리자 site-density의 간격 0.8배에 맞춰 시안 간격을 보존한다. */
+.models-unified{display:grid;gap:calc(30px / .8);min-width:0;scroll-padding-top:120px;font-size:calc(13px + var(--admin-font-delta, 0px));line-height:1.6}
+.models-unified section,.models-unified details{min-width:0;scroll-margin-top:calc(120px / .8)}
+.mu-jumps{display:flex;gap:calc(20px / .8);justify-content:flex-end;color:var(--muted);font-size:calc(11px + var(--admin-font-delta, 0px));margin-bottom:calc(-20px / .8)}
+.mu-jumps a:hover{text-decoration:underline}
+.mu-lower{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:calc(20px / .8)}
+.mu-section-head{display:flex;align-items:center;justify-content:space-between;gap:calc(16px / .8);margin-bottom:calc(12px / .8)}
+.mu-section-head h2{font-size:calc(15px + var(--admin-font-delta, 0px));letter-spacing:-.25px;font-weight:600}
+.mu-section-head>span{font-size:calc(11px + var(--admin-font-delta, 0px));color:var(--muted)}
+.mu-section-head>a{font-size:calc(12px + var(--admin-font-delta, 0px));color:var(--link)}
+.mu-folds{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.mu-folds>details+details{border-top:1px solid var(--line)}
+.mu-folds summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:calc(10px / .8);padding:calc(12px / .8) calc(14px / .8);font-weight:600;font-size:calc(12px + var(--admin-font-delta, 0px))}
+.mu-folds summary::-webkit-details-marker{display:none}
+.mu-folds summary:before{content:"›";font-size:calc(18px + var(--admin-font-delta, 0px));color:var(--muted);line-height:1;transition:transform .15s}
+.mu-folds details[open]>summary:before{transform:rotate(90deg)}
+.mu-folds summary span{font-size:calc(11px + var(--admin-font-delta, 0px));font-weight:400;color:var(--muted);margin-left:auto;text-align:right}
+.mu-fold-content{padding:0 calc(14px / .8) calc(15px / .8);min-width:0}
+.mu-fold-content p{color:var(--muted);font-size:calc(12px + var(--admin-font-delta, 0px));margin:0 0 calc(12px / .8)}
+.mu-fold-content details+details{border-top:1px solid var(--line)}
+.mu-fold-content details>summary{padding-inline:0}
+.mu-fold-content table{font-size:calc(12px + var(--admin-font-delta, 0px))}
+.mu-manage-row{padding:calc(10px / .8) 0;border-top:1px solid var(--line);display:flex;align-items:center;gap:calc(12px / .8);justify-content:space-between;font-size:calc(12px + var(--admin-font-delta, 0px));margin-top:calc(12px / .8)}
+.mu-manage-row span{display:grid}.mu-manage-row small{color:var(--muted);font-size:calc(11px + var(--admin-font-delta, 0px))}
+.mu-import{border:0;padding:0;min-width:0;margin:0}
+.mu-retired{display:grid;gap:calc(8px / .8);font-size:calc(12px + var(--admin-font-delta, 0px))}.mu-retired li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:calc(12px / .8)}
+.mu-recent{border:1px solid var(--line);border-radius:8px;padding:0 calc(14px / .8);background:var(--surface)}
+.mu-recent-row{display:grid;grid-template-columns:48px 1fr;gap:calc(12px / .8);padding:calc(12px / .8) 0;border-bottom:1px solid var(--line)}
+.mu-recent-row:last-child{border-bottom:0}
+.mu-recent-row time{font:11px var(--f-mono);color:var(--muted);padding-top:2px;font-variant-numeric:tabular-nums}
+.mu-recent-row strong{font-size:calc(12px + var(--admin-font-delta, 0px));font-weight:500}.mu-recent-row strong[data-ok=false]{color:var(--bad)}
+.mu-recent-row p{font-size:calc(11px + var(--admin-font-delta, 0px));color:var(--muted);margin-top:calc(3px / .8);overflow-wrap:anywhere}
+.mu-mini-foot{display:flex;justify-content:space-between;padding-top:8px;color:var(--muted);font-size:calc(11px + var(--admin-font-delta, 0px))}
+.mu-empty{padding:calc(14px / .8) 0;color:var(--muted);font-size:calc(12px + var(--admin-font-delta, 0px))}
+.mu-preview-note{border:1px solid var(--line);border-radius:6px;padding:calc(8px / .8) calc(12px / .8);font-size:calc(12px + var(--admin-font-delta, 0px));color:var(--muted)}
+@media(max-width:1050px){.mu-jumps{display:none}.mu-lower{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media(max-width:760px){.mu-lower{grid-template-columns:minmax(0,1fr)}.models-unified{gap:calc(24px / .8)}.mu-folds summary{flex-wrap:wrap}.mu-folds summary span{text-align:left}}
+@media(prefers-reduced-motion:reduce){.mu-folds summary:before{transition:none}}

@@ -34,9 +34,9 @@ export type RankSave = (previous: null, form: FormData) => Promise<{ ok?: true; 
 
 const STEPS: { key: Step; text: string }[] = [{ key: "edit", text: "모델·추론 강도 고르기" }, { key: "confirm", text: "바뀌는 내용 확인" }, { key: "done", text: "저장됨" }];
 /** 운영 홈에서 열었을 때 「모든 작업 보기」 링크(작업 배정 화면 안에서 열면 null) */
-const TASKS_FULL_VIEW = "/admin/models/tasks#tasks";
+const TASKS_FULL_VIEW = "/admin/models#tasks";
 /** 작업 배정 화면의 실행 방식 접힘 안 그 작업 칸(작업 분산 구성원·실행 방식을 바꾸는 곳) */
-const modeHref = (line: Pick<FlowRankLine, "task" | "slot">) => `/admin/models/tasks#mode-${line.task}-${line.slot}`;
+const modeHref = (line: Pick<FlowRankLine, "task" | "slot">) => `/admin/models#mode-${line.task}-${line.slot}`;
 
 function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "live" } {
   if (line.execution?.mode === "workload_pool") return { text: `작업 분산 · 모델 ${line.execution.members.length}개`, tone: "live" };

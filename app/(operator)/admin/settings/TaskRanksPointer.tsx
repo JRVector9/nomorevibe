@@ -6,6 +6,6 @@ import Link from "next/link";
  */
 export function TaskRanksPointer({ what = "1차·2차 심사 모델" }: { what?: string }) {
   return <p role="note" data-task-ranks-pointer="true" className="rounded-[9px] border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg-2">
-    {what}은(는) <Link href="/admin/models/tasks#tasks" prefetch={false} className="font-semibold text-accent-ink underline">작업 ↔ 모델</Link>
+    {what}은(는) <Link href="/admin/models#tasks" prefetch={false} className="font-semibold text-accent-ink underline">작업 ↔ 모델</Link>
     {" "}에서 1·2·3순위로 정합니다(2차는 투표자 칸마다 따로). 이 화면은 바꾸지 않습니다 — 순위가 없으면 그 심사는 돌지 않고 상태 화면에 까닭이 보입니다.</p>;
 }

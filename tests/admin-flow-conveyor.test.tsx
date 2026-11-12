@@ -180,7 +180,7 @@ describe("flow board", () => {
     expect(html).toContain('aria-pressed="true" aria-label="AI 2차');
     expect(html).toContain('id="cv-detail-title"><small>검수</small>AI 2차');
     expect(html).toContain("3,701");
-    expect(html).toContain('href="/admin/models/tasks"');
+    expect(html).toContain('href="/admin/models#tasks"');
     expect(html).toContain("<summary>24시간 통과 수·보류 사유 더 보기</summary>");
     expect(html.indexOf('id="cv-stage-table-title"')).toBeLessThan(html.indexOf('<details class="cv-more">'));
     // 장애 대응은 자세히 옆에 같이 열린다 — 2차는 모델 순위 화면으로, 보류 묶음 재개는 화면 조치 없음으로 정직하게
@@ -285,7 +285,7 @@ describe("operator desk", () => {
 
   it("names where to undo each setting change, and says so when it cannot be undone", () => {
     expect(deskChange({ id: 1, createdAt: DESK_NOW, actor: "jr", action: "ai-task-models-save", target: "first-review", ok: true }, (a) => a).undo)
-      .toEqual({ text: "이전 순위로 다시 저장(「바꾸기」 되돌리기·작업 ↔ AI 모델)", href: "/admin/models/tasks" });
+      .toEqual({ text: "이전 순위로 다시 저장(「바꾸기」 되돌리기·작업 ↔ AI 모델)", href: "/admin/models#tasks" });
     expect(deskChange({ id: 2, createdAt: DESK_NOW, actor: "jr", action: "job-pause", target: "crawl-publish", ok: true }, (a) => a).undo.href).toBe("/admin/status?tab=jobs&job=crawl-publish");
     expect(deskChange({ id: 3, createdAt: DESK_NOW, actor: "jr", action: "model-capacity-unknown-reviewed", target: "x", ok: true }, (a) => a).undo.href).toBeNull();
     expect(deskChange({ id: 4, createdAt: DESK_NOW, actor: "jr", action: "something-else", target: "a/b", ok: true }, (a) => a).undo.href).toBe("/admin/activity?target=a%2Fb");
@@ -388,7 +388,7 @@ describe("incident response (2026-11-02 incidents)", () => {
       stage("first", { status: "stalled", waiting: 260, oldestMinutes: 48, completed5m: 0 }), stage("second"), stage("publish")] } }));
     const response = stationResponse("first", conveyor, desk());
     expect(response.checks[1]).toContain("1차 AI 검수 1순위가 비어 있지 않은지");
-    expect(response.steps).toContainEqual(expect.objectContaining({ kind: "link", href: "/admin/models/tasks", risk: "careful" }));
+    expect(response.steps).toContainEqual(expect.objectContaining({ kind: "link", href: "/admin/models#tasks", risk: "careful" }));
     expect(response.steps).toContainEqual(expect.objectContaining({ kind: "link", href: "/admin/activity?group=settings" }));
     expect(response.steps).toContainEqual(expect.objectContaining({ kind: "job", job: "crawl-agent-review" }));
     // 장부 경보(dispatch_stuck)도 막힌 모델 칸의 점검에 든다 — 소유자 없는 행 정리는 화면 조치가 없다고 적는다
