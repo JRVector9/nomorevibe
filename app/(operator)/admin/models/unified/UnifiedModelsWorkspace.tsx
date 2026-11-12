@@ -43,7 +43,7 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
       }
       const keys = data.assignments.rows.map(row => row.key);
       const task = keys.includes(url.searchParams.get("task") ?? "") ? url.searchParams.get("task") : unifiedTaskKey(url.hash, keys);
-      if (task) setDetail({ kind: "task", key: task });
+      if (task) setDetail(current => current?.kind === "task" && current.key === task ? current : { kind: "task", key: task });
       else if (url.searchParams.get("model")) setDetail({ kind: "model", id: url.searchParams.get("model")! });
       let id: string;
       try { id = decodeURIComponent(url.hash.slice(1)); } catch { return; }
