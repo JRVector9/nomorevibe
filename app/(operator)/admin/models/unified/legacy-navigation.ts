@@ -1,6 +1,8 @@
 type Params = Record<string, string | string[] | undefined>;
 const one = (value: string | string[] | undefined) => typeof value === "string" ? value.trim() : Array.isArray(value) ? (value[0] ?? "").trim() : "";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SECTIONS: Readonly<Record<string, string>> = { modes: "tasks", connections: "models", "assist-fold": "assist-controls", "limits-fold": "concurrency", "cleanup-fold": "cleanup" };
+export const unifiedSectionHash = (hash: string) => { const id = hash.replace(/^#/, ""); return `#${SECTIONS[id] ?? id}`; };
 
 /** 서버에는 오지 않는 옛 조각 주소도 브라우저에서 그대로 새 통합 화면으로 옮긴다. */
 export function legacyTasksHref(params: Params = {}, hash = ""): string {
@@ -18,13 +20,14 @@ export function legacyTasksHref(params: Params = {}, hash = ""): string {
     const mode = one(params.mode);
     fragment = connection ? "model-detail" : one(params.import) === "plan" ? "import"
       : query.has("task") ? `execution-${query.get("task")!.replace("#", "-")}`
-        : mode.startsWith("mode-") ? mode : mode.includes("#") ? `mode-${mode.replace("#", "-")}` : "tasks";
+        : mode.startsWith("mode-") ? mode : mode.includes("#") ? `mode-${mode.replace("#", "-")}`
+          : /^[a-z][a-z0-9-]*$/.test(mode) && !["fallback", "workload_pool"].includes(mode) ? `mode-${mode}-1` : "tasks";
   }
   if (fragment.startsWith("conn-")) {
     query.set("model", fragment.slice(5));
     fragment = "model-detail";
   }
-  return `/admin/models${query.size ? `?${query}` : ""}#${fragment}`;
+  return `/admin/models${query.size ? `?${query}` : ""}${unifiedSectionHash(fragment)}`;
 }
 
 /** 옛 실행 방식·순위 줄과 새 ?task= 주소는 모두 같은 공유 작업 편집기를 연다. */

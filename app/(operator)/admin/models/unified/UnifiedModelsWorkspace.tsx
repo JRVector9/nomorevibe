@@ -6,7 +6,7 @@ import { unifiedTaskDuplicate } from "@/lib/operations/model-unified-task-view";
 import { ModelConsole } from "../console/ModelConsole";
 import { UnifiedTaskSection } from "./tasks/UnifiedTaskSection";
 import { UnifiedTaskEditor } from "./tasks/UnifiedTaskEditor";
-import { unifiedTaskKey } from "./legacy-navigation";
+import { unifiedSectionHash, unifiedTaskKey } from "./legacy-navigation";
 import "./unified.css";
 
 export type UnifiedModelsWorkspaceData = Pick<ModelUnifiedRead, "models" | "assignments" | "editor" | "devices" | "poolHelp" | "lockReason" | "taskUses" | "ranksReadable">;
@@ -36,6 +36,11 @@ export function UnifiedModelsWorkspace({ data, selected, readOnly, children }: {
   useEffect(() => {
     const reveal = () => {
       const url = new URL(window.location.href);
+      const hash = unifiedSectionHash(url.hash);
+      if (url.hash && hash !== url.hash) {
+        url.hash = hash;
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      }
       const keys = data.assignments.rows.map(row => row.key);
       const task = keys.includes(url.searchParams.get("task") ?? "") ? url.searchParams.get("task") : unifiedTaskKey(url.hash, keys);
       if (task) setDetail({ kind: "task", key: task });

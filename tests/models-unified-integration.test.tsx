@@ -97,6 +97,9 @@ describe("옛 작업 즐겨찾기", () => {
     [{}, "#execution-second-review-2", "/admin/models#execution-second-review-2"],
     [{}, "#mode-first-review-1", "/admin/models#mode-first-review-1"],
     [{}, "#concurrency", "/admin/models#concurrency"],
+    [{}, "#modes", "/admin/models#tasks"],
+    [{}, "#connections", "/admin/models#models"],
+    [{ mode: "crawl-tagline" }, "", "/admin/models?mode=crawl-tagline#mode-crawl-tagline-1"],
   ])("%j %s → %s", (params, hash, href) => expect(legacyTasksHref(params, hash)).toBe(href));
   it("순위와 실행 방식의 같은 칸을 같은 편집기로 찾고 잘못된 조각은 무시한다", () => {
     const keys = ["first-review#1", "second-review#2"];
