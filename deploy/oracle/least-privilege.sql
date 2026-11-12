@@ -214,6 +214,7 @@ GRANT SELECT, INSERT ON TABLE public.jobs TO nomorevibe_oracle_scheduler;
 GRANT UPDATE (requested_version, processed_version, next_scheduled_at, not_before, lease_token, worker_seen_at, cursor, locked_at, last_run_at, last_success_at, last_error, runs, updated_at) ON TABLE public.jobs TO nomorevibe_oracle_scheduler;
 GRANT SELECT, INSERT ON TABLE public.operations_observations TO nomorevibe_oracle_scheduler;
 GRANT UPDATE (value, observed_at) ON TABLE public.operations_observations TO nomorevibe_oracle_scheduler;
+GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_scheduler;
 
 -- attest
 CREATE ROLE nomorevibe_oracle_attest LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :attest_connections;
