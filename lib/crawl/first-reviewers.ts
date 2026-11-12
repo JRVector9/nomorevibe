@@ -34,14 +34,17 @@ export function firstReviewers(settings?: FirstReviewSettings): FirstReviewer[] 
 
 /** 1차 순위의 지금 사정 — 고르기가 비켜 갈 쓸 수 없는 심사자(firstReviewerKey → 까닭)와, 부를 순위가 없을 때의 degraded(잡이 그대로 적는다). */
 export type FirstReviewRankState = Readonly<{ pool: FirstReviewer[]; unusable: ReadonlyMap<string, string>; degraded: ReviewRankDegraded | null;
-  resolution: ReviewRankResolution | null }>;
+  resolution: ReviewRankResolution | null;
+  /** 「동시에」 예비 순위(0179) — pool 의 꼬리에도 들어 있다(지금 심사자). 구성원과 같은 엔진은 빠진다. 예비가 꺼졌으면 빈 목록 */
+  reserve: FirstReviewer[] }>;
 export function firstReviewRankState(settings?: FirstReviewSettings): FirstReviewRankState {
-  if (settingsReviewersActive()) return Object.freeze({ pool: legacyFirstReviewers(settings ?? {}), unusable: new Map(), degraded: null, resolution: null });
+  if (settingsReviewersActive()) return Object.freeze({ pool: legacyFirstReviewers(settings ?? {}), unusable: new Map(), degraded: null, resolution: null, reserve: [] });
   const ranks = firstReviewRanks();
   return Object.freeze({ pool: ranks.pool.map(reviewer => ({ provider: reviewer.provider, model: reviewer.model })),
     // 열쇠 꼴이 firstReviewerKey 와 같다(JSON [provider, model])
     unusable: new Map(ranks.unusable),
-    degraded: firstReviewRanksDegraded(ranks), resolution: ranks.resolution });
+    degraded: firstReviewRanksDegraded(ranks), resolution: ranks.resolution,
+    reserve: ranks.reserve.map(reviewer => ({ provider: reviewer.provider, model: reviewer.model })) });
 }
 
 /**

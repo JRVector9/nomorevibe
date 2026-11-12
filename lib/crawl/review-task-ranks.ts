@@ -15,7 +15,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { canonicalReviewModel } from "./review-model-identity";
 import { aiTaskExecutionReadState, ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from "@/lib/llm/ai-task-execution-snapshot";
 import { chooseTaskWorkloadMember } from "@/lib/llm/ai-task-workload-selector";
-import type { AiTaskExecutionConfig, AiTaskPoolMember, AiTaskPoolSelection } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskPoolFeatures, type AiTaskExecutionConfig, type AiTaskPoolMember, type AiTaskPoolSelection } from "@/lib/llm/ai-task-execution-config";
 
 /**
  * 심사 묶음(1차 AI 검수·2차 AI 검수 투표자)의 「작업 ↔ 모델」 순위 → 실행 쪽 심사자(2026-11-02 소유자 결정, PR C1).
@@ -187,7 +187,45 @@ export function resolveReviewTaskRanks(task: AiReviewTaskId, slot = 1): ReviewRa
   memo.results.set(key, resolved);
   return resolved;
 }
-let memo: { contractsToken: string; rows: readonly unknown[]; loaded: boolean; epoch: number; executionLoadedAt: number; results: Map<string, ReviewRankResolution> } | null = null;
+let memo: { contractsToken: string; rows: readonly unknown[]; loaded: boolean; epoch: number; executionLoadedAt: number; results: Map<string, ReviewRankResolution>;
+  reserves?: Map<string, readonly ReviewRankCandidate[]> } | null = null;
+
+/**
+ * 「동시에」의 예비 순위(0179 reserve_ranks, 2026-11-12 1·2차도 따름): 묶음이 모두 설 때(칸 수가 참·줄에 설 구성원도 없음·쉼) 이 칸의 저장된 1·2·3순위를
+ * 순위 차례로 이어 쓴다. 순위대로·예비 꺼짐·고정 시험 순위·설정 행을 읽는 범위면 빈 목록. 묶기는 resolveReviewTaskRanks 와 같은 스냅숏으로 한 번만 한다.
+ */
+export function resolveReviewReserveRanks(task: AiReviewTaskId, slot = 1): readonly ReviewRankCandidate[] {
+  if (currentPin() || settingsReviewersActive()) return [];
+  const resolution = resolveReviewTaskRanks(task, slot), execution = resolution.execution;
+  if (execution?.mode !== "workload_pool" || execution.reserveRanks !== true || !aiTaskPoolFeatures(task, slot).reserve || !memo) return [];
+  const key = `${task}#${slot}`, known = (memo.reserves ??= new Map()).get(key);
+  if (known) return known;
+  const ranks = taskModels(task, slot);
+  const contracts = ranks.length ? reviewRouteContracts(REVIEW_TASK_ROUTES[task]) : [];
+  const bound = Object.freeze(ranks.map(rank => bindReviewTaskRank(task, rank, contracts)));
+  memo.reserves.set(key, bound);
+  return bound;
+}
+
+/**
+ * 칸 수(max_slots)를 적은 「동시에」 — 구성원 열쇠(JSON [provider, identity], firstReviewerKey 와 같은 꼴)마다 칸 수 합. 같은 엔진(같은 장부 이름)을 두 자리에 넣으면
+ * 한 열쇠로 더한다(장부·표가 자리를 가르지 못한다 — 함께 차고 함께 빈다). 칸 수를 적지 않았거나 따르지 않는 작업이면 null(예전처럼 상한 없음).
+ */
+export function reviewPoolSlotCaps(task: AiReviewTaskId, slot: number, execution: AiTaskExecutionConfig | undefined,
+  candidates: readonly ReviewRankCandidate[]): ReadonlyMap<string, number> | null {
+  if (execution?.mode !== "workload_pool" || !aiTaskPoolFeatures(task, slot).slotCaps || !execution.members.some(member => member.maxSlots != null)) return null;
+  const caps = new Map<string, number>();
+  for (const candidate of candidates) {
+    if (!candidate.binding || !candidate.poolMember) continue;
+    const key = JSON.stringify([candidate.binding.provider, candidate.binding.identity]);
+    caps.set(key, (caps.get(key) ?? 0) + (candidate.poolMember.maxSlots ?? 1));
+  }
+  return caps;
+}
+/** 칸 수 합에 닿은 구성원 열쇠 — loads 는 열쇠마다 지금 그 구성원이 쥔 일(1차: 살아 있는 장부 행, 2차: 끝나지 않은 표). */
+export function reviewPoolCappedKeys(caps: ReadonlyMap<string, number> | null, loads: ReadonlyMap<string, number>): Set<string> {
+  return new Set(caps ? [...caps].filter(([key, cap]) => (loads.get(key) ?? 0) >= cap).map(([key]) => key) : []);
+}
 /** 계약·순위 스냅숏을 기다린 뒤(잡 틱·소비자 쪽의 길목). 던지지 않는다. */
 export async function ensureReviewTaskRanks(maxAgeMs?: number): Promise<void> {
   await Promise.all([ensureServingContracts(maxAgeMs), ensureAiTaskModels(maxAgeMs), ensureAiTaskExecutionConfigs(maxAgeMs)]);
@@ -226,20 +264,27 @@ const reviewerOf = (binding: ReviewRankBinding): ReviewRankReviewer => ({ provid
 /** 쓸 수 없는 까닭(코드) → 운영자 문장(text 작업과 같은 표 + 심사 쪽 코드). */
 export const reviewRankUnusableText = (code: string, detail?: string | null): string => `${textRankUnusableText(code)}${detail ? `(${detail})` : ""}`;
 
-/** 1차 순위 — 「지금 1차 심사자」(순위 차례, identity 를 아는 것만)와 쓸 수 없는 것(고르기가 비켜 갈 열쇠 → 까닭). */
+/**
+ * 1차 순위 — 「지금 1차 심사자」(순위 차례, identity 를 아는 것만)와 쓸 수 없는 것(고르기가 비켜 갈 열쇠 → 까닭).
+ * 「동시에」에 예비를 켰으면 예비 순위도 「지금 1차 심사자」다(그 결과가 유효하고 claim 재확인·2차 관문이 센다) — 구성원 다음에 붙고, 구성원과 같은 열쇠(같은 엔진)는
+ * 한 번만 든다(reserve 에는 구성원과 다른 열쇠만 — 칸이 찬·쉬는 구성원의 엔진을 예비로 다시 부르지 않는다).
+ */
 export type FirstReviewRanks = Readonly<{ resolution: ReviewRankResolution; pool: readonly ReviewRankReviewer[];
-  unusable: ReadonlyMap<string, string>; usable: number }>;
+  unusable: ReadonlyMap<string, string>; usable: number; reserve: readonly ReviewRankReviewer[]; reserveCandidates: readonly ReviewRankCandidate[] }>;
 export function firstReviewRanks(): FirstReviewRanks {
   const resolution = resolveReviewTaskRanks("first-review", 1);
-  const pool: ReviewRankReviewer[] = [], unusable = new Map<string, string>();
-  for (const candidate of resolution.candidates) {
+  const reserveCandidates = resolveReviewReserveRanks("first-review", 1);
+  const pool: ReviewRankReviewer[] = [], unusable = new Map<string, string>(), reserve: ReviewRankReviewer[] = [];
+  for (const candidate of [...resolution.candidates, ...reserveCandidates]) {
     if (!candidate.binding) continue;
     const reviewer = reviewerOf(candidate.binding), key = reviewerKey(reviewer);
     if (pool.some(entry => reviewerKey(entry) === key)) continue;
     pool.push(reviewer);
+    if (reserveCandidates.includes(candidate)) reserve.push(reviewer);
     if (candidate.unusable) unusable.set(key, candidate.unusable);
   }
-  return Object.freeze({ resolution, pool: Object.freeze(pool), unusable, usable: pool.length - unusable.size });
+  return Object.freeze({ resolution, pool: Object.freeze(pool), unusable, usable: pool.length - unusable.size,
+    reserve: Object.freeze(reserve), reserveCandidates });
 }
 
 /** 2차 투표자 칸 하나: 그 칸의 순위와 지금 표를 내는 순위(쓸 수 있는 가장 높은 순위 — 1순위를 쓸 수 없으면 2·3순위). */
@@ -345,7 +390,9 @@ export function firstReviewRanksDegraded(ranks: FirstReviewRanks): ReviewRankDeg
   if (resolution.status === "task_models_unreadable")
     return { code: "task_models_unreadable", detail: `${name}: 작업 ↔ 모델 표를 아직 읽지 못했습니다(권한·migration 0162 확인) — 기본값으로 대신 부르지 않습니다` };
   if (ranks.usable > 0) return null;
-  return { code: "all_ranks_unusable", detail: `${name}: ${resolution.candidates.map(candidateText).join(" / ")}`.slice(0, 300), ...keyMissingCause(resolution.candidates) };
+  const all = [...resolution.candidates, ...ranks.reserveCandidates];
+  const parts = [...resolution.candidates.map(candidateText), ...ranks.reserveCandidates.map(candidate => `예비 ${candidateText(candidate)}`)];
+  return { code: "all_ranks_unusable", detail: `${name}: ${parts.join(" / ")}`.slice(0, 300), ...keyMissingCause(all) };
 }
 /** 2차: 순위 없음·표 못 읽음, 또는 표를 낼 칸이 하나도 없음(모든 칸의 모든 순위를 쓸 수 없음). */
 export function secondReviewRanksDegraded(ranks: SecondReviewRanks): ReviewRankDegraded | null {
@@ -361,9 +408,20 @@ export function secondReviewRanksDegraded(ranks: SecondReviewRanks): ReviewRankD
   return { code: "all_ranks_unusable", detail: `${name}: ${parts.join(" / ")}`.slice(0, 300),
     ...keyMissingCause(ranks.slots.flatMap(slot => slot.resolution.candidates)) };
 }
-/** 틱 끝 요약(ai_task.ranks 의 숫자 칸) — 칸·순위마다 쓸 수 없는 까닭과 지금 표를 내는 순위. text 작업의 summary 와 같은 이름을 쓴다(관리 화면이 읽는다). */
-export function reviewRanksSummary(resolutions: readonly ReviewRankResolution[], served: ReadonlyMap<number, number> = new Map()): Record<string, number> {
+/**
+ * 틱 끝 요약(ai_task.ranks 의 숫자 칸) — 칸·순위마다 쓸 수 없는 까닭과 지금 표를 내는 순위. text 작업의 summary 와 같은 이름을 쓴다(관리 화면이 읽는다).
+ * reserve: 「동시에」의 예비 순위 — text 작업처럼 served.<순위>·unusable.<순위>.<까닭> 으로 센다(구성원 칸과 섞지 않는다).
+ */
+export function reviewRanksSummary(resolutions: readonly ReviewRankResolution[], served: ReadonlyMap<number, number> = new Map(),
+  reserve?: Readonly<{ candidates: readonly ReviewRankCandidate[]; served: ReadonlyMap<number, number> }>): Record<string, number> {
   const out: Record<string, number> = { ranks: resolutions.reduce((sum, row) => sum + row.candidates.length, 0) };
+  if (reserve?.candidates.length) {
+    for (const [rank, count] of reserve.served) if (count > 0) out[`served.${rank}`] = count;
+    for (const candidate of reserve.candidates) if (candidate.unusable && /^[a-z_]{1,60}$/.test(candidate.unusable)) {
+      const key = `unusable.${candidate.rank.rank}.${candidate.unusable}`;
+      out[key] = (out[key] ?? 0) + 1;
+    }
+  }
   const pool = resolutions.find(resolution => resolution.execution?.mode === 'workload_pool');
   if (pool?.execution?.revision) {
     out.pool_revision = pool.execution.revision;

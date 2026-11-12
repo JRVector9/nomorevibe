@@ -44,7 +44,7 @@ import type { FirstReviewer } from "./agent-review";
 import { ai1WithinLiveCallWindowSql } from "./ai1-live-call";
 import { firstReviewRankState, firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer,
   type FirstReviewPoolPosition } from "./first-reviewers";
-import { chooseReviewWorkloadMember, ensureReviewTaskRanks } from "./review-task-ranks";
+import { chooseReviewWorkloadMember, ensureReviewTaskRanks, reviewPoolCappedKeys, reviewPoolSlotCaps } from "./review-task-ranks";
 import { logger } from "@/lib/observability/logger";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { candidateStarAutoApproval } from "./star-auto-approval";
@@ -99,17 +99,46 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
   // New work only: retain every existing waiting/reserved/dispatched/live binding.
   // The locked recheck below still receives exactly one selected reviewer.
   if (executor === db && state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
-    const chosen = await chooseReviewWorkloadMember(state.resolution, blocked);
-    if (!chosen) {
-      // 쉬지도 막히지도 않은 구성원이 있는데 고르지 못했다 = 줄에 설 자리도 없다(포화 쪽). 모두 쉬면 예전처럼 「모든 순위를 쓸 수 없음」이 가른다
-      if (note && pool.some(reviewer => !blocked.has(firstReviewerKey(reviewer)))) note.poolBusy = true;
-      return null;
+    // 칸 수(0179, 2026-11-12 1차도 따름): 그 모델의 살아 있는 1차 장부 행(대기·예약·보냄)이 칸 수 합에 닿은 구성원은 고르지 않는다 —
+    // 줄에 서는 것(queueWhenFull)도 칸이 남은 구성원 중에서만이다. 같은 엔진 두 자리는 한 열쇠로 함께 찬다.
+    const capped = await firstReviewCappedKeys(state.resolution, executor);
+    const avoid = capped.size ? new Set([...blocked, ...capped]) : blocked;
+    const chosen = await chooseReviewWorkloadMember(state.resolution, avoid);
+    if (chosen) {
+      logger.info("ai_task.workload_hint_selected", { candidateId: context.candidate.id,
+        model: chosen.model, provider: chosen.provider, ...chosen.poolSelection });
+      return { provider: chosen.provider, model: chosen.model };
     }
-    logger.info("ai_task.workload_hint_selected", { candidateId: context.candidate.id,
-      model: chosen.model, provider: chosen.provider, ...chosen.poolSelection });
-    return { provider: chosen.provider, model: chosen.model };
+    // 예비(0179 reserve_ranks): 구성원이 모두 차거나 쉬거나 줄에 설 자리도 없으면 예비 순위가 받는다(순위 차례, 쉬거나 막힌 예비는 비켜 간다).
+    // 예비도 claim 이 장부 줄에 선다 — 차례가 오면 다음 틱이 그 의도(waiting)를 이어받는다. 구성원과 같은 엔진은 예비 목록에 없다(firstReviewRanks).
+    const reserve = state.reserve.find(reviewer => !avoid.has(firstReviewerKey(reviewer)));
+    if (reserve) {
+      logger.info("ai_task.workload_reserve_selected", { candidateId: context.candidate.id, model: reserve.model, provider: reserve.provider,
+        capped: capped.size });
+      return reserve;
+    }
+    // 쉬지도 막히지도 않은 구성원이 있는데 고르지 못했다 = 칸이 찼거나 줄에 설 자리도 없다(포화 쪽). 모두 쉬면 예전처럼 「모든 순위를 쓸 수 없음」이 가른다
+    const members = state.resolution.candidates.flatMap(candidate => candidate.binding && candidate.poolMember
+      ? [firstReviewerKey({ provider: candidate.binding.provider, model: candidate.binding.identity })] : []);
+    if (note && members.some(key => !blocked.has(key))) note.poolBusy = true;
+    return null;
   }
   return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked });
+}
+/**
+ * 칸 수 합에 닿은 1차 「동시에」 구성원 열쇠(firstReviewerKey). 그 모델의 살아 있는 1차 장부 행 — 기한 안의 대기·예약, 호출 기한 + 여유 안의 보냄(위 의도 질의와 같은
+ * 기준) — 을 모든 주인에 걸쳐 센다. 칸 수를 적지 않은 묶음이면 읽지 않는다(빈 집합).
+ */
+async function firstReviewCappedKeys(resolution: NonNullable<ReturnType<typeof firstReviewRankState>["resolution"]>, executor: Executor): Promise<Set<string>> {
+  const caps = reviewPoolSlotCaps("first-review", 1, resolution.execution, resolution.candidates);
+  if (!caps?.size || currentReplayDb()) return new Set();
+  const rows = await executor.execute<{ provider: string; model: string; n: number }>(sql`
+    SELECT provider, model, count(*)::integer AS n FROM model_capacity_requests
+    WHERE route_id = 'crawl-agent-review' AND class = 'first' AND (
+      (state = 'waiting' AND queue_until > clock_timestamp()) OR (state = 'reserved' AND reserved_until > clock_timestamp())
+      OR (state = 'dispatched' AND ${ai1WithinLiveCallWindowSql(sql`provider`, sql`coalesce(dispatched_at, updated_at)`)}))
+    GROUP BY provider, model`);
+  return reviewPoolCappedKeys(caps, new Map(Array.from(rows, row => [firstReviewerKey(row), Number(row.n)])));
 }
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,

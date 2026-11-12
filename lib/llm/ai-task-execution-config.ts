@@ -16,7 +16,12 @@ export const AI_TASK_POOL_LANES_MAX = 16;
  * - slots: 「동시에」를 받는 칸(2차 검수는 투표자 1만 — 투표자 1·2·3 은 같은 후보를 각자 판정하는 뜻이라 건드리지 않는다)
  * - slotCaps: 구성원마다 이 단계에 내줄 칸 수(max_slots)를 따른다 — 칸 수를 적으면 칸 수의 합만큼 함께 돌고, 구성원마다 그 칸 수를 넘겨 보내지 않는다
  * - reserve: 묶음이 모두 설 때(실패·한도 초과·쉼) 이 작업의 순위(1·2·3)를 예비로 이어 쓴다(reserve_ranks)
- * 카테고리 분류·1차·2차 검수·검색어 번역(웹)은 예전의 작업 분산(일 하나마다 구성원 하나)만 따르고 칸 수·예비는 아직 읽지 않는다.
+ * 1차·2차(투표자 1) 검수도 칸 수·예비를 따른다(2026-11-12 소유자 「1,2차도 동시에 선택하면 새 동작을 따르게」):
+ * - 1차: 구성원의 칸 수 = 그 모델의 살아 있는 1차 장부 행(대기·예약·보냄) 상한. 찬 구성원은 고르지 않고, 남은 구성원 중에서만 줄에 선다. 모두 차거나 설 자리가 없으면
+ *   예비 순위가 받는다(예비도 장부 줄에 선다 — lib/crawl/agent-review-repository.ts chooseFirstReviewForCandidate).
+ * - 2차: 구성원의 칸 수 = 그 모델에 배정돼 아직 끝나지 않은 표(pending) 상한 — 표 하나는 호출 하나라 동시 호출도 그만큼이다. 모두 차면 예비(저장된 순위의 첫 쓸 수 있는 순위,
+ *   배정 행 없는 첫 표)가 받는다. 표 수·고정 표 규칙은 그대로(lib/crawl/second-review-workload.ts insertSecondReviewWorkloadRows).
+ * 카테고리 분류·검색어 번역(웹)은 예전의 작업 분산(일 하나마다 구성원 하나)만 따르고 칸 수·예비는 아직 읽지 않는다.
  */
 export type AiTaskPoolFeatures = Readonly<{ slotCaps: boolean; reserve: boolean }>;
 const POOL_TEXT_JOB: AiTaskPoolFeatures = Object.freeze({ slotCaps: true, reserve: true });
@@ -29,8 +34,8 @@ const AI_TASK_POOL_SUPPORT: Readonly<Record<string, Readonly<{ slots: readonly n
   "product-tagline-ko": { slots: [1], features: POOL_TEXT_JOB },
   "crawl-tagline": { slots: [1], features: POOL_TEXT_JOB },
   "search-query-translate": { slots: [1], features: POOL_DISTRIBUTE_ONLY },
-  "first-review": { slots: [1], features: POOL_DISTRIBUTE_ONLY },
-  "second-review": { slots: [1], features: POOL_DISTRIBUTE_ONLY },
+  "first-review": { slots: [1], features: POOL_TEXT_JOB },
+  "second-review": { slots: [1], features: POOL_TEXT_JOB },
   "publish-classify": { slots: [1], features: POOL_DISTRIBUTE_ONLY },
 });
 /** 「동시에」를 지원하는 작업(id 차례). */
