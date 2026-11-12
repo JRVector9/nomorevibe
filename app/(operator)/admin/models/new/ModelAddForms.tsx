@@ -13,7 +13,11 @@ const step = (id: string, number: 2 | 3) => `/admin/models/new?id=${encodeURICom
  * ① 넣기 — 검사(checkModelAddStepOne) 뒤 기존 연결 저장(saveAiConnectionAction)으로 연결을 만든다. API 는 저장하면서 GET /models 를 읽는다.
  * 이름은 주소의 호스트에서 임시로 만들고(겹치면 번호), 두 번째 걸음에서 사용자가 정한다. 만든 연결은 순위가 없어 처리에 쓰이지 않는다.
  */
-export function ModelAddStepOneForm({ secretBox, readOnly, taken }: { secretBox: boolean; readOnly: boolean; taken: readonly string[] }) {
+export function ModelAddStepOneForm({ secretBox, readOnly, taken, onCreated, drawer = false }: {
+  secretBox: boolean; readOnly: boolean; taken: readonly string[];
+  /** A drawer refreshes the existing inventory and waits for the saved row; the page keeps its route transition. */
+  onCreated?: (connectionId: string) => void; drawer?: boolean;
+}) {
   const router = useRouter();
   const [kind, setKind] = useState<ModelAddKind>("api");
   const [baseUrl, setBaseUrl] = useState(""), [apiKey, setApiKey] = useState("");
@@ -32,13 +36,16 @@ export function ModelAddStepOneForm({ secretBox, readOnly, taken }: { secretBox:
       for (const [name, value] of fields) form.append(name, value);
       const saved = await saveAiConnectionAction(null, form);
       if (!saved?.ok || !saved.connectionId) { setIssues(saved?.issues ?? ["저장 결과를 확인하지 못했습니다."]); return; }
-      router.push(step(saved.connectionId, 2));
+      if (onCreated) onCreated(saved.connectionId);
+      else router.push(step(saved.connectionId, 2));
     });
   };
   return <form className="mc-form" data-dirty={baseUrl || apiKey || cliModels ? "true" : undefined} onSubmit={event => { event.preventDefault(); submit(); }}>
-    <fieldset><legend>방식</legend><div className="mc-acts">
+    {drawer ? <label><span>연결 방식</span><select value={kind} disabled={pending || readOnly} onChange={event => setKind(event.target.value as ModelAddKind)}>
+      <option value="api">OpenAI 호환 API</option><option value="cli">CLI 도구</option></select></label>
+      : <fieldset><legend>방식</legend><div className="mc-acts">
       <label><input type="radio" name="kind" checked={kind === "api"} onChange={() => setKind("api")} /> API 주소</label>
-      <label><input type="radio" name="kind" checked={kind === "cli"} onChange={() => setKind("cli")} /> CLI 도구</label></div></fieldset>
+      <label><input type="radio" name="kind" checked={kind === "cli"} onChange={() => setKind("cli")} /> CLI 도구</label></div></fieldset>}
     {kind === "api" ? <>
       <label><span>주소</span><input type="url" value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://호스트/v1" autoComplete="off" /></label>
       <label><span>키</span><input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} disabled={!secretBox} autoComplete="off"
@@ -49,7 +56,8 @@ export function ModelAddStepOneForm({ secretBox, readOnly, taken }: { secretBox:
       <label><span>모델 이름</span><input type="text" value={cliModels} onChange={event => setCliModels(event.target.value)} placeholder="sonnet (띄어쓰기로 여럿)" autoComplete="off" /></label>
       <label><span>CLI 버전</span><input type="text" value={cliVersion} onChange={event => setCliVersion(event.target.value)} placeholder="워커의 --version 출력(나중에 적어도 됨)" autoComplete="off" /></label>
     </>}
-    <div className="mc-acts"><button type="submit" className="button small primary" disabled={readOnly || pending}>{pending ? "응답 확인 중…" : "넣고 응답 확인"}</button></div>
+    <div className={drawer ? "mc-editor-foot" : "mc-acts"}>{drawer && <p>{kind === "api" ? "연결을 확인한 뒤 이름과 한도를 정합니다." : "도구와 모델 이름을 저장한 뒤 이름과 한도를 정합니다."}</p>}
+      <button type="submit" className="button small primary" disabled={readOnly || pending}>{pending ? "응답 확인 중…" : drawer ? kind === "api" ? "연결 확인 후 다음 →" : "저장 후 다음 →" : "넣고 응답 확인"}</button></div>
     {issues.map(text => <p key={text} role="alert" className="mc-msg">{text}</p>)}
   </form>;
 }
@@ -59,7 +67,9 @@ export function ModelAddStepOneForm({ secretBox, readOnly, taken }: { secretBox:
  * 기존 장비 한 줄 저장(saveDeviceRowAction — 행이 없으면 첫 행을 만든다, 감사)도 부른다 — 「한 번 불러 보기」(기존 선택 모델 응답 시험)가 장비 칸을 확인하기 때문이다.
  * 저장한 뒤 시험 호출과 「다음」이 열린다.
  */
-export function ModelAddStepTwoForm({ row, maxTokens, readOnly, taken }: { row: ModelConsoleRow; maxTokens: number | null; readOnly: boolean; taken: readonly string[] }) {
+export function ModelAddStepTwoForm({ row, maxTokens, readOnly, taken, onNext }: {
+  row: ModelConsoleRow; maxTokens: number | null; readOnly: boolean; taken: readonly string[]; onNext?: () => void;
+}) {
   const router = useRouter();
   const { connection } = row;
   const [name, setName] = useState(row.name), [machine, setMachine] = useState(row.machine);
@@ -99,7 +109,8 @@ export function ModelAddStepTwoForm({ row, maxTokens, readOnly, taken }: { row: 
       placeholder={maxTokens ? `서버가 알려 준 값 ${maxTokens.toLocaleString("ko-KR")}` : "서버가 알려 주지 않으면 적습니다"} /></label>}
     <p className="mc-hint">이름은 관리자 화면 어디서나 이 모델을 부르는 이름입니다. 서버가 알려 준 모델 이름은 상세의 「연결 확인」에만 보입니다.</p>
     <div className="mc-acts"><button type="submit" className="button small primary" disabled={readOnly || pending}>{pending ? "저장 중…" : "저장"}</button>
-      <Link prefetch={false} className="button small" href={step(connection.id, 3)} aria-disabled={!hasDevice && !saved ? "true" : undefined}>다음: 쓸 단계</Link></div>
+      {onNext ? <button type="button" className="button small" disabled={!hasDevice || readOnly || pending} onClick={onNext}>다음: 쓸 작업 →</button>
+        : <Link prefetch={false} className="button small" href={step(connection.id, 3)} aria-disabled={!hasDevice && !saved ? "true" : undefined}>다음: 쓸 단계</Link>}</div>
     <label><span>시험 호출</span><span>{model && hasDevice ? <SelectedModelProbe choice={{ provider: connection.id, model }} disabled={readOnly} />
       : <span className="mc-muted">{model ? "저장하면 장비 칸이 생겨 한 번 불러 볼 수 있습니다." : "부를 모델이 없습니다 — 첫 걸음의 확인을 다시 하세요."}</span>}</span></label>
     {saved && <p role="status" className="mc-msg">{saved}</p>}

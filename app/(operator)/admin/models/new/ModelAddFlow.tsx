@@ -7,6 +7,13 @@ import "../console/model-console.css";
 
 export type ModelAddStep = 1 | 2 | 3;
 const STEPS: readonly [ModelAddStep, string][] = [[1, "넣기"], [2, "이름과 한도"], [3, "쓸 단계"]];
+export type ModelAddFlowProps = {
+  step: ModelAddStep; row: ModelConsoleRow | null; missing: boolean; recommendations: readonly ModelStageRecommendation[]; secretBox: boolean; readOnly: boolean;
+  taken: readonly string[]; embedded?: boolean;
+  /** Drawer callbacks reuse the existing save actions and refresh the authoritative inventory. */
+  drawer?: boolean; onCreated?: (connectionId: string) => void; onStep?: (step: ModelAddStep) => void;
+  onReadAgain?: () => void; onAttachModel?: (connectionId: string) => void; onClose?: () => void;
+};
 
 /**
  * 모델 추가 세 단계(2026-11-12 최종 시안 흐름 3, 조각 3a · 「1인 운영 콘솔 시안」 화면 3 — 세 칸을 나란히).
@@ -16,15 +23,39 @@ const STEPS: readonly [ModelAddStep, string][] = [[1, "넣기"], [2, "이름과 
  *    「나중에」면 홈의 「정리」(쓰는 단계 없는 모델)에 남는다 — 그 규칙은 이미 있다.
  * 순위·장비 행은 이 세 걸음에서 만들지 않는다 — 단계에 붙일 때(작업 배정 저장) 만들어진다.
  */
-export function ModelAddFlow({ step, row, missing, recommendations, secretBox, readOnly, taken, embedded = false }: {
-  step: ModelAddStep; row: ModelConsoleRow | null; missing: boolean; recommendations: readonly ModelStageRecommendation[]; secretBox: boolean; readOnly: boolean;
-  taken: readonly string[];
-  /** 모델 목록 아래에 붙인 첫 단계(시안 화면 3 은 목록 아래에 세 단계를 둔다) — 넣으면 둘째 단계부터는 모델 추가 화면에서 잇는다 */
-  embedded?: boolean;
-}) {
+export function ModelAddFlow({ step, row, missing, recommendations, secretBox, readOnly, taken, embedded = false,
+  drawer = false, onCreated, onStep, onReadAgain, onAttachModel, onClose }: ModelAddFlowProps) {
   const connection = row?.connection ?? null;
   const found = connection ? row!.served.length : 0;
   const maxTokens = row ? modelMaxTokens(row.connection) : null;
+  if (drawer) return <div id="model-add" className="mc-add-flow">
+    <ol className="mc-add-steps" aria-label="모델 추가 단계">{([[1, "연결"], [2, "이름과 한도"], [3, "쓸 작업"]] as const).map(([number, label]) =>
+      <li key={number} aria-current={step === number ? "step" : undefined} data-complete={step > number || undefined}>
+        {number} {label}</li>)}</ol>
+    {step === 1 ? <>
+      <ModelAddStepOneForm secretBox={secretBox} readOnly={readOnly} taken={taken} onCreated={onCreated} drawer />
+      <p className="mc-hint">OpenCode 는 <Link prefetch={false} href="/admin/models/llm?add=1#connection-new">LLM 운영의 연결 추가</Link>에서 넣습니다.</p>
+    </> : !row ? <div className="mc-callout" role={missing ? "alert" : "status"}>
+      <p>{missing ? "저장한 모델을 읽지 못했습니다. 목록을 다시 확인하세요." : "저장한 모델을 다시 읽는 중입니다."}</p>
+      {onReadAgain && <button type="button" className="text-button" onClick={onReadAgain}>목록 다시 읽기</button>}
+    </div> : step === 2 ? <>
+      <div className="mc-callout">
+        {connection!.kind === "cli" ? `CLI 모델 ${formatCount(connection!.cliModels.length)}개를 저장했습니다.`
+          : connection!.modelsError ? `연결은 저장했지만 모델 목록 확인에 실패했습니다(${connection!.modelsError}).`
+            : connection!.models ? `응답 정상 · 모델 ${formatCount(found)}개 찾음` : "연결은 저장했지만 모델 목록을 아직 확인하지 못했습니다."}
+      </div>
+      {connection!.kind === "api" && (connection!.modelsError || !connection!.models) && !readOnly && <RereadModelsButton id={row.id} />}
+      <ModelAddStepTwoForm row={row} maxTokens={maxTokens} readOnly={readOnly}
+        taken={taken.filter(name => name !== row.connection.label && name !== row.name)} onNext={onStep ? () => onStep(3) : undefined} />
+    </> : <>
+      <p className="mc-add-success"><span aria-hidden="true">✓</span> {row.name}을(를) 추가했습니다.</p>
+      <p className="mc-drawer-lead">{row.stageCount ? `현재 ${formatCount(row.stageCount)}개 작업에 배정되어 있습니다.`
+        : "아직 처리할 작업은 없습니다. 모델 상세에서 쓸 작업을 고르세요."}</p>
+      <div className="mc-editor-foot"><button type="button" className="button" onClick={onClose}>나중에 붙이기</button>
+        {onAttachModel ? <button type="button" className="button primary" onClick={() => onAttachModel(row.id)}>쓸 작업 고르기 →</button>
+          : <Link prefetch={false} className="button primary" href={modelHref(row.id)}>쓸 작업 고르기 →</Link>}</div>
+    </>}
+  </div>;
   // 시안 화면 3 「모델 추가」 — 세 칸이 나란히 있고, 지금 단계 칸에서만 고친다. 지난 칸은 넣은 값, 다음 칸은 할 일을 적는다
   const state = (number: ModelAddStep) => number < step ? "done" : number === step ? "now" : "next";
   return <div className="model-console" id={embedded ? "model-add" : undefined}>
