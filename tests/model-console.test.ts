@@ -183,7 +183,8 @@ describe("모델 추가 세 걸음", () => {
     const picks = recommendStages(board, m1max.connection, SAMPLE_COMPARE_SUPPORTED, m1max.models[0]);
     expect(picks.map(pick => pick.task)).toEqual(["product-translate", "reason-translate", "product-search-verify"]);
     expect(picks.map(pick => pick.daysText)).toEqual(["96일 밀림", "30일 밀림", "5.7일 밀림"]);
-    expect(picks[0]).toMatchObject({ label: "공개 번역", compare: false, href: "/admin/models/tasks#execution-product-translate-1" });
+    // 붙이는 곳은 그 단계 패널의 모델 구역(운영 콘솔 2a)
+    expect(picks[0]).toMatchObject({ label: "공개 번역", compare: false, href: "/admin/flow?stage=product-translate#sp-models" });
     // 「쓸 수 있는 단계」를 좁힌 모델은 그 단계만
     const exaone = byLabel("LG EXAONE");
     expect(recommendStages(board, exaone.connection, SAMPLE_COMPARE_SUPPORTED, null).map(pick => pick.task)).toEqual(["product-translate", "reason-translate"]);

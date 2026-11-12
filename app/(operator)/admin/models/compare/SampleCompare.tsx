@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { aiTask, aiTaskAccepts } from "@/lib/llm/ai-tasks";
 import { formatCount, formatKst } from "@/lib/operations/console-tasks";
-import { modelCompareHref, modelTaskHref, type ModelConsoleRow } from "@/lib/operations/model-console";
+import { modelCompareHref, modelStageHref, type ModelConsoleRow } from "@/lib/operations/model-console";
 import { SAMPLE_COMPARE_LIMITS, SAMPLE_COMPARE_TASKS, sampleCompareTask, sampleReasonText, sampleStatusText, sampleTally, type SampleComparison,
   type SampleSideResult } from "@/lib/operations/model-sample-compare";
 import { SampleCompareRequestForm } from "./SampleCompareRequestForm";
@@ -29,7 +29,7 @@ export function SampleCompare({ task, rows, candidate, model, records, readOnly 
     {!spec.supported ? <section className="mc-card" aria-label="지원 안 함">
       <p><b>지원 안 함</b> — {spec.reason}</p>
       <p className="mc-muted">이 단계는 작업 배정에서 순위를 저장하고(저장 전 확인), 홈의 「바꾼 것 지켜보기」로 전·후 처리량을 봅니다.</p>
-      <div className="mc-acts"><Link prefetch={false} className="button small primary" href={modelTaskHref(spec.task)}>작업 배정에서 붙이기</Link></div>
+      <div className="mc-acts"><Link prefetch={false} className="button small primary" href={modelStageHref(spec.task)}>단계에서 붙이기</Link></div>
     </section> : <section className="mc-card" aria-label="비교 요청">
       <dl className="mc-dl"><dt>단계</dt><dd>{def?.label ?? spec.label}</dd>
         <dt>지금 모델</dt><dd>{current ? current.name : <span className="mc-muted">1순위 없음 — 후보만 부릅니다</span>}</dd></dl>
@@ -73,7 +73,7 @@ function SampleRecord({ record }: { record: SampleComparison }) {
         <td className="top"><Cell side={item.candidate} /></td></tr>)}</tbody>
     </table></div>
     {done && <div className="mc-acts">
-      <Link prefetch={false} className="button small primary" href={modelTaskHref(record.task)}>이 모델을 붙이기</Link>
+      <Link prefetch={false} className="button small primary" href={modelStageHref(record.task)}>이 모델을 붙이기</Link>
       <Link prefetch={false} className="button small" href="/admin/models">붙이지 않기</Link>
       <span className="mc-muted">붙이기는 작업 배정에서 순위로 저장합니다(저장 전 확인을 거칩니다).</span></div>}
   </section>;

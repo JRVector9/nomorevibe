@@ -2,6 +2,7 @@ import { aiTask, aiTaskAccepts, aiTaskSlotLabel, AI_TASKS, type AiTaskDef } from
 import { AI_CONNECTION_CONTEXT_MAX, aiAllowedTaskField, aiConnectionBaseUrl, aiConnectionModelIds, aiDeviceSlug, aiModelDisplayName, aiModelMachine,
   type AiConnectionView } from "./admin-ai-tasks";
 import { CONSOLE_TASK_LIMITS, formatCount, formatDays, formatKst, formatShare, type ConsoleTask, type ConsoleTaskBoard } from "./console-tasks";
+import { stagePanelHref, stagePanelKeyOfTask } from "./stage-panel-catalog";
 
 /**
  * 운영 콘솔 「모델」 화면(2026-11-12 최종 시안 화면 4·흐름 3, 조각 3a) — 순수 함수. DB·네트워크를 쓰지 않는다(읽기는 model-console-read.ts).
@@ -62,7 +63,7 @@ export type ModelConsoleInput = Readonly<{
 
 /** 이 모델을 쓰는 단계 하나 — 순위(1·2·3) 또는 「함께」(작업 분산 구성원) */
 export type ModelStageUse = Readonly<{ task: string; slot: number; label: string; place: string; rank: number | null; enabled: boolean; paused: boolean;
-  /** 작업 배정의 그 줄 */
+  /** 그 단계 패널의 모델 구역(패널이 없는 작업은 작업 배정의 그 줄) */
   href: string }>;
 /** 서버가 알려 준 이름 묶음 — 같은 root(또는 같은 이름)는 한 묶음. 상세 「연결 확인」 줄에만 보인다 */
 export type ModelServedGroup = Readonly<{ ids: readonly string[]; root: string | null; maxModelLen: number | null }>;
@@ -100,6 +101,8 @@ const DAY_MS = 86_400_000;
 export const modelHref = (id: string) => `/admin/models?model=${encodeURIComponent(id)}`;
 export const MODEL_ADD_HREF = "/admin/models/new";
 export const modelTaskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
+/** 이 모델을 쓰는 단계 — 그 단계 패널의 모델 구역(운영 콘솔 2a, 순위·「동시에」를 그 자리에서 고친다). 패널이 없는 작업은 작업 배정의 그 줄 */
+export const modelStageHref = (task: string, slot = 1) => { const key = stagePanelKeyOfTask(task); return key ? stagePanelHref(key, "models") : modelTaskHref(task, slot); };
 export const modelCompareHref = (task: string, connectionId: string, model?: string | null) =>
   `/admin/models/compare?task=${encodeURIComponent(task)}&candidate=${encodeURIComponent(connectionId)}${model ? `&model=${encodeURIComponent(model)}` : ""}`;
 const RETRY_HREF = "/admin/models/history#retry";
@@ -175,14 +178,14 @@ export function buildModelConsole(input: ModelConsoleInput): ModelConsoleView {
       if (stageMap.has(key)) continue;
       const def = taskDef(row.task);
       stageMap.set(key, { task: row.task, slot: row.slot, label: def ? (def.slots > 1 ? aiTaskSlotLabel(def, row.slot) : def.label) : row.task,
-        place: `${row.rank}순위`, rank: row.rank, enabled: true, paused: taskPaused(row.task), href: modelTaskHref(row.task, row.slot) });
+        place: `${row.rank}순위`, rank: row.rank, enabled: true, paused: taskPaused(row.task), href: modelStageHref(row.task, row.slot) });
     }
     for (const row of pools) {
       const key = `${row.task}#${row.slot}`;
       if (stageMap.has(key)) continue;
       const def = taskDef(row.task);
       stageMap.set(key, { task: row.task, slot: row.slot, label: def ? (def.slots > 1 ? aiTaskSlotLabel(def, row.slot) : def.label) : row.task,
-        place: "함께", rank: null, enabled: true, paused: taskPaused(row.task), href: modelTaskHref(row.task, row.slot) });
+        place: "함께", rank: null, enabled: true, paused: taskPaused(row.task), href: modelStageHref(row.task, row.slot) });
     }
     const stages = [...stageMap.values()];
     const stageCount = new Set(stages.map(stage => stage.task)).size;
@@ -453,6 +456,6 @@ export function recommendStages(board: Pick<ConsoleTaskBoard, "groups"> | null, 
       const compare = compareTasks.includes(def.id);
       return [Object.freeze({ task: def.id, label: task.title.replace(/[이가] 쌓입니다$/, ""), days: task.days,
         daysText: Number.isFinite(task.days) ? `${formatDays(task.days)} 밀림` : "줄지 않음", fact: task.fact, compare,
-        href: compare ? modelCompareHref(def.id, connection.id, model) : modelTaskHref(def.id) })];
+        href: compare ? modelCompareHref(def.id, connection.id, model) : modelStageHref(def.id) })];
     }).sort((a, b) => b.days - a.days);
 }

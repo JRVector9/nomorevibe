@@ -159,15 +159,16 @@ describe("표본 비교(시안 흐름 2)", () => {
     expect(text(record)).toContain("검사 통과 · M1max 1/1");
     expect(text(record)).toContain("검사 탈락: 한국어 아님");
     expect(text(record)).toContain("이미 처리됨(표본에서 빠짐)");
-    expect(record).toContain('href="/admin/models/tasks#execution-product-tagline-ko-1"');
+    // 붙이기는 그 단계 패널의 모델 구역에서(운영 콘솔 2a — 순위·「동시에」를 그 자리에서)
+    expect(record).toContain('href="/admin/flow?stage=tagline-ko#sp-models"');
     expect(text(record)).toContain("이 모델을 붙이기");
   });
 
-  it("지원 안 하는 작업은 까닭을 그대로 보이고 작업 배정으로 보낸다 · 기록을 못 읽으면 알린다", async () => {
+  it("지원 안 하는 작업은 까닭을 그대로 보이고 그 단계 패널로 보낸다 · 기록을 못 읽으면 알린다", async () => {
     mocks.records.mockResolvedValue(null);
     const html = renderToStaticMarkup(await SampleCompareSlot({ task: "product-translate", candidate: null, model: null, readOnly: false }));
     expect(text(html)).toContain("지원 안 함 — 공개 번역은");
-    expect(html).toContain('href="/admin/models/tasks#execution-product-translate-1"');
+    expect(html).toContain('href="/admin/flow?stage=product-translate#sp-models"');
     expect(html).not.toContain('name="candidate"');
   });
 

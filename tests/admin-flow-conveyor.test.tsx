@@ -227,7 +227,8 @@ describe("flow board", () => {
     expect(html).toContain("mini · 예비가 일함");
     expect(html).toContain("AI2 소비자 실행 장비와 별도");
     expect(html).toContain("이 집계에서는 확인하지 않음");
-    expect(html).toContain('href="/admin/models"');
+    // 실제 호출·점유는 대시보드(운영 콘솔 3a 가 /admin/models 에서 옮김 — /admin/models 는 모델 목록)
+    expect(html).toContain('href="/admin/models/dashboard"');
     const stale: FlowControls = { ...controls, jobs: { "second-review": { ...controls.jobs["second-review"], execution: "stale" } } };
     const staleHtml = renderToStaticMarkup(<FlowBoard data={conveyor} controls={stale} />);
     expect(staleHtml).toContain("실행 잡 미확인 · 잠금 오래됨 · 소비자 별도");
