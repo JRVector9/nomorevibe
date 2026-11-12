@@ -1,4 +1,5 @@
 import { aiTask, aiTaskSlotLabel } from "@/lib/llm/ai-tasks";
+import { aiTaskPoolFeatures } from "@/lib/llm/ai-task-execution-config";
 import { aiTaskRankOptions, type AiConnectionView, type AiTaskRankRow } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import type { AiTaskSlotView } from "./admin-ai-tasks-repository";
@@ -40,7 +41,8 @@ export function buildModelUnifiedFixture(): ModelUnifiedRead {
     members: task.members.flatMap((member, index) => {
       const connection = connectionOf(member.model);
       return connection ? [{ memberId: `preview-${index + 1}`, position: index + 1, connectionId: connection.id, model: member.model,
-        options: {}, canonicalModel: member.model, deviceId: connection.deviceId, engineKey: member.model, maxSlots: member.slots }] : [];
+        options: {}, canonicalModel: member.model, deviceId: connection.deviceId, engineKey: member.model,
+        maxSlots: aiTaskPoolFeatures(task.id, task.slot).slotCaps ? member.slots : null }] : [];
     }),
   }));
   const slots: AiTaskSlotView[] = preview.task.map(row => {

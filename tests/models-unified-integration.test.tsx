@@ -92,6 +92,16 @@ describe("통합 모델 화면 경로와 읽기 전용 고정 자료", () => {
     expect(uses[duplicate.choices[0].connectionId!].find(row => row.key === duplicate.key)?.place).toBe("1순위·3순위");
   });
 
+  it("고정 작업 분산도 실행이 따르는 작업에만 구성원 칸 수를 붙인다", () => {
+    const fixture = buildModelUnifiedFixture();
+    const execution = (key: string) => fixture.editor.lines.find(line => line.key === key)!.execution!;
+    expect(execution("publish-classify#1").members).not.toHaveLength(0);
+    expect(execution("publish-classify#1").members.every(member => member.maxSlots === null)).toBe(true);
+    expect(execution("product-translate#1").members.map(member => member.maxSlots)).toEqual(
+      preview.task.find(task => task.key === "product-translate#1")!.members.map(member => member.slots),
+    );
+  });
+
   it("조회가 키 자동 채움을 건너뛸 수 있고 통합 화면에 새 서버 액션은 없다", () => {
     const read = readFileSync("lib/operations/admin-ai-tasks-repository.ts", "utf8");
     expect(read).toContain("if (!options.readOnly) await maybeFillConnectionKeys()");
