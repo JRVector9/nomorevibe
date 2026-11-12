@@ -174,10 +174,16 @@ describe("stage panel — other cases", () => {
     expect(confirm).toContain("동시 처리 한 모델씩(1순위가 막히면 다음 순위) 모델 2개가 함께 · 최대 6건(칸 수 합)");
     expect(confirm).toContain("함께 쓰는 모델 없음 supa-direct 1칸 + gpu3090-qwen 5칸");
     expect(confirm).toContain("예비 없음 순위(1·2·3)로 이어 처리");
-    // 1차 심사는 칸 수·예비를 따르지 않는다(2b 지원 표) — 칸 수·예비 칸이 없다
-    const first = render("first", { modelsInitial: { key: "first-review#1", step: "edit", draft: { mode: "workload_pool", ranks, members: [gpu], slots: [], reserve: false } } });
-    expect(first).not.toContain('data-pool-slots="true"');
-    expect(first).not.toContain('data-pool-reserve="true"');
-    expect(text(first)).toContain("이 작업은 아직 모델별 칸 수·예비를 따르지 않습니다");
+    // 1차 심사도 칸 수·예비를 따른다(2026-11-12 소유자 「1,2차도 동시에 선택하면 새 동작을 따르게」) — text 단계와 같은 칸
+    const first = render("first", { modelsInitial: { key: "first-review#1", step: "edit", draft: { mode: "workload_pool", ranks, members: [gpu], slots: ["3"], reserve: true } } });
+    expect(first).toContain('data-pool-slots="true"');
+    expect(first).toMatch(/aria-label="함께 1 칸 수"[^>]*value="3"/);
+    expect(first).toMatch(/data-pool-reserve="true"><input type="checkbox"[^>]*checked=""/);
+    expect(text(first)).not.toContain("이 작업은 아직 모델별 칸 수·예비를 따르지 않습니다");
+    // 2차는 투표자 1 만 「동시에」 — 그 칸도 칸 수·예비 칸이 같다
+    const second = render("second", { modelsInitial: { key: "second-review#1", step: "edit", draft: { mode: "workload_pool", ranks, members: [gpu], slots: ["2"], reserve: true } } });
+    expect(second).toContain('data-pool-slots="true"');
+    expect(second).toMatch(/aria-label="함께 1 칸 수"[^>]*value="2"/);
+    expect(second).toContain('data-pool-reserve="true"');
   });
 });

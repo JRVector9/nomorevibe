@@ -2,7 +2,7 @@ import { reviewIndependenceKey, sameReviewModel } from "./review-model-identity"
 import { ensureReviewTaskRanks, reviewRanksSummary, secondReviewRankSets, settingsReviewersActive, secondReviewRanks, secondReviewRanksDegraded, secondReviewSlotFallbacks,
   type ReviewRankDegraded, type SecondReviewRanks } from "./review-task-ranks";
 import type { CrawlSettings } from "./settings-schema";
-import { secondReviewHasWorkloadPool, secondReviewSlotRepresentatives, secondReviewWorkloadSlots } from "./second-review-workload";
+import { secondReviewHasWorkloadPool, secondReviewPoolReserve, secondReviewSlotRepresentatives, secondReviewWorkloadSlots } from "./second-review-workload";
 
 /**
  * 2차 투표자·대체 목록의 한 길목. 2차의 모든 읽기(올리기·입력 검증·정리·공개 관문 SQL·보류 재심사·대체 고르기·발견 관문)가 이 함수들을 읽어,
@@ -60,7 +60,13 @@ export function secondReviewFallbacksFor(settings: Pick<CrawlSettings, "secondRe
 /** 2차가 지금 표를 낼 수 있는가 — 순위 없음·표 못 읽음·모든 칸을 쓸 수 없음이면 그 degraded(잡이 그대로 적는다). replay 는 늘 null. */
 export function secondReviewVotersDegraded(ranks?: SecondReviewRanks): ReviewRankDegraded | null {
   if (settingsReviewersActive()) return null;
-  return secondReviewRanksDegraded(ranks ?? secondReviewRanks());
+  return withoutReserve(secondReviewRanksDegraded(ranks ?? secondReviewRanks()));
+}
+/** 「동시에」 투표자 1 의 구성원을 모두 쓸 수 없어도 예비(0179)가 표를 받을 수 있으면 제 일 못 함이 아니다 — 올리기·정비가 그대로 돈다 */
+function withoutReserve(degraded: ReviewRankDegraded | null): ReviewRankDegraded | null {
+  if (degraded?.code !== "all_ranks_unusable") return degraded;
+  try { return secondReviewHasWorkloadPool() && secondReviewPoolReserve() ? null : degraded; }
+  catch { return degraded; }   // 투표자 칸 구성이 맞지 않으면(assignments_unavailable) 예전 판정 그대로
 }
 
 /** 런타임 가드: 이 항목에 표를 낸·내는 중인 모델과 같은 모델(같은 가중치·연결로 가른 이름 포함)은 대체가 될 수 없다. */
@@ -81,5 +87,5 @@ export async function secondReviewRankTick(): Promise<{ degraded: ReviewRankDegr
   for (const slot of ranks.slots) if (slot.voter && slot.resolution.execution?.mode !== 'workload_pool')
     served.set(slot.voter.rank, (served.get(slot.voter.rank) ?? 0) + 1);
   // A pool's configured eligible representative is not evidence of an actual successful consumer call.
-  return { degraded: secondReviewRanksDegraded(ranks), summary: reviewRanksSummary(ranks.slots.map(slot => slot.resolution), served) };
+  return { degraded: withoutReserve(secondReviewRanksDegraded(ranks)), summary: reviewRanksSummary(ranks.slots.map(slot => slot.resolution), served) };
 }

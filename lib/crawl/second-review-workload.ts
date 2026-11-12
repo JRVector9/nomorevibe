@@ -3,11 +3,12 @@ import { secondReviews, secondReviewWorkloadAssignments, type SecondReview, type
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { logger } from '@/lib/observability/logger';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
-import type { AiTaskExecutionConfig, AiTaskPoolSelection } from '@/lib/llm/ai-task-execution-config';
+import { aiTaskPoolFeatures, type AiTaskExecutionConfig, type AiTaskPoolSelection } from '@/lib/llm/ai-task-execution-config';
 import { readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
 import { taskModels } from '@/lib/llm/ai-task-resolver';
 import { chooseTaskWorkloadMember } from '@/lib/llm/ai-task-workload-selector';
-import { bindReviewTaskRank, resolveReviewTaskRanks, reviewRouteContracts, reviewTaskRanksPinned, settingsReviewersActive, type ReviewRankCandidate, type ReviewRankReviewer } from './review-task-ranks';
+import { bindReviewTaskRank, resolveReviewTaskRanks, reviewPoolCappedKeys, reviewPoolSlotCaps, reviewRouteContracts, reviewTaskRanksPinned, settingsReviewersActive,
+  type ReviewRankCandidate, type ReviewRankReviewer } from './review-task-ranks';
 import { underlyingReviewModel, reviewIndependenceKey, sameReviewModel } from './review-model-identity';
 import { reviewIndependenceSql } from './held-qwen-retry-policy';
 
@@ -87,17 +88,22 @@ function modelCanonical(task: 'first-review' | 'second-review', model: string): 
   return OPAQUE_MODEL.test(underlyingReviewModel(value)) ? null : reviewIndependenceKey(value);
 }
 export function secondReviewPoolHasEligibleMember(): boolean {
-  return secondReviewWorkloadSlots()[0].candidates.some(candidate => {
+  const slot = secondReviewWorkloadSlots()[0], reserve = secondReviewPoolReserve(slot);
+  // 구성원을 모두 쓸 수 없어도 예비(0179)가 표를 받을 수 있으면 관문을 사람에게 넘기지 않는다
+  return slot.candidates.some(candidate => {
     const canonical = candidate.binding ? modelCanonical('second-review', candidate.binding.identity) : null;
     return !candidate.unusable && canonical !== null;
-  });
+  }) || !!reserve && modelCanonical('second-review', reserve.model) !== null;
 }
 export async function chooseSecondReviewWorkloadSlot(slot: SecondReviewWorkloadSlot, tx: ProductTransaction,
-  excludedCanonical: ReadonlySet<string>): Promise<(ReviewRankReviewer & { selection: AiTaskPoolSelection; canonicalModel: string }) | null> {
+  excludedCanonical: ReadonlySet<string>,
+  /** 칸 수 합에 닿은 구성원 열쇠(JSON [provider, identity]) — 고르지 않는다(줄에 서는 것도 칸이 남은 구성원 중에서만) */
+  capped: ReadonlySet<string> = new Set()): Promise<(ReviewRankReviewer & { selection: AiTaskPoolSelection; canonicalModel: string }) | null> {
   const candidates = slot.candidates.flatMap(candidate => {
     const binding = candidate.binding, member = candidate.poolMember;
     const canonical = binding ? modelCanonical('second-review', binding.identity) : null;
-    if (!binding || !member || candidate.unusable || canonical === null || excludedCanonical.has(canonical)) return [];
+    if (!binding || !member || candidate.unusable || canonical === null || excludedCanonical.has(canonical)
+      || capped.has(JSON.stringify([binding.provider, binding.identity]))) return [];
     return [{ memberId: member.memberId, routeId: binding.routeId, connectionId: binding.connectionId,
       engineModel: binding.engineModel, provider: binding.provider, identity: binding.identity, deviceId: binding.deviceId }];
   });
@@ -110,13 +116,23 @@ export async function chooseSecondReviewWorkloadSlot(slot: SecondReviewWorkloadS
   return { provider: chosen.provider as ReviewRankReviewer['provider'], model: chosen.identity,
     selection: chosen.poolSelection, canonicalModel: member.canonicalModel };
 }
-/** Single-voter pool: no pool member becomes an extra quorum slot. */
+/**
+ * 「동시에」 예비(0179 reserve_ranks, 2026-11-12 2차도 따름): 투표자 1 의 구성원이 모두 칸 수에 닿았거나 쓸 수 없을 때 표를 받는 순위 — 저장된 순위의
+ * 첫 쓸 수 있는 순위(배정 행 없는 첫 표가 회원 자격을 갖는 유일한 모델 — secondReviewWorkloadMembership·secondReviewPoolRootMembershipSql). 그 표의 대체는
+ * 예전처럼 같은 칸의 다음 순위(secondReviewFallbacksFor)다. 예비가 꺼졌거나 「동시에」가 아니면 null. 표 수는 늘지 않는다(한 후보에 표 하나).
+ */
+export function secondReviewPoolReserve(slot: SecondReviewWorkloadSlot = secondReviewWorkloadSlots()[0]): ReviewRankReviewer | null {
+  if (slot.slot !== 1 || slot.config.mode !== 'workload_pool' || slot.config.reserveRanks !== true || !aiTaskPoolFeatures('second-review', 1).reserve) return null;
+  const binding = slot.legacy.find(candidate => candidate.binding && !candidate.unusable)?.binding;
+  return binding ? { provider: binding.provider, model: binding.identity } : null;
+}
+/** Single-voter pool: no pool member becomes an extra quorum slot. 예비가 표를 받을 수 있으면 그 모델도 「표를 낼 수 있음」이다. */
 export function secondReviewPoolRequiredSql(): SQL {
-  const slot = secondReviewWorkloadSlots()[0];
-  const available = [...new Set(slot.candidates.flatMap(candidate => {
+  const slot = secondReviewWorkloadSlots()[0], reserve = secondReviewPoolReserve(slot);
+  const available = [...new Set([...slot.candidates.flatMap(candidate => {
     const canonical = candidate.binding ? modelCanonical('second-review', candidate.binding.identity) : null;
     return canonical === null ? [] : [canonical];
-  }))];
+  }), ...(reserve ? [modelCanonical('second-review', reserve.model)].filter((value): value is string => value !== null) : [])])];
   return sql`CASE WHEN jsonb_array_length(${JSON.stringify(available)}::jsonb) > 0 THEN 1 ELSE 0 END`;
 }
 const sameNameSql = (name: SQL) => sql`regexp_replace(regexp_replace(lower(trim(${name})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')`;
@@ -166,6 +182,15 @@ export async function insertSecondReviewWorkloadRows(tx: ProductTransaction,
   const slot = secondReviewWorkloadSlots()[0], grouped = new Map<string, typeof proposed[number]>();
   for (const row of proposed) grouped.set(JSON.stringify([row.candidateId, row.generationKey, row.inputHash, row.trigger, row.publishedSlug ?? null]), row);
   const inserted: (typeof secondReviews.$inferSelect)[] = [];
+  // 칸 수(0179, 2026-11-12 2차도 따름): 구성원 열쇠마다 끝나지 않은 표(pending) 수 — 표 하나는 호출 하나라, 칸 수 합에 닿은 구성원은 새 표를 받지 않는다.
+  // 같은 엔진 두 자리는 한 열쇠로 함께 찬다. 이 틱에 배정한 표도 바로 더한다(장부에 행을 쓰지 않고 잇달아 고르므로).
+  const caps = reviewPoolSlotCaps('second-review', 1, slot.config, slot.candidates);
+  const loads = new Map<string, number>();
+  if (caps?.size) for (const row of await tx.select({ provider: secondReviews.provider, model: secondReviews.model, n: sql<number>`count(*)::integer` })
+    .from(secondReviews).where(eq(secondReviews.status, 'pending')).groupBy(secondReviews.provider, secondReviews.model))
+    loads.set(JSON.stringify([row.provider, row.model]), Number(row.n));
+  const reserve = secondReviewPoolReserve(slot);
+  const took = (provider: string, model: string) => { const key = JSON.stringify([provider, model]); loads.set(key, (loads.get(key) ?? 0) + 1); };
   for (const base of grouped.values()) {
     const existing = await tx.select().from(secondReviews).where(and(eq(secondReviews.candidateId, base.candidateId),
       base.publishedSlug ? eq(secondReviews.publishedSlug, base.publishedSlug)
@@ -184,8 +209,9 @@ export async function insertSecondReviewWorkloadRows(tx: ProductTransaction,
         if (canonical !== null) excluded.add(canonical);
       }
     }
+    const capped = reviewPoolCappedKeys(caps, loads);
     let selected: Awaited<ReturnType<typeof chooseSecondReviewWorkloadSlot>>;
-    try { selected = await chooseSecondReviewWorkloadSlot(slot, tx, excluded); }
+    try { selected = await chooseSecondReviewWorkloadSlot(slot, tx, excluded, capped); }
     catch (error) {
       // 용량 장부가 열려 있지 않다(배포 창 DRAIN·꺼짐)·정책 세대가 바뀌었다 — 이 틱에는 표를 배정하지 않는다(OPEN 뒤 다음 틱이 배정한다).
       // 예전에는 이 미룸이 유지보수 틱 전체(정산·고아 정리·실패 표 재시도·발행분 표본)를 던졌다. 이 셋은 SQL 실패 없이 던지는 미룸이라 TX 는 그대로다.
@@ -196,8 +222,20 @@ export async function insertSecondReviewWorkloadRows(tx: ProductTransaction,
       throw error;
     }
     if (!selected) {
-      // 줄에 설 수 있는 구성원도 없다(장비 없음·꺼짐, 모델 상한·경로 몫이 참) — 다음 틱에 다시 고른다
-      logger.info('second_review.workload_unassigned', { candidateId: base.candidateId });
+      // 구성원이 모두 칸 수에 닿았거나 쓸 수 없거나 줄에 설 자리도 없다 — 예비가 있으면 예비 순위(배정 행 없는 첫 표)가 받는다.
+      // 칸이 찬 구성원과 같은 엔진(같은 열쇠)·이 세대에 이미 표를 낸 모델이면 예비도 받지 않는다(칸 수·독립 표 규칙)
+      const reserveCanonical = reserve ? modelCanonical('second-review', reserve.model) : null;
+      if (reserve && reserveCanonical !== null && !excluded.has(reserveCanonical) && !capped.has(JSON.stringify([reserve.provider, reserve.model]))) {
+        const [row] = await tx.insert(secondReviews).values({ ...base, provider: reserve.provider, model: reserve.model }).onConflictDoNothing().returning();
+        if (row) {
+          logger.info('second_review.workload_reserve_assigned', { candidateId: base.candidateId, model: reserve.model, capped: capped.size });
+          took(reserve.provider, reserve.model);
+          inserted.push(row);
+          continue;
+        }
+      }
+      // 다음 틱에 다시 고른다 — 후보 탓이 아니다(표가 끝나 칸이 비거나 장비가 비면 배정된다)
+      logger.info('second_review.workload_unassigned', { candidateId: base.candidateId, capped: capped.size });
       continue;
     }
     const [row] = await tx.insert(secondReviews).values({ ...base, provider: selected.provider, model: selected.model })
@@ -205,6 +243,7 @@ export async function insertSecondReviewWorkloadRows(tx: ProductTransaction,
     if (!row) continue;
     await tx.insert(secondReviewWorkloadAssignments).values({ secondReviewId: row.id, taskSlot: 1,
       configRevision: selected.selection.configRevision, memberId: selected.selection.memberId, canonicalModel: selected.canonicalModel });
+    took(selected.provider, selected.model);
     inserted.push(row);
   }
   return inserted;

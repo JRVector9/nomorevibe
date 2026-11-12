@@ -175,7 +175,14 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     // 장비 칸을 작업마다 나누는 곳(칸 배분, step 3)
     expect(html).toContain('href="/admin/models/allocation">장비 칸을 작업별로 나누기(칸 배분) →</a>');
     expect(html).not.toContain('name="baseUrl"');
-    expect(html).not.toContain("칸 수");
+    // 연결의 동시 실행 칸(연결 폼)은 없다 — 「칸 수」는 「동시에」로 저장된 1차의 모델별 칸 수·예비 칸뿐이다(2026-11-12 1·2차도 칸 수·예비를 따름)
+    const connections = html.slice(html.indexOf('id="connections"'));
+    expect(connections).not.toContain("칸 수");
+    const firstMode = html.slice(html.indexOf('id="mode-first-review-1"'), html.indexOf('id="mode-crawl-tagline-1"'));
+    expect(firstMode).toContain('data-pool-slots="true"');
+    expect(firstMode).toContain('aria-label="함께 1 칸 수"');
+    expect(firstMode).toContain('data-pool-reserve="true"');
+    expect(firstMode).not.toContain("아직 모델별 상한·예비를 따르지 않습니다");
     expect(html).not.toContain('id="connection-form"');
     // 목록을 못 읽은 서버는 LLM 운영의 그 행으로 보낸다
     expect(html).toContain(`href="/admin/models/llm?edit=${M1}#conn-${M1}"`);

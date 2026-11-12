@@ -166,6 +166,8 @@ describe("save preview (저장 전 확인)", () => {
       { label: "동시 처리", before: "한 모델씩(1순위가 막히면 다음 순위)", after: "모델 2개가 나눠 처리 · 장비 칸 합 8칸(다른 단계와 함께 씀)" },
       // 이름은 사용자가 정한 이름 하나 — supa 의 두 서버 이름(같은 root)은 따로 적지 않는다
       { label: "함께 쓰는 모델", before: "없음", after: "supa-direct + gpu3090-qwen" },
+      // 1차도 예비를 따른다(2026-11-12 「1,2차도 새 동작」) — 예비 줄이 text 단계처럼 따로 보인다
+      { label: "예비", before: "없음", after: "없음" },
     ]);
     expect(preview.saves).toEqual(["execution"]);
     expect(preview.impact).toEqual([
@@ -204,9 +206,12 @@ describe("save preview (저장 전 확인)", () => {
     ]);
     expect(capped.saves).toEqual(["execution"]);
     expect(capped.impact[0].text).toMatch(/^supa-direct: 이 단계에 1칸 · 지금 3칸 중 3칸 사용\(가득 참\)/);
-    // 칸 수를 받지 않는 작업(1차)은 칸 수를 무시한다 — 예전 작업 분산 그대로
-    const ignored = assignmentPreview({ task: "first-review", slot: 1, before: pooled, after: { ...pooled, slots: ["1", "5"], reserve: true }, context });
+    // 칸 수를 받지 않는 작업(검색어 번역)은 칸 수를 무시한다 — 예전 작업 분산 그대로
+    const ignored = assignmentPreview({ task: "search-query-translate", slot: 1, before: pooled, after: { ...pooled, slots: ["1", "5"], reserve: true }, context });
     expect(ignored.rows).toEqual([]);
+    // 1차·2차(투표자 1)는 2026-11-12 부터 칸 수·예비를 따른다 — text 단계와 같은 줄
+    const first = assignmentPreview({ task: "first-review", slot: 1, before: pooled, after: { ...pooled, slots: ["1", "5"], reserve: true }, context });
+    expect(first.rows).toEqual(capped.rows);
     // 장비 한도보다 많이 적으면 알린다
     const over = assignmentPreview({ task: "product-translate", slot: 1, before: pooled, after: { ...pooled, slots: ["8", "1"] }, context });
     expect(over.impact[0]).toMatchObject({ tone: "warn" });
@@ -224,7 +229,9 @@ describe("save preview (저장 전 확인)", () => {
     const text = { apiOnly: false, features: aiTaskPoolFeatures("product-translate") };
     expect(poolMemberIssues([supa, gpu], ["2", ""], connections, text)).toEqual(["칸 수는 모든 모델에 적거나 모두 비워 주세요."]);
     expect(poolMemberIssues([supa, gpu], ["2", "9"], connections, text)).toEqual(["칸 수는 1~8 사이로 적어 주세요."]);
-    expect(poolMemberIssues([supa, gpu], ["2", "9"], connections, plain)).toEqual([]);
+    // 칸 수를 받지 않는 작업(검색어 번역)은 칸 수를 보지 않는다. 1차는 2026-11-12 부터 받는다(같은 검사)
+    expect(poolMemberIssues([supa, gpu], ["2", "9"], connections, { apiOnly: false, features: aiTaskPoolFeatures("search-query-translate") })).toEqual([]);
+    expect(poolMemberIssues([supa, gpu], ["2", "9"], connections, plain)).toEqual(["칸 수는 1~8 사이로 적어 주세요."]);
     for (const [task, slot] of [["first-review", 1], ["second-review", 2], ["product-intro-check", 1], ["product-translate", 1]] as const)
       expect(stagePoolSupported(task, slot)).toBe(aiTaskSupportsPool(task, slot));
     expect(CONN.supa).toBeTruthy();

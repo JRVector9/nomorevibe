@@ -20,7 +20,7 @@ import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonA
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedReviewCliCall } from "../review-cli-call";
 import { firstReviewRankState, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
-import { ensureReviewTaskRanks, reviewRankUnusableText, reviewRanksSummary, type ReviewRankResolution } from "../review-task-ranks";
+import { ensureReviewTaskRanks, resolveReviewReserveRanks, reviewRankUnusableText, reviewRanksSummary, type ReviewRankResolution } from "../review-task-ranks";
 import { CLI_TOOL_COMMANDS } from "@/lib/llm/cli-serving-contract";
 import { readBlockedFirstReviewerKeys } from "../first-reviewer-blocks";
 import { agentReviewBinding } from "../agent-review-ownership";
@@ -371,7 +371,15 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       const calls = ranks.resolution.execution?.mode === 'workload_pool' ? tally?.succeeded ?? 0 : tally?.calls ?? 0;
       if (calls) served.set(candidate.rank.rank, (served.get(candidate.rank.rank) ?? 0) + calls);
     }
-    ctx.log("ai_task.ranks", reviewRanksSummary([ranks.resolution], served));
+    // 「동시에」 예비 순위(0179)는 순위처럼 served.<순위> 로 센다 — 구성원 칸(member_served)과 섞지 않는다
+    const reserveCandidates = ranks.resolution.execution?.mode === 'workload_pool' ? resolveReviewReserveRanks("first-review", 1) : [];
+    const reserveServed = new Map<number, number>();
+    for (const candidate of reserveCandidates) {
+      const calls = candidate.binding && ranks.reserve.some(row => row.provider === candidate.binding!.provider && row.model === candidate.binding!.identity)
+        ? perModel.get(candidate.binding.identity)?.succeeded ?? 0 : 0;
+      if (calls) reserveServed.set(candidate.rank.rank, (reserveServed.get(candidate.rank.rank) ?? 0) + calls);
+    }
+    ctx.log("ai_task.ranks", reviewRanksSummary([ranks.resolution], served, { candidates: reserveCandidates, served: reserveServed }));
   }
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;

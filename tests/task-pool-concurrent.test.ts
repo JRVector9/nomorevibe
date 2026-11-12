@@ -40,9 +40,11 @@ function gate() {
 }
 
 describe("지원 표(aiTaskSupportsPool) — 화면·저장·실행이 이것만 묻는다", () => {
-  it("밀린 text 단계 여섯은 칸 수·예비까지, 카테고리 분류·1차·2차(투표자 1)·검색어 번역은 예전 분산만, 나머지는 지원하지 않는다", () => {
-    const full = ["product-translate", "reason-translate", "product-search-verify", "product-search-profile", "product-tagline-ko", "crawl-tagline"];
-    const distribute = ["search-query-translate", "first-review", "second-review", "publish-classify"];
+  it("밀린 text 단계 여섯과 1차·2차(투표자 1)는 칸 수·예비까지, 카테고리 분류·검색어 번역은 예전 분산만, 나머지는 지원하지 않는다", () => {
+    // 1차·2차: 2026-11-12 소유자 「1,2차도 동시에 선택하면 새 동작을 따르게」
+    const full = ["product-translate", "reason-translate", "product-search-verify", "product-search-profile", "product-tagline-ko", "crawl-tagline",
+      "first-review", "second-review"];
+    const distribute = ["search-query-translate", "publish-classify"];
     for (const task of AI_TASKS) {
       const expected = full.includes(task.id) || distribute.includes(task.id);
       expect([task.id, aiTaskSupportsPool(task.id)]).toEqual([task.id, expected]);
@@ -63,7 +65,12 @@ describe("지원 표(aiTaskSupportsPool) — 화면·저장·실행이 이것만
     expect(issues(input("product-translate", [{ ...a, maxSlots: 5 }, b]))).toEqual(["ai_task_pool_slot_caps_partial"]);
     expect(issues(input("product-translate", [{ ...a, maxSlots: 9 }]))).not.toEqual([]);
     expect(issues(input("publish-classify", [{ ...a, maxSlots: 2 }]))).toEqual(["ai_task_pool_slot_caps_unsupported"]);
-    expect(issues(input("first-review", [a], { reserveRanks: true }))).toEqual(["ai_task_pool_reserve_unsupported"]);
+    expect(issues(input("search-query-translate", [a], { reserveRanks: true }))).toEqual(["ai_task_pool_reserve_unsupported"]);
+    // 1차·2차(투표자 1)는 칸 수·예비를 받는다 — 2차 투표자 2·3 은 「동시에」 자체를 받지 않는다
+    expect(input("first-review", [{ ...a, maxSlots: 2 }, { ...b, maxSlots: 1 }], { reserveRanks: true }).success).toBe(true);
+    expect(input("second-review", [{ ...a, maxSlots: 3 }], { reserveRanks: true }).success).toBe(true);
+    expect(issues(aiTaskExecutionInputSchema.safeParse({ task: "second-review", slot: 2, expectedRevision: null, mode: "workload_pool", members: [{ ...a, maxSlots: 1 }] })))
+      .toContain("ai_task_pool_ai2_single_slot_only");
     expect(issues(input("audit-review", [a]))).toEqual(["ai_task_pool_task_unsupported"]);
     expect(issues(aiTaskExecutionInputSchema.safeParse({ task: "product-translate", slot: 1, expectedRevision: 3, mode: "fallback", members: [], reserveRanks: true })))
       .toEqual(["ai_task_fallback_uses_existing_ranks"]);
