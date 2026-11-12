@@ -4,7 +4,7 @@ import type { ReviewInput } from '@/lib/crawl/agent-review-contract';
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), save: vi.fn(), ready: vi.fn(), settings: vi.fn(), overview: vi.fn(), repos: vi.fn(),
   claim: vi.fn(), record: vi.fn(), requeue: vi.fn(), infer: vi.fn(), revalidate: vi.fn(), defer: vi.fn(),
-  refresh: vi.fn(), repoCheck: vi.fn(),
+  refresh: vi.fn(), repoCheck: vi.fn(), release: vi.fn(),
 }));
 // 2026-10-31(PR 3a-C): 보류 Qwen-v2 재심사(held-qwen-retry)와 갈림 판가름의 DeepSeek 확인(split-confirm)은 자기 잡이다 — 이 잡은 둘을 부르지 않는다
 vi.mock('@/lib/crawl/held-qwen-retry', () => ({ runHeldQwenRetry: () => { throw new Error('human_review_must_not_run_held_qwen'); } }));
@@ -17,7 +17,7 @@ vi.mock('@/lib/crawl/review-overview', () => ({ humanQueueOverview: mocks.overvi
 vi.mock('@/lib/crawl/human-review-repository', () => ({
   claimHumanReview: mocks.claim, recordHumanReview: mocks.record, requeueInvalidHumanApprovals: mocks.requeue,
   humanReviewRepos: mocks.repos, deferHumanReviewForModelCapacity: mocks.defer, HUMAN_REVIEW_SCAN_FACTOR: 4,
-  refreshStaleDelegatedSources: mocks.refresh,
+  refreshStaleDelegatedSources: mocks.refresh, releaseLostDelegatedReviews: mocks.release,
   delegatedApprovalRoute: (hours: number) => hours > 72 ? 'refresh' : hours > 24 ? 'check_repo' : 'publish',
 }));
 vi.mock('@/lib/crawl/delegated-repo-check', () => ({ checkDelegatedRepository: mocks.repoCheck }));
@@ -159,6 +159,18 @@ describe('human queue worker', () => {
     mocks.record.mockResolvedValue('applied');
     mocks.refresh.mockResolvedValue({ requested: 0, gone: 0, failed: 0 });
     mocks.repoCheck.mockResolvedValue({ check: 'present', retryAt: null });
+    mocks.release.mockResolvedValue([]);
+  });
+  // 2026-11-11 1차 정체: 주인이 사라진 위임 시도가 running 으로 남아 1차 심사가 그 후보를 영영 비켰다 — 틱 시작마다 스위치와 상관없이 닫는다
+  it('releases delegated attempts whose owner is gone at tick start, even with the switch off', async () => {
+    mocks.settings.mockResolvedValue({ enabled: true, humanReview: { enabled: false, generation: 3 } });
+    mocks.release.mockResolvedValue([{ id: 7, candidateId: 642281, startedAt: new Date('2026-11-10T08:18:00Z'), leaseToken: 'gone' }]);
+    const context = ctx();
+    expect(await reviewHumanQueue(context)).toEqual({ done: true });
+    expect(mocks.release).toHaveBeenCalledExactlyOnceWith(context.lease);
+    expect(context.log).toHaveBeenCalledWith('crawl.human_review_owner_lost', { released: 1,
+      attempts: [{ id: 7, candidateId: 642281, startedAt: '2026-11-10T08:18:00.000Z' }] });
+    expect(mocks.claim).not.toHaveBeenCalled();
   });
   const aged = (hours: number) => ({ input: { ...input, validUntil: new Date(Date.now() - (hours - 24) * 3600_000) }, startedAt: new Date() });
   // 2026-11-09: 24~72시간 근거의 승인만 GitHub 에 저장소를 묻는다 — 72시간 넘은 것은 기록이 원본 재수집으로 보낸다
