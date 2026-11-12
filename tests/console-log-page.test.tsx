@@ -64,7 +64,7 @@ describe("log screen", () => {
     expect(html.match(/<button type="button" class="button small" popovertarget="undo-[^"]+">되돌리기<\/button>/gi)).toHaveLength(3);
     expect(html).toMatch(/<div id="undo-[^"]+" popover="auto" class="lg-undo-pop" role="dialog"/);
     expect(text(html)).toContain("지금 supa → gpu3090-qwen 되돌린 뒤 OpenCode deepseek → gpu3090-qwen");
-    expect(html).toContain('href="/admin/models/tasks">되돌리러 가기 →</a>');
+    expect(html).toContain('href="/admin/models#tasks">되돌리러 가기 →</a>');
     // 접수 중단 → 다시 열림 줄에는 되돌리기가 없다
     expect(html).toMatch(/접수 중단 → 다시 열림 \(18분\)[\s\S]*?<td class="lg-act"><\/td>/);
     expect(html).toContain(`href="/admin/activity?before=${28864 + 1}">원래 줄</a>`);

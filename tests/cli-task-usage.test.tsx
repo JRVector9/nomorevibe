@@ -128,7 +128,7 @@ describe("buildCliTaskUsages", () => {
     expect(usages[1]).toMatchObject({ effort: "medium", where: "작업 분산 1번" });
     expect(unavailable).toHaveLength(2);
     const off = buildCliTaskUsages(input({ connections: [{ ...claude, enabled: false }], rows: [row("first-review", 1, 1, "sonnet")], current: [], classifier: null }));
-    expect(off.usages[0]).toMatchObject({ edit: null, readOnly: { reason: "연결이 꺼져 있습니다", href: "/admin/models/tasks#execution-first-review-1" } });
+    expect(off.usages[0]).toMatchObject({ edit: null, readOnly: { reason: "연결이 꺼져 있습니다", href: "/admin/models#execution-first-review-1" } });
   });
   it("배정 표·여러 모델 풀이 출처인 소개 검수와 오래된 connect 관측은 읽기만 한다", () => {
     const table: AiCurrentSlot = { ...introCurrent, source: "배정 표" };

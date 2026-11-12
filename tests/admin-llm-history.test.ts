@@ -107,11 +107,19 @@ describe("최근 1시간 실패 · 대시보드 할 일", () => {
 describe("하위 화면의 변경 기록은 최근 3건만, 나머지는 기록 한 표로", () => {
   const root = path.resolve(__dirname, "..");
   it.each([["devices", 'llmHistoryHref({ kind: "limit" })'], ["limits", 'llmHistoryHref({ kind: "limit" })'], ["helpers", 'llmHistoryHref({ kind: "limit" })'],
-    ["assignments", 'llmHistoryHref({ kind: "rank" })'], ["tasks", "llmHistoryHref()"]])("%s", (page, link) => {
+    ["assignments", 'llmHistoryHref({ kind: "rank" })']])("%s", (page, link) => {
     const source = readFileSync(path.join(root, `app/(operator)/admin/models/${page}/page.tsx`), "utf8");
     expect(source).toContain("view.audit.slice(0, RECENT_AUDIT_ROWS).map(");
     expect(source).not.toMatch(/view\.audit\.map\(/);
     expect(source).toContain(`href={${link}}`);
+  });
+  it("통합 모델의 최근 변경은 기존 기록 조회에서 세 건만 읽고 같은 전체 기록으로 잇는다", () => {
+    const read = readFileSync(path.join(root, "lib/operations/model-unified-read.ts"), "utf8");
+    const view = readFileSync(path.join(root, "app/(operator)/admin/models/unified/UnifiedOperations.tsx"), "utf8");
+    expect(read).toContain('readLlmChangeLog({ kind: null, failedOnly: false, before: null }, 3)');
+    expect(view).toContain("rows.slice(0, 3).map(");
+    expect(view).toContain("href={llmHistoryHref()}");
+    expect(view).not.toMatch(/changes\.rows\.map\([^]*?<tr/);
   });
   it("확인 못함 목록은 고급 영역에서 빠졌고 옛 #review 주소를 쓰는 곳이 없다", () => {
     const page = readFileSync(path.join(root, "app/(operator)/admin/models/page.tsx"), "utf8");

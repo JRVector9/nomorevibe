@@ -225,6 +225,16 @@ describe("마지막 갱신 = 화면을 그린 시각", () => {
       expect(parents.has(file), `cyclic page delegation: ${file}`).toBe(false);
       const source = readFileSync(file, "utf8");
       if (source.includes("<PageStamp />")) return;
+      // The removed task screen only redirects; its canonical stamped page owns the unified read's freshness.
+      if (file === path.join(root, "app/(operator)/admin/models/tasks/page.tsx")) {
+        expect(source).toContain("return <LegacyTasksRedirect");
+        expect(readFileSync(path.join(root, "app/(operator)/admin/models/unified/LegacyTasksRedirect.tsx"), "utf8")).toContain("window.location.replace(legacyTasksHref(");
+        expect(readFileSync(path.join(root, "app/(operator)/admin/models/unified/legacy-navigation.ts"), "utf8")).toContain("`/admin/models");
+        const canonical = path.join(root, "app/(operator)/admin/models/page.tsx");
+        expect(readFileSync(canonical, "utf8")).toContain("<UnifiedModelsSlot");
+        verifyStamp(canonical, new Set([...parents, file]));
+        return;
+      }
       // Workspace entrypoints render the original stamped server pages. Check every delegate instead of mounting a second stamp.
       const delegates = [...source.matchAll(/import (\w+) from "(\.\.[^"]*\/page)";/g)];
       expect(delegates.length, `missing PageStamp or page delegation: ${file}`).toBeGreaterThan(0);
