@@ -69,6 +69,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "job-resume": "개별 작업 재개",
   // 운영 홈 할 일의 「사유 남기고 유지」·「그대로 두기」(2026-11-12 조각 2a) — 할 일을 정한 기간 목록에서 내린다
   "console-task-keep": "할 일 그대로 둠",
+  // 휴대폰 알림 켜기·끄기와 조용한 시간(조각 4b) — 저장 한 번이 한 줄, 마지막 줄이 지금 설정
+  "console-alert-settings": "휴대폰 알림 설정",
   "github-collector-token-save": "수집 토큰 저장",
   "github-collector-enable": "수집 계정 켜기",
   "github-collector-disable": "수집 계정 끄기",
@@ -219,7 +221,8 @@ export const ACTION_GROUPS = {
     "ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-model-hide", "ai-task-models-save", "ai-task-models-import", "ai-connection-key-fill", "ai-task-execution-save",
     "llm-assist-control",
     "runtime-settings-save", "model-capacity-device-save", "model-capacity-route-quota-save", "model-capacity-model-limit-save", "model-capacity-device-retire", "model-capacity-routes-prune", "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save",
-    "model-registry-override-disable", "model-assignment-save", "model-helper-save", "model-helper-mode", "model-capacity-unknown-reviewed", "job-pause", "job-resume", "console-task-keep"] },
+    "model-registry-override-disable", "model-assignment-save", "model-helper-save", "model-helper-mode", "model-capacity-unknown-reviewed", "job-pause", "job-resume", "console-task-keep",
+    "console-alert-settings"] },
   // LLM 운영 화면에서 한 번에 거르는 갈래 — 연결·순위·한도 저장(「설정·연결」과 겹침)과 접수·미확정·경계 해제·연결 확인 같은 조치
   llm: { label: "LLM 운영", actions: ["ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-model-hide", "ai-connection-key-fill",
     "ai-task-models-save", "ai-task-models-import", "ai-task-execution-save",

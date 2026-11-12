@@ -21,7 +21,7 @@ import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "작업 로그 — NoMoreVibe", robots: { index: false } };
 
-type Props = { searchParams: Promise<{ group?: string; actor?: string; failed?: string; before?: string; target?: string; workspace?: string }> };
+type Props = { searchParams: Promise<{ group?: string; actor?: string; failed?: string; before?: string; target?: string; workspace?: string; q?: string }> };
 
 const count = (value: number) => value.toLocaleString("ko-KR");
 const KIND: Record<string, string> = { github: "GitHub", password: "아이디·비밀번호", local: "로컬 로그인", token: "API 토큰", model: "로컬 모델" };
@@ -43,7 +43,7 @@ export default async function AdminActivityPage({ searchParams }: Props) {
   const params = await searchParams;
   const workspace = params.workspace === "home" || params.workspace === "models" ? params.workspace : null;
   const filter = activityFilter(params);
-  const { group, actor, failedOnly, before, target } = filter;
+  const { group, actor, failedOnly, before, target, q } = filter;
 
   const local = adminLocalLoginEnabled();
   const now = new Date();
@@ -52,17 +52,19 @@ export default async function AdminActivityPage({ searchParams }: Props) {
     adminLogFacets(),
     local ? localOperatorName() : Promise.resolve(null),
   ]);
-  const query = (next: { group?: ActionGroup | null; actor?: string | null; failed?: boolean; before?: number; target?: string | null }) => {
+  const query = (next: { group?: ActionGroup | null; actor?: string | null; failed?: boolean; before?: number; target?: string | null; q?: string | null }) => {
     const search = new URLSearchParams();
     if (workspace) search.set("workspace", workspace);
     const g = next.group === undefined ? group : next.group;
     const a = next.actor === undefined ? actor : next.actor;
     const f = next.failed ?? failedOnly;
     const t = next.target === undefined ? target : next.target;
+    const text = next.q === undefined ? q : next.q;
     if (g) search.set("group", g);
     if (a) search.set("actor", a);
     if (f) search.set("failed", "1");
     if (t) search.set("target", t);
+    if (text) search.set("q", text);
     if (next.before) search.set("before", String(next.before));
     return search;
   };
@@ -84,8 +86,10 @@ export default async function AdminActivityPage({ searchParams }: Props) {
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line pb-3">
         <h1 className="text-[22px] font-extrabold tracking-tight">작업 로그</h1>
         <span className="text-[13px] text-fg-3">관리자가 바꾼 것 전부 — 덧붙이기만 하고 고치거나 지울 수 없습니다 · 전체 {count(total)}건</span>
+        {/* 기록 메뉴의 기본(조각 4b)은 바꾼 것을 한 줄씩 묶어 보이고, 이 화면은 그 「모두 보기」 — 원시 줄 그대로 */}
+        <Link href={q ? `/admin/log?q=${encodeURIComponent(q)}` : "/admin/log"} className="ml-auto text-[13px] text-accent hover:underline">바꾼 것 한 줄씩</Link>
         <a href={`/admin/export?view=activity&format=csv${query({}).size ? `&${query({})}` : ""}`}
-          className="ml-auto text-[13px] text-accent hover:underline">CSV 내보내기</a>
+          className="text-[13px] text-accent hover:underline">CSV 내보내기</a>
       </div>
 
       {local && <OperatorName current={operator} max={OPERATOR_NAME_MAX} />}
@@ -112,6 +116,7 @@ export default async function AdminActivityPage({ searchParams }: Props) {
         {group && <input type="hidden" name="group" value={group} />}
         {actor && <input type="hidden" name="actor" value={actor} />}
         {failedOnly && <input type="hidden" name="failed" value="1" />}
+        {q && <input type="hidden" name="q" value={q} />}
         <label className="flex min-w-0 flex-1 basis-[260px] items-center gap-2">
           <span className="shrink-0 font-semibold text-fg-2">대상</span>
           <input type="search" name="target" defaultValue={target ?? ""} maxLength={200} placeholder="제품 slug · owner/repo · GitHub 주소"
@@ -120,6 +125,11 @@ export default async function AdminActivityPage({ searchParams }: Props) {
         <button type="submit" className="admin-button" data-tone="primary">찾기</button>
         {target && <Link href={href({ target: null })} className="px-1 py-1.5 text-fg-2 underline">대상 거르기 풀기</Link>}
       </Form>
+      {/* 찾는 말(⌘K 「그 이름이 나온 기록」·기록 화면의 「모두 보기」) — 대상·사람·작업 이름·내용 어디든 */}
+      {q && <p className="text-[13px] text-fg-3">
+        <b className="text-fg-2">“{q}”</b>이(가) 든 줄 — 대상·처리자·작업 이름·내용에서 찾았습니다.{" "}
+        <Link href={href({ q: null })} className="text-fg-2 underline">찾는 말 풀기</Link> · <Link href={`/admin/log?q=${encodeURIComponent(q)}`} className="text-fg-2 underline">한 줄씩 보기</Link>
+      </p>}
       {target && <p className="text-[13px] text-fg-3">
         <b className="font-mono text-fg-2">{target}</b>의 기록 — 대상이 정확히 같은 줄, 이어진 제품·저장소의 줄, 이 대상을 담은 일괄 스크립트 줄입니다.
       </p>}

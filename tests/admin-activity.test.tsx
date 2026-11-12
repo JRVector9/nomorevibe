@@ -13,7 +13,7 @@ vi.mock('@/app/(operator)/admin/activity/query', async (importOriginal) => ({
 
 import AdminActivityPage from '@/app/(operator)/admin/activity/page';
 import { actionLabel, targetLabel } from '@/app/(operator)/admin/activity/labels';
-import { normalizeTarget } from '@/app/(operator)/admin/activity/query';
+import { actionsLabelled, activityFilter, normalizeQuery, normalizeTarget } from '@/app/(operator)/admin/activity/query';
 import { isScriptRow, summaryLine } from '@/app/(operator)/admin/activity/summary';
 import { actorKind, settingsChanges } from '@/lib/operations/admin-log';
 
@@ -174,5 +174,28 @@ describe('작업 로그 표기', () => {
     expect(summaryLine({ ...base, detail: {} })).toBe('—');
     expect(isScriptRow(base)).toBe(true);
     expect(isScriptRow({ ip: '203.0.113.7', userAgent: null })).toBe(false);
+  });
+});
+
+/** ⌘K 「그 이름이 나온 기록」·기록 화면의 찾기(조각 4b) — 찾는 말 */
+describe('작업 로그 찾는 말', () => {
+  it('두 글자부터 100자까지, 주소에 그대로 남는다', () => {
+    expect(normalizeQuery(' supa ')).toBe('supa');
+    expect(normalizeQuery('s')).toBe('');
+    expect(normalizeQuery('x'.repeat(150))).toHaveLength(100);
+    expect(activityFilter({ q: '소개 검수' }).q).toBe('소개 검수');
+    expect(activityFilter({}).q).toBeUndefined();
+  });
+
+  it('한국어 이름표로도 작업을 찾는다 — 「접수」면 접수 OPEN·DRAIN 전환 줄도', () => {
+    expect(actionsLabelled('접수')).toContain('pipeline-control-capacity-mode');
+    expect(actionsLabelled('휴대폰 알림')).toEqual(['console-alert-settings']);
+  });
+
+  it('찾는 말이 있으면 화면에 적고 링크마다 지킨다', async () => {
+    const html = await render({ q: 'supa' });
+    expect(html).toContain('“supa”</b>이(가) 든 줄');
+    expect(html).toContain('href="/admin/log?q=supa"');
+    expect(mocks.log).toHaveBeenCalledWith(expect.objectContaining({ q: 'supa' }));
   });
 });

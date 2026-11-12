@@ -31,6 +31,8 @@ const ADDRESSES: readonly (readonly [url: string, menu: WorkspaceId, tab: string
   ['/admin/flow?tab=diagnostics', 'home', 'diagnostics', null],
   ['/admin/flow?tab=changes', 'home', 'changes', null],
   ['/admin/flow?tab=unknown', 'home', 'home', null],
+  // 홈 › 알림(조각 4b) — 휴대폰 알림 켜기·끄기와 조용한 시간
+  ['/admin/alerts', 'home', 'alerts', null],
   ['/admin/inbox', 'home', 'changes', 'inbox'],
   ['/admin/activity?workspace=home&group=settings', 'home', 'changes', 'changes'],
   ['/admin/activity?workspace=home', 'home', 'changes', 'changes'],
@@ -148,7 +150,10 @@ const ADDRESSES: readonly (readonly [url: string, menu: WorkspaceId, tab: string
   ['/admin/talk', 'content', 'social', null],
   ['/admin/news', 'content', 'news', null],
   ['/admin/ranking', 'content', 'ranking', null],
-  // 기록
+  // 기록 — 기본은 바꾼 것 한 줄씩(조각 4b), 원시 줄은 모두 보기(작업 로그)
+  ['/admin/log', 'log', 'summary', null],
+  ['/admin/log?q=supa', 'log', 'summary', null],
+  ['/admin/activity?q=supa', 'log', 'changes', null],
   ['/admin/settings?tab=history', 'log', 'history', null],
   ['/admin/activity', 'log', 'changes', null],
   ['/admin/activity?group=takedown', 'log', 'changes', null],
@@ -197,9 +202,9 @@ describe('메뉴 여섯', () => {
     for (const page of WORKSPACES) expect(html).toContain(`<span>${page.label}</span>`);
   });
 
-  it('홈 탭은 운영 홈(기본)·흐름 상세·시스템 진단·할 일·변경 기록이고, 오늘 할 일은 그 2차 메뉴에 둔다', () => {
+  it('홈 탭은 운영 홈(기본)·흐름 상세·시스템 진단·할 일·변경 기록·알림이고, 오늘 할 일은 그 2차 메뉴에 둔다', () => {
     expect(WORKSPACES[0].tabs.map(tab => [tab.label, tab.href])).toEqual([['운영 홈', '/admin/flow'], ['흐름 상세', '/admin/flow?tab=detail'],
-      ['시스템 진단', '/admin/flow?tab=diagnostics'], ['할 일·변경 기록', '/admin/flow?tab=changes']]);
+      ['시스템 진단', '/admin/flow?tab=diagnostics'], ['할 일·변경 기록', '/admin/flow?tab=changes'], ['알림', '/admin/alerts']]);
     expect(WORKSPACE_SECONDARY.homeChanges.map(link => link.href)).toEqual(['/admin/inbox', '/admin/activity?workspace=home&group=settings']);
   });
 
@@ -219,6 +224,15 @@ describe('메뉴 여섯', () => {
     expect(WORKSPACES.find(page => page.id === 'models')!.href).toBe('/admin/models');
     expect(WORKSPACE_SECONDARY.modelsAdvanced.map(link => link.label)).toEqual(['고급 설정', '대시보드', 'LLM 운영', '실시간 한도', '장비 한도', '칸 배분', '도우미·감시자',
       '모델 배정 표', '서빙 계약·등록부', '검색 모델']);
+  });
+});
+
+describe('기록 메뉴(조각 4b)', () => {
+  it('기본은 바꾼 것 한 줄씩이고 원시 작업 로그는 「모두 보기」로 남는다', () => {
+    const log = WORKSPACES.find(page => page.id === 'log')!;
+    expect(log.href).toBe('/admin/log');
+    expect(log.tabs.map(tab => [tab.label, tab.href])).toEqual([['바꾼 것', '/admin/log'], ['모두 보기', '/admin/activity'],
+      ['운영 기록', '/admin/settings?tab=history'], ['LLM 기록', '/admin/models/history']]);
   });
 });
 

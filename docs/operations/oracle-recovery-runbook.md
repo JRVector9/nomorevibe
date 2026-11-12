@@ -84,6 +84,24 @@ DRAINING 으로 두고 잡 ~10개를 멈추며 첫 앱 재시작은 2~3분 뒤�
   `valid_capacity_mode` 를 가져오므로 Oracle 세 파일은 함께 바꾼다. 새 gateway 는 새 monitor 가 칸을 쓸 때만 `capacityMode` 를 보내는데, 구 Oracle
   validator 는 그 행을 거절해 호스트 전체가 `probe_unknown` 이 된다. 새 monitor + 구 gateway 는 칸을 버린다(지금과 같다).
 
+**운영 홈 할 일의 휴대폰 알림(2026-11-12 운영 콘솔 개편 조각 4b).** 홈 할 일 중 멈춤·평소와 다름이 새로 생기면 이 Telegram 통로로 한 번 보낸다.
+
+- 앱: maintenance 잡 `console-alerts`(5분)가 홈과 같은 규칙(`lib/operations/console-tasks.ts`)으로 할 일을 세어 알림 줄(`console_alerts`, 마이그레이션 0183)을
+  열고·이어 쓰고·닫는다. 10분 넘게 안 보이면 닫고, 다시 생기면 새 줄이다. 「그대로 둔다」로 표시한 할 일과 접수 중단 30분 전의 접힌 줄은 열지 않는다.
+  켜기·끄기와 조용한 시간(KST)은 관리자 「홈 › 알림」(`/admin/alerts`)에서 저장하고(작업 로그 `console-alert-settings`), **기본은 꺼짐**이다.
+- monitor: 주기마다 닫히지 않았고 내보낸 줄(최대 8줄 — 제목 80·사실 160·경로 200자)을 heartbeat 에 `consoleAlerts: [{id, title, fact, href}]` 로 적는다.
+  읽지 못하면 칸이 없다. gateway `MONITOR_PROBE` 는 모양(관리자 경로 `/admin…` 만, 제어·방향 글자 없음)을 검사하고 모든 신선한 replica 가 같을 때만
+  행에 붙인다. 행의 `ok`·`reason`·`recoverable` 은 바뀌지 않는다.
+- Oracle: `incident_notifications` 가 줄 id(`host/service/id`)마다 한 번 `NoMoreVibe 할 일 알림` 으로 보낸다(제목 · 사실 한 줄 · 링크). 보고에서 줄이
+  사라지면 표시를 지우고, 칸이 없는 보고(옛 monitor·읽기 실패·호스트 못 읽음)는 모름으로 두어 표시를 지우지 않는다. 상태 파일에는 열쇠와 보냄 표시만 둔다.
+  링크 앞의 사이트 주소는 config 의 선택 키 `adminOrigin`(예: `"https://nomorevibe.com"` — https, 경로 없음)이 붙인다. 없으면 경로만 보낸다.
+- 켜는 순서: ① 마이그레이션 0183 ② monitor 읽기 역할에 `GRANT SELECT ON TABLE public.console_alerts TO nomorevibe_monitor_20261022;`
+  ③ **Oracle 세 파일(`oracle_watchdog.py`·`incident_notifications.py`·`recovery_gateway.py`)과 config `adminOrigin`** → ④ M3/mini SSH gateway(`recovery_gateway.py`)
+  → ⑤ scheduler(새 카탈로그 잡 `console-alerts`) → maintenance·monitor 앱 → ⑥ `/admin/alerts` 에서 켜기. 구 Oracle validator 는 `consoleAlerts` 가 붙은
+  행을 거절해 그 호스트 전체가 `probe_unknown` 이 되므로 Oracle 이 gateway 보다 먼저다. 새 monitor + 구 gateway 는 칸을 버린다(지금과 같다).
+- 바뀌지 않는 것: 장애 알림(`NoMoreVibe 장애 알림`)의 사유·유예·해제 규칙, Kuma Push·복구 판단. 같은 멈춤이 `pipeline_alarm`(장애 알림)과 할 일 알림으로
+  두 번 올 수 있다 — 장애 알림은 워커 진행 관측, 할 일 알림은 홈 규칙(1시간 처리가 대기의 10분의 1 미만 등)이다.
+
 2026-11-10 소유자 결정: 검토 행은 아무것도 막지 않으므로 검토 문턱만 넘은 장부로 monitor를 DOWN으로 만들지 않는다(11-09 배포 창이
 indeterminate 35건·가장 오래된 41시간의 `review_stale` 때문에 `monitor_push_state_not_up`으로 멈췄다). 문턱 값은 그대로이고,
 `capacityUnknowns`의 `status: alarm`·`alarmReasons`도 그대로 보고한다. 같은 규칙이 TS `capacityReviewOnlyAlarm`과

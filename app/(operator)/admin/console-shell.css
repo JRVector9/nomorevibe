@@ -1,0 +1,90 @@
+/* 운영 콘솔 개편 조각 4b — 머리줄의 접수 표시와 ⌘K 찾기·바꾸기의 갈래. 상태는 점 하나 + 짧은 말, 색은 상태에만(prototype.css 토큰). */
+
+.admin-prototype .top-admission {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 340px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  white-space: nowrap;
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  line-height: 1.4;
+}
+.admin-prototype a.top-admission:hover {
+  border-color: var(--soft);
+}
+.admin-prototype .top-admission > i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--soft);
+}
+.admin-prototype .top-admission[data-tone="ok"] > i {
+  background: var(--green);
+}
+.admin-prototype .top-admission[data-tone="warn"] > i {
+  background: var(--amber);
+}
+.admin-prototype .top-admission[data-tone="bad"] {
+  border-color: var(--red);
+  color: var(--red);
+}
+.admin-prototype .top-admission[data-tone="bad"] > i {
+  background: var(--red);
+}
+.admin-prototype .top-admission[data-tone="off"] {
+  color: var(--muted);
+}
+.admin-prototype .top-admission b {
+  font-weight: 600;
+}
+.admin-prototype .top-admission-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.admin-prototype .top-admission[data-tone="bad"] .top-admission-detail {
+  color: inherit;
+}
+.admin-prototype .top-tools {
+  min-width: 0;
+}
+.admin-prototype .top-admission {
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+@media (max-width: 850px) {
+  /* 좁은 화면 — 열려 있으면 점과 말만, 멈춰 있으면 언제부터·누가까지 */
+  .admin-prototype .top-admission {
+    max-width: 52vw;
+  }
+  .admin-prototype .top-admission[data-mode="open"] .top-admission-detail {
+    display: none;
+  }
+}
+@media (max-width: 500px) {
+  /* 휴대폰 — 머리줄에는 점과 「접수 중단」만, 언제부터·누가는 누른 곳(접수 칸)과 마우스를 올린 말에 */
+  .admin-prototype .top-admission .top-admission-detail {
+    display: none;
+  }
+}
+
+/* ⌘K — 화면·조치·기록 갈래의 표시(줄 모양은 기존 admin-search-item 그대로) */
+.admin-search-item[data-kind="action"] .admin-search-badge {
+  font-weight: 600;
+}
+
+/* 휴대폰 알림의 주소(/admin/flow#task-…)로 온 할 일 줄 */
+.admin-prototype .ch-task:target {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 8px;
+  scroll-margin-top: 90px;
+}

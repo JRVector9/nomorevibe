@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
-import { ADMIN_SEARCH_MIN, type AdminSearchResult } from "@/lib/operations/admin-search-shared";
+import { ADMIN_SEARCH_COMMAND_KINDS, ADMIN_SEARCH_MIN, type AdminSearchCommand, type AdminSearchResult } from "@/lib/operations/admin-search-shared";
 import { AdminIcon } from "./AdminIcon";
 
 /** 상태 이름 — 제품 표(ProductRow)·심사 상세(ReviewDetail)와 같은 말 */
@@ -10,12 +10,17 @@ const PRODUCT_STATUS: Record<string, string> = { verified: "검증됨", seeded: 
 const CANDIDATE_STATE: Record<string, string> = { new: "규칙 검사 대기", approved: "발행 조건 확인", needs_review: "보류", rejected: "거부", published: "발행 완료" };
 const WAIT_MS = 200;
 
-type Item = { key: string; href: string; title: string; detail: string; badge: string; extra?: { label: string; href: string }[] };
+type Item = { key: string; href: string; title: string; detail: string; badge: string; kind?: AdminSearchCommand["kind"]; extra?: { label: string; href: string }[] };
 
-/** 결과를 화살표로 오가는 한 줄 목록으로 — 범주 차례 그대로 */
+/**
+ * 결과를 화살표로 오가는 한 줄 목록으로 — 범주 차례 그대로. 맨 앞은 찾기·바꾸기(운영 콘솔 조각 4b): 이름마다 화면 열기 → 조치 → 기록.
+ * 조치 줄은 그 조치가 있는 화면의 그 자리로 갈 뿐 실행하지 않는다(저장 전 확인·사유는 그 자리의 폼이 받는다).
+ */
 export function searchItems(result: AdminSearchResult | null): { group: string; items: Item[] }[] {
   if (!result) return [];
   return [
+    { group: "바로 가기 · 조치 · 기록", items: (result.commands ?? []).map(command => ({ key: `k:${command.id}`, href: command.href, title: command.title,
+      detail: command.detail, badge: ADMIN_SEARCH_COMMAND_KINDS[command.kind] ?? command.kind, kind: command.kind })) },
     { group: "엔진·연결", items: (result.engines ?? []).map(engine => ({ key: `e:${engine.id}`, href: engine.href, title: engine.label,
       detail: [engine.deviceId, engine.baseUrl, engine.contextTokens ? `컨텍스트 ${engine.contextTokens.toLocaleString("ko-KR")} 토큰` : null].filter(Boolean).join(" · "),
       badge: !engine.enabled ? "연결 꺼짐" : engine.kind === "api" ? "API 엔진" : "CLI 연결",
@@ -36,7 +41,8 @@ export function searchItems(result: AdminSearchResult | null): { group: string; 
 /**
  * 관리자 전역 검색(⌘K·Ctrl+K, 2026-10-08 UX 점검 ADM-05) — 사이드바 맨 위 단추나 단축키로 연다.
  * 엔진·모델·작업·설정, 프로젝트·후보·작업 로그 대상을 한 창에서 찾고, 줄을 고르면 그 화면으로 간다.
- * 화살표로 줄을 옮기고 Enter 로 연다. 줄 끝의 작은 링크(공개 페이지·기록)는 마우스로 고른다.
+ * 화살표로 줄을 옮기고 Enter 로 연다. Esc 로 닫는다(dialog 기본 동작). 줄 끝의 작은 링크(공개 페이지·기록)는 마우스로 고른다.
+ * 운영 콘솔 조각 4b: 모델·단계·수집원·잡 이름이면 그 화면·조치·기록이 맨 앞 갈래에 함께 나온다.
  */
 export function CommandSearch({ appearance }: { appearance?: "prototype" } = {}) {
   const router = useRouter();
@@ -98,15 +104,15 @@ export function CommandSearch({ appearance }: { appearance?: "prototype" } = {})
   const activeItem = short ? null : items[active];
 
   return <>
-    <button type="button" className={appearance === "prototype" ? "search-launch" : "admin-search-trigger"} onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="엔진·모델·작업·프로젝트 찾기 (⌘K)">
-      <AdminIcon name="search" size={15} /><span className="admin-sidebar-label">{appearance === "prototype" ? "전체 검색" : "찾기"}</span><kbd className="admin-sidebar-label">⌘K</kbd>
+    <button type="button" className={appearance === "prototype" ? "search-launch" : "admin-search-trigger"} onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="모델·단계·작업·프로젝트 찾기 · 바꾸기 (⌘K)">
+      <AdminIcon name="search" size={15} /><span className="admin-sidebar-label">{appearance === "prototype" ? "찾기 · 바꾸기" : "찾기"}</span><kbd className="admin-sidebar-label">⌘K</kbd>
     </button>
     <dialog ref={dialog} className="admin-confirm admin-search" aria-label="관리자 전역 검색"
       onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <div className="admin-search-body">
         <div className="admin-search-field">
           <AdminIcon name="search" size={16} />
-          <input ref={input} type="search" value={query} autoFocus placeholder="엔진·모델·연결·작업·설정·프로젝트 검색"
+          <input ref={input} type="search" value={query} autoFocus placeholder="모델·단계·수집원·작업·프로젝트 — 이름으로 찾고 바로 가기"
             role="combobox" aria-expanded={items.length > 0 && !short} aria-controls={listId} aria-autocomplete="list"
             aria-activedescendant={activeItem ? `${listId}-${activeItem.key}` : undefined} aria-label="찾을 말"
             onChange={(event) => setQuery(event.target.value)}
@@ -125,7 +131,7 @@ export function CommandSearch({ appearance }: { appearance?: "prototype" } = {})
                 const index = items.indexOf(item);
                 return (
                   <div key={item.key} id={`${listId}-${item.key}`} role="option" aria-selected={index === active}
-                    className="admin-search-item" onMouseMove={() => { if (index !== active) setActive(index); }}
+                    className="admin-search-item" data-kind={item.kind} onMouseMove={() => { if (index !== active) setActive(index); }}
                     onClick={(event) => { if (!(event.target as Element).closest("a")) go(item.href); }}>
                     <span className="admin-search-title">{item.title}</span>
                     <span className="admin-search-badge">{item.badge}</span>
@@ -143,7 +149,7 @@ export function CommandSearch({ appearance }: { appearance?: "prototype" } = {})
           {short ? `${ADMIN_SEARCH_MIN}글자 이상 입력하면 찾습니다. ↑↓ 로 옮기고 Enter 로 엽니다.`
             : state === "loading" ? "찾는 중…"
             : state === "error" ? "찾지 못했습니다 — 잠시 뒤 다시 입력해 주세요."
-            : result && items.length === 0 ? `“${result.q}”에 맞는 엔진·모델·작업·프로젝트·기록이 없습니다.`
+            : result && items.length === 0 ? `“${result.q}”에 맞는 모델·단계·작업·프로젝트·기록이 없습니다.`
             : `${items.length}건 · ↑↓ 로 옮기고 Enter 로 엽니다.`}
         </p>
       </div>

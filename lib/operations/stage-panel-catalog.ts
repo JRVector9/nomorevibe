@@ -67,7 +67,7 @@ export function stagePanelKeyOf(stage: string): StagePanelKey | null {
 export const stagePanelKeyOfTask = (taskId: string): StagePanelKey | null => STAGE_PANELS.find(panel => panel.tasks.includes(taskId))?.key ?? null;
 
 /** 단계 패널 주소 — 새로고침·공유해도 같은 패널이 열린다. part 는 패널 안의 구역(#sp-models 등) */
-export function stagePanelHref(stage: string, part?: "models" | "limits"): string {
+export function stagePanelHref(stage: string, part?: "models" | "limits" | "jobs"): string {
   const key = stagePanelKeyOf(stage) ?? stage;
   return `/admin/flow?stage=${encodeURIComponent(key)}${part ? `#sp-${part}` : ""}`;
 }

@@ -841,3 +841,33 @@ export const modelSampleComparisons = pgTable('model_sample_comparisons', {
   index('model_sample_comparisons_task_idx').on(table.task, table.id),
   index('model_sample_comparisons_open_idx').on(table.task, table.id).where(sql`${table.status} IN ('queued','running')`),
 ]);
+
+/**
+ * 휴대폰 알림(0183, 2026-11-12 운영 콘솔 조각 4b). 홈 할 일 중 알림 묶음(멈춤 · 평소와 다름)의 「한 번 생김」 하나가 한 줄이다.
+ * maintenance 잡(console-alerts)이 할 일 규칙(console-tasks.ts)을 읽어 열고·이어 쓰고·닫는다(lib/operations/console-alerts.ts planConsoleAlerts).
+ * released_at 이 있고 닫히지 않은 줄을 감시(monitor)가 읽어 기존 전달 통로(복구 게이트웨이 → Oracle watchdog Telegram)로 넘긴다 — Oracle 이 줄 id 마다 한 번 보낸다.
+ * 할 일이 같은 동안은 같은 줄(열린 줄은 할 일 열쇠마다 하나 — 부분 유일 색인), 사라져 닫힌 뒤 다시 생기면 새 줄(다시 알림)이다.
+ */
+export const consoleAlerts = pgTable('console_alerts', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  taskId: varchar('task_id', { length: 160 }).notNull(),
+  rule: varchar('rule', { length: 40 }).notNull(),
+  groupKey: varchar('group_key', { length: 8 }).$type<'stop' | 'odd' | 'pile' | 'tidy'>().notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  fact: varchar('fact', { length: 400 }).notNull(),
+  href: varchar('href', { length: 400 }).notNull(),
+  openedAt: timestamp('opened_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  seenAt: timestamp('seen_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  missingSince: timestamp('missing_since', { withTimezone: true, precision: 3 }),
+  releasedAt: timestamp('released_at', { withTimezone: true, precision: 3 }),
+  closedAt: timestamp('closed_at', { withTimezone: true, precision: 3 }),
+  closeReason: varchar('close_reason', { length: 16 }).$type<'resolved' | 'kept' | 'disabled'>(),
+}, table => [
+  check('console_alerts_group_check', sql`${table.groupKey} IN ('stop','odd','pile','tidy')`),
+  check('console_alerts_close_check', sql`(${table.closedAt} IS NULL) = (${table.closeReason} IS NULL) AND (${table.closeReason} IS NULL OR ${table.closeReason} IN ('resolved','kept','disabled'))`),
+  check('console_alerts_text_check', sql`${table.title} !~ '[[:cntrl:]]' AND ${table.fact} !~ '[[:cntrl:]]' AND ${table.href} !~ '[[:cntrl:]]' AND char_length(${table.title}) >= 1`),
+  uniqueIndex('console_alerts_open_task_idx').on(table.taskId).where(sql`${table.closedAt} IS NULL`),
+  index('console_alerts_released_idx').on(table.id).where(sql`${table.closedAt} IS NULL AND ${table.releasedAt} IS NOT NULL`),
+  index('console_alerts_opened_idx').on(table.openedAt.desc()),
+]);
+export type ConsoleAlertRecord = typeof consoleAlerts.$inferSelect;

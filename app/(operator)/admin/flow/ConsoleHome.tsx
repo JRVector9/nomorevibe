@@ -3,6 +3,7 @@ import { Fragment, type ReactNode } from "react";
 import { buildConsoleFlow, buildConsoleStrip, type ConsoleFlowRow } from "@/lib/operations/console-home-model";
 import type { ConsoleHomeRead, ConsoleJobControl } from "@/lib/operations/console-home-read";
 import { buildConsoleTasks, CONSOLE_TASK_LIMITS, formatCount, formatKst, type ConsoleAction, type ConsoleTask, type ConsoleTaskBoard } from "@/lib/operations/console-tasks";
+import { consoleTaskAnchor } from "@/lib/operations/console-alerts";
 import { JobControl } from "../status/JobControl";
 import { TaskKeep } from "./TaskKeep";
 import "./console-home.css";
@@ -71,7 +72,8 @@ export function ConsoleHome({ data, csrf, changeWatch, panel }: {
 }
 
 function TaskRow({ task, csrf, controls }: { task: ConsoleTask; csrf: { token: string; expiresAt: number } | null; controls: Record<string, ConsoleJobControl> }) {
-  return <li className="ch-task" data-tone={task.tone} data-rule={task.rule}>
+  // id — 휴대폰 알림의 주소(/admin/flow#task-…)가 이 줄로 온다(조각 4b)
+  return <li className="ch-task" id={consoleTaskAnchor(task.id)} data-tone={task.tone} data-rule={task.rule}>
     <i aria-hidden="true" />
     <div>
       <h3>{task.title}</h3>

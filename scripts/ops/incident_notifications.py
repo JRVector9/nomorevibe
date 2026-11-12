@@ -51,6 +51,12 @@ SERVICE_TEXT = {
     'native_unit_inactive': '호스트 서비스가 꺼져 있음',
     'native_unit_unknown': '호스트 서비스 상태를 알 수 없음',
 }
+# 2026-11-12 운영 콘솔 조각 4b: 휴대폰 알림 — 운영 홈 할 일(멈춤·평소와 다름)의 알림 줄(console_alerts). monitor 보고의 consoleAlerts 를
+# 줄 id 마다 한 번 보낸다(제목·사실 한 줄·그 할 일로 가는 주소). 앱이 할 일의 생김·해소(10분 연속 없음)·조용한 시간·그대로 둠을 정해 줄을 열고 닫으므로
+# 여기서는 보고된 줄이 사라지면 보낸 표시를 바로 지운다(같은 할 일이 다시 생기면 새 줄 id — 다시 보낸다). 칸이 없는 보고(옛 monitor·읽기 실패)는 모름이다.
+# 상태에는 열쇠(host/service/id)와 보냄 표시만 둔다 — 알림 글은 보낼 때 보고에서 읽고 상태·로그에 남기지 않는다.
+# 보고의 주소는 관리자 화면 경로뿐이다(게이트웨이가 검사) — 사이트 주소는 이 쪽 설정 adminOrigin(https, 선택)이 붙인다. 없으면 경로만 보낸다.
+CONSOLE_HEADER = 'NoMoreVibe 할 일 알림'
 MESSAGE_LIMIT = 4096
 RESPONSE_LIMIT = 16384
 INPUT_LIMIT = 32768
@@ -213,6 +219,60 @@ def _advance_pipeline_recovery(item, now):
     return now - started >= PIPELINE_RECOVERY_SECONDS
 
 
+def _console_key(config, value):
+    if not isinstance(value, str) or len(value.split('/')) != 3:
+        return False
+    host, service, alert = value.split('/')
+    return (host in config['hosts'] and re.fullmatch(r'[a-z0-9-]{1,60}', service) is not None and
+            re.fullmatch(r'[1-9][0-9]{0,14}', alert) is not None)
+
+
+def _console_alerts(config, stored, reports, now):
+    """보고된 알림 줄과 보낸 표시를 맞춘다. 돌려주는 것: (표시, 지금 보고된 줄 글)."""
+    from recovery_gateway import valid_console_alerts
+    marks = {}
+    for key, item in stored.items() if isinstance(stored, dict) else []:
+        if _console_key(config, key) and isinstance(item, dict):
+            first = item.get('firstSeen')
+            marks[key] = {'sent': item.get('sent') is True, 'firstSeen': first if _finite_time(first, now) else now}
+    current = {}
+    for host in config['hosts']:
+        report = reports.get(host)
+        if not isinstance(report, dict) or not isinstance(report.get('services'), list):
+            continue
+        for row in report['services']:
+            if (not isinstance(row, dict) or not isinstance(row.get('key'), str) or 'consoleAlerts' not in row or
+                    not valid_console_alerts(row['consoleAlerts'])):
+                continue
+            prefix = host + '/' + row['key'] + '/'
+            reported = {prefix + str(alert['id']): alert for alert in row['consoleAlerts']}
+            for key in [key for key in marks if key.startswith(prefix) and key not in reported]:
+                del marks[key]
+            for key, alert in reported.items():
+                marks.setdefault(key, {'sent': False, 'firstSeen': now})
+                current[key] = alert
+    return marks, current
+
+
+def _admin_origin(config):
+    value = config.get('adminOrigin')
+    return value.rstrip('/') if isinstance(value, str) and re.fullmatch(r'https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?', value) else ''
+
+
+def _console_message(marks, current, origin=''):
+    pending = sorted((key for key, item in marks.items() if not item['sent'] and key in current),
+                     key=lambda key: (marks[key]['firstSeen'], key))
+    message, included = CONSOLE_HEADER, []
+    for key in pending:
+        alert = current[key]
+        line = '\n- ' + alert['title'] + ('\n  ' + alert['fact'] if alert['fact'] else '') + '\n  ' + origin + alert['href']
+        if len(message) + len(line) > MESSAGE_LIMIT:
+            break
+        message += line
+        included.append(key)
+    return message, included
+
+
 def notify(config, state, reports, result, receipts, *, now=None, send=send_telegram):
     """One batch of new/pending incidents. Only explicit observations resolve an incident."""
     if 'incidentNotifications' not in config:
@@ -373,7 +433,9 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
             break
         message += line
         included.append(signature)
-    state['notifications'] = {'version': 1, 'incidents': incidents}
+    console, alerts = _console_alerts(config, stored.get('console', {}) if isinstance(stored, dict) and stored.get('version') == 1 else {},
+                                      reports, now)
+    state['notifications'] = {'version': 1, 'incidents': incidents, 'console': console}
     from recovery_gateway import save
     save(config['state'], state)
     accepted = None
@@ -386,8 +448,22 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
             for signature in included:
                 incidents[signature]['sent'] = True
             save(config['state'], state)
+    # 휴대폰 알림(할 일) — 장애 알림과 따로 한 통. 받아들여진 줄만 보냄으로 적는다(아니면 다음 주기에 다시)
+    console_message, console_included = _console_message(console, alerts, _admin_origin(config))
+    console_accepted = None
+    if console_included:
+        try:
+            console_accepted = send(destination, console_message) is True
+        except Exception:
+            console_accepted = False
+        if console_accepted:
+            for key in console_included:
+                console[key]['sent'] = True
+            save(config['state'], state)
     return {'enabled': True, 'accepted': accepted, 'sent': len(included) if accepted else 0,
-            'pending': sum(not item['sent'] for item in incidents.values())}
+            'pending': sum(not item['sent'] for item in incidents.values()),
+            'consoleAccepted': console_accepted, 'consoleSent': len(console_included) if console_accepted else 0,
+            'consolePending': sum(not item['sent'] and key in alerts for key, item in console.items())}
 
 
 def _child():

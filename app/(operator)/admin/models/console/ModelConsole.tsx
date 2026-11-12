@@ -97,7 +97,8 @@ export function ModelDetail({ row, device, secretBox, readOnly, now, siblings = 
       </dl>
       <ModelSettingsForm row={row} device={device} secretBox={secretBox} readOnly={readOnly} siblings={siblings} />
     </section>
-    <section aria-label="쓰는 단계">
+    {/* id — ⌘K 「이 모델을 쓰는 단계」가 이 자리로 보낸다(조각 4b) */}
+    <section id="model-stages" aria-label="쓰는 단계">
       <span className="mc-lab">쓰는 단계</span>
       {row.stages.length ? <ul className="mc-cause">{row.stages.map(stage => <li key={`${stage.task}#${stage.slot}`}><span>{stage.place}</span>
         <span><Link prefetch={false} href={stage.href}>{stage.label}</Link>{stage.paused ? <span className="mc-muted"> · 사람이 멈춤</span> : null}</span></li>)}</ul>

@@ -111,6 +111,7 @@ export type StageKey = (typeof PIPELINE_STAGES)[number]["key"];
  */
 export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   heartbeat: "스케줄러가 살아 있다는 관측 — 후보·제품을 처리하지 않는다",
+  "console-alerts": "운영 홈 할 일의 휴대폰 알림 줄 — 할 일 규칙을 읽어 알림만 열고 닫는다(후보·제품을 처리하지 않는다)",
   "grok-session-check": "Grok 로그인 토큰 유지 — 심사 결과를 만들지 않는다",
   "product-search-health": "검색 데이터 자동 점검 — 읽기만 하고 고치지 않는 관측",
   "github-integration-reconcile": "GitHub 연동 재조회 — 읽기 전용 해시·검색 사본 대조",

@@ -182,6 +182,57 @@ describe("console tasks — rules and their limits", () => {
     expect(unknowns(buildConsoleTasks(quiet({ admission: null })))).toEqual(["접수 상태"]);
   });
 
+  describe("stop: while admission is drained, model stages fold into one line (console 4b)", () => {
+    // 시안 흐름 6 — 중단 중에 「1시간 처리 1/10」로 뜬 모델 단계 멈춤은 「접수 중단 때문」 한 줄로 접힌다. 규칙 심사(모델 없음)는 그대로 둔다
+    const stalled = (admission: ConsoleTaskInputs["admission"]) => quiet({ admission,
+      conveyor: conveyor({ stations: [station("first", { label: "AI 1차", waiting: 857, doneHour: 3 }), station("second", { label: "AI 2차", waiting: 40, doneHour: 0 }),
+        station("judge", { label: "규칙 심사", waiting: 100, doneHour: 1 })] }),
+      progress: { stages: [{ stage: "first", job: "crawl-agent-review", reason: "running", waiting: 857 }] } });
+
+    it("keeps every stalled stage as its own line while admission is open", () => {
+      const board = buildConsoleTasks(stalled({ mode: "open", since: at(HOUR) }));
+      expect(titles(board, "stop")).toEqual(["AI 1차가 거의 멈췄습니다", "AI 2차가 멈췄습니다", "규칙 심사가 거의 멈췄습니다"]);
+    });
+
+    it("folds the model stages under thirty minutes into one silent line that opens admission", () => {
+      const board = buildConsoleTasks(stalled({ mode: "draining", since: at(18 * MIN) }));
+      const stop = board.groups[0].tasks;
+      expect(stop.map(task => task.title)).toEqual(["규칙 심사가 거의 멈췄습니다", "모델 단계 2개가 접수 중단 때문에 멈춰 있습니다"]);
+      expect(stop[1]).toMatchObject({ id: "stop:admission", rule: "admission-paused", notify: false, tone: "bad",
+        fact: "AI 1차 · AI 2차 · 접수 중단 11-12 08:42부터 · 18분",
+        why: "접수를 다시 열면 풀립니다. 중단이 30분을 넘으면 알림을 보냅니다.",
+        actions: [{ kind: "link", label: "접수 열기", href: "/admin/models/dashboard#admission" }, { kind: "link", label: "단계 열기", href: "/admin/flow?stage=first" }] });
+      // 흐름 표는 그대로 「멈춤」을 그린다 — 접는 것은 할 일뿐이다
+      expect(board.marks.stopped).toEqual(["first", "second", "judge"]);
+      expect(board.total).toBe(2);
+    });
+
+    it("names the single folded stage", () => {
+      const board = buildConsoleTasks(quiet({ admission: { mode: "draining", since: at(5 * MIN) },
+        conveyor: conveyor({ stations: [station("first", { label: "AI 1차", waiting: 10, doneHour: 0 })] }) }));
+      expect(titles(board)).toEqual(["AI 1차가 접수 중단 때문에 멈춰 있습니다"]);
+    });
+
+    it("past thirty minutes, the admission task carries the folded stages and notifies", () => {
+      const board = buildConsoleTasks(stalled({ mode: "draining", since: at(45 * MIN) }));
+      expect(titles(board, "stop")).toEqual(["규칙 심사가 거의 멈췄습니다", "접수가 45분째 멈춰 있습니다"]);
+      expect(board.groups[0].tasks[1]).toMatchObject({ id: "stop:admission", notify: true,
+        why: "접수 중단 때문에 모델 단계 2개가 멈춰 있습니다: AI 1차 · AI 2차." });
+    });
+
+    it("still folds when the drain time is unknown, and says it cannot count it", () => {
+      const board = buildConsoleTasks(stalled({ mode: "draining", since: null }));
+      expect(titles(board, "stop")).toEqual(["규칙 심사가 거의 멈췄습니다", "모델 단계 2개가 접수 중단 때문에 멈춰 있습니다"]);
+      expect(board.groups[0].tasks[1]).toMatchObject({ notify: false, fact: "AI 1차 · AI 2차 · 접수 중단" });
+      expect(unknowns(board)).toEqual(["접수 중단 시각"]);
+    });
+
+    it("does not fold when admission cannot be read", () => {
+      const board = buildConsoleTasks(stalled(null));
+      expect(titles(board, "stop")).toEqual(["AI 1차가 거의 멈췄습니다", "AI 2차가 멈췄습니다", "규칙 심사가 거의 멈췄습니다"]);
+    });
+  });
+
   it("stop: takedown requests past their 24 hours", () => {
     expect(titles(buildConsoleTasks(quiet({ takedown: { count: 3, overdue: 0 } })))).toEqual([]);
     expect(buildConsoleTasks(quiet({ takedown: { count: 3, overdue: 1 } })).groups[0].tasks[0])

@@ -1,16 +1,18 @@
-import { and, desc, eq, inArray, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, lt, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, operationsAudit } from "@/lib/db/schema";
+import { aiConnections, crawlCandidates, operationsAudit } from "@/lib/db/schema";
 import { ADMIN_LOG_PAGE_SIZE } from "@/lib/operations/admin-log";
-import { ACTION_GROUPS, type ActionGroup } from "./labels";
+import { ACTION_GROUPS, ACTION_LABELS, type ActionGroup } from "./labels";
 
 /**
  * 작업 로그 읽기 — 화면과 내보내기(/admin/export?view=activity)가 같이 쓴다.
  * 거르기는 lib/operations/admin-log adminLog 와 같고, 대상(target)으로 찾기를 더했다(2026-10-08 UX 감사 ADM-20).
  */
-export type ActivityFilter = { actions?: string[]; actor?: string; failedOnly?: boolean; before?: number; target?: string };
+export type ActivityFilter = { actions?: string[]; actor?: string; failedOnly?: boolean; before?: number; target?: string;
+  /** 찾는 말(운영 콘솔 조각 4b ⌘K 「그 이름이 나온 기록」) — 대상·사람·작업 이름(한국어 이름표 포함)·내용 어디든. 모델 이름이면 그 연결 id 가 든 줄도 */
+  q?: string };
 
-type Params = { group?: string | null; actor?: string | null; failed?: string | null; before?: string | null; target?: string | null };
+type Params = { group?: string | null; actor?: string | null; failed?: string | null; before?: string | null; target?: string | null; q?: string | null };
 
 /** 주소의 거르기(?group·actor·failed·before·target)를 읽는다 — 화면과 내보내기가 같은 결과를 내게 */
 export function activityFilter(params: Params): ActivityFilter & { group: ActionGroup | null; failedOnly: boolean } {
@@ -23,7 +25,35 @@ export function activityFilter(params: Params): ActivityFilter & { group: Action
     // id 는 serial(int4)이다 — 그보다 큰 값을 넘기면 DB 가 범위 오류를 내 화면이 깨진다
     before: Number.isSafeInteger(parsedBefore) && parsedBefore > 0 && parsedBefore <= 2_147_483_647 ? parsedBefore : undefined,
     target: normalizeTarget(params.target) || undefined,
+    q: normalizeQuery(params.q) || undefined,
   };
+}
+
+/** 찾는 말 — 앞뒤 공백을 떼고 100자까지. 두 글자 아래는 거르지 않는다(모든 줄이 걸린다) */
+export function normalizeQuery(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const value = raw.trim().slice(0, 100);
+  return [...value].length >= 2 ? value : "";
+}
+
+/** 작업 이름표(한국어)에 그 말이 든 작업 이름 — 「접수」로 찾으면 pipeline-control-capacity-mode 도 걸린다 */
+export function actionsLabelled(q: string): string[] {
+  const needle = q.toLowerCase();
+  return Object.entries(ACTION_LABELS).filter(([, label]) => label.toLowerCase().includes(needle)).map(([action]) => action);
+}
+
+/**
+ * 찾는 말의 조건 — 대상·사람·작업 이름·내용(JSON 글자)에 든 줄과 이름표가 맞는 작업의 줄. 모델(연결) 이름이면 그 연결 id 가 대상이거나 내용에 든 줄도.
+ * 작업 로그는 수만 줄이라 색인 없이 훑어도 짧다(2026-11-08 운영 약 2.6만 줄). % _ \ 는 글자 그대로 찾는다.
+ */
+export async function queryCondition(q: string): Promise<SQL> {
+  const like = `%${q.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+  const connections = await db.select({ id: aiConnections.id }).from(aiConnections).where(ilike(aiConnections.label, like)).limit(20);
+  const actions = actionsLabelled(q);
+  return or(ilike(operationsAudit.target, like), ilike(operationsAudit.actor, like), ilike(operationsAudit.action, like),
+    sql`${operationsAudit.detail}::text ilike ${like}`,
+    ...(actions.length ? [inArray(operationsAudit.action, actions)] : []),
+    ...connections.flatMap(row => [eq(operationsAudit.target, row.id), sql`${operationsAudit.detail}::text like ${`%${row.id}%`}`]))!;
 }
 
 export async function activityLog(filter: ActivityFilter = {}, limit = ADMIN_LOG_PAGE_SIZE) {
@@ -33,6 +63,7 @@ export async function activityLog(filter: ActivityFilter = {}, limit = ADMIN_LOG
   if (filter.failedOnly) where.push(eq(operationsAudit.ok, false));
   if (filter.before) where.push(lt(operationsAudit.id, filter.before));
   if (filter.target) where.push(await targetCondition(filter.target));
+  if (filter.q) where.push(await queryCondition(filter.q));
   return db.select().from(operationsAudit).where(where.length ? and(...where) : undefined)
     .orderBy(desc(operationsAudit.id)).limit(limit);
 }
