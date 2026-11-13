@@ -42,6 +42,12 @@ async function routeRequest(req: NextRequest) {
   // A prefixed machine/admin address is never normalized into an endpoint alias.
   if (locale && isLocaleExcludedPath(stripLocale(pathname))) return passThrough(req, locale);
   if (!locale && isLocaleExcludedPath(pathname)) return passThrough(req, DEFAULT_LOCALE);
+  // Retired public URLs retain their path and query, without aliasing machine/admin endpoints.
+  if (locale === "zh-Hant") {
+    const canonical = req.nextUrl.clone();
+    canonical.pathname = pathname.replace(/^\/zh-Hant(?=\/|$)/, "/zh-Hans");
+    return NextResponse.redirect(canonical, 308);
+  }
   if (locale === DEFAULT_LOCALE) {
     const canonical = req.nextUrl.clone();
     canonical.pathname = stripLocale(pathname);

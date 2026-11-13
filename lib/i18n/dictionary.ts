@@ -25,6 +25,17 @@ const loaders = {
     policy: () => import("@/messages/en/policy").then((module) => module.policy),
     me: () => import("@/messages/en/me").then((module) => module.me),
   },
+  "ja": {
+    common: () => import("@/messages/ja/common").then((module) => module.common),
+    globalError: () => import("@/messages/ja/global-error").then((module) => module.globalError),
+    labels: () => import("@/messages/ja/labels").then((module) => module.labels),
+    browse: () => import("@/messages/ja/browse").then((module) => module.browse),
+    detail: () => import("@/messages/ja/detail").then((module) => module.detail),
+    auth: () => import("@/messages/ja/auth").then((module) => module.auth),
+    launch: () => import("@/messages/ja/launch").then((module) => module.launch),
+    policy: () => import("@/messages/ja/policy").then((module) => module.policy),
+    me: () => import("@/messages/ja/me").then((module) => module.me),
+  },
   "zh-Hans": {
     common: () => import("@/messages/zh-Hans/common").then((module) => module.common),
     globalError: () => import("@/messages/zh-Hans/global-error").then((module) => module.globalError),

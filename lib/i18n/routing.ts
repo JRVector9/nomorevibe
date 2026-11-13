@@ -28,6 +28,7 @@ export function stripLocale(path: string): string {
 /** Korean keeps its existing unprefixed canonical addresses. */
 export function localePath(locale: Locale, logicalPath: string): string {
   if (!isLocale(locale)) throw new Error("Unsupported locale");
+  if (locale === "zh-Hant") locale = "zh-Hans";
   const { pathname, suffix } = splitPath(stripLocale(logicalPath));
   if (isLocaleExcludedPath(pathname)) return `${pathname}${suffix}`;
   return `${locale === DEFAULT_LOCALE ? "" : `/${locale}`}${pathname === "/" && locale !== DEFAULT_LOCALE ? "" : pathname}${suffix}`;

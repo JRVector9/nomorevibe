@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, count, eq, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, asc, count, eq, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { operationsAudit, productIntroChecks, products, productTranslations, takedownRequests,
   type ProductTranslationField, type ProductTranslationLocale, type ProductTranslationStatus } from "@/lib/db/schema";
@@ -9,8 +9,10 @@ import { detectTranslationSourceLocale, isProductTranslationField, productTransl
 import { PRODUCT_TRANSLATION_JOB, productTranslationEligible, requestProductTranslations } from "./translations";
 import { requestJob } from "@/lib/jobs/control";
 
+import { isActiveTranslationLocale, PRODUCT_TRANSLATION_LOCALES } from "@/lib/i18n/locales";
+
 const t = productTranslations;
-const LOCALES = ["en", "zh-Hans", "zh-Hant"] as const;
+const LOCALES = ["en", "zh-Hans", "zh-Hant", "ja"] as const;
 const STATES = ["pending", "ready", "failed", "reviewed", "all"] as const;
 const iso = (value: AnyColumn | SQL) => sql<string | null>`to_char(${value}, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 const timestamp = (value: unknown): value is string => {
@@ -56,7 +58,7 @@ function item(row: {
   const sourceMatches = currentSourceHash === row.sourceHash;
   const holdReason = !["seeded", "verified"].includes(productStatus) ? "product_not_public" as const
     : takedownPending ? "takedown_pending" as const : introHold ? "intro_editor_hold" as const : null;
-  const recoveryReason = !row.eligible ? holdReason ?? "ineligible" : row.status !== "failed" ? "not_failed"
+  const recoveryReason = !isActiveTranslationLocale(row.locale) ? "locale_retired" : !row.eligible ? holdReason ?? "ineligible" : row.status !== "failed" ? "not_failed"
     : !sourceText.trim() ? "empty_source" : detectTranslationSourceLocale(sourceText) === row.locale ? "source_native"
       : sourceText.length > productTranslationPolicy().maxSourceChars ? "source_too_long" : !sourceMatches ? "new_source"
         : row.attempts >= productTranslationPolicy().maxAttempts ? "exhausted"
@@ -81,7 +83,7 @@ export function productTranslationAdminQueue(input: ProductTranslationAdminFilte
   const state = STATES.includes(input.state ?? "failed") ? input.state ?? "failed" : "failed";
   const q = input.q?.trim().slice(0, 120), pattern = q ? `%${q.replace(/[\\%_]/g, "\\$&")}%` : null;
   const predicate = and(state === "all" ? undefined : eq(t.status, state),
-    input.locale && LOCALES.includes(input.locale) ? eq(t.locale, input.locale) : undefined,
+    input.locale && LOCALES.includes(input.locale) ? eq(t.locale, input.locale) : inArray(t.locale, PRODUCT_TRANSLATION_LOCALES),
     isProductTranslationField(input.field) ? eq(t.field, input.field) : undefined,
     pattern ? sql`(${products.slug} ilike ${pattern} or ${products.name} ilike ${pattern} or ${products.id}::text ilike ${pattern})` : undefined);
   const position = cursor(input.cursor);
@@ -124,7 +126,7 @@ export type ProductTranslationRetryInput = {
 
 /** One existing failed demand only. Never clears backoff or replenishes the current source's attempt budget. */
 export function retryProductTranslation(input: ProductTranslationRetryInput): Promise<{ slug: string; kind: "retry" | "new_source" }> {
-  if (!Number.isSafeInteger(input.productId) || input.productId < 1 || !LOCALES.includes(input.locale) || !isProductTranslationField(input.field)
+  if (!isActiveTranslationLocale(input.locale) || !Number.isSafeInteger(input.productId) || input.productId < 1 || !LOCALES.includes(input.locale) || !isProductTranslationField(input.field)
     || !hash(input.expectedSourceHash) || !hash(input.expectedCurrentSourceHash) || !Number.isSafeInteger(input.expectedAttempts) || input.expectedAttempts < 0
     || !timestamp(input.expectedUpdatedAt) || (input.expectedRetryAt !== null && !timestamp(input.expectedRetryAt))
     || !input.reason.trim() || input.reason.length > 1000 || !input.adminLogin.trim() || input.adminLogin.length > 120) throw new ProductTranslationAdminError("invalid");

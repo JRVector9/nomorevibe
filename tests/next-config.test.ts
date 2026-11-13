@@ -75,7 +75,7 @@ describe("Next.js multi-instance configuration", () => {
     const rules = await config.headers!();
     const detail = rules.filter((rule) => /(^|\/)p\/:slug$/.test(rule.source)
       && rule.headers.some((header) => header.key === "Cloudflare-CDN-Cache-Control" && header.value !== "no-store"));
-    expect(detail.map((rule) => rule.source).sort()).toEqual(["/en/p/:slug", "/p/:slug", "/zh-Hans/p/:slug", "/zh-Hant/p/:slug"]);
+    expect(detail.map((rule) => rule.source).sort()).toEqual(["/en/p/:slug", "/ja/p/:slug", "/p/:slug", "/zh-Hans/p/:slug"]);
     for (const rule of detail) {
       const value = rule.headers.find((header) => header.key === "Cloudflare-CDN-Cache-Control")!.value;
       const seconds = (name: string) => Number(new RegExp(`(?:^|,\\s*)${name}=(\\d+)`).exec(value)?.[1] ?? NaN);

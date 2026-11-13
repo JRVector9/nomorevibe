@@ -25,7 +25,7 @@ export type AnalyticsPageType =
   | "home" | "browse" | "search" | "product" | "product_settings" | "talk" | "popular" | "rising"
   | "rankings" | "launch" | "policy" | "me" | "login" | "feedback" | "not_found" | "other";
 
-export type AnalyticsLocale = "ko" | "en" | "zh-Hans" | "zh-Hant";
+export type AnalyticsLocale = "ko" | "en" | "zh-Hans" | "zh-Hant" | "ja";
 
 /* ── 화면 보기 ── */
 
@@ -365,7 +365,7 @@ const surface = oneOf(SURFACES);
 export const ANALYTICS_EVENT_CATALOG: { [Name in AnalyticsEventName]: EventSpec<AnalyticsEventParams[Name]> } = {
   page_view: { source: "client", description: "화면을 열었다(첫 화면과 앱 안 이동마다)", params: {
     page_location: text, page_path: text, page_title: text, page_referrer: optionalText,
-    locale: oneOf(["ko", "en", "zh-Hans", "zh-Hant"]), page_type: oneOf(PAGE_TYPES) } },
+    locale: oneOf(["ko", "en", "zh-Hans", "zh-Hant", "ja"]), page_type: oneOf(PAGE_TYPES) } },
   select_item: { source: "client", description: "목록의 제품 카드를 눌렀다", params: {
     item_list_id: text, item_list_name: text, index: count, item_id: text } },
   search: { source: "client", description: "검색했다(검색어는 정리·길이 제한)", params: {

@@ -23,7 +23,7 @@ export function localizedAlternates(
   const origin = siteOrigin();
   const ready = LOCALES.filter((candidate) => readyLocales.includes(candidate));
   const languages = Object.fromEntries(ready.map((candidate) => [candidate, `${origin}${localePath(candidate, path)}`]));
-  if (ready.includes(DEFAULT_LOCALE)) languages["x-default"] = `${origin}${localePath(DEFAULT_LOCALE, path)}`;
+  if (ready.some(candidate => candidate === DEFAULT_LOCALE)) languages["x-default"] = `${origin}${localePath(DEFAULT_LOCALE, path)}`;
   return { canonical: `${origin}${localePath(locale, path)}`, languages };
 }
 
@@ -41,6 +41,6 @@ export function productLocaleMetadata(
 ): Pick<Metadata, "alternates" | "robots" | "openGraph"> {
   const ready = baseIndexable ? productReadyLocales(source, translations, contentEligible) : [];
   return { alternates: localizedAlternates(locale, logicalPath, ready),
-    robots: { index: baseIndexable && ready.includes(locale), follow: baseIndexable },
+    robots: { index: baseIndexable && ready.some(candidate => candidate === locale), follow: baseIndexable },
     openGraph: localizedOpenGraph(locale, ready) };
 }

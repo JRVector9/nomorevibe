@@ -57,6 +57,7 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       ...LOCALES.map((locale) => ({ source: localePath(locale, "/account"), destination: localePath(locale, "/me/account"), permanent: true })),
+      { source: "/zh-Hant/account", destination: "/zh-Hans/me/account", permanent: true },
       { source: "/ko/account", destination: "/me/account", permanent: true },
     ];
   },

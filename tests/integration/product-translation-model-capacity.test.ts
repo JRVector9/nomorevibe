@@ -5,6 +5,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vite
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
+import { productTranslationAdminQueue } from "@/lib/domain/products/translation-admin";
+import { textStageProgressSql } from "@/lib/operations/text-stage-progress";
 import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from "@/lib/llm/deadline-ladder";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -36,8 +38,9 @@ const serving = vi.hoisted(() => ({ contract: null as ProductTranslationServingC
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/product-translation-serving-contract")>(),
   // 계약 본문은 시험 서버 하나 — 「동시에」 시험의 둘째 구성원 모델도 같은 서버로 보낸다(모델 이름만 그 모델)
-  resolveProductTranslationServingContract: (model: string) => serving.contract && { ...serving.contract, model },
+  resolveProductTranslationServingContract: (model: string, provider = "abcllm") => serving.contract?.provider === provider ? { ...serving.contract, model } : null,
 }));
+vi.mock("server-only", () => ({}));
 type Raw = Record<string, unknown>;
 // 제품 번역의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B) — 이 파일은 순위 하나(이 모델)를 고정한다
 const PRODUCT_TRANSLATE_MODEL = "mlx-community--gemma-4-26b-a4b-it-4bit";
@@ -100,7 +103,7 @@ async function performCleanup() {
     }
     const requests = await tx`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal FOR UPDATE`;
     const ids = requests.map(({ row }) => { expect(ownerBoots.has(row.owner_boot_id)).toBe(true); expect(row.route_id).toBe(jobName);
-      expect(row.logical_member_keys.every((key: string) => { const match = /^product-translate:(\d+):(en|zh-Hans|zh-Hant):(tagline|description)$/.exec(key); return match && ownProducts.has(Number(match[1])); })).toBe(true);
+      expect(row.logical_member_keys.every((key: string) => { const match = /^product-translate:(\d+):(en|zh-Hans|zh-Hant|ja):(tagline|description)$/.exec(key); return match && ownProducts.has(Number(match[1])); })).toBe(true);
       return row.request_id as string; });
     await tx`LOCK TABLE model_capacity_events IN ACCESS EXCLUSIVE MODE`;
     const guards = async () => Array.from(await tx`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='model_capacity_events'::regclass AND tgname IN ('model_capacity_events_no_change','model_capacity_events_no_truncate') ORDER BY tgname`);
@@ -145,31 +148,41 @@ async function elect() {
     ROLE_LEASE_RELEASE: role.release, ROLE_LEASE_EPOCH: String(role.epoch) })) vi.stubEnv(key, value);
   for (const key of ["ROLE_LEASE_BATCH_VERSION", "ROLE_LEASE_HOST", "ROLE_LEASE_BATCH_EPOCH"]) vi.stubEnv(key, undefined);
 }
-async function seed(fields: ("tagline" | "description")[] = ["tagline"], tagline = "문서를 정리하는 도구") {
+async function seed(fields: ("tagline" | "description")[] = ["tagline"], tagline = "문서를 정리하는 도구", locale: "en" | "ja" = "en") {
   const slug = `${prefix}-${++serial}`;
   expect(await admin`SELECT id FROM products WHERE slug=${slug}`).toEqual([]); expect(await admin`SELECT id FROM cdn_purges WHERE slug=${slug}`).toEqual([]);
   expect(await admin`SELECT slug FROM takedown_requests WHERE slug=${slug}`).toEqual([]);
   const [row] = await tracked(db.insert(products).values({ slug, name: "Doc", url: `https://${slug}.test`, tagline,
     description: "문서를 정리하는 도구", taglineSource: "ai_page", category: "Productivity", status: "seeded", source: "crawler", verifyToken: "fixture", editTokenHash: "fixture" }).returning());
   ownProducts.set(row.id, slug); // committed ID registration, not an unexecuted lazy builder
-  expect(await tracked(requestProductTranslations([row.id], "en", fields))).toBe(fields.length);
+  expect(await tracked(requestProductTranslations([row.id], locale, fields))).toBe(fields.length);
   const tasks = (await tracked(pendingProductTranslations(8))).filter(task => task.source.id === row.id);
   expect(tasks).toHaveLength(fields.length); return { product: row, tasks };
 }
 const replyBody = (outputs: string[] = ["Doc helps you manage documents"]) => ({ id: "product-local", object: "chat.completion", created: 1, model: "served-product",
   choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(outputs) }, finish_reason: "stop" }],
   usage: { prompt_tokens: 70, completion_tokens: 20, total_tokens: 90 }, usage_provenance: "upstream_reported" });
-async function server(run: (state: { bodies: string[]; setReply: (reply: (response: ServerResponse, body: string) => void) => void }) => Promise<void>) {
+async function server(run: (state: { bodies: string[]; setReply: (reply: (response: ServerResponse, body: string) => void) => void }) => Promise<void>, direct = false) {
   const bodies: string[] = [], responses = new Set<Promise<unknown>>(), failures: unknown[] = [];
   let reply = (response: ServerResponse, body: string) => { const wire = JSON.parse(body); const items = JSON.parse(wire.messages[1].content);
     response.end(JSON.stringify(replyBody(items.map(() => "Doc helps you manage documents")))); };
   const http = createServer((request, response) => { const closed = new Promise<void>(resolve => response.once("close", resolve));
-    tracked((async () => { let body = ""; for await (const part of request) body += part.toString(); bodies.push(body); reply(response, body); await closed; })(), responses); });
+    tracked((async () => { let body = ""; for await (const part of request) body += part.toString();
+      if (request.url === "/tokenize") response.end(JSON.stringify({ count: 70, max_model_len: 50000, tokens: Array.from({ length: 70 }, (_, i) => i) }));
+      else { bodies.push(body); reply(response, body); } await closed; })(), responses); });
   try {
     await new Promise<void>((resolve, reject) => { http.once("error", reject); http.listen(0, "127.0.0.1", resolve); });
     const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
     serving.contract = { version: 1, protocol: "abcllm-product-translation-total-bound-v1", routeId: jobName, provider: "abcllm", model: PRODUCT_TRANSLATE_MODEL,
       responseModel: "served-product", deploymentRevision: "local-only", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, totalTokenBound: 8000 };
+    if (direct) {
+      serving.contract = { version: 1, protocol: "direct-openai-chat-v1", routeId: jobName, provider: "local-direct", model: PRODUCT_TRANSLATE_MODEL,
+        responseModel: "served-product", deploymentRevision: "local-only", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+        tokenizerEndpoint: `http://127.0.0.1:${address.port}/tokenize`, backendId: "account", physicalGroup: "engine",
+        totalTokenBound: 50000, requestTokenBound: 32000, maxOutputTokens: 30000 };
+      pinTextRanks([textRankRow(jobName, PRODUCT_TRANSLATE_MODEL, { baseUrl: `http://127.0.0.1:${address.port}/v1` })]);
+      setServingContractSnapshotForTest([{ routeId: jobName, model: PRODUCT_TRANSLATE_MODEL, contract: serving.contract, auth: "none", apiKey: null, transport: "direct" }]);
+    }
     await run({ bodies, setReply: next => { reply = next; } });
   } catch (error) { failures.push(error); }
   finally { serving.contract = null; await steps([() => drain(work),
@@ -505,7 +518,9 @@ it("preserves the same complete four-field product batch across waiting polls be
         .toEqual(["queued"]);
     }
     for (const slot of reservations) await cancelReservedModelSlot(slot.reservation);
-    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    const outcome = await tick();
+    expect(outcome).toMatchObject({ status: "completed", done: true });
+    expect(outcome).not.toHaveProperty("degraded");
     expect(bodies).toHaveLength(1);
     expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(3);
     expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${waiting.request_id}::uuid ORDER BY id`).map(row => row.kind))
@@ -527,7 +542,9 @@ it("recovers an old product reservation before a changed overlapping queue batch
     const candidates = await pendingProductTranslations(4);
     expect(candidates.some(task => task.source.id === first.product.id)).toBe(true);
     expect(candidates.some(task => task.source.id === second.product.id)).toBe(false);
-    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    const outcome = await tick();
+    expect(outcome).toMatchObject({ status: "completed", done: true });
+    expect(outcome).not.toHaveProperty("degraded");
     expect(bodies).toHaveLength(1); expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(2);
     expect((await admin`SELECT state,logical_member_keys FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0])
       .toMatchObject({ state: "settled", logical_member_keys: [first.product.id,second.product.id].sort((a,b)=>a-b).map(id=>`product-translate:${id}:en:tagline`).sort() });
@@ -592,7 +609,9 @@ it("skips a member held by another boot's live request and translates the next d
     let requestId = "";
     await custom(async lease => { requestId = (await reserve(held.tasks, lease, { instanceId: prefix, bootId })).reservation.requestId; });
     expect((await pendingProductTranslations(8)).map(task => task.source.id)).toEqual([next.product.id]);
-    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    const outcome = await tick();
+    expect(outcome).toMatchObject({ status: "completed", done: true });
+    expect(outcome).not.toHaveProperty("degraded");
     expect(bodies).toHaveLength(1); expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(1);
     expect(await admin`SELECT status,attempts FROM product_translations WHERE product_id=${next.product.id}`).toEqual([{ status: "ready", attempts: 1 }]);
     expect(await admin`SELECT status,attempts FROM product_translations WHERE product_id=${held.product.id}`).toEqual([{ status: "pending", attempts: 0 }]);
@@ -664,3 +683,40 @@ it("concurrent pool: two capped members take one batch each in the same tick and
     expect(JSON.stringify(observed.value)).toContain("pool_lanes");
   } finally { setAiTaskExecutionConfigsForTest(null); setRuntimeSettingsForTest(null); }
 }), 30_000);
+
+
+it("translates Japanese through the native ledger while preserving and excluding retired Traditional Chinese demand", exercise(async () => {
+  const directPolicy = { ...policy, routes: policy.routes.map(route => ({ ...route, provider: "local-direct" })) };
+  await admin`UPDATE model_capacity_control SET policy=${JSON.stringify(directPolicy)}::text::jsonb,
+    policy_hash=${modelCapacityPolicyHash(directPolicy)} WHERE id=1`;
+  const { product, tasks } = await seed(["tagline", "description"], "문서를 정리하는 도구", "ja");
+  expect(await requestProductTranslations([product.id], "zh-Hant", ["tagline"])).toBe(0);
+  // An existing queue entry predates the locale change. Preserve its full row, including retries.
+  await admin`INSERT INTO product_translations(product_id,locale,field,source_hash,status,provenance,attempts)
+    SELECT product_id,'zh-Hant',field,source_hash,'pending',provenance,2 FROM product_translations
+    WHERE product_id=${product.id} AND locale='ja' AND field='tagline'`;
+  const [archived] = await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id} AND locale='zh-Hant'`;
+  expect((await pendingProductTranslations(8)).map(task => task.locale)).toEqual(["ja", "ja"]);
+  expect(await pendingProductTranslationBatch([`product-translate:${product.id}:zh-Hant:tagline`])).toBeNull();
+  expect((await productTranslationAdminQueue({ state: "pending" })).count).toBe(2);
+  const archive = await productTranslationAdminQueue({ state: "pending", locale: "zh-Hant" });
+  expect(archive.count).toBe(1);
+  expect(archive.items[0]).toMatchObject({ recovery: null, recoveryReason: "locale_retired" });
+  const progress = await db.execute<{ key: string; waiting: number }>(textStageProgressSql([], "other"));
+  expect(progress.find(row => row.key === "product-translate")).toMatchObject({ waiting: 2 });
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => response.end(JSON.stringify(replyBody(tasks.map(() => "Docで文書を整理できます")))));
+    const outcome = await tick();
+    expect(outcome).toMatchObject({ status: "completed", done: true });
+    expect(outcome).not.toHaveProperty("degraded");
+    expect(bodies).toHaveLength(1);
+    const [saved] = await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id} AND locale='zh-Hant'`;
+    expect(saved).toEqual(archived);
+    expect(await admin`SELECT locale,status,text,attempts FROM product_translations WHERE product_id=${product.id} AND locale='ja' ORDER BY field`)
+      .toEqual(tasks.map(() => ({ locale: "ja", status: "ready", text: "Docで文書を整理できます", attempts: 1 })));
+    const [ledger] = await admin`SELECT request_id,state,provider FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
+    expect(ledger).toMatchObject({ state: "settled", provider: "local-direct" });
+    const events = await admin`SELECT kind FROM model_capacity_events WHERE request_id=${ledger.request_id}::uuid ORDER BY id`;
+    expect(events.map(event => event.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
+  }, true);
+}), 20000);

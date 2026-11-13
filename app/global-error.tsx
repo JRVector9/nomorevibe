@@ -6,6 +6,7 @@ import { DEFAULT_LOCALE, LOCALE_CONFIG } from "@/lib/i18n/locales";
 import { localePath, pathLocale } from "@/lib/i18n/routing";
 import { createTranslator } from "@/lib/i18n/messages";
 import { globalError as ko } from "@/messages/ko/global-error";
+import { globalError as ja } from "@/messages/ja/global-error";
 import { globalError as en } from "@/messages/en/global-error";
 import { globalError as zhHans } from "@/messages/zh-Hans/global-error";
 import { globalError as zhHant } from "@/messages/zh-Hant/global-error";
@@ -14,7 +15,7 @@ import { useRenderRecovery } from "@/components/errors/RenderReadRecovery";
 
 // Only this six-message failure slice is bundled for all locales. The failed root
 // cannot pass its server-selected catalog; the router still provides pathname.
-const messages = { ko, en, "zh-Hans": zhHans, "zh-Hant": zhHant };
+const messages = { ko, en, ja, "zh-Hans": zhHans, "zh-Hant": zhHant };
 
 /**
  * 루트 레이아웃까지 무너졌을 때의 화면(2026-10-08 UX 감사 UX-10).

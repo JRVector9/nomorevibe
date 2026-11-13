@@ -20,11 +20,12 @@ import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "공개 번역 — NoMoreVibe", robots: { index: false, follow: false } };
-const LOCALES = { en: "영어", "zh-Hans": "중국어 간체", "zh-Hant": "중국어 번체" };
+const LOCALES = { en: "영어", "zh-Hans": "중국어 간체", "zh-Hant": "중국어 번체 (보관)", ja: "일본어" };
 const FIELDS = { tagline: "한 줄 소개", description: "설명" };
 const STATES = { failed: "실패", pending: "자동 처리 대기", ready: "번역 저장됨", reviewed: "검토값 저장됨", all: "전체" };
 // 원문 글자 상한·최대 시도는 지금 판의 translation.product(관리자 실시간 한도)에서 — 문구가 저장된 값을 따라간다
 const reasonTexts = (policy: ProductTranslationPolicy): Record<string, string> => ({
+  locale_retired: "번체 번역은 중단했습니다. 기존 데이터는 보관하며 재요청하지 않습니다.",
   product_not_public: "현재 제품이 공개 상태가 아닙니다.", takedown_pending: "내림 요청 처리 대기 중입니다.",
   intro_editor_hold: "현재 원문이 소개 편집 보류 상태입니다.", ineligible: "현재 번역 대상이 아닙니다.",
   empty_source: "현재 원문이 비어 있어 번역이 필요하지 않습니다.", source_native: "현재 원문이 대상 언어로 확인돼 번역이 필요하지 않습니다.",
@@ -59,6 +60,7 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   if (queue.nextCursor) next.set("cursor", queue.nextCursor);
   return <main className="mx-auto max-w-5xl space-y-5 p-5"><PageStamp />
     <h1 className="text-[22px] font-semibold">공개 번역</h1>
+    <p className="mt-2 text-sm text-fg-2">영어·중국어 간체·일본어를 화면 수요에 따라 번역합니다. 번체는 보관만 하며 자동 대기 집계·처리에서 제외합니다.</p>
     <p className="text-[14px] leading-6 text-fg-2">공개 제품의 언어별 수요 기록입니다. 한국어 심사 사유 번역과 별개이며, 중단된 소개 검수를 재개하지 않습니다. {owner.page}</p>
     <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-[13px]">
       <caption className="pb-2 text-left text-fg-2">저장 상태 집계입니다. 현재 공개 준비 여부는 아래 원문 일치·보류 상태를 함께 확인하세요. 소진·재시도 대기는 실패 건수에 포함됩니다.</caption>
@@ -84,7 +86,7 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
     </details>
     <form action="/admin/translations" className="flex flex-wrap items-center gap-3 text-[14px]">
       <label>상태<select name="state" defaultValue={state} className="ml-2 min-h-11 rounded-lg border border-line px-2">{Object.entries(STATES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <label>언어<select name="locale" defaultValue={locale ?? ""} className="ml-2 min-h-11 rounded-lg border border-line px-2"><option value="">전체</option>{Object.entries(LOCALES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>언어<select name="locale" defaultValue={locale ?? ""} className="ml-2 min-h-11 rounded-lg border border-line px-2"><option value="">활성 언어 전체</option>{Object.entries(LOCALES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>항목<select name="field" defaultValue={field ?? ""} className="ml-2 min-h-11 rounded-lg border border-line px-2"><option value="">전체</option>{Object.entries(FIELDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>제품<input name="q" defaultValue={q} maxLength={120} placeholder="이름·slug·ID" className="ml-2 min-h-11 rounded-lg border border-line px-2" /></label>
       <button className="min-h-11 rounded-lg border border-line px-4">조회</button>

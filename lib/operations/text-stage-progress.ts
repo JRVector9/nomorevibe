@@ -77,7 +77,7 @@ export function textStageProgressSql(homeSlugs: readonly string[], group: 'all' 
       greatest(${t.updatedAt},${t.retryAt}),
       CASE WHEN ${t.status} IN ('ready','reviewed') THEN ${t.updatedAt} END,
       CASE WHEN ${t.status}='failed' THEN ${t.updatedAt} END
-      FROM ${t} JOIN ${products} ON ${products.id}=${t.productId} WHERE ${productTranslationEligible}
+      FROM ${t} JOIN ${products} ON ${products.id}=${t.productId} WHERE ${productTranslationEligible} AND ${t.locale} IN ('en','zh-Hans','ja')
     UNION ALL
     SELECT 'tagline-ko', ${q.ready},
       (${q.retry} AND NOT ${q.due}),

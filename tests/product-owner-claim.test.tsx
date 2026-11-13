@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTranslator } from "@/lib/i18n/messages";
 import type { Locale } from "@/lib/i18n/locales";
 import { detail as ko } from "@/messages/ko/detail";
+import { detail as ja } from "@/messages/ja/detail";
 import { detail as en } from "@/messages/en/detail";
 import { detail as hans } from "@/messages/zh-Hans/detail";
 import { detail as hant } from "@/messages/zh-Hant/detail";
@@ -21,7 +22,7 @@ vi.mock("react", async (original) => ({ ...await original<typeof import("react")
   },
 }));
 vi.mock("@/lib/i18n/context", () => ({ useLocale: () => hooks.locale,
-  useTranslations: () => createTranslator("detail", { ko, en, "zh-Hans": hans, "zh-Hant": hant }[hooks.locale]) }));
+  useTranslations: () => createTranslator("detail", { ko, en, ja, "zh-Hans": hans, "zh-Hant": hant }[hooks.locale]) }));
 vi.mock("@/components/me/account-store", () => ({ recheckMeState: vi.fn() }));
 const { recheckMeState } = await import("@/components/me/account-store");
 const { GithubOwnershipClaim } = await import("@/components/product-detail/GithubOwnershipClaim");
@@ -60,18 +61,19 @@ function result(value: string) {
 }
 
 describe("public detail ownership action", () => {
-  it.each(["ko", "en", "zh-Hans", "zh-Hant"] as const)("returns a signed-out %s owner to the exact product query and ownership anchor", async (locale) => {
+  it.each(["ko", "en", "zh-Hans", "ja", "zh-Hant"] as const)("returns a signed-out %s owner to the exact product query and ownership anchor", async (locale) => {
     hooks.locale = locale;
     const prefix = locale === "ko" ? "" : `/${locale}`;
     vi.stubGlobal("window", { location: { href: `https://nomorevibe.example${prefix}/p/tool?from=detail#evidence`, assign: navigate } });
     vi.mocked(recheckMeState).mockResolvedValue({ status: "ok", account: null });
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
-    const dictionary = { ko, en, "zh-Hans": hans, "zh-Hant": hant }[locale];
+    const dictionary = { ko, en, ja, "zh-Hans": hans, "zh-Hant": hant }[locale];
     await click(dictionary["owner.claim.button"]);
     const destination = new URL(navigate.mock.calls[0][0], "https://nomorevibe.example");
-    expect(destination.pathname).toBe(`${prefix}/login`);
+    const targetPrefix = locale === "zh-Hant" ? "/zh-Hans" : prefix;
+    expect(destination.pathname).toBe(`${targetPrefix}/login`);
     expect(destination.searchParams.get("connectGithub")).toBe("1");
-    expect(destination.searchParams.get("returnTo")).toBe(`${prefix}/p/tool?from=detail#owner-claim`);
+    expect(destination.searchParams.get("returnTo")).toBe(`${targetPrefix}/p/tool?from=detail#owner-claim`);
     expect(fetcher).not.toHaveBeenCalled();
   });
 

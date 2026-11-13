@@ -262,6 +262,7 @@ describe("/account → /me/account (Q1)", () => {
     expect(target("/ko/account")).toMatchObject({ destination: "/me/account", permanent: true });
     expect(target("/en/account")).toMatchObject({ destination: "/en/me/account", permanent: true });
     expect(target("/zh-Hans/account")).toMatchObject({ destination: "/zh-Hans/me/account", permanent: true });
-    expect(target("/zh-Hant/account")).toMatchObject({ destination: "/zh-Hant/me/account", permanent: true });
+    expect(target("/ja/account")).toMatchObject({ destination: "/ja/me/account", permanent: true });
+    expect(target("/zh-Hant/account")).toMatchObject({ destination: "/zh-Hans/me/account", permanent: true });
   });
 });

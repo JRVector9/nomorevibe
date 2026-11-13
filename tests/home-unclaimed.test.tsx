@@ -722,7 +722,7 @@ describe("분야 주소·검색 상태 (UX-12·24·35·39·40)", () => {
     expect(await generateMetadata({ searchParams: Promise.resolve({}) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>))).toMatchObject({
       title: "nomorevibe — AI로 만든 것들, 세상에 나오다.",
       alternates: { canonical: "http://localhost:3000/", types: { "application/rss+xml": "http://localhost:3000/feed.xml" },
-        languages: { ko: "http://localhost:3000/", en: "http://localhost:3000/en", "zh-Hans": "http://localhost:3000/zh-Hans", "zh-Hant": "http://localhost:3000/zh-Hant", "x-default": "http://localhost:3000/" } },
+        languages: { ko: "http://localhost:3000/", en: "http://localhost:3000/en", "zh-Hans": "http://localhost:3000/zh-Hans", ja: "http://localhost:3000/ja", "x-default": "http://localhost:3000/" } },
     });
   });
 });

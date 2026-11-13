@@ -5,7 +5,7 @@ import { db, onPrimary } from "@/lib/db";
 import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { productIntroChecks, products, productTranslations, takedownRequests,
   type ProductTranslation, type ProductTranslationField, type ProductTranslationLocale } from "@/lib/db/schema";
-import { isLocale, type Locale } from "@/lib/i18n/locales";
+import { isLocale, isActiveTranslationLocale, PRODUCT_TRANSLATION_LOCALES, type Locale } from "@/lib/i18n/locales";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { assertJobLeaseAtWallTime } from "@/lib/jobs/control";
 import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -94,7 +94,7 @@ export async function requestProductTranslations(
 ): Promise<number> {
   requireLocale(locale);
   if (fields.some((field) => !isProductTranslationField(field))) throw new Error("invalid_translation_field");
-  if (locale === "ko") return 0;
+  if (!isActiveTranslationLocale(locale)) return 0;
   const ids = demandIds(productIds), requestedFields = [...new Set(fields)].sort();
   if (!ids.length || !requestedFields.length) return 0;
   const demand = async (tx: ProductTranslationTransaction) => {
@@ -154,7 +154,7 @@ export async function pendingProductTranslations(limit = 4, options: { owner?: C
   const rows = await db.select({ source: sourceColumns, locale: t.locale, field: t.field,
     sourceHash: t.sourceHash, attempts: t.attempts, eligible: sql<boolean>`(${eligible})` }).from(t)
     .innerJoin(products, eq(products.id, t.productId))
-    .where(and(inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${dispatchableAttempts()}`,
+    .where(and(inArray(t.locale, PRODUCT_TRANSLATION_LOCALES), inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${dispatchableAttempts()}`,
       sql`(${t.retryAt} is null or ${t.retryAt} <= now())`,
       sql`${MEMBER_KEY} NOT IN (${busyMemberKeysSql(`${PRODUCT_TRANSLATION_JOB}:`, { owner, keepOwn: true })})`,
       exclude.length ? sql`${MEMBER_KEY} NOT IN (${sql.join(exclude.map(key => sql`${key}`), sql`, `)})` : undefined))
@@ -164,10 +164,11 @@ export async function pendingProductTranslations(limit = 4, options: { owner?: C
 
 /** Complete original membership only; fresh queue ordering cannot replace one member of an admitted batch. */
 export async function pendingProductTranslationBatch(memberKeys: readonly string[]): Promise<ProductTranslationTask[] | null> {
-  const keys = z.array(z.string().regex(/^product-translate:[1-9]\d*:(en|zh-Hans|zh-Hant):(tagline|description)$/)).min(1).max(4).parse(memberKeys);
+  const keys = z.array(z.string().regex(/^product-translate:[1-9]\d*:(en|zh-Hans|zh-Hant|ja):(tagline|description)$/)).min(1).max(4).parse(memberKeys);
   if (new Set(keys).size !== keys.length) throw new Error("invalid_product_translation_members");
   const targets = keys.map(key => { const [, id, locale, field] = key.split(":");
     return { productId: z.number().int().positive().safe().parse(Number(id)), locale, field }; });
+  if (targets.some(target => !isActiveTranslationLocale(target.locale))) return null;
   return onPrimary(async () => {
     const rows = await db.select({ source: sourceColumns, locale: t.locale, field: t.field,
       sourceHash: t.sourceHash, attempts: t.attempts, eligible: sql<boolean>`(${eligible})` }).from(t)
@@ -193,7 +194,7 @@ const productWrites = new WeakMap<ProductTranslationWriteExpectation, {
 }>();
 class ProductTranslationChanged extends Error { constructor() { super("product_translation_input_changed"); } }
 const taskSchema = z.object({ source: z.object({ id: z.number().int().positive().safe(), name: z.string(), tagline: z.string(),
-  description: z.string().optional() }).strict(), locale: z.enum(["en", "zh-Hans", "zh-Hant"]), field: z.enum(["tagline", "description"]),
+  description: z.string().optional() }).strict(), locale: z.enum(["en", "zh-Hans", "zh-Hant", "ja"]), field: z.enum(["tagline", "description"]),
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/), attempts: z.number().int().min(0), eligible: z.boolean() }).strict();
 function translationBatch(value: readonly ProductTranslationTask[]): ProductTranslationTask[] {
   // attempts < maxAttempts 와 원문 글자 합 상한은 이 틱의 translation.product(관리자 실시간 한도)로 본다
@@ -281,6 +282,7 @@ export async function prepareProductTranslationDispatch(value: readonly ProductT
   valueOptions: TranslationPreparationOptions): Promise<ProductTranslationPreparation> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const tasks = translationBatch(value), lease = structuredClone(job), roleLease = structuredClone(valueOptions.roleLease);
+  if (tasks.some(task => !isActiveTranslationLocale(task.locale))) return { kind: "skipped" };
   const reserved = valueOptions.reserved && structuredClone(valueOptions.reserved), call = valueOptions.call;
   const callBudget = valueOptions.callBudget && structuredClone(valueOptions.callBudget);
   if (lease.name !== PRODUCT_TRANSLATION_JOB) throw new Error("translation_job_lease_required");

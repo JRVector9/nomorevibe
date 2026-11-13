@@ -64,6 +64,7 @@ export function detectTranslationSourceLocale(text: string): Locale | null {
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length && words.filter((word) => /[가-힣]/u.test(word)).length * 2 >= words.length
     && (text.match(/[가-힣]/gu)?.length ?? 0) >= 3) return "ko";
+  if (!/[가-힣]/u.test(text) && /[ぁ-ゖァ-ヺ]/u.test(text)) return "ja";
   if (/[가-힣぀-ヿ]/u.test(text)) return null;
   if (/[㐀-䶿一-鿿]/u.test(text)) {
     if (new Set(text.match(CHINESE_WORDS) ?? []).size < 2) return null;
@@ -110,6 +111,7 @@ const NUMBERS = /[+\-−＋－]?\p{Nd}+(?:[.,]\p{Nd}+)*/gu;
 // Semantic vocabulary is checked separately from script; 軟件/數據庫 alone is not a reviewed Hant translation.
 const WRONG_TERMS: Record<ProductTranslationLocale, readonly string[]> = {
   en: [],
+  ja: [],
   "zh-Hans": ["軟體", "軟件", "程式碼", "資料庫", "伺服器", "瀏覽器", "檔案", "匯出"],
   "zh-Hant": ["软件", "軟件", "代码", "數據庫", "数据库", "服務器", "服务器", "浏览器", "文件夹", "文件夾", "导出"],
 };
@@ -151,6 +153,8 @@ export function checkProductTranslation(
   if (locale === "en") {
     if (!/[A-Za-z]{2,}/.test(prose) || /[가-힣㐀-䶿一-鿿぀-ヿ]/u.test(prose)) return { ok: false, reason: "not_english" };
     if (detectTranslationSourceLocale(prose) !== "en") return { ok: false, reason: "english_uncertain" };
+  } else if (locale === "ja") {
+    if (!/[ぁ-ゖァ-ヺ]/u.test(prose) || /[가-힣]/u.test(prose)) return { ok: false, reason: "not_japanese" };
   } else {
     if ((prose.match(/[㐀-䶿一-鿿]/gu)?.length ?? 0) < 2 || /[가-힣぀-ヿ]/u.test(prose)) return { ok: false, reason: "not_chinese" };
     if ((locale === "zh-Hans" ? HANT : HANS).test(prose)) return { ok: false, reason: "wrong_script" };

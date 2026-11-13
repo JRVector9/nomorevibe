@@ -8,6 +8,7 @@ import { dispatchReleaseAddedKindsSql, dispatchReleaseEvidenceKindsSql, publicat
 import { textLocalDirectDispatchSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 import { opencodeCliLogicalSql, opencodeCliDispatchSql } from "@/lib/llm/opencode-cli-binding-sql";
 import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql } from "@/lib/llm/opencode-task-binding-sql";
+import { japaneseProductLogicalSql, japaneseProductMembersSql, japaneseProductDispatchSql } from "@/lib/llm/japanese-product-translation-sql";
 
 /**
  * 0158(2026-10-31): 종료 근거 회수(0096)의 kind 목록에 없던 publication_classify_cli(0125)·local_model_direct(0118)를 같은 회수 길에 올린다.
@@ -76,6 +77,11 @@ it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the co
   const checks = getTableConfig(modelCapacityRequests).checks;
   for (const [name, branch] of Object.entries(targets)) {
     let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+    const japanese = name === "model_capacity_requests_dispatch_check" ? japaneseProductDispatchSql
+      : name === "model_capacity_requests_members_check" ? japaneseProductMembersSql : japaneseProductLogicalSql;
+    const japaneseTail = `) OR (${japanese})`;
+    expect(expression.startsWith("(") && expression.endsWith(japaneseTail), `${name}: 0184 additive tail present`).toBe(true);
+    expression = expression.slice(1, -japaneseTail.length);
     const task = name === "model_capacity_requests_dispatch_check" ? opencodeTaskDispatchSql
       : name === "model_capacity_requests_members_check" ? opencodeTaskMembersSql : opencodeTaskLogicalSql;
     const taskTail = `) OR (${task})`;
