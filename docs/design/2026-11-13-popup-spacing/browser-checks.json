@@ -1,0 +1,107 @@
+[
+  {
+    "name": "reference",
+    "viewport": {
+      "width": 699,
+      "height": 1161
+    },
+    "width": 665,
+    "height": 1127,
+    "scrollWidth": 665,
+    "scrollHeight": 1143,
+    "inset": 21,
+    "padding": "20px",
+    "lineHeight": "17.4px",
+    "fontSize": "12px",
+    "columns": "302.5px 302.5px",
+    "escape": true,
+    "focusReturn": true,
+    "close": true,
+    "backdrop": true,
+    "innerClick": true
+  },
+  {
+    "name": "desktop",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "width": 758,
+    "height": 966,
+    "scrollWidth": 758,
+    "scrollHeight": 1143,
+    "inset": 21,
+    "padding": "20px",
+    "lineHeight": "17.4px",
+    "fontSize": "12px",
+    "columns": "349px 349px",
+    "escape": true,
+    "focusReturn": true,
+    "close": true,
+    "backdrop": true,
+    "innerClick": true
+  },
+  {
+    "name": "mobile",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "width": 356,
+    "height": 810,
+    "scrollWidth": 356,
+    "scrollHeight": 1422,
+    "inset": 17,
+    "padding": "16px",
+    "lineHeight": "17.4px",
+    "fontSize": "12px",
+    "columns": "324px",
+    "escape": true,
+    "focusReturn": true,
+    "close": true,
+    "backdrop": true,
+    "innerClick": true
+  },
+  {
+    "name": "narrow",
+    "viewport": {
+      "width": 320,
+      "height": 568
+    },
+    "width": 286,
+    "height": 534,
+    "scrollWidth": 286,
+    "scrollHeight": 1549,
+    "inset": 17,
+    "padding": "16px",
+    "lineHeight": "17.4px",
+    "fontSize": "12px",
+    "columns": "254px",
+    "escape": true,
+    "focusReturn": true,
+    "close": true,
+    "backdrop": true,
+    "innerClick": true
+  },
+  {
+    "name": "landscape",
+    "viewport": {
+      "width": 844,
+      "height": 390
+    },
+    "width": 758,
+    "height": 356,
+    "scrollWidth": 758,
+    "scrollHeight": 1143,
+    "inset": 21,
+    "padding": "20px",
+    "lineHeight": "17.4px",
+    "fontSize": "12px",
+    "columns": "349px 349px",
+    "escape": true,
+    "focusReturn": true,
+    "close": true,
+    "backdrop": true,
+    "innerClick": true
+  }
+]

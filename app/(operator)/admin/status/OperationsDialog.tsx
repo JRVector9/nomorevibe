@@ -1,7 +1,30 @@
 'use client';
 import { useEffect, useRef } from 'react';
-export function OperationsDialog({labelledBy,onClose,children}:{labelledBy:string;onClose:()=>void;children:React.ReactNode}) {
-  const ref=useRef<HTMLDialogElement>(null);
-  useEffect(()=>{const el=ref.current;el?.showModal();return ()=>el?.close();},[]);
-  return <dialog ref={ref} className="ops-modal" aria-labelledby={labelledBy} onCancel={onClose} onClick={e=>{if(e.target===e.currentTarget){const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)onClose();}}}>{children}</dialog>;
+import './operations-dialog.css';
+
+export function OperationsDialog({ labelledBy, onClose, children }: {
+  labelledBy: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = ref.current;
+    const opener = document.activeElement;
+    element?.showModal();
+    return () => {
+      element?.close();
+      // React can remove the dialog before native close restores focus.
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, []);
+
+  return <dialog ref={ref} className="ops-modal" aria-labelledby={labelledBy} onCancel={onClose}
+    onClick={event => {
+      if (event.target !== event.currentTarget) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
+    }}>
+    <div className="ops-modal-content">{children}</div>
+  </dialog>;
 }
