@@ -2,6 +2,7 @@ import type { KoreanDiscoveryStatus } from '@/lib/operations/korean-discovery-st
 import type { ReplicaRead } from '@/lib/operations/replica-hold';
 import { replicaHoldText } from '@/lib/operations/replica-hold';
 import { KoreanDiscoveryControls } from './KoreanDiscoveryControls';
+import { KOREAN_STAGING_MAX_PENDING } from '@/lib/crawl/korean-discovery/contracts';
 
 const BLOCKERS: Record<string, string> = { disabled: '한국어 탐색 설정 꺼짐', collection_disabled: '전체 수집 설정 꺼짐', start_missing: '과거 탐색 시작일 미설정',
   principal_missing: 'Oracle 전용 DB 계정 미설치', queries_not_transferred: '켜진 한국어 검색 조건이 아직 Oracle로 전달되지 않음',
@@ -22,6 +23,7 @@ export function KoreanDiscoveryStatusCard({ read }: { read: ReplicaRead<KoreanDi
     <p className="mt-2 text-[13px]">시작일 {date(s.startAt)} · 전용 DB 계정 {s.principalReady ? '설치됨' : '미설치'} · 활성 검색 조건 {s.activeQueries}개</p>
     <p className="text-[13px]">워커 생존 관측 {date(s.heartbeatAt)} · 마지막 탐색 회차 {date(s.tickAt)}</p>
     <p className="text-[13px]">판별·적재 대기 {s.pending.toLocaleString('ko-KR')}{s.pendingTruncated ? '+' : ''}건 · 오류 후 대기 검색 {s.queryErrors}개{s.queryErrors > 0 && ` · 다음 재시도 ${date(s.nextRetryAt)}`}</p>
+    <p className="text-[13px]">한국어 판별 전 후보도 포함합니다. 대기 상한 {KOREAN_STAGING_MAX_PENDING.toLocaleString('ko-KR')}건이며, 한국어로 확인된 후보만 공통 수집 큐로 보냅니다.</p>
     {s.blockers.length > 0 && <ul className="mt-2 text-[13px] text-fg-2">{s.blockers.map(reason => <li key={reason}>{BLOCKERS[reason]}</li>)}</ul>}
     <details className="mt-2 text-[13px]"><summary>설정된 한국어 검색 조건 {s.queries.length}개</summary><ul>{s.queries.map(q => <li key={q.label}>{q.label} · <code>{q.query}</code></li>)}</ul></details>
     <KoreanDiscoveryControls key={s.epoch} enabled={s.enabled} startAt={s.startAt} epoch={s.epoch} />

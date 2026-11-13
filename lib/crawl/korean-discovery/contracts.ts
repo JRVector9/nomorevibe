@@ -10,6 +10,8 @@ export type KoreanCursor = z.infer<typeof KoreanCursorSchema>;
 export const KOREAN_QUERY_LEASE_MS = 120_000;
 export const KOREAN_UNKNOWN_RETRY_MS = 15 * 60_000;
 export const KOREAN_CYCLE_WAIT_MS = 60 * 60_000;
+/** Pending language checks plus confirmed candidates awaiting home admission; excludes applied/excluded history. */
+export const KOREAN_STAGING_MAX_PENDING = 50_000;
 
 /** A repository search whose query text contains Hangul is a Korean-only search. Oracle is its only runner. */
 export function isKoreanRepositoryQuery(query: { kind: string; query: string }): boolean {
