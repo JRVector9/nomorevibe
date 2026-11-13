@@ -1,6 +1,7 @@
 import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
 import { gatewayHttpRejectedTerminalSql, gatewayHttpRejectedEventTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
+import { japaneseProductTerminalSql, japaneseProductEventSql } from "@/lib/llm/japanese-product-translation-sql";
 import { randomBytes, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -523,7 +524,11 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
       let full = new PgDialect().sqlToQuery(check.value).sql;
-      // 0174 appends the HTTP-rejected settlement branch last on both terminal CHECKs; strip it first.
+      // 0184 appends Japanese after the complete 0174 predecessor on both terminal CHECKs.
+      const japaneseTail = `) OR (${events ? japaneseProductEventSql : japaneseProductTerminalSql})`;
+      expect(full.startsWith("(") && full.endsWith(japaneseTail), `${name}: 0184 tail present`).toBe(true);
+      full = full.slice(1, -japaneseTail.length);
+      // Strip the exact HTTP-rejected settlement branch before the older predicates.
       const rejectedTail = `) OR (${events ? gatewayHttpRejectedEventTerminalSql : gatewayHttpRejectedTerminalSql})`;
       expect(full.startsWith("(") && full.endsWith(rejectedTail), `${name}: 0174 tail present`).toBe(true);
       full = full.slice(1, -rejectedTail.length);
