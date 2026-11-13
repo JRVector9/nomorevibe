@@ -2,7 +2,8 @@ import {beforeAll,beforeEach,afterEach,expect,it} from 'vitest';
 import {sql} from 'drizzle-orm';
 import {db} from '@/lib/db';
 import {DEFAULT_CRAWL_SETTINGS} from '@/lib/crawl/settings-schema';
-import {claimKoreanQuery,deferKoreanQuery,m3DiscoveryQueries,stageKoreanPage,synchronizeKoreanQueries,importSharedKoreanCandidates} from '@/lib/crawl/korean-discovery/repository';
+import {claimKoreanQuery,deferKoreanQuery,stageKoreanPage,synchronizeKoreanQueries,importSharedKoreanCandidates} from '@/lib/crawl/korean-discovery/repository';
+import {m3DiscoveryQueries} from '@/lib/crawl/korean-discovery/contracts';
 import {ensureSchema} from './setup';
 const settings={...DEFAULT_CRAWL_SETTINGS,enabled:true,discover:{...DEFAULT_CRAWL_SETTINGS.discover,queries:[
   {label:'기존 한글',kind:'repositories' as const,query:'있습니다 in:readme',enabled:true,priority:60,builder:null,requireEvidence:true},
@@ -17,17 +18,18 @@ afterEach(async()=>{
   await db.execute(sql`TRUNCATE github_ko_discovery_queries,github_ko_discovery_staging`);
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=false,start_at=NULL,shared_cursor=NULL WHERE id=1`);
 });
-it('keeps M3 ownership until explicitly enabled and exactly transferred; disable restores it',async()=>{
+it('never gives Korean searches to M3; Oracle owns them only after explicit enable and transfer',async()=>{
+  expect(m3DiscoveryQueries(settings.discover.queries).map(q=>q.label)).toEqual(['일반']);
   await synchronizeKoreanQueries(settings);
-  expect(await m3DiscoveryQueries(settings)).toEqual(settings.discover.queries);
   expect(await claimKoreanQuery(3)).toBeNull();
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=true,start_at='2026-01-01' WHERE id=1`);
   await synchronizeKoreanQueries(settings);
   const [saved] = await db.execute<{cursor: {window: {from: string; to: string}}}>(sql`SELECT cursor FROM github_ko_discovery_queries WHERE label='기존 한글'`);
   expect(saved.cursor.window).toEqual({from:'2026-01-01T00:00:00Z',to:'2026-01-04T00:00:00Z'});
-  expect((await m3DiscoveryQueries(settings)).map(q=>q.label)).toEqual(['일반']);
+  // Disabling Oracle pauses Korean search; it does not hand it back to M3.
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=false WHERE id=1`);
-  expect(await m3DiscoveryQueries(settings)).toEqual(settings.discover.queries);
+  expect(m3DiscoveryQueries(settings.discover.queries).map(q=>q.label)).toEqual(['일반']);
+  expect(await claimKoreanQuery(3)).toBeNull();
 });
 it('permits one query owner and fences a lease after disable/re-enable; page staging is idempotent',async()=>{
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=true,start_at='2026-01-01' WHERE id=1`);

@@ -1,5 +1,10 @@
 # Oracle 한국어 GitHub 탐색
 
+> **2026-11-13 변경 — 한국어 전용 검색은 Oracle에서만 돈다.** 검색 문자열에 한글이 든 레포 검색 신호(`isKoreanRepositoryQuery`)는
+> Oracle이 켜져 있든 꺼져 있든 M3 일반 수집(`crawl-seed`)이 검색하지 않는다(`m3DiscoveryQueries`). 관리자 「검색 신호」 표에서 켜 둔
+> 한글 신호는 M3 적용기(`crawl-ko-apply`)가 Oracle 표로 넘기고, Oracle consumer만 검색한다. Oracle을 끄면 한국어 검색은 **멈추며**
+> M3로 되돌아가지 않는다. 아래 본문 중 "M3가 다시 맡는다"는 이전 설계는 이 변경으로 대체됐다. 활성화 순서는 맨 아래 「활성화 점검표」를 따른다.
+
 이 릴리스는 M3의 최신·전체 탐색을 유지하고 Oracle에 `github-ko-discovery` consumer를 추가한다. 배포만으로 실행하지 않는다. `GITHUB_KO_DISCOVERY_VERSION=1`과 `github_ko_discovery_control.enabled`가 모두 필요하며 기본값은 비활성이다. X 타이머와 기존 agent-scan은 변경하지 않는다.
 
 ## 데이터와 권한
@@ -31,10 +36,26 @@ WHERE id = 1;
 COMMIT;
 ```
 
-M3 적용기는 기존 활성 한국어 repository 검색어의 query·우선순위와 미완료 날짜·페이지·분할·재시도 구간을 Oracle 표로 복사한 뒤에만 소유권을 넘긴다. 전체 원본 cursor도 `legacy_state`에 보존한다. 기존 검색 정렬이 recent인지 확인할 수 없으면 고정 날짜·분할·재시도 구간은 유지하고 첫 페이지부터 다시 확인한다. 다른 정렬의 같은 페이지를 재사용해 누락시키지 않는다. 동일 label의 검색식이 바뀌면 이전 query/cursor를 보존하고 새 조건으로 시작한다. 일반 M3 검색어의 진행 위치는 유지한다. 소비자가 중단되면 query lease 만료 뒤 이어가며, 제어 변경은 epoch를 증가시켜 늦게 돌아온 이전 응답을 차단한다.
+M3 적용기는 관리자 검색 신호 중 켜진 한국어 repository 검색어의 query·우선순위를 Oracle 표로 넘긴다. M3 `crawl-seed` cursor에 그 검색어의 미완료 날짜·페이지·분할·재시도 구간이 남아 있으면 함께 복사한다(2026-11-13 변경 배포 뒤 M3의 다음 탐색 틱이 한글 검색어의 진행 상태를 cursor에서 정리하므로, 그 뒤 활성화하면 `start_at`부터 시작한다). 전체 원본 cursor도 `legacy_state`에 보존한다. 기존 검색 정렬이 recent인지 확인할 수 없으면 고정 날짜·분할·재시도 구간은 유지하고 첫 페이지부터 다시 확인한다. 다른 정렬의 같은 페이지를 재사용해 누락시키지 않는다. 동일 label의 검색식이 바뀌면 이전 query/cursor를 보존하고 새 조건으로 시작한다. 일반 M3 검색어의 진행 위치는 유지한다. 소비자가 중단되면 query lease 만료 뒤 이어가며, 제어 변경은 epoch를 증가시켜 늦게 돌아온 이전 응답을 차단한다.
 
 ## 확인과 중지
 
 `github_ko_discovery_queries`의 due/error/lease/cursor, staging의 `language`/`state`, `crawl.korean_applied` 작업 로그와 관리자 탐색 계측을 확인한다. 검색 요청과 새 frontier 적재는 별도 지표다. 한국어가 아니라고 M3 일반 탐색 결과를 삭제하지 않는다.
 
-문제가 있으면 control의 `enabled=false`로 Oracle의 새 탐색·판별·적용을 멈춘다. 기존 M3 한국어 검색어는 다시 M3가 맡으며 일반 최신·전체 탐색과 저장된 Oracle cursor·staging은 보존한다. 실제 활성화 뒤 M3·Oracle·X·agent-scan의 진척과 API 오류를 함께 관측한다. 배포와 관측 완료는 실제 기록으로만 보고한다.
+문제가 있으면 control의 `enabled=false`로 Oracle의 새 탐색·판별·적용을 멈춘다. 한국어 검색은 그동안 멈춘다(2026-11-13부터 M3는 한글 검색어를 맡지 않는다). 일반 최신·전체 탐색과 저장된 Oracle cursor·staging은 보존되며, 다시 켜면 저장된 cursor에서 이어간다. 실제 활성화 뒤 M3·Oracle·X·agent-scan의 진척과 API 오류를 함께 관측한다. 배포와 관측 완료는 실제 기록으로만 보고한다.
+
+## 활성화 점검표 (2026-11-13)
+
+실행 영수증이 아니다. 각 단계는 운영자 승인을 받고 실제 결과를 따로 기록한다.
+
+| # | 단계 | 확인 |
+|---|---|---|
+| 1 | 이 변경(한국어 검색 M3 제외)을 crawler 역할에 배포한다. Oracle consumer 코드는 바뀌지 않았다. | M3 `crawl.seed_page`·탐색 진척에 한글 검색어 신호가 더 나오지 않음 |
+| 2 | 운영 DB에 `-- consumer github-ko-discovery` 절만 `BEGIN`/`COMMIT`으로 실행해 `nomorevibe_oracle_github_ko`를 만들고 대화형 `\password`로 비밀번호를 정한다(`2026-10-17-oracle-activation-runbook.md` 2절). | `pg_roles`에 role, 권한 readback = `lib/runtime/oracle-db-profile.ts` |
+| 3 | Oracle이 쓸 GitHub App 설치의 `github_collector_apps.oracle_principals`에 `nomorevibe_oracle_github_ko`를 추가한다. agent-scan principal 권한은 넓히지 않는다. | 전용 계정으로 그 설치 1행만 보임 |
+| 4 | Oracle(osaka-smoke)에 root 0600 `/etc/nomorevibe-core/consumer-github-ko-discovery.env`를 `deploy/oracle/consumer.env.example` 형식으로 만든다: `SERVICE_INSTANCE_ID=github-ko-discovery-consumer-oracle`, `WORKER_ROLE=crawler`, 현재 Oracle `RELEASE_TAG`, 전용 `DATABASE_URL`, `GITHUB_COLLECTOR_SOURCES=apps`, 수집 암호화 키, `HTTP_ORIGIN_PERMITS=0`, `GITHUB_KO_DISCOVERY_VERSION=1`, 측정한 `DB_POOL_MAX`·`HOST_DB_BUDGET`(감독 1 + worker 최대 3 연결). | `launch.py` preflight가 `korean_discovery_standby_ready` |
+| 5 | 관리자 상태 화면 「Oracle 한국어 프로젝트 탐색」에서 과거 시작일(UTC)을 정해 저장하고 켠다. 시작일은 한 번 검색이 시작되면 바꿀 수 없다. M3의 기존 한국어 검색어는 2026-10-28 무렵까지 훑었으므로 그 날짜 전후를 권장 기준으로 삼는다. | 감사 `korean-discovery-control`, `github_ko_discovery_queries` 행 생성(=M3 적용기가 넘김) |
+| 6 | `nomorevibe-core-consumer@github-ko-discovery.service`를 `--once`로 한 번 확인한 뒤 enable/start 한다. | 90초 이내 생존 관측, staging `language` 판정, `crawl.korean_applied` 로그, 탐색 진척 `korean` 줄 |
+
+되돌리기: 5단계의 `enabled=false`(관리자 화면) → 한국어 검색만 멈춘다. 6단계 unit stop/disable. 2~4단계 자격은 그대로 두거나 승인 후 회수한다.
+
