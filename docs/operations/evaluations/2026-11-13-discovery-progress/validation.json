@@ -1,0 +1,68 @@
+{
+  "project": "nomorevibe",
+  "projectId": "a18272ed-b261-484b-90f2-ef8a5b11d9b0",
+  "base": "d4d70685fed96161701baeaf3bd0aec138a16f67",
+  "branch": "fix/discovery-progress-20261113",
+  "runtime": {
+    "node": "24.18.0",
+    "postgres": "17",
+    "pgvector": "0.8.6",
+    "testContainer": "nmv-discovery-20261113-test-pg"
+  },
+  "checks": [
+    {
+      "name": "scoped-unit-regressions",
+      "files": 13,
+      "passed": 152,
+      "failed": 0,
+      "exitCode": 0,
+      "durationSeconds": 3.54,
+      "log": "nomorevibe-discovery-tests-final.log"
+    },
+    {
+      "name": "scoped-db-integration",
+      "files": 3,
+      "passed": 31,
+      "failed": 0,
+      "exitCode": 0,
+      "durationSeconds": 7.16,
+      "log": "nomorevibe-discovery-integration-final.log"
+    },
+    {
+      "name": "next-route-typegen",
+      "exitCode": 0,
+      "log": "nomorevibe-discovery-typegen.log"
+    },
+    {
+      "name": "typecheck",
+      "command": "tsc --noEmit --incremental false",
+      "exitCode": 0,
+      "log": "nomorevibe-discovery-typecheck.log"
+    },
+    {
+      "name": "scoped-eslint",
+      "files": 10,
+      "exitCode": 0,
+      "log": "nomorevibe-discovery-lint.log"
+    }
+  ],
+  "syntheticCommitFixture": {
+    "items": 100,
+    "rawBytes": 3376129,
+    "projectedBytes": 23556,
+    "attributionParserLimitUnchanged": true
+  },
+  "notRun": [
+    "full unit suite",
+    "full integration suite",
+    "production build",
+    "required GitHub CI",
+    "production rollout",
+    "live throughput/memory comparison"
+  ],
+  "artifactsDirectory": "/home/ubuntu/.xaegis-hub/data/main-agent/artifacts/nomorevibe-discovery-20261113",
+  "decision": {
+    "choice": "retain Claude search and fix response/cursor causes",
+    "reason": "preserve search coverage and existing quotas/data"
+  }
+}

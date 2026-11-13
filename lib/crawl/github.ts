@@ -3,6 +3,7 @@ import { readBodyStrictlyCapped } from "@/lib/net/fetch";
 import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldown,
   readGitHubAuthCooldown, recordGitHubAuthCooldown } from "./github-quota";
 import { collectorTokens, observeCollectorQuota, type CollectorToken } from "./github-accounts";
+import { GITHUB_RESPONSE_MAX_BYTES, githubResponseMaxBytes } from './github-response-policy';
 
 /**
  * GitHub API — 수집기가 쓰는 만큼만.
@@ -16,7 +17,6 @@ import { collectorTokens, observeCollectorQuota, type CollectorToken } from "./g
  */
 
 const API_ORIGIN = "https://api.github.com";
-const GITHUB_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 const AUTH_RETRY_DELAYS_MS = [100, 250] as const;
 const AUTH_COOLDOWN_MS = 15 * 60_000;
 type AuthReason = "expired" | "revoked" | "bad_credentials" | "unauthorized" | "blocked" | "cooldown";
@@ -26,6 +26,7 @@ export type GitHubFailure =
   | { kind: "not_found" }
   | { kind: "transport" }
   | { kind: "invalid_response" }
+  | { kind: "response_too_large"; stage: 'body' | 'cache_input' | 'cache_projection'; limitBytes: number; observedBytes: number }
   | { kind: "auth_unavailable"; reason: AuthReason; resetAt: Date | null }
   | { kind: "http"; status: number };
 
@@ -63,11 +64,15 @@ export async function githubRequest<T>(
   options: { timeoutMs?: number; body?: unknown; deadlineAt?: number; signal?: AbortSignal } = {},
 ): Promise<GitHubHttpResult<T>> {
   if (options.deadlineAt === undefined && !options.signal) return githubRequestWithinBudget<T>(path, conditional, options);
+  const startedAt=Date.now();
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stop: () => void = () => {};
   const stopped = new Promise<GitHubHttpResult<T>>(resolve => {
-    stop = () => { controller.abort(); resolve({ ok: false, error: { kind: "transport" } }); };
+    stop = () => {
+      logger.warn('github.request_stopped',{phase:options.signal?.aborted ? 'cancelled' : 'deadline',elapsedMs:Date.now()-startedAt});
+      controller.abort(); resolve({ ok: false, error: { kind: "transport" } });
+    };
     options.signal?.addEventListener("abort", stop, { once: true });
     if (options.deadlineAt !== undefined) {
       const remaining = options.deadlineAt - Date.now();
@@ -176,6 +181,7 @@ async function githubRequestWithToken<T>(
   account: CollectorToken, onSecondary: () => void,
 ): Promise<GitHubHttpResult<T>> {
   const token = account.token;
+  const startedAt=Date.now();
   const resource = githubResource(path);
   if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
   const authUntil = await readGitHubAuthCooldown(token);
@@ -233,6 +239,7 @@ async function githubRequestWithToken<T>(
       url = next.href;
     }
   } catch {
+    logger.warn('github.request_failed',{resource,phase:'connect',elapsedMs:Date.now()-startedAt});
     return { ok: false, error: { kind: "transport" } };
   }
 
@@ -290,14 +297,22 @@ async function githubRequestWithToken<T>(
   }
   if (res.ok) {
     let value: T;
+    const limitBytes = githubResponseMaxBytes(path);
+    let observedBytes = 0;
+    let phase:'body'|'json'='body';
     try {
-      const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      const body = await readBodyStrictlyCapped(res, limitBytes, bytes => { observedBytes = bytes; });
       if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
-      if (body === null) return { ok: false, error: { kind: "invalid_response" } };
+      if (body === null) return limitBytes > GITHUB_RESPONSE_MAX_BYTES
+        ? { ok: false, error: { kind: 'response_too_large', stage: 'body', limitBytes, observedBytes } }
+        : { ok: false, error: { kind: 'invalid_response' } };
+      observedBytes=body.length;
+      phase='json';
       value = JSON.parse(body.toString("utf8")) as T;
     } catch {
+      logger.warn('github.request_failed',{resource,phase,status:res.status,elapsedMs:Date.now()-startedAt,observedBytes});
       if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
-      return { ok: false, error: { kind: "invalid_response" } };
+      return { ok: false, error: { kind: phase === 'body' ? 'transport' : 'invalid_response' } };
     }
     return {
       ok: true,

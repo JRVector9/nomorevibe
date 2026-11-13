@@ -127,11 +127,14 @@ it('retains unresolved windows across other signals and resumes fresh discovery 
   mocks.search.mockResolvedValue(page([]));
   const drained = await seedFrontier(context(pending.cursor!));
   expect(drained.cursor).toMatchObject({signal:'Codex hint',phase:'discovery'});
-  // 모든 신호가 주기를 마치면 미완으로 남겨둔 창을 다시 본다
+  // 미완 신호의 대기는 다른 신호의 다음 탐색을 막지 않는다. 재시도 위치는 신호 안에 남는다.
   const finishedOther = await seedFrontier(context(drained.cursor!));
-  expect(finishedOther.cursor).toMatchObject({phase:'retry',signal:'Kimi',window:minimum});
-  // 미완 창까지 마치면 덮을 것이 없다 — 새로 쌓일 때까지 검색하지 않고 기다린다
-  const retried = await seedFrontier(context({...finishedOther.cursor!,retryAt:new Date(0).toISOString()}));
+  expect(finishedOther.cursor?.states?.Kimi).toMatchObject({phase:'retry',window:minimum});
+  const due=structuredClone(finishedOther.cursor!);
+  due.retryAt=undefined;
+  due.states!.Kimi.retryAt=new Date(0).toISOString();
+  // 해당 신호의 대기가 끝나면 보존한 구간만 재시도한다.
+  const retried = await seedFrontier(context(due));
   expect(retried.cursor).toMatchObject({incompleteWindows:[],waiting:true});
   // 시간이 지나 덮지 않은 구간이 생기면 첫 신호부터 새 주기를 연다
   const searches = mocks.search.mock.calls.length;

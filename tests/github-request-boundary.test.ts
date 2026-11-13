@@ -96,3 +96,34 @@ it('honors quota exhaustion on the redirect before making another request', asyn
   expect(await githubRequest('/repos/old/app')).toMatchObject({ok: false, error: {kind: 'rate_limited'}});
   expect(fetcher).toHaveBeenCalledTimes(1);expect(quota.record).toHaveBeenCalledOnce();
 });
+
+it('accepts a 2.87MB commit response while keeping other endpoints at 2MiB', async () => {
+  const body=JSON.stringify({items:[{repository:{full_name:'a/app'},commit:{message:'x'.repeat(2_870_600)}}]});
+  vi.stubGlobal('fetch',vi.fn().mockImplementation(async()=>new Response(body)));
+  expect(await githubRequest('/search/commits?q=Claude')).toMatchObject({ok:true,status:200});
+  expect(await githubRequest('/search/repositories?q=Claude')).toMatchObject({ok:false,error:{kind:'invalid_response'}});
+});
+
+it.each(['declared','stream'] as const)('cancels an oversized commit %s body and reports bounded size facts',async source=>{
+  const limitBytes=8*1024*1024;
+  const cancel=vi.fn();
+  const body=new ReadableStream<Uint8Array>({start(controller){
+    if(source === 'stream') {controller.enqueue(new Uint8Array(limitBytes));controller.enqueue(new Uint8Array([1]));}
+  },cancel});
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(body,{headers:source === 'declared' ? {'content-length':String(limitBytes+1)} : {}})));
+  expect(await githubRequest('/search/commits?q=Claude')).toEqual({ok:false,error:{kind:'response_too_large',stage:'body',limitBytes,observedBytes:limitBytes+1}});
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
+it('accepts valid JSON exactly at the commit body limit and distinguishes malformed JSON',async()=>{
+  const body='{"items":[]}'+' '.repeat(8*1024*1024-12);
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(new Response(body)).mockResolvedValueOnce(new Response('{bad json')));
+  expect(await githubRequest('/search/commits?q=Claude')).toMatchObject({ok:true,value:{items:[]}});
+  expect(await githubRequest('/search/commits?q=Claude')).toMatchObject({ok:false,error:{kind:'invalid_response'}});
+});
+
+it('distinguishes a failed body stream from invalid JSON without retaining the error text',async()=>{
+  const body=new ReadableStream<Uint8Array>({start(controller){controller.error(new Error('private body transport detail'));}});
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(body)));
+  expect(await githubRequest('/search/commits?q=Claude')).toEqual({ok:false,error:{kind:'transport'}});
+});

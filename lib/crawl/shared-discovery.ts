@@ -8,6 +8,7 @@ import { lockFrontierIdentity } from './repository';
 import { readReviewBacklogInTransaction, reviewBacklogAdmission } from './review-backlog';
 import { discoveryPageKey, projectDiscoverySearchValue, type DiscoverySearchIdentity } from './discovery-contract';
 import type { GitHubResult } from './github';
+import { COMMIT_SEARCH_MAX_BYTES, GITHUB_RESPONSE_MAX_BYTES, DISCOVERY_CACHE_MAX_BYTES } from './github-response-policy';
 
 export const DISCOVERY_PAGE_LEASE_MS = 90_000;
 export type DiscoveryBusy = { ok: false; error: { kind: 'discovery_busy'; retryAt: Date } };
@@ -59,12 +60,25 @@ export async function sharedDiscoverySearch<T>(input: SearchInput,
   try { result = await load(); }
   catch (error) { await releasePage(key, token); throw error; }
   if (!result.ok) { await releasePage(key, token); return result; }
-  if (!result.value || typeof result.value !== 'object' || !('items' in result.value) || !Array.isArray(result.value.items)
-    || Buffer.byteLength(JSON.stringify(result.value)) > 2 * 1024 * 1024) {
+  if (!result.value || typeof result.value !== 'object' || !('items' in result.value) || !Array.isArray(result.value.items)) {
     await releasePage(key, token);
     return { ok: false, error: { kind: 'invalid_response' } };
   }
+  const limitBytes = input.kind === 'commits' ? COMMIT_SEARCH_MAX_BYTES : GITHUB_RESPONSE_MAX_BYTES;
+  const observedBytes = Buffer.byteLength(JSON.stringify(result.value));
+  if (observedBytes > limitBytes) {
+    await releasePage(key, token);
+    return input.kind === 'commits'
+      ? { ok: false, error: { kind: 'response_too_large', stage: 'cache_input', limitBytes, observedBytes } }
+      : { ok: false, error: { kind: 'invalid_response' } };
+  }
   const value = projectDiscoverySearchValue(input.kind, result.value) as T;
+  const projectedBytes = Buffer.byteLength(JSON.stringify(value));
+  if (projectedBytes > DISCOVERY_CACHE_MAX_BYTES) {
+    await releasePage(key, token);
+    return { ok: false, error: { kind: 'response_too_large', stage: 'cache_projection',
+      limitBytes: DISCOVERY_CACHE_MAX_BYTES, observedBytes: projectedBytes } };
+  }
   const published = await db.transaction(async tx => {
     if (!await writerSiteActive(tx)) throw new Error('discovery_writer_fenced');
     if (input.lease) await assertJobLease(tx, input.lease);
