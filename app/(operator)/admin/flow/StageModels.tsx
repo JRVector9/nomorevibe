@@ -17,6 +17,8 @@ import { PoolReserveField, PoolSlotFields } from "../models/tasks/PoolSlotFields
 import { PoolHelpTip, PoolMemberWarnings } from "../models/tasks/PoolHelp";
 import { modelPickerOptionName } from "../models/model-picker-display";
 import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
+import { saveAssignmentChanges, type AssignmentSaveResult } from "@/lib/operations/model-assignment-save";
+import { unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
 
 /**
  * 단계 패널 「모델」 구역(운영 콘솔 개편 조각 2a) — 지금 배정(순위대로: 1·2·3순위 / 동시에: 함께 쓰는 모델)을 보이고 그 자리에서 고친다.
@@ -34,7 +36,6 @@ type Props = { lines: StageModelLine[]; editor: FlowRankEditor | null; context: 
   poolHelp?: PoolHelpContext | null;
   /** 단계 이름(흐름 표의 말) — 작업이 하나인 단계의 저장 전 확인 제목(「AI 1차 배정을 바꿉니다」) */
   stageLabel?: string };
-type Answer = { ok?: true; message?: string; issues?: string[]; warnings?: string[] } | null;
 
 const POOL_SLOTS = Array.from({ length: 4 }, (_, index) => ({ provider: `pool${index + 1}Connection`, model: `pool${index + 1}Model`,
   reasoningEffort: `pool${index + 1}ReasoningEffort` }));
@@ -75,12 +76,13 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
   const [step, setStep] = useState<Step>(initial?.step ?? "view");
   const [draft, setDraft] = useState<AssignmentState>(initial?.draft ?? before);
   const [ack, setAck] = useState(false);
-  const [results, setResults] = useState<{ ok: boolean; text: string; issues: string[]; warnings: string[] }[]>([]);
+  const [results, setResults] = useState<AssignmentSaveResult[]>([]);
+  const unconfirmed = results.some(result => result.unconfirmed);
   // 바꿀 수 없는 까닭 — 순위를 못 읽음 · 화면에서 못 바꾸는 작업(소개 검수) · 실제 적용 설정이 따로 있는 작업
   const locked = !flowLine || !editor ? "순위를 읽지 못해 여기서 바꿀 수 없습니다." : FLOW_RANK_LOCKS[line.task] ?? null;
   const elsewhere = flowLine && !flowLine.live && line.task !== "publish-classify" ? aiTaskEditTarget(line.task) : null;
   const rankEditable = !locked && !elsewhere && !line.apiOnly;
-  const canEdit = !locked && !elsewhere && (rankEditable || line.poolSupported);
+  const canEdit = !unconfirmed && !locked && !elsewhere && (rankEditable || line.poolSupported);
   const preview = flowLine && editor ? assignmentPreview({ task: line.task, slot: line.slot, before, after: draft, context }) : null;
   const rankIssues = flowLine && editor && draft.mode === "fallback" && preview?.saves.includes("ranks") ? flowRankIssues(editor, flowLine, draft.ranks) : [];
   const poolRules = { apiOnly: line.apiOnly, features: line.features };
@@ -89,31 +91,24 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
   const mustAck = needsAcknowledge(warnings);
   const issues = [...rankIssues, ...(draft.mode === "workload_pool" ? poolIssues : [])];
 
-  const start = (mode: AssignmentState["mode"]) => { setDraft({ ...before, mode }); setAck(false); setResults([]); setStep("edit"); };
+  const start = (mode: AssignmentState["mode"]) => {
+    // Match the models drawer: a first pool starts with the existing ranks, each at one reviewed slot.
+    const current = step === "edit" || step === "confirm" ? draft : before;
+    setDraft(flowLine ? unifiedTaskSwitchMode(current, mode, flowLine) : { ...current, mode });
+    setAck(false); setResults([]); setStep("edit");
+  };
   const cancel = () => { setDraft(before); setStep("view"); };
   const submit = async () => {
     if (!flowLine || !preview) return;
     setStep("saving");
-    const done: typeof results = [];
-    for (const kind of preview.saves) {
-      let answer: Answer = null;
-      try {
-        if (kind === "execution") {
-          // 작업 배정 실행 방식 폼과 같은 칸 — 같은 자리·같은 모델의 구성원은 저장된 id 를 이어 쓰고, 칸 수·예비는 받는 작업에서만 싣는다
-          const members = poolMembersInput(draft.members, draft.slots ?? [], flowLine.execution?.members ?? [], line.features);
-          answer = await saveTaskExecutionAction(null, poolExecutionForm({ task: line.task, slot: line.slot, revision: flowLine.execution?.revision ?? null,
-            mode: draft.mode, members, reserve: line.features.reserve && !!draft.reserve }));
-        } else answer = await saveAiTaskRanksAction(null, rankForm(flowLine, draft.ranks));
-      } catch {
-        answer = { issues: ["저장 요청이 서버에 닿지 않았습니다 — 다시 누르기 전에 기록에서 저장됐는지 보세요."] };
-      }
-      const ok = !!answer?.ok;
-      done.push({ ok, text: answer?.message ?? "", issues: answer?.issues ?? (ok ? [] : ["저장하지 못했습니다."]), warnings: answer?.warnings ?? [] });
-      if (!ok) break;
-    }
+    const changes = preview.saves.map(kind => ({ kind, form: kind === "execution"
+      ? poolExecutionForm({ task: line.task, slot: line.slot, revision: flowLine.execution?.revision ?? null, mode: draft.mode,
+        members: poolMembersInput(draft.members, draft.slots ?? [], flowLine.execution?.members ?? [], line.features), reserve: line.features.reserve && !!draft.reserve })
+      : rankForm(flowLine, draft.ranks) }));
+    const done = await saveAssignmentChanges(changes,
+      { execution: saveTaskExecutionAction, ranks: saveAiTaskRanksAction }, () => router.refresh());
     setResults(done);
     setStep("done");
-    if (done.some(row => row.ok)) router.refresh();
   };
 
   const mode = step === "view" || step === "done" ? savedMode : draft.mode;
@@ -138,7 +133,7 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
       {(["fallback", "workload_pool"] as const).map(value => {
         const unsupported = value === "workload_pool" && !line.poolSupported;
         const disabled = !canEdit || !!lockReason || unsupported || step === "saving" || (value === "fallback" && line.apiOnly && savedMode === "fallback");
-        return <button key={value} type="button" aria-pressed={mode === value} disabled={disabled && mode !== value}
+        return <button key={value} type="button" aria-pressed={mode === value} disabled={unconfirmed || disabled && mode !== value}
           title={unsupported ? "이 작업은 아직 「동시에」를 받지 않습니다" : undefined}
           onClick={() => { if (mode !== value && !disabled) start(value); }}>{value === "fallback" && line.apiOnly ? "기존 CLI 분류" : MODE_LABELS[value]}</button>;
       })}
@@ -221,11 +216,15 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
     </div>}
 
     {step === "done" && <div className="sp-done" role="status">
-      {results.map((row, index) => <p key={index} data-ok={row.ok ? "yes" : "no"}><b>{row.ok ? "저장함" : "저장 못 함"}</b> {row.text}
+      {results.map((row, index) => <p key={index} data-ok={row.ok ? "yes" : "no"}><b>{row.unconfirmed ? "저장 여부 미확인" : row.ok ? "저장함" : "저장 못 함"}</b> {row.message}
         {row.warnings.map(text => <span key={text} className="sp-warn" data-tone="warn"> 알림 — {text}</span>)}
         {row.issues.map(text => <span key={text} className="sp-warn" data-tone="bad"> {text}</span>)}</p>)}
-      {results.every(row => row.ok) && <p className="sp-note">홈 「바꾼 것 지켜보기」에서 그 뒤 처리량을 봅니다. 되돌리기는 기록의 그 줄에서 합니다.</p>}
-      <button type="button" className="button small" onClick={() => { setStep("view"); setDraft(before); }}>닫기</button>
+      {results.length > 0 && results.every(row => row.ok && !row.issues.length) && <p className="sp-note">설정 저장을 확인했습니다. 실제 호출 성공은 아직 확인 전입니다. 홈 「바꾼 것 지켜보기」에서 그 뒤 처리량을 봅니다.</p>}
+      {unconfirmed && <p className="sp-note">새로고침으로 현재 배정과 최근 변경 기록을 확인한 뒤 다시 편집하세요.</p>}
+      <button type="button" className="button small" onClick={() => {
+        if (unconfirmed) window.location.reload();
+        else { setStep("view"); setDraft(before); }
+      }}>{unconfirmed ? "새로고침해서 적용 확인" : "닫기"}</button>
     </div>}
   </section>;
 }

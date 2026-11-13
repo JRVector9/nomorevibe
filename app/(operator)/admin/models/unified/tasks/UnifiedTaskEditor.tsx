@@ -15,9 +15,10 @@ import { UNIFIED_TASK_GROUPS, unifiedTaskActualNote, unifiedTaskEditTarget, unif
 import { buildPoolHelp, poolHelpWarnings, type PoolHelpContext } from "@/lib/operations/pool-help";
 import { assignmentPreview, type AssignmentState } from "@/lib/operations/stage-panel-model";
 import { poolMemberIssues, poolMembersInput } from "@/lib/operations/task-pool-form";
+import { saveAssignmentChanges } from "@/lib/operations/model-assignment-save";
 import { RankSelects } from "../../RankSelects";
 import { modelPickerModelCount, modelPickerOptionName, modelPickerVisibleText } from "../../model-picker-display";
-import { saveAiTaskRanksAction, type AiTaskActionState } from "../../tasks/actions";
+import { saveAiTaskRanksAction } from "../../tasks/actions";
 import { saveTaskExecutionAction } from "../../tasks/execution-actions";
 import { PoolHelpContent, PoolMemberWarnings } from "../../tasks/PoolHelp";
 import { UnifiedTaskImpact, UnifiedTaskResult, type UnifiedTaskSaveResult } from "./UnifiedTaskFeedback";
@@ -59,7 +60,11 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
     if (node && !node.open && typeof node.showModal === "function") node.showModal();
   }, []);
 
-  const close = () => { if (!busy) onClose(); };
+  const close = () => {
+    if (busy) return;
+    if (results.some(result => result.unconfirmed)) window.location.reload();
+    else onClose();
+  };
   const target = snapshot ? unifiedTaskEditTarget(snapshot) : null;
   const lineLock = snapshot ? unifiedTaskLock(snapshot) : null;
   const locked = lockReason ?? lineLock;
@@ -115,21 +120,10 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
     if (!snapshot || !draft || !canSave || busy || mustAck && !ack) return;
     setStep("saving");
     startTransition(async () => {
-      const done: UnifiedTaskSaveResult[] = [];
-      for (const { kind, form } of attachSaveForms({ line: snapshot, after: draft, features, saves })) {
-        let answer: AiTaskActionState;
-        try {
-          answer = kind === "execution" ? await saveTaskExecutionAction(null, form) : await saveAiTaskRanksAction(null, form);
-        } catch {
-          answer = { issues: ["저장 응답을 확인하지 못했습니다. 다시 누르기 전에 최근 변경 기록에서 적용 여부를 확인하세요."] };
-        }
-        const ok = !!answer?.ok;
-        done.push({ kind, ok, message: answer?.message ?? "", warnings: answer?.warnings ?? [], issues: answer?.issues ?? (ok ? [] : ["저장하지 못했습니다."]) });
-        if (!ok) break;
-      }
+      const done = await saveAssignmentChanges(attachSaveForms({ line: snapshot, after: draft, features, saves }),
+        { execution: saveTaskExecutionAction, ranks: saveAiTaskRanksAction }, () => router.refresh());
       setResults(done);
       setStep("done");
-      if (done.some(result => result.ok)) router.refresh();
     });
   };
 

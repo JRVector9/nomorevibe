@@ -197,6 +197,31 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     expect(gap.status).toMatchObject({ level: "ok", text: "정상", reason: "1시간 정산 20" });
   });
 
+  it("새 분산 구성은 변경 전 1시간 호출로 정상이나 모델 미사용을 단정하지 않는다; 실제 실패는 유지한다", () => {
+    const members = [{ memberId: "member-a", position: 1, connectionId: M1, model: "m1-gemma", canonicalModel: "m1-gemma", options: {}, deviceId: "m1-qwen", engineKey: "a", maxSlots: 1 }];
+    const at = (updatedAt: string, failed1h = 0) => rowOf(buildTaskAssignView(input({
+      observation: observationWith([metric("reason-translate", "abcllm", "gpt-oss-120b", "m3-mlx", 20, { failed1h })]),
+      slots: [slotOf("reason-translate")], executions: [{ task: "reason-translate", slot: 1, mode: "workload_pool", members, updatedAt }],
+    })), "reason-translate#1");
+    const recent = at("2026-11-07T07:14:00.000Z");
+    expect(recent.actual).toMatchObject({ warnings: [], mixed: true, note: "배정을 6분 전에 바꿈 — 그 전 호출이 섞여 있어 17:14 이후 비교" });
+    expect(recent.actual.calls).toContainEqual(expect.objectContaining({ position: null, model: "gpt-oss-120b", settled: 20 }));
+    expect(recent.status).toMatchObject({ level: "unknown", text: "확인 전", reason: "새 분산 구성의 실행 확인 전" });
+    expect(at("2026-11-07T07:14:00.000Z", 1).status.reason).toContain("1시간 실패 1건");
+    const older = at("2026-11-07T06:10:00.000Z");
+    expect(older.actual.mixed).toBe(false);
+    expect(older.actual.warnings).toContain("모델 1 m1-gemma 0건 — 다른 모델만 호출");
+  });
+
+  it("순위대로 복귀한 실행 방식의 저장 시각도 이전 분산 호출과의 혼합을 알린다", () => {
+    const rows = [rank("reason-translate", 1, M1, "m1-gemma")];
+    const row = rowOf(buildTaskAssignView(input({ observation: observationWith([metric("reason-translate", "abcllm", "gpt-oss-120b", "m3-mlx", 20)]),
+      slots: [slotOf("reason-translate", 1, { savedAt: "2026-11-06T07:00:00.000Z" }, rows)],
+      executions: [{ task: "reason-translate", slot: 1, mode: "fallback", members: [], updatedAt: "2026-11-07T07:14:00.000Z" }],
+    })), "reason-translate#1");
+    expect(row.actual).toMatchObject({ mixed: true, warnings: [], note: expect.stringContaining("배정을 6분 전에 바꿈") });
+  });
+
   it("F2 앞 순위가 상한·칸 가득으로만 건너뛰어져 뒤 순위가 처리했으면 순위대로 대체 — 「설정과 다름」이 아니다; 다른 까닭이 섞이면 지금 경고 그대로", () => {
     // 제품 다국어 번역: 1·2순위 m3 gpt-oss 가 모델 상한 가득, 3순위 m1 이 98건을 처리
     const rows = [rank("product-translate", 1, MLX, "gpt-oss-120b"), rank("product-translate", 2, MLX, "gpt-oss-120b"), rank("product-translate", 3, M1, "m1-gemma")];
