@@ -256,10 +256,22 @@
   color: var(--muted);
 }
 .admin-prototype .sp-rank > .sp-add > .sp-facts {
+  grid-column: 2;
+  min-width: 0;
   color: var(--muted);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+/* Action labels and idle-model descriptions need separate rows, unlike the compact rank facts. */
+.admin-prototype .sp-rank > .sp-add {
+  grid-template-columns: 3.4em minmax(0, 1fr);
+  row-gap: calc(4px / .8);
 }
 .admin-prototype .sp-rank > .sp-add .text-button {
+  min-width: 0;
   justify-self: start;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 .admin-prototype .sp-edit,
 .admin-prototype .sp-dlg,
