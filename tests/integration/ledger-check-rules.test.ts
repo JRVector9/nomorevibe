@@ -246,8 +246,9 @@ it("0175 는 0168 의 OpenCode dispatch·events terminal 두 행만 같은 ordin
     .toEqual(applied);
   for (const name of ["model_capacity_requests_dispatch_check", "model_capacity_events_terminal_check"])
     expect(applied[name].split(OPENCODE_TASK_FIX_FROM), `${name}: 0168 left the JSON claude-cli provider twice`).toHaveLength(3);
-  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  // This test proves the 0175 repair itself; later additive ordinals are checked independently.
+  await migrateThrough(175);
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 175).length);
   const after = await rulesNow();
   const fixed: Record<string, string> = { model_capacity_requests_dispatch_check: opencodeTaskDispatchSql, model_capacity_events_terminal_check: opencodeTaskEventTerminalSql };
   // 같은 (표, 제약, ordinal) 자리 — 행 수·순서·나머지 행의 글은 한 글자도 바뀌지 않는다
