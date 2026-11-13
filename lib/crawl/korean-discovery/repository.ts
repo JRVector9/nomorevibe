@@ -4,7 +4,7 @@ import { assertJobLeaseAtWallTime, type JobLease } from '@/lib/jobs/control';
 import { db } from '@/lib/db';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
-import { KoreanCursorSchema, KoreanQuerySchema, firstKoreanCursor, isKoreanRepositoryQuery, resumeKoreanCursor, KOREAN_QUERY_LEASE_MS, type KoreanCursor, type KoreanQuery } from './contracts';
+import { KoreanCursorSchema, KoreanQuerySchema, firstKoreanCursor, isKoreanRepositoryQuery, resumeKoreanCursor, KOREAN_QUERY_LEASE_MS, KOREAN_STAGING_MAX_PENDING, type KoreanCursor, type KoreanQuery } from './contracts';
 import type { KoreanLanguageResult } from './language';
 
 export type KoreanQueryClaim = KoreanQuery & { token: string; epoch: number; controlEpoch: number; cursor: KoreanCursor; windowDays: number };
@@ -87,7 +87,7 @@ export async function stageKoreanPage(claim: KoreanQueryClaim, repositories: Kor
     const [control] = await tx.execute<{ epoch: number; enabled: boolean }>(sql`SELECT epoch,enabled FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
     if (!control?.enabled || control.epoch !== claim.controlEpoch) return false;
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('github-ko-staging-cap-v1'))`);
-    const [capacity] = await tx.execute<{remaining:number}>(sql`SELECT greatest(0,10000-count(*)::integer) AS remaining FROM github_ko_discovery_staging WHERE state='pending'`);
+    const [capacity] = await tx.execute<{remaining:number}>(sql`SELECT greatest(0,${KOREAN_STAGING_MAX_PENDING}-count(*)::integer) AS remaining FROM github_ko_discovery_staging WHERE state='pending'`);
     const keys=[...new Set(repositories.map(row=>row.repo.toLowerCase()))];
     const known=keys.length ? await tx.execute<{repo:string}>(sql`SELECT repo FROM github_ko_discovery_staging WHERE repo IN (${sql.join(keys.map(key=>sql`${key}`),sql`,`)} )`) : [];
     if (keys.length-known.length > capacity.remaining) return false;
@@ -135,7 +135,8 @@ export async function importSharedKoreanCandidates(): Promise<number> {
     if (!control?.enabled) return 0;
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('github-ko-staging-cap-v1'))`);
     const [count] = await tx.execute<{total:number}>(sql`SELECT count(*)::integer AS total FROM github_ko_discovery_staging WHERE state='pending'`);
-    if (count.total >= 9900) return 0;
+    // A cached page contains at most 100 candidates. Reserve a full page under the same lock as direct staging.
+    if (count.total > KOREAN_STAGING_MAX_PENDING - 100) return 0;
     const pages = await tx.execute<{key:string;completed_at_key:string;result:{items?:{full_name?:string;description?:string|null}[]}}>(sql`
       SELECT key,completed_at::text AS completed_at_key,result FROM github_discovery_pages WHERE state='complete' AND kind='repositories' AND scope='public-v1'
         AND (completed_at,key) > (${control.shared_cursor?.at ?? '1970-01-01T00:00:00.000000'}::timestamp,${control.shared_cursor?.key ?? ''})

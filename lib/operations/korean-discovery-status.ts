@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { KoreanQuerySchema } from '@/lib/crawl/korean-discovery/contracts';
+import { KoreanQuerySchema, KOREAN_STAGING_MAX_PENDING } from '@/lib/crawl/korean-discovery/contracts';
 import { DB_CLOCK_SQL, replicaCache } from './replica-cache';
 
 export type KoreanDiscoveryStatus = {
@@ -34,7 +34,7 @@ export function buildKoreanDiscoveryStatus(source: {
   return { at: source.at, enabled: source.enabled, startAt, epoch: source.epoch, collectionEnabled: source.collectionEnabled,
     principalReady: source.principalReady, queries: parsed.data.map(({ label, query }) => ({ label, query })),
     activeQueries: nonnegative(source.activeQueries), heartbeatAt, tickAt,
-    pending: Math.min(10_000, nonnegative(source.pending)), pendingTruncated: source.pending > 10_000,
+    pending: Math.min(KOREAN_STAGING_MAX_PENDING, nonnegative(source.pending)), pendingTruncated: source.pending > KOREAN_STAGING_MAX_PENDING,
     queryErrors: nonnegative(source.queryErrors), nextRetryAt: iso(source.nextRetryAt), blockers,
     state: !source.enabled ? 'disabled' : !source.collectionEnabled || !startAt || !source.principalReady ? 'blocked' : !fresh ? 'unconfirmed' : 'observed' };
 }
@@ -57,7 +57,7 @@ export function readKoreanDiscoveryStatus(fresh = false) {
               AND value->>'lastHeartbeatAt' ~ '^[0-9]{13}$') AS "heartbeatAt",
           (SELECT to_char(max(observed_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') FROM operations_observations
             WHERE key LIKE 'github-ko-discovery:github-ko-discovery-consumer-%') AS "tickAt",
-          (SELECT count(*)::integer FROM (SELECT repo FROM github_ko_discovery_staging WHERE state='pending' LIMIT 10001) p) AS pending,
+          (SELECT count(*)::integer FROM (SELECT repo FROM github_ko_discovery_staging WHERE state='pending' LIMIT ${KOREAN_STAGING_MAX_PENDING + 1}) p) AS pending,
           (SELECT count(*)::integer FROM github_ko_discovery_queries WHERE enabled AND last_error IS NOT NULL) AS "queryErrors",
           (SELECT to_char(min(due_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') FROM github_ko_discovery_queries WHERE enabled AND last_error IS NOT NULL) AS "nextRetryAt"
         FROM github_ko_discovery_control c WHERE c.id=1`);

@@ -38,10 +38,13 @@ describe('Oracle Korean discovery operator status', () => {
   });
   it('keeps progress and successful collection separate from liveness; bounds the pending count', () => {
     const value = buildKoreanDiscoveryStatus({ ...source, pending: 10001, queryErrors: 1, nextRetryAt: '2026-10-28T06:15:00Z' });
-    expect(value).toMatchObject({ pending: 10000, pendingTruncated: true, queryErrors: 1 });
+    expect(value).toMatchObject({ pending: 10001, pendingTruncated: false, queryErrors: 1 });
+    expect(buildKoreanDiscoveryStatus({ ...source, pending: 50001 })).toMatchObject({ pending: 50000, pendingTruncated: true });
     expect(value.blockers).toContain('query_retry');
     const html = renderToStaticMarkup(createElement(KoreanDiscoveryStatusCard, { read: { ok: true, value } }));
     expect(html).toContain('신규 수집 성공을 뜻하지 않습니다');
     expect(html).toContain('다음 재시도');
+    expect(html).toContain('한국어 판별 전 후보도 포함');
+    expect(html).toContain('대기 상한 50,000건');
   });
 });
