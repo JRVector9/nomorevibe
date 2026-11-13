@@ -1,6 +1,7 @@
 import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql } from "@/lib/llm/opencode-task-binding-sql";
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql } from "@/lib/llm/publication-classify-api-sql";
 import { gatewayHttpRejectedTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
+import { japaneseProductLogicalSql, japaneseProductMembersSql, japaneseProductDispatchSql, japaneseProductTerminalSql } from "@/lib/llm/japanese-product-translation-sql";
 import { createHash,randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync,copyFileSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync } from "node:fs";
@@ -111,6 +112,9 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
       model_capacity_requests_terminal_check: publicationApiTerminalSql };
     // 0174 appends the HTTP-rejected settlement branch as the next requests-terminal ordinal.
     const rejected: Record<string, string> = { model_capacity_requests_terminal_check: gatewayHttpRejectedTerminalSql };
+    const japanese: Record<string, string> = { model_capacity_requests_logical_check: japaneseProductLogicalSql,
+      model_capacity_requests_members_check: japaneseProductMembersSql, model_capacity_requests_dispatch_check: japaneseProductDispatchSql,
+      model_capacity_requests_terminal_check: japaneseProductTerminalSql };
     if(textLocalDirect[n]){
       await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected_0158 CHECK (${predicate})`);
       let live="";
@@ -118,14 +122,14 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0158`);}
       const expr=live.slice("CHECK (".length,-1);
       // 0163/0166/0168/0174 append exact ordinals after 0161; the complete historical predicate remains the first leaf.
-      const leaves = [expr, textLocalDirect[n], opencode[n], publication[n], opencodeTask[n], rejected[n]].filter(Boolean);
-      expect(after[n],`${n}: 0161/0163/0166/0168/0174 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
+      const leaves = [expr, textLocalDirect[n], opencode[n], publication[n], opencodeTask[n], rejected[n], japanese[n]].filter(Boolean);
+      expect(after[n],`${n}: 0161/0163/0166/0168/0174/0184 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
       continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
     try{
       const historical = (await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition;
-      const leaves = [historical.slice("CHECK (".length,-1), opencode[n], publication[n], opencodeTask[n], rejected[n]].filter(Boolean);
+      const leaves = [historical.slice("CHECK (".length,-1), opencode[n], publication[n], opencodeTask[n], rejected[n], japanese[n]].filter(Boolean);
       const expected = leaves.length > 1 ? `CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})` : historical;
       expect(after[n]).toBe(expected);
     }finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
