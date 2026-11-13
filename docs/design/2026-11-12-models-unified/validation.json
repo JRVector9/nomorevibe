@@ -1,0 +1,18 @@
+{
+  "at": "2026-11-12T12:55:37.918Z",
+  "mode": "standalone HTML, real Chromium, no production writes",
+  "passed": [
+    "single models destination; 9 models and 28 task slots; retired tasks menu removed",
+    "model attach → shared task editor → confirmation → model usage and home preview update together",
+    "status, duplicate, model, keyword and empty-state filters",
+    "task pool, per-model slot edit, pre-save impact and shared summary update",
+    "fallback/pool switching, retained draft on back, reserve setting and no save on cancel",
+    "assist dispatch/apply dependencies, confirmation and retained controls",
+    "concurrency control retains its values; import planning and obsolete-record cleanup remain available",
+    "feature migration map and compatibility link plan inside prototype",
+    "all 28 tasks preserved; external model settings remain separate and cannot save inactive ranks",
+    "no document or drawer overflow at 1440, 1024, 768, 390, 320; horizontal scrolling stays within data tables",
+    "dark/light themes, Escape dismiss, keyboard task search and reduced motion"
+  ],
+  "browserErrors": []
+}

@@ -1,0 +1,215 @@
+{
+  "updatedAt": "2026-11-13T00:18:53.292773+00:00",
+  "title": "모델·작업 통합 최종 검수",
+  "prHead": "be7c530f828612accba811c0472086e9e7749151",
+  "browserHead": "dda00e22f55a19bae801b845bf8e9a7d5977a851",
+  "browser": {
+    "passed": 85,
+    "total": 85,
+    "captures": 77,
+    "pageErrors": 0,
+    "horizontalOverflow": 0,
+    "followup": {
+      "passed": 4,
+      "total": 4,
+      "detail": "최종 버튼 보정의 개별 좌표·돌아가기·저장 동작 검증"
+    },
+    "detail": "85건 공통 검증 통과 후 마지막 한 줄 보정에 4건을 추가 검증했습니다. 최종 보정 외 파일은 동일합니다."
+  },
+  "database": {
+    "passed": 4331,
+    "skipped": 1,
+    "todo": 1
+  },
+  "pullRequests": [
+    {
+      "number": 930,
+      "label": "작업 목록·공유 편집기",
+      "status": "merged",
+      "statusLabel": "병합 완료",
+      "url": "https://github.com/JRVector9/nomorevibe/pull/930"
+    },
+    {
+      "number": 929,
+      "label": "모델 목록·상세 연결",
+      "status": "merged",
+      "statusLabel": "병합 완료",
+      "url": "https://github.com/JRVector9/nomorevibe/pull/929"
+    },
+    {
+      "number": 931,
+      "label": "통합 페이지·최종 조립",
+      "status": "merged",
+      "statusLabel": "병합 완료",
+      "url": "https://github.com/JRVector9/nomorevibe/pull/931"
+    }
+  ],
+  "ci": {
+    "status": "passed",
+    "statusLabel": "main 검사·이미지 검증 통과",
+    "detail": "5b058e83 · trusted push check 및 worker/web 이미지·출처 검증 완료",
+    "url": "https://github.com/JRVector9/nomorevibe/actions/runs/43260741899"
+  },
+  "reviews": {
+    "requestedModel": "opencode-go/deepseek-v4.1-flash",
+    "reasoningEffort": "high",
+    "items": [
+      {
+        "label": "화면·문구 비교",
+        "status": "passed",
+        "statusLabel": "최종 화면 검수 통과",
+        "detail": "기본 화면과 마지막 보강 확인 버튼 재검수 · 지적 0건",
+        "actualModel": {
+          "id": "deepseek-v4.1-flash",
+          "providerID": "opencode-go",
+          "variant": "high"
+        }
+      },
+      {
+        "label": "작업 배정·저장 논리",
+        "status": "passed",
+        "statusLabel": "최종 검수 통과",
+        "detail": "동일 최종 소스·화면 증거를 검수한 high 세션 · 지적 0건",
+        "actualModel": {
+          "id": "deepseek-v4.1-flash",
+          "providerID": "opencode-go",
+          "variant": "high"
+        }
+      },
+      {
+        "label": "모델·운영 설정 논리",
+        "status": "passed",
+        "statusLabel": "최종 검수 통과",
+        "detail": "운영 설정·저장 동작과 마지막 버튼 보정 검수 · 지적 0건",
+        "actualModel": {
+          "id": "deepseek-v4.1-flash",
+          "providerID": "opencode-go",
+          "variant": "high"
+        }
+      }
+    ]
+  },
+  "deployment": {
+    "status": "deployed",
+    "statusLabel": "운영 배포 완료 · OPEN",
+    "detail": "운영 반영 완료. 18앱·23컨테이너와 웹 6개 복제본의 소스·건강 상태를 포함한 독립 14개 검증이 모두 통과했습니다. OPEN 재개와 실제 M3 화면 4개 검증도 완료했습니다. 선행 정체 1건은 미확정 기록을 보존해 정식 점유 회수했습니다. 5·10·15분 관측 통과, 6시간 관측은 예정 시각 전이며 관측 프로세스 실행을 확인했습니다.",
+    "productionHead": "5b058e83",
+    "plannedHead": "5b058e83",
+    "selectedApps": 18,
+    "imagePrePullComplete": true,
+    "recovery": {
+      "requestIdPrefix": "f345aed7",
+      "state": "indeterminate",
+      "reviewClosed": false,
+      "auditId": 30897,
+      "eventId": 1508771,
+      "providerExitProven": false,
+      "businessSuccessClaimed": false
+    },
+    "verifiedApps": 18,
+    "capacityMode": "open",
+    "openAuditId": 30898,
+    "actualBrowserChecks": 4,
+    "actualBrowserErrors": 0,
+    "actualBrowserSettingsWrites": 0,
+    "observations": {
+      "passedOffsets": [
+        300,
+        600,
+        900
+      ],
+      "pendingOffsets": [
+        21600
+      ],
+      "pendingDueAt": "2026-11-13T05:37:35.493427Z",
+      "driverAliveConfirmedAt": "2026-11-13T00:12:02Z"
+    },
+    "health": {
+      "passed": 14,
+      "total": 14,
+      "apps": 18,
+      "containers": 23,
+      "webReplicas": 6,
+      "verifiedAt": "2026-11-13T00:18:05.763525+00:00"
+    }
+  },
+  "knownDifferences": [
+    "작업 확인: 실제 용량 경고를 보이므로 하단 버튼이 시안보다 35.59px 아래에 있습니다.",
+    "모델 설정 확인: 영향 자세히 항목으로 하단 버튼이 시안보다 31.59px 아래에 있습니다.",
+    "분류 작업의 최대 2건은 시안 예시입니다. 실제 화면은 작업·장비의 지원 한도를 따릅니다.",
+    "가져오기 0건만으로 현재 배정 완료를 단정하지 않습니다. 조회가 불확실하거나 빈 칸이 있으면 사실에 맞는 안내를 표시합니다.",
+    "추가 운영 제어와 저장 내역은 펼쳐 볼 수 있습니다. 모든 화면의 픽셀 일치를 주장하지 않습니다."
+  ],
+  "comparisons": [
+    {
+      "id": "overview-desktop",
+      "title": "전체 화면 · 데스크톱",
+      "viewport": "1440px",
+      "group": "overview",
+      "note": "모델 목록, 주요 작업 8개와 접힌 운영 설정을 함께 비교합니다.",
+      "reference": "report-assets/reference-1440.png",
+      "implementation": "report-assets/implementation-1440.png"
+    },
+    {
+      "id": "overview-mobile",
+      "title": "전체 화면 · 모바일",
+      "viewport": "390px",
+      "group": "overview",
+      "note": "작은 화면의 표·필터·운영 설정 배치를 비교합니다.",
+      "reference": "report-assets/reference-390.png",
+      "implementation": "report-assets/implementation-390.png"
+    },
+    {
+      "id": "model-confirm",
+      "title": "모델 설정 변경 확인",
+      "viewport": "390px",
+      "group": "confirmation",
+      "note": "이름과 동시 한도를 바꾼 실제 전후 미리보기입니다. 구현에는 추가 영향 항목이 있습니다.",
+      "reference": "report-assets/reference-390-model-settings-confirm.png",
+      "implementation": "report-assets/implementation-390-model-settings-confirm.png"
+    },
+    {
+      "id": "task-confirm",
+      "title": "작업 동시 실행 변경 확인",
+      "viewport": "390px",
+      "group": "confirmation",
+      "note": "첫 모델의 칸 수를 1→2로 변경했습니다. 구현은 현재 용량이 가득 찼다는 경고를 유지합니다.",
+      "reference": "report-assets/reference-390-task-pool-confirm.png",
+      "implementation": "report-assets/implementation-390-task-pool-confirm.png"
+    },
+    {
+      "id": "task-done",
+      "title": "작업 배정 저장 완료",
+      "viewport": "390px",
+      "group": "confirmation",
+      "note": "기존 저장 동작이 성공한 뒤 적용 배정과 홈 확인 동선을 보여줍니다.",
+      "reference": "report-assets/reference-390-task-pool-done.png",
+      "implementation": "report-assets/implementation-390-task-pool-done.png"
+    },
+    {
+      "id": "production-1440",
+      "title": "실제 운영 화면 · 데스크톱",
+      "viewport": "1440px",
+      "group": "overview",
+      "note": "M3 운영 주소에서 로그인 후 조회한 화면입니다. 사용량·모델 상태·최근 변경은 실제 데이터입니다.",
+      "reference": "report-assets/reference-1440.png",
+      "implementation": "report-assets/production-1440.png",
+      "implementationLabel": "실제 운영"
+    },
+    {
+      "id": "production-390",
+      "title": "실제 운영 화면 · 모바일",
+      "viewport": "390px",
+      "group": "overview",
+      "note": "M3 운영 주소에서 로그인 후 조회한 화면입니다. 사용량·모델 상태·최근 변경은 실제 데이터입니다.",
+      "reference": "report-assets/reference-390.png",
+      "implementation": "report-assets/production-390.png",
+      "implementationLabel": "실제 운영"
+    }
+  ],
+  "mergedHead": "5b058e8378ed7d6aa49531b83e6c242b8b9beb53",
+  "unit": {
+    "passed": 10859,
+    "skipped": 8
+  }
+}
