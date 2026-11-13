@@ -58,4 +58,3 @@ M3 적용기는 관리자 검색 신호 중 켜진 한국어 repository 검색�
 | 6 | `nomorevibe-core-consumer@github-ko-discovery.service`를 `--once`로 한 번 확인한 뒤 enable/start 한다. | 90초 이내 생존 관측, staging `language` 판정, `crawl.korean_applied` 로그, 탐색 진척 `korean` 줄 |
 
 되돌리기: 5단계의 `enabled=false`(관리자 화면) → 한국어 검색만 멈춘다. 6단계 unit stop/disable. 2~4단계 자격은 그대로 두거나 승인 후 회수한다.
-
