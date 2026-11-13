@@ -68,3 +68,30 @@ it('shares the five-minute insertion budget across concurrent producers at its f
   expect(outcomes.reduce((sum,o)=>sum+o.added,0)).toBe(1);
   expect(await db.select().from(crawlFrontier)).toHaveLength(250);
 });
+
+it('accepts a large commit page, persists only projected facts, and reuses the small cache',async()=>{
+  const input={...identity,kind:'commits' as const};
+  const original={items:Array.from({length:100},()=>({repository:{full_name:'a/large'},sha:'a'.repeat(40),
+    commit:{message:'sensitive prose '.repeat(2100)+'\n\nCo-authored-by: Claude <personal@example.com>'}})),total_count:100};
+  expect(Buffer.byteLength(JSON.stringify(original))).toBeGreaterThan(2*1024*1024);
+  const load=vi.fn(async()=>({ok:true as const,value:original}));
+  expect(await sharedDiscoverySearch(input,load)).toMatchObject({ok:true,cached:false});
+  const [row]=await db.select().from(githubDiscoveryPages).where(eq(githubDiscoveryPages.key,discoveryPageKey(input)));
+  const stored=JSON.stringify(row.result);
+  expect(Buffer.byteLength(stored)).toBeLessThan(64*1024);
+  expect(stored).not.toContain('sensitive prose');expect(stored).not.toContain('personal@example.com');
+  expect(stored).toContain('Claude');
+  expect(await sharedDiscoverySearch(input,load)).toMatchObject({ok:true,cached:true});
+  expect(load).toHaveBeenCalledTimes(1);
+});
+
+it('releases an oversized raw commit claim without persisting the original body',async()=>{
+  const input={...identity,kind:'commits' as const};
+  const value={items:[{commit:{message:'x'.repeat(8*1024*1024)}}]};
+  expect(await sharedDiscoverySearch(input,async()=>({ok:true,value}))).toMatchObject({
+    ok:false,error:{kind:'response_too_large',stage:'cache_input',limitBytes:8*1024*1024},
+  });
+  const [row]=await db.select().from(githubDiscoveryPages).where(eq(githubDiscoveryPages.key,discoveryPageKey(input)));
+  expect(row.result).toBeNull();expect(row.state).toBe('running');
+  expect(await sharedDiscoverySearch(input,async()=>({ok:true,value:{items:[]}}))).toMatchObject({ok:true,cached:false});
+});

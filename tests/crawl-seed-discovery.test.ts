@@ -1,6 +1,6 @@
 import { recordDiscoveryProgress } from '@/lib/crawl/discovery-progress';
 import { createHash } from 'node:crypto';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 
@@ -281,4 +281,134 @@ it('preserves remaining query windows when an Oracle-owned query leaves the M3 s
   const next=await seedFrontier(context(first));
   expect(mocks.search.mock.calls[0][0].query).toContain(`${parked.window.from}..${parked.window.to}`);
   expect(next.cursor?.cycleWindow).toEqual(first.cycleWindow);
+});
+
+
+describe('independent query cursors',()=>{
+  const old={from:'2026-10-01T00:00:00Z',to:'2026-10-04T00:00:00Z'};
+  const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
+  const legacy=():SeedCursor=>{
+    const discover=mocks.settings!.discover;
+    const querySignatures=Object.fromEntries(discover.queries.map(q=>[q.label,hash(q.kind+'\0'+q.query+'\0'+discover.windowDays)]));
+    return {signal:'신호0',page:2,window:old,cycleWindow:old,pendingWindows:[],states:{},doneSignals:['신호1'],
+      configHash:hash(JSON.stringify({queries:discover.queries.map(q=>[q.label,q.kind,q.query]),sort:discover.sort,windowDays:discover.windowDays})),
+      queryHash:querySignatures['신호0'],querySignatures,searchSort:discover.sort};
+  };
+  beforeEach(()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-13T00:00:00Z'));
+    mocks.settings!.discover={...mocks.settings!.discover,queries:[signal(0),signal(1)],windowDays:3,pagesPerTick:2};
+  });
+  afterEach(()=>vi.useRealTimers());
+
+  it('migrates a completed v2 peer to its next dates while a failing query keeps the exact page',async()=>{
+    mocks.search.mockImplementation(async p=>p.query.startsWith('q0 ') ? {ok:false,error:{kind:'invalid_response'}} : page([]));
+    const tick=context(legacy());
+    let cursor=(await seedFrontier(tick)).cursor!;
+    for(let i=0;i<3;i++) cursor=(await seedFrontier(context(cursor))).cursor!;
+    expect(mocks.search.mock.calls.filter(([p])=>p.query.startsWith('q0 '))).toHaveLength(1);
+    expect(mocks.search.mock.calls.some(([p])=>p.query.includes('2026-10-04T00:00:00Z..2026-10-07T00:00:00Z'))).toBe(true);
+    expect(cursor.states?.['신호0']).toMatchObject({page:2,window:old,cycleWindow:old,retryKind:'invalid_response',failures:1});
+    expect(cursor.cursorVersion).toBe(3);
+  });
+
+  it('keeps a v2 partial page item index through migration and resumes it before another HTTP page',async()=>{
+    const cursor=legacy();
+    cursor.pendingPage={items:['one','two'].map(n=>({repo:'acme/'+n,sha:null,attributions:[null],attributionLimited:false})),
+      itemIndex:1,size:2,incomplete:false,saturated:false,capped:false};
+    mocks.search.mockResolvedValue(page([]));
+    await seedFrontier(context(cursor));
+    expect(mocks.enqueue.mock.calls[0][0].map((item:{repo:string})=>item.repo)).toEqual(['acme/two']);
+    expect(mocks.search.mock.calls.every(([p])=>!p.query.includes('2026-10-01T00:00:00Z..2026-10-04T00:00:00Z'))).toBe(true);
+  });
+
+  it('preserves the disabled active query, including its partial page, and resumes after re-enabling',async()=>{
+    const cursor=legacy();
+    cursor.pendingPage={items:[{repo:'acme/saved',sha:null,attributions:[null],attributionLimited:false}],itemIndex:0,size:1,incomplete:false,saturated:false,capped:false};
+    mocks.settings!.discover.queries[0].enabled=false;
+    mocks.search.mockResolvedValue(page([]));
+    const paused=(await seedFrontier(context(cursor))).cursor!;
+    expect(paused.states?.['신호0']).toMatchObject({page:2,pendingPage:{itemIndex:0}});
+    mocks.enqueue.mockClear();mocks.search.mockClear();
+    mocks.settings!.discover.queries[0].enabled=true;
+    await seedFrontier(context(paused));
+    expect(mocks.enqueue.mock.calls.flatMap(([items])=>items).map(item=>item.repo)).toContain('acme/saved');
+    expect(mocks.search.mock.calls.every(([p])=>!p.query.startsWith('q0 '))).toBe(true);
+  });
+
+  it('splits an oversized page into inclusive disjoint child ranges from page one',async()=>{
+    mocks.settings!.discover.pagesPerTick=1;
+    const cursor=legacy();cursor.pendingWindows=[{from:'2026-09-01T00:00:00Z',to:'2026-09-02T00:00:00Z'}];
+    mocks.search.mockResolvedValue({ok:false,error:{kind:'response_too_large',stage:'body',limitBytes:8388608,observedBytes:8388609}});
+    const next=(await seedFrontier(context(cursor))).cursor!;
+    const saved=next.states!['신호0'];
+    expect(saved.page).toBe(1);
+    expect(saved.window.from).toBe(old.from);
+    expect(saved.pendingWindows[0].to).toBe(old.to);
+    expect(Date.parse(saved.pendingWindows[0].from)-Date.parse(saved.window.to)).toBe(1000);
+    expect(saved.pendingWindows[1]).toEqual(cursor.pendingWindows[0]);
+  });
+
+  it('retains an unsplittable oversized second and lets the peer progress',async()=>{
+    const cursor=legacy();cursor.window={from:old.from,to:old.from};
+    mocks.search.mockImplementation(async p=>p.query.startsWith('q0 ') ? {ok:false,error:{kind:'response_too_large',stage:'body',limitBytes:8388608,observedBytes:8388609}} : page([]));
+    const next=(await seedFrontier(context(cursor))).cursor!;
+    expect(next.states?.['신호0']).toMatchObject({page:2,window:cursor.window,retryKind:'response_too_large'});
+    expect(mocks.search.mock.calls[1][0].query).toContain('2026-10-04T00:00:00Z');
+  });
+
+  it('backs off only the failing query for 1, 2, 4, 8, then 15 minutes',async()=>{
+    mocks.settings!.discover.queries=[signal(0)];mocks.settings!.discover.pagesPerTick=1;
+    mocks.search.mockResolvedValue({ok:false,error:{kind:'transport'}});
+    let cursor:SeedCursor|null=null;
+    for(const minutes of [1,2,4,8,15,15]) {
+      cursor=(await seedFrontier(context(cursor))).cursor!;
+      const delay=Date.parse(cursor.retryAt!)-Date.now();
+      expect(delay).toBe(minutes*60000);
+      vi.advanceTimersByTime(delay);
+    }
+  });
+
+  it.each(['rate_limited','auth_unavailable'])('keeps %s a shared wait without attempting the peer',async kind=>{
+    const resetAt=new Date(Date.now()+15*60000);
+    mocks.search.mockResolvedValue({ok:false,error:{kind,reason:'expired',resetAt}});
+    const first=(await seedFrontier(context(legacy()))).cursor!;
+    await seedFrontier(context(first));
+    expect(mocks.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains every cursor when all search signals are disabled',async()=>{
+    const prior=legacy();
+    mocks.settings!.discover.queries.forEach(q=>{q.enabled=false;});
+    const disabled=await seedFrontier(context(prior));
+    expect(disabled.cursor).toEqual(prior);
+    expect(mocks.search).not.toHaveBeenCalled();
+  });
+
+  it('keeps the saturated incomplete queue and the current window without blocking a peer',async()=>{
+    const cursor=legacy();
+    cursor.window={from:old.from,to:old.from};
+    cursor.incompleteWindows=Array.from({length:128},(_,i)=>({signal:'신호0',
+      window:{from:new Date(i*1000).toISOString(),to:new Date(i*1000).toISOString()},retryAt:new Date(Date.now()+3600000).toISOString()}));
+    mocks.search.mockImplementation(async p=>p.query.startsWith('q0 ') ? page([],{incomplete_results:true}) : page([]));
+    const next=(await seedFrontier(context(cursor))).cursor!;
+    expect(next.incompleteWindows).toHaveLength(128);
+    expect(next.states?.['신호0']).toMatchObject({window:cursor.window,page:1,retryAt:expect.any(String)});
+    expect(mocks.search.mock.calls[1][0].query).toContain('2026-10-04T00:00:00Z');
+  });
+
+  it('replays a disabled cursor from page one after a sort change while preserving its windows',async()=>{
+    const cursor=legacy();
+    cursor.pendingWindows=[{from:'2026-09-01T00:00:00Z',to:'2026-09-02T00:00:00Z'}];
+    mocks.settings!.discover.queries[0].enabled=false;
+    mocks.search.mockResolvedValue(page([]));
+    let saved=(await seedFrontier(context(cursor))).cursor!;
+    mocks.settings!.discover.sort='recent';
+    saved=(await seedFrontier(context(saved,()=>false))).cursor!;
+    mocks.settings!.discover.queries[0].enabled=true;
+    mocks.search.mockClear();
+    for(let i=0;i<2;i++) saved=(await seedFrontier(context(saved))).cursor!;
+    const resumed=mocks.search.mock.calls.find(([p])=>p.query.startsWith('q0 ') && p.query.includes(`${old.from}..${old.to}`))?.[0];
+    expect(resumed).toMatchObject({page:1,sort:'recent'});
+    expect(resumed.query).toContain(`${old.from}..${old.to}`);
+  });
 });

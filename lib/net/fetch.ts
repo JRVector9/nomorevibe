@@ -125,11 +125,13 @@ async function cancelUnusedBody(response: Response): Promise<boolean> {
 export async function readBodyStrictlyCapped(
   response: Response,
   maxBytes: number,
+  onExceeded?: (bytes: number) => void,
 ): Promise<Buffer | null> {
   const declared = response.headers.get("content-length");
   if (declared !== null) {
     const bytes = Number(declared);
     if (Number.isFinite(bytes) && bytes > maxBytes) {
+      onExceeded?.(bytes);
       await cancelUnusedBody(response);
       return null;
     }
@@ -144,6 +146,7 @@ export async function readBodyStrictlyCapped(
     if (done) break;
     total += value.length;
     if (total > maxBytes) {
+      onExceeded?.(total);
       await reader.cancel().catch(() => {});
       return null;
     }

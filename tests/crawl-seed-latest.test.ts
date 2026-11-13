@@ -111,6 +111,11 @@ it('preserves unfinished latest split windows across long downtime without movin
   vi.advanceTimersByTime(7*86_400_000);
   mocks.search.mockClear();
   cursor = (await seedFrontier(ctx(cursor))).cursor!;
+  expect(mocks.search.mock.calls.some(([p]) => range(p.query) === '2026-10-05T00:00:00Z..2026-10-08T00:00:00Z')).toBe(true);
+  expect(cursor.latestScan?.window).toEqual({from:'2026-09-29T12:00:01Z',to:'2026-10-01T00:00:00Z'});
+  expect(cursor.latestHead?.cycleWindow?.to).toBe('2026-10-08T00:00:00Z');
+  expect(cursor.cycleWindow).toEqual(oldWindow);
+  cursor=(await seedFrontier(ctx(cursor))).cursor!;
   expect(mocks.search.mock.calls.some(([p]) => range(p.query) === '2026-09-29T12:00:01Z..2026-10-01T00:00:00Z')).toBe(true);
   expect(cursor.cycleWindow).toEqual(oldWindow);
 });
@@ -313,4 +318,39 @@ it('retains unfinished latest ranges when the configured sort changes to relevan
   const next = (await seedFrontier(ctx(first))).cursor!;
   expect(next.latestScan?.cycleWindow).toEqual(first.latestScan?.cycleWindow);
   expect(mocks.search.mock.calls.some(([p]) => p.sort === 'relevance' && p.page === 1 && range(p.query).includes('2026-10-01'))).toBe(true);
+});
+
+it('saves the old latest cursor and fresh head before side effects, and does not mark the head as complete coverage',async()=>{
+  let cursor=await oldCursor();
+  mocks.settings!.discover.pagesPerTick=2;
+  mocks.search.mockResolvedValue(page(true));
+  cursor=(await seedFrontier(ctx(cursor))).cursor!;
+  const prior=structuredClone(cursor.latestScan);
+  vi.advanceTimersByTime(7*86400000);
+  let saved:SeedCursor|null=null;
+  cursor.latestTurn=true;
+  mocks.record.mockRejectedValueOnce(new Error('write unavailable'));
+  await expect(seedFrontier({...ctx(cursor),save:async value=>{saved=structuredClone(value);}})).rejects.toThrow('write unavailable');
+  expect(saved).toMatchObject({latestScan:prior,latestHead:{pendingPage:{itemIndex:0}}});
+  mocks.record.mockResolvedValue(undefined);
+  vi.mocked(recordDiscoveryProgress).mockClear();
+  mocks.search.mockResolvedValue(page(false));
+  await seedFrontier(ctx(saved));
+  expect(vi.mocked(recordDiscoveryProgress).mock.calls.filter(([input])=>input.completedThrough === '2026-10-08T00:00:00Z')).toHaveLength(0);
+});
+
+it('does not drop the indexing gap when a previously drained latest cursor is stale',async()=>{
+  let cursor=await oldCursor();
+  mocks.settings!.discover.pagesPerTick=2;
+  mocks.search.mockResolvedValue(page(false));
+  cursor=(await seedFrontier(ctx(cursor))).cursor!;
+  expect(cursor.latestScan?.waiting).toBe(true);
+  vi.advanceTimersByTime(7*86400000);
+  cursor.latestTurn=true;
+  mocks.search.mockClear();
+  cursor=(await seedFrontier(ctx(cursor))).cursor!;
+  expect(cursor.latestHead?.cycleWindow?.to).toBe('2026-10-08T00:00:00Z');
+  expect(cursor.latestScan?.cycleWindow?.to).toBe('2026-10-01T00:00:00Z');
+  cursor=(await seedFrontier(ctx(cursor))).cursor!;
+  expect(mocks.search.mock.calls.some(([p])=>range(p.query) === '2026-09-30T23:55:00Z..2026-10-08T00:00:00Z')).toBe(true);
 });
