@@ -5,6 +5,7 @@ import { dbErrorTag } from "@/lib/db/error-fields";
 import type { JobContext } from "@/lib/jobs/runner";
 import { JobLeaseLostError } from "@/lib/jobs/control";
 import { DrWriterFencedError } from "./dr/epoch";
+import { markExitedCallerIndeterminate } from "./dr/exited-caller";
 import { markOwnerGoneIndeterminate } from "./dr/owner-gone";
 import { OWNER_GONE_MAX_REQUESTS, OWNER_GONE_QUIET_MS } from "./dr/owner-gone-contract";
 
@@ -43,8 +44,9 @@ async function candidatesAfter(after: string, through: string | null): Promise<{
 }
 
 /** A fair, bounded hint scan followed by the existing locked owner-gone judgement.
- * Age selects candidates only. Live holds, recent owner activity or missing positive
- * exit/successor evidence keep the dispatch intact, however long it has taken.
+ * Age selects candidates only. A complete dispatch-time child-group exit proves
+ * caller loss even under a live supervisor; otherwise the unchanged whole-owner
+ * check requires quiet time, no live holds and positive exit/successor evidence.
  * Marks remain unreviewed indeterminate; no native terminal, release or business result is invented.
  */
 export async function markAutomaticOwnerGone(ctx: JobContext<ModelCapacityReclaimCursor>, operator: string): Promise<ModelCapacityReclaimCursor | null> {
@@ -69,6 +71,16 @@ export async function markAutomaticOwnerGone(ctx: JobContext<ModelCapacityReclai
   for (const candidate of candidates) {
     if (!ready()) break;
     try {
+      // A child can exit while its supervisor keeps the same owner boot and lease.
+      // Check positive per-dispatch group exits before the whole-owner absence path.
+      const caller = await markExitedCallerIndeterminate({ requestIds: [candidate.requestId], operator,
+        allowedOwnerInstanceIds: SINGLETON_OWNERS, jobLease: lease }, true);
+      if (caller.rows[0]?.kind === "marked") {
+        marked++; scanned++; after = candidate.queueOrdinal;
+        ctx.log("model_capacity.caller_exited_checked", { requestId: candidate.requestId, marked: true });
+        if (ready()) await ctx.save({ ...original, ownerGoneAfterQueueOrdinal: after, ownerGoneThroughQueueOrdinal: through });
+        continue;
+      }
       const result = await markOwnerGoneIndeterminate({ requestIds: [candidate.requestId], operator,
         allowedOwnerInstanceIds: SINGLETON_OWNERS, jobLease: lease }, true);
       const row = result.rows[0];

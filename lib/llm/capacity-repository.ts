@@ -997,7 +997,7 @@ export async function closeModelCapacityUnknownReview(value: { requestId: string
 }
 
 export type OwnerGoneCandidate = Readonly<{ requestId: string; queueOrdinal: number; owner: Readonly<{ instanceId: string; bootId: string }>;
-  state: ModelCapacityState; providerBudgetId: string; dispatchAt: string | null; now: string }>;
+  state: ModelCapacityState; providerBudgetId: string; dispatchAt: string | null; now: string; bindingKind: string | null; bindingHash: string | null }>;
 /** owner_gone 근거가 이 행에 묶이는 최소 모양(전체 스키마는 lib/operations/dr/owner-gone.ts). */
 export type OwnerGoneBoundEvidence = Readonly<{ kind: "owner_gone"; requestId: string; owner: Readonly<{ instanceId: string; bootId: string }>;
   fromState: "dispatched"; dispatchAt: string; evaluatedAt: string }>;
@@ -1013,6 +1013,18 @@ export type OwnerGoneMarkResult<E> = { kind: "marked"; evidence: E } | { kind: "
  */
 export async function markOwnerGoneDispatchIndeterminate<E extends OwnerGoneBoundEvidence>(tx: ProductTransaction, requestId: string,
   verify: (candidate: OwnerGoneCandidate) => Promise<E | { blocked: string }>): Promise<OwnerGoneMarkResult<E>> {
+  return markProcessExitIndeterminate(tx, requestId, "owner_gone", verify);
+}
+
+type ProcessExitEvidence = Omit<OwnerGoneBoundEvidence, "kind"> & { kind: "owner_gone" | "caller_process_exited" };
+/** A surviving supervisor is not a surviving caller. The verifier must prove the dispatch's child groups exited. */
+export async function markExitedCallerDispatchIndeterminate<E extends ProcessExitEvidence & { kind: "caller_process_exited" }>(
+  tx: ProductTransaction, requestId: string, verify: (candidate: OwnerGoneCandidate) => Promise<E | { blocked: string }>): Promise<OwnerGoneMarkResult<E>> {
+  return markProcessExitIndeterminate(tx, requestId, "caller_process_exited", verify);
+}
+
+async function markProcessExitIndeterminate<E extends ProcessExitEvidence>(tx: ProductTransaction, requestId: string, kind: E["kind"],
+  verify: (candidate: OwnerGoneCandidate) => Promise<E | { blocked: string }>): Promise<OwnerGoneMarkResult<E>> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const id = z.uuid().parse(requestId);
   const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, id)).for("update");
@@ -1023,11 +1035,16 @@ export async function markOwnerGoneDispatchIndeterminate<E extends OwnerGoneBoun
     FROM model_capacity_requests r WHERE r.request_id = ${row.requestId}::uuid`);
   const owner = Object.freeze({ instanceId: row.ownerInstanceId, bootId: row.ownerBootId });
   const verdict = await verify(Object.freeze({ requestId: row.requestId, queueOrdinal: row.queueOrdinal, owner, state: row.state,
-    providerBudgetId: row.providerBudgetId, dispatchAt: clock.dispatch_at, now: clock.now }));
+    providerBudgetId: row.providerBudgetId, dispatchAt: clock.dispatch_at, now: clock.now,
+    bindingKind: row.dispatchBinding && typeof row.dispatchBinding === "object" && "kind" in row.dispatchBinding
+      && typeof row.dispatchBinding.kind === "string" ? row.dispatchBinding.kind : null, bindingHash: row.dispatchBindingHash }));
   if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
-  if (verdict.kind !== "owner_gone" || verdict.requestId !== row.requestId || verdict.owner.instanceId !== owner.instanceId
+  if (verdict.kind !== kind || verdict.requestId !== row.requestId || verdict.owner.instanceId !== owner.instanceId
     || verdict.owner.bootId !== owner.bootId || verdict.fromState !== "dispatched" || verdict.dispatchAt !== clock.dispatch_at
     || verdict.evaluatedAt !== clock.now) fail("model_capacity_owner_gone_evidence_mismatch");
+  if (verdict.kind === "caller_process_exited" && (!("bindingHash" in verdict) || verdict.bindingHash !== row.dispatchBindingHash
+    || !("bindingKind" in verdict) || !row.dispatchBinding || typeof row.dispatchBinding !== "object"
+    || !("kind" in row.dispatchBinding) || verdict.bindingKind !== row.dispatchBinding.kind)) fail("model_capacity_caller_exit_binding_mismatch");
   const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
     .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, "dispatched"))).returning();
   if (!changed) fail("model_capacity_owner_gone_state_changed");

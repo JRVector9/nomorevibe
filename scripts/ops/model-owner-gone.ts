@@ -10,10 +10,12 @@ import { parseDatabaseUrl } from './dr/promotion';
 
 export type OwnerGoneCliCommand =
   | { command: 'mark'; apply: boolean; requestIds: string[]; operator: string; quietMs: number }
+  | { command: 'mark-exited-caller'; apply: boolean; requestIds: string[]; operator: string }
   | { command: 'close-review'; apply: boolean; requestIds: string[]; operator: string; note: string };
 
 const ALLOWED: Record<OwnerGoneCliCommand['command'], readonly string[]> = {
   mark: ['request', 'operator', 'quiet-minutes', 'apply'],
+  'mark-exited-caller': ['request', 'operator', 'apply'],
   'close-review': ['request', 'operator', 'note', 'apply'],
 };
 const fail = (code: string): never => { throw new Error(code); };
@@ -42,6 +44,7 @@ export function parseOwnerGoneCliArgs(args: readonly string[]): OwnerGoneCliComm
   const operator = identity(120).safeParse(one('operator'));
   if (!operator.success) fail('owner_gone_cli_invalid_operator');
   const apply = options.has('apply');
+  if (name === 'mark-exited-caller') return { command: name, apply, requestIds, operator: operator.data! };
   if (name === 'mark') {
     const minutes = options.has('quiet-minutes') ? Number(one('quiet-minutes')) : OWNER_GONE_QUIET_MS.default / 60_000;
     const quietMs = minutes * 60_000;
@@ -71,6 +74,11 @@ export async function ownerGoneCliMain(args: readonly string[], io: Io = { stdin
       io.stdout(`${JSON.stringify({ command: command.command, dryRun: !command.apply, blocked, result })}\n`);
       return blocked ? 3 : 0;
     };
+    if (command.command === 'mark-exited-caller') {
+      const { markExitedCallerIndeterminate } = await import('@/lib/operations/dr/exited-caller');
+      const result = await markExitedCallerIndeterminate(command, command.apply);
+      return out(result, result.rows.some(row => row.kind !== 'marked'));
+    }
     if (command.command === 'mark') {
       const { markOwnerGoneIndeterminate } = await import('@/lib/operations/dr/owner-gone');
       const result = await markOwnerGoneIndeterminate(command, command.apply);
