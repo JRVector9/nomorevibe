@@ -8,7 +8,7 @@ PR: https://github.com/JRVector9/nomorevibe/pull/935 · 격리 브랜치 `xaegis
 
 요청 전송은 00:04:45.742 UTC, 그때 호출할 수 있었던 child seq1(run `ad0e0a40…`, PID 51)의 `group_exited`는 00:05:17.815 UTC다. 이후 seq2(PID 3702)는 00:05:17.845 UTC부터 시작했다. 하위 워커 교체가 메모리의 overdue 추적을 잃게 했으나 상위 감독은 같은 owner boot로 역할 lease를 계속 갱신했다. 기존 owner-gone의 live-lease 거절은 올바르지만, 이 경우를 해결할 별도 경로가 없었다.
 
-작업 중 05:44:47 UTC에 기존 seq2도 종료됐으며 text 컨테이너가 다른 작업에 의해 교체됐다. 이 작업에서 재시작한 것이 아니다. 05:46 UTC 재조회에도 해당 요청은 dispatched, 접수는 OPEN, epoch1/revision36이었다. 이 변화를 감지해 이전 컨테이너를 대상으로 쓰기를 실행하지 않았다.
+작업 중 05:44:47 UTC에 기존 seq2도 종료됐으며 text 컨테이너 교체를 관측했다. 교체 원인은 이번에 확정하지 않았으며, 이 작업에서 재시작한 것은 아니다. 05:46 UTC 재조회에도 해당 요청은 dispatched, 접수는 OPEN, epoch1/revision36이었다. 이 변화를 감지해 이전 컨테이너를 대상으로 쓰기를 실행하지 않았다.
 
 ## 변경과 선택
 
@@ -33,4 +33,13 @@ Node24.18.0에서 범위 단위 3파일 37건 통과. 새 전용 PostgreSQL17/pg
 
 ## 운영 결과
 
-복구 실행 전. 앱 배포·병합·capacity mode/정책/한도 변경 없음.
+코드 커밋 `bd588d22`의 소스를 별도 임시 경로에 고정해 운영 이미지와 package-lock 일치를 확인한 뒤 일회성 CLI로 실행했다. 앱이 실행 중인 `/app` 소스나 환경 파일은 바꾸지 않았다.
+
+- 05:51:34 UTC dry-run EXIT0, blocked=false, seq1/PID51/runId와 00:05:17.815 UTC 실제 종료 기록 일치.
+- 05:51:52 UTC apply **한 번** EXIT0. 요청 한 건 `dispatched → indeterminate`. 감사 ID **31006**, action `model-capacity-caller-exited`.
+- 05:52:03 UTC 독립 읽기에서 전환·event·감사 확인. binding hash 보존, terminal/settled_at NULL. 해당 요청은 활성 reserved/dispatched 목록에 없다. 다른 활성 요청은 최근 진행 중인 별개 작업이다.
+- 접수 **OPEN, epoch1/revision36**, 현재 text boot `79a0402f…`와 release `5b058e83` 유지. 공개 `/api/health`도 status=ok, 같은 release를 반환했다.
+- native 엔진의 실제 생성 종료나 업무 성공을 확정하지 않았으며 사람 검토 대상인 indeterminate 기록을 닫지 않았다. 기존 unknown hold 정책 그대로다.
+- 앱 배포·병합·capacity mode/정책/한도·자격 정보 변경은 없다. 재발 방지 자동 경로는 PR 병합 후 정상 릴리스에 반영해야 한다. 일반 탐색 개선 main `25824182`의 실제 배포·효과 측정은 별도다.
+
+운영 SQL 조회 두 번에서 잘못 지정한 열로 읽기가 실패했고 수정 후 재조회했다. 복구 dry-run 첫 원격 셸 구성은 따옴표 오류로 DB 실행 전에 실패했으며, 고정 인자 배열/셸 인용을 쓰는 실행기로 바꿨다. 실제 apply는 한 번뿐이며 한 번 실행 표식을 보존한다. 테스트 전용 컨테이너는 검증 후 중지한다.
