@@ -73,11 +73,22 @@ describe("console home", () => {
 
   it("draws the flow table from the conveyor, with the after-publish group", () => {
     expect(html).toContain('<table class="ch-table"><colgroup><col/><col style="width:132px"/>');
-    expect(plain).toContain("AI 1차 거의 멈춤 857 3 /시간");
+    expect(plain).toContain("AI 1차 방식 미확인 거의 멈춤 857 3 /시간");
     expect(html).toContain('<span class="ch-st" data-tone="bad"><i aria-hidden="true"></i>거의 멈춤</span>');
     expect(plain).toContain("공개 게시 중 — 6 /시간 공개 78,919");
-    expect(plain).toMatch(/공개 뒤 한국어 소개 일감 없음 0 0 \/5분 — 공개 번역 쌓임 187,380 17 \/5분 — 사유 번역 쌓임 78,863 21 \/5분 — 소개 검수 멈춤 2,143 0 \/5분 —/);
+    expect(plain).toMatch(/공개 뒤 한국어 소개 방식 미확인 일감 없음 0 0 \/5분 — 공개 번역 방식 미확인 쌓임 187,380 17 \/5분 — 사유 번역 방식 미확인 쌓임 78,863 21 \/5분 — 소개 검수 별도 설정 멈춤 2,143 0 \/5분 —/);
     expect(html.match(/<svg class="ch-spark"/g)).toHaveLength(7);
+  });
+
+  it("shows saved execution modes next to stage links without changing the links or flow status", () => {
+    const data = consoleFixtureRead();
+    const current = text(renderToStaticMarkup(<ConsoleHome csrf={null} data={{ ...data, executions: [
+      { task: "reason-translate", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null, members: [], reserveRanks: false },
+    ] }} />));
+    expect(current).toContain("사유 번역 동시에 쌓임 78,863");
+    expect(current).toContain("탐색 흐름");
+    expect(current).toContain("방식은 저장된 설정이며, 실제 동시 호출 수를 뜻하지 않습니다.");
+    expect(html).toContain('title="카테고리 분류: 동시에. 저장된 실행 방식이며 실제 동시 호출 수를 뜻하지 않습니다."');
   });
 
   it("puts the change watch under the flow and the stage panel after the grid", () => {
