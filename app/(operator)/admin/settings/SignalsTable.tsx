@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
+import { isKoreanRepositoryQuery } from "@/lib/crawl/korean-discovery/contracts";
 import { buttonClass, chipClass, SettingsCard, Switch } from "./Switch";
 
 type Query = CrawlSettings["discover"]["queries"][number];
@@ -94,6 +96,9 @@ export function SignalsTable({ id, discover, yields }: { id: string; discover: C
                   <td className={`${cell} min-w-[240px]`}>
                     <input name={`query.${i}.label`} defaultValue={q.label} placeholder="새 신호 이름" aria-label="신호 이름" className={`${bare} font-semibold`} />
                     <input name={`query.${i}.query`} defaultValue={q.query} placeholder="검색 문자열" aria-label="검색 문자열" className={`${bare} font-mono text-[13px] text-fg-2`} />
+                    {q.label && isKoreanRepositoryQuery(q) && (
+                      <Link prefetch={false} href="/admin/status#oracle-korean-discovery" className="px-2 text-[13px] text-accent-ink">Oracle 한국어 탐색이 검색합니다</Link>
+                    )}
                   </td>
                   <td className={cell}>
                     <select name={`query.${i}.kind`} defaultValue={q.kind} aria-label="검색 종류"
@@ -132,6 +137,7 @@ export function SignalsTable({ id, discover, yields }: { id: string; discover: C
           <code className="mx-1 font-mono">topic:</code>같은 레포 수식어를 찾습니다. 레포 신호는 배포 주소가 없는 레포를 넣지 않습니다.
           “AI 흔적”을 켠 신호는 레포 루트의 CLAUDE.md·.cursor 같은 파일이나 최근 커밋 표기가 없으면 들여보내지 않습니다 — 검색어가
           AI 사용을 말하지 않는 신호(한국어 README 등)에 켭니다. 이름이나 검색 문자열을 지우면 그 신호가 빠집니다.
+          검색 문자열에 한글이 든 레포 신호는 M3 일반 수집이 검색하지 않고 Oracle 한국어 탐색에 넘깁니다 — 여기서 켜고 끄면 Oracle이 따릅니다.
           7일 수집·발행률은 지난 7일 이 신호로 들어온 후보와 그중 발행된 비율입니다.
         </p>
       </details>

@@ -10,6 +10,18 @@ export type KoreanCursor = z.infer<typeof KoreanCursorSchema>;
 export const KOREAN_QUERY_LEASE_MS = 120_000;
 export const KOREAN_UNKNOWN_RETRY_MS = 15 * 60_000;
 export const KOREAN_CYCLE_WAIT_MS = 60 * 60_000;
+
+/** A repository search whose query text contains Hangul is a Korean-only search. Oracle is its only runner. */
+export function isKoreanRepositoryQuery(query: { kind: string; query: string }): boolean {
+  return query.kind === 'repositories' && /[가-힣]/.test(query.query);
+}
+/**
+ * M3 general discovery never runs Korean-only searches, whether Oracle is on or off.
+ * The admin list still owns them; the Oracle consumer receives the enabled ones via synchronizeKoreanQueries.
+ */
+export function m3DiscoveryQueries<Q extends { kind: string; query: string }>(queries: readonly Q[]): Q[] {
+  return queries.filter(query => !isKoreanRepositoryQuery(query));
+}
 const iso = (ms: number) => new Date(ms).toISOString().replace('.000Z', 'Z');
 
 export function koreanSearchQuery(query: string, window: SearchWindow): string {

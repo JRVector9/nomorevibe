@@ -1,4 +1,3 @@
-vi.mock('@/lib/crawl/korean-discovery/repository', () => ({ m3DiscoveryQueries: async (settings: {discover:{queries:unknown[]}}) => settings.discover.queries }));
 import { recordDiscoveryProgress } from '@/lib/crawl/discovery-progress';
 import { createHash } from 'node:crypto';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -46,6 +45,21 @@ it('레포 검색: 배포 URL 없는 레포는 프론티어에 넣지 않는다'
   await seedFrontier(context());
   const enqueued = mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo);
   expect(enqueued).toEqual(['acme/deployed']);
+});
+
+/** 한국어 전용 검색은 Oracle 한국어 탐색만 돈다. M3 일반 수집은 켜져 있어도 검색하지 않는다. */
+it('한국어 전용 레포 검색어는 M3 일반 수집에서 검색하지 않는다', async () => {
+  mocks.settings!.discover.queries = [
+    {label:'한국어 README (AI 흔적 필요)',kind:'repositories',query:'있습니다 in:readme',enabled:true,builder:null,priority:500,requireEvidence:true},
+    {...topicQuery},
+  ];
+  mocks.search.mockResolvedValue(page([]));
+  let cursor = null as SeedCursor | null;
+  for (let tick = 0; tick < 3; tick++) cursor = (await seedFrontier(context(cursor))).cursor ?? cursor;
+  const searched = mocks.search.mock.calls.map(([params]) => params.query as string);
+  expect(searched.length).toBeGreaterThan(0);
+  expect(searched.some(query => /[가-힣]/.test(query))).toBe(false);
+  expect(Object.keys(cursor?.querySignatures ?? {})).toEqual(['topic:glm']);
 });
 
 /** 커밋 검색 결과에는 레포 메타가 없다. homepage를 모른 채 넣고 판정 단계에서 거른다. */

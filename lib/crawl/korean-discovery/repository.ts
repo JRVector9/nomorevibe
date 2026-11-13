@@ -4,14 +4,17 @@ import { assertJobLeaseAtWallTime, type JobLease } from '@/lib/jobs/control';
 import { db } from '@/lib/db';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
-import { KoreanCursorSchema, KoreanQuerySchema, firstKoreanCursor, resumeKoreanCursor, KOREAN_QUERY_LEASE_MS, type KoreanCursor, type KoreanQuery } from './contracts';
+import { KoreanCursorSchema, KoreanQuerySchema, firstKoreanCursor, isKoreanRepositoryQuery, resumeKoreanCursor, KOREAN_QUERY_LEASE_MS, type KoreanCursor, type KoreanQuery } from './contracts';
 import type { KoreanLanguageResult } from './language';
 
 export type KoreanQueryClaim = KoreanQuery & { token: string; epoch: number; controlEpoch: number; cursor: KoreanCursor; windowDays: number };
 export type KoreanStagedRepository = { repo: string; signal: string; priority: number; description: string | null };
 const queryHash = (query: string) => createHash('sha256').update(query).digest('hex');
 
-/** Home controller transfers only Korean repository queries. Original M3 state is retained verbatim for audit/rollback. */
+/**
+ * Home controller hands the enabled Korean repository queries to Oracle. M3 never searches them (m3DiscoveryQueries);
+ * any original M3 cursor is retained verbatim in legacy_state for audit.
+ */
 export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: JobLease): Promise<void> {
   await db.transaction(async tx => {
     if (!await writerSiteActive(tx)) return;
@@ -20,7 +23,7 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
     const [control] = await tx.execute<{ enabled: boolean; start_at_ms: number | null; queries: unknown }>(sql`SELECT enabled,
       (extract(epoch FROM start_at) * 1000)::double precision AS start_at_ms, queries FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
     if (!control?.enabled || control.start_at_ms === null || !settings.enabled) return;
-    const selected = settings.discover.queries.filter(q => q.enabled && q.kind === 'repositories' && /[가-힣]/.test(q.query)).map(q => ({label:q.label,query:q.query,priority:q.priority}));
+    const selected = settings.discover.queries.filter(q => q.enabled && isKoreanRepositoryQuery(q)).map(q => ({label:q.label,query:q.query,priority:q.priority}));
     const configured = KoreanQuerySchema.array().max(30).parse(control.queries);
     const normalized = (query:string)=>query.trim().replace(/\s+/g,' ').toLowerCase();
     for (const query of configured) {
@@ -53,13 +56,6 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
     await tx.execute(sql`UPDATE github_ko_discovery_queries SET enabled=false,transferred=false,updated_at=now()
       WHERE enabled AND NOT (${labels.length ? sql`label IN (${sql.join(labels.map(label=>sql`${label}`),sql`,`)})` : sql`false`})`);
   });
-}
-
-/** Omit queries only after an enabled, exact-query transfer; disabling Oracle immediately restores M3 ownership. */
-export async function m3DiscoveryQueries(settings: CrawlSettings): Promise<CrawlSettings['discover']['queries']> {
-  const rows = await db.execute<{ label: string; query: string }>(sql`SELECT q.label,q.query FROM github_ko_discovery_queries q
-    JOIN github_ko_discovery_control c ON c.id=1 WHERE c.enabled AND q.enabled AND q.transferred`);
-  return settings.discover.queries.filter(q => !rows.some(row => row.label === q.label && row.query === q.query));
 }
 
 export async function koreanDiscoveryEnabled(): Promise<boolean> {
