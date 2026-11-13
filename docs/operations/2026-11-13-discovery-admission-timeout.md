@@ -10,6 +10,8 @@
 
 운영 `EXPLAIN`(실행 없는 계획 조회)은 문서 약 80만 행과 후보 약 81만 행을 `lower(repo)`로 비교하는 전체 anti join, 최근 5분 발견량에 frontier 약 81만 행의 병렬 전체 스캔을 보였다. 후보의 `lower(repo)` 인덱스와 frontier 발견 시각 인덱스가 없었다. 세부 진단은 `/tmp/nmv-discovery-error-evidence-20261113/{jobs.private.json,events.safe.json,plan.safe.json}`에 있다. 운영에서 대형 `EXPLAIN ANALYZE`를 실행하지 않았다.
 
+검증 이력: 초기 읽기 도구 재사용으로 `/tmp/nmv-models-postdeploy-health-20261112/runtime.safe.json`이 이번 11월 13일 관측으로 갱신됐다. 이 파일을 11월 12일 원본 증거로 사용하면 안 된다. 이전 바이트의 백업이 없어 복원하지 않았으며, 이번 분석에는 위 전용 증거 경로를 사용한다.
+
 ## 변경
 
 문서와 후보의 바이트가 같은 저장소를 먼저 제외하고, 남은 대소문자 변형만 기존과 같은 `lower(repo)` 비교로 확인한다. 이 과정에서 대부분의 과거 저장소를 두 번 소문자로 바꿀 필요가 없어진다. 0185는 후보의 대소문자 무시 조회 인덱스와, alias·원본 재수집 신호를 제외한 frontier 발견 시각 인덱스 두 개를 추가한다.
