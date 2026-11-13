@@ -19,7 +19,8 @@ describe("unified task confirmation and confirmed result", () => {
     expect(unifiedTaskSavesConfirmed([saved("execution"), saved("ranks")], ["execution", "ranks"])).toBe(true);
 
     const html = result([saved("execution"), saved("ranks")], ["execution", "ranks"]);
-    expect(html).toContain("모델과 작업 현황이 함께 바뀌었습니다.");
+    expect(html).toContain("배정 설정을 저장했습니다.");
+    expect(html).toContain("저장 확인은 실제 호출 성공과 다릅니다.");
     expect(html).toContain("확인된 모델 2칸 + 다른 모델 1칸");
     expect(html).toContain('href="/admin/flow?stage=first#sp-models"');
     expect(html).toContain("홈 배정 확인 →");
@@ -30,12 +31,18 @@ describe("unified task confirmation and confirmed result", () => {
     const partial = result([saved("execution"), saved("ranks", { ok: false, issues: ["CAS 판이 바뀌어 순위를 저장하지 못함"] })], ["execution", "ranks"]);
     expect(partial).toContain("일부 변경만 저장됐습니다.");
     expect(partial).toContain('<p role="alert">CAS 판이 바뀌어 순위를 저장하지 못함</p>');
-    expect(partial).not.toContain("모델과 작업 현황이 함께 바뀌었습니다.");
+    expect(partial).not.toContain("배정 설정을 저장했습니다.");
     expect(partial).not.toContain("확인된 모델 2칸");
     expect(partial).not.toContain("홈 배정 확인 →");
-    const uncertain = result([saved("execution", { ok: false, issues: ["저장 응답을 확인하지 못했습니다. 다시 누르기 전에 최근 기록을 확인하세요."] })], ["execution"]);
+    const uncertain = result([saved("execution", { ok: false, unconfirmed: true, issues: ["저장 응답을 확인하지 못했습니다. 다시 누르기 전에 최근 기록을 확인하세요."] })], ["execution"]);
     expect(uncertain).toContain("저장 응답을 확인하지 못했습니다.");
+    expect(uncertain).toContain("실행 방식 저장 여부 미확인");
+    expect(uncertain).not.toContain("저장 못 함");
     expect(uncertain).not.toContain("ut-after");
+    const partialUnknown = result([saved("execution"), saved("ranks", { ok: false, unconfirmed: true })], ["execution", "ranks"]);
+    expect(partialUnknown).toContain("나머지도 적용됐을 수 있으니");
+    expect(partialUnknown).not.toContain("일부 변경만 저장됐습니다");
+    expect(partialUnknown).not.toContain("확인된 저장만");
   });
 
   it("keeps successful-write warnings visible above the primary completion actions", () => {

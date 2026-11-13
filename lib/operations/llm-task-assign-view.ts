@@ -23,7 +23,7 @@ export type TaskAssignInput = Readonly<{
   connections: readonly AiConnectionView[];
   slots: readonly TaskAssignSlotInput[];
   /** 실행 방식(대체 실행·작업 분산). null = 읽지 못함 */
-  executions: readonly Pick<AiTaskExecutionAdminView, "task" | "slot" | "mode" | "members">[] | null;
+  executions: readonly (Pick<AiTaskExecutionAdminView, "task" | "slot" | "mode" | "members"> & Partial<Pick<AiTaskExecutionAdminView, "updatedAt">>)[] | null;
   /** 잡 멈춤. null = 읽지 못함 */
   jobs: readonly JobPause[] | null;
   /**
@@ -67,7 +67,7 @@ export type TaskAssignActual = Readonly<{
   shared: boolean;
   /** 설정과 견줄 수 있었나 — 실행 방식·실제 적용 설정을 못 읽었으면 false(「설정 밖」이라 하지 않는다) */
   compared: boolean;
-  /** 최근 1시간 안에 순위를 저장해 장부에 그 전 순위의 호출이 섞여 있다 — 순위와 견주지 않는다(경고 아님) */
+  /** 최근 1시간 안에 배정을 저장해 장부에 그 전 호출이 섞여 있다 — 현재 배정과 견주지 않는다(경고 아님) */
   mixed: boolean;
   /** 경고가 아닌 메모(순위를 막 바꿈 등) */
   note: string | null;
@@ -216,12 +216,19 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
   const taskFirsts = new Map<string, Expect[]>();
   // 작업마다 순위를 마지막으로 저장한 때 — 장부는 칸(투표자)을 가르지 않으므로 여러 칸이면 가장 늦은 칸
   const taskSaved = new Map<string, number>();
+  const executionSaved = new Map<string, number>();
   for (const slot of input.slots) {
     const entries = expected(slot, modeOf(slot));
     taskEntries.set(slot.task.id, [...taskEntries.get(slot.task.id) ?? [], ...entries]);
     taskFirsts.set(slot.task.id, [...taskFirsts.get(slot.task.id) ?? [], ...entries.filter(entry => entry.first)]);
     const saved = slot.savedAt ? Date.parse(slot.savedAt) : NaN;
     if (Number.isFinite(saved)) taskSaved.set(slot.task.id, Math.max(taskSaved.get(slot.task.id) ?? saved, saved));
+  }
+  for (const execution of input.executions ?? []) {
+    const saved = Date.parse(execution.updatedAt ?? "");
+    if (!Number.isFinite(saved)) continue;
+    executionSaved.set(execution.task, Math.max(executionSaved.get(execution.task) ?? saved, saved));
+    taskSaved.set(execution.task, Math.max(taskSaved.get(execution.task) ?? saved, saved));
   }
   // 장부 1시간 창의 끝 — 장부를 읽은 DB 시각(없으면 화면 시각)
   const observedMs = readable && observation.observedAt ? Date.parse(observation.observedAt) : now;
@@ -252,7 +259,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     const emptyExtra = mode === "fallback" && multi && slot.slot > 1 && !entries.length;
     // 1시간 안에 순위를 저장했으면 장부에 그 전 순위의 호출이 섞여 있다 — 순위와 견주지 않는다
     const savedMs = taskSaved.get(task.id);
-    const mixed = mode === "fallback" && savedMs !== undefined && savedMs > observedMs - HOUR_MS;
+    const mixed = (mode === "fallback" || mode === "workload_pool") && savedMs !== undefined && savedMs > observedMs - HOUR_MS;
     // 실행 쪽 마지막 틱이 앞 순위의 포화로 뒤 순위를 쓴 것(설계대로의 대체) — 「설정과 다름」이 아니다. 여러 칸 작업은 순위 사정이 투표자를 가르지 않아 보지 않는다
     const fallback = mode === "fallback" && !multi && runtime ? saturationFallback(runtime, entries.map(entry => entry.position)) : null;
     // 쓰지 않는 작업(2026-11-09) — 순위가 없고 사실이 그 까닭을 말할 때만. CLI 전용 작업은 받는 CLI 도구의 연결이 없음.
@@ -307,7 +314,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       const first = entries.find(entry => entry.first);
       const firstGap = mode === "fallback" && !!first && !(counted.get(first)?.settled);
       if (firstGap && !mixed && !fallback) warnings.push(`1순위 ${ledgerModelText(first!.model)} 0건 — 다른 모델이 처리`);
-      if (mode === "workload_pool") for (const entry of entries) if (!counted.get(entry)?.settled) warnings.push(`모델 ${entry.position} ${ledgerModelText(entry.model)} 0건 — 다른 모델만 호출`);
+      if (mode === "workload_pool" && !mixed) for (const entry of entries) if (!counted.get(entry)?.settled) warnings.push(`모델 ${entry.position} ${ledgerModelText(entry.model)} 0건 — 다른 모델만 호출`);
       if (mode === "fallback" && taskLevel && !firstGap && !mixed && !fallback) {
         const firsts = taskFirsts.get(task.id) ?? [];
         const onFirst = aggs.filter(agg => firsts.some(entry => matches(agg, entry))).reduce((sum, agg) => sum + agg.settled, 0);
@@ -318,7 +325,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     }
     const ago = savedMs === undefined ? 0 : Math.max(0, Math.round((observedMs - savedMs) / 60_000));
     const note = mixed && readable && tracked && total > 0 && !emptyExtra
-      ? `순위를 ${ago < 1 ? "방금" : `${fmt(ago)}분 전에`} 바꿈 — 그 전 호출이 섞여 있어 ${kstClock(savedMs! + HOUR_MS)} 이후 비교` : null;
+      ? `${executionSaved.get(task.id) === savedMs ? "배정을" : "순위를"} ${ago < 1 ? "방금" : `${fmt(ago)}분 전에`} 바꿈 — 그 전 호출이 섞여 있어 ${kstClock(savedMs! + HOUR_MS)} 이후 비교` : null;
 
     // 호출이 없을 때의 까닭(없으면 「최근 1시간」 — 그때만 멈춤 신호를 더 본다)
     const enabledConnections = entries.filter(entry => entry.connectionId).map(entry => connectionOf(entry.connectionId!));
@@ -390,6 +397,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       : emptyExtra ? { level: "idle", text: "비어 있음", reason: "이 칸은 쓰지 않습니다", detail: null }
       : !tracked ? untracked
       : !readable ? { level: "unknown", text: UNREADABLE, reason: "장부를 읽지 못했습니다", detail: null }
+      : total > 0 && mode === "workload_pool" && mixed ? { level: "unknown", text: "확인 전", reason: "새 분산 구성의 실행 확인 전", detail: "최근 1시간 호출에는 배정 변경 전 기록이 섞여 있습니다." }
       : total > 0 ? { level: "ok", text: "정상", reason: `1시간 정산 ${fmt(total)}${multi ? " (작업 전체)" : ""}`, detail: null }
       : auditIdle ? { level: "idle", text: "쉼", reason: auditIdle, detail: null }
       : { level: "idle", text: "쉼", reason: lastSuccess !== null ? `최근 1시간 호출 없음 · 마지막 성공 ${kstStamp(lastSuccess)}` : "최근 1시간 호출 없음", detail: null };

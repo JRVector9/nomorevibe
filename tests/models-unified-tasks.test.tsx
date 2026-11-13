@@ -10,7 +10,7 @@ import { attachSaveForms, savedAssignment } from "@/lib/operations/model-attach"
 import { UNIFIED_MAIN_TASKS, unifiedTaskActualNote, unifiedTaskDuplicate, unifiedTaskEditTarget, unifiedTaskHomeHref, unifiedTaskInitialDraft, unifiedTaskLock,
   unifiedTaskNeedsAttention, unifiedTaskPoolMembers, unifiedTaskPoolOptions, unifiedTaskRows, unifiedTaskSwitchMode } from "@/lib/operations/model-unified-task-view";
 import { poolMemberIssues, poolMembersInput } from "@/lib/operations/task-pool-form";
-import { GPU, LLM_NOW, llmConnections, llmJobs, llmObservation, llmRankRows, MLX, OPENCODE } from "./fixtures/llm-ops";
+import { GPU, LLM_NOW, llmConnections, llmJobs, llmObservation, llmRankRows, M1, MLX, OPENCODE } from "./fixtures/llm-ops";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiTaskRanksAction: vi.fn() }));
@@ -271,6 +271,21 @@ describe("shared unified task editor", () => {
     expect(unifiedTaskSwitchMode(before, "workload_pool", line).slots).toEqual(["1", "1", "", ""]);
     expect(before.slots).toEqual(["", "", "", ""]);
     const automatic = { ...before, mode: "workload_pool" as const, members: before.ranks, slots: ["", "", "", ""] };
+    expect(unifiedTaskSwitchMode(automatic, "workload_pool", line).slots).toEqual(["", "", "", ""]);
+  });
+
+  it("carries edited ranks over an inactive pool and keeps matching occurrence caps through reorder", () => {
+    const line = lineOf(editorOf());
+    const a = { provider: MLX, model: "gpt-oss-120b" }, b = { provider: GPU, model: "qwen3.8-flash-next" };
+    const before = { ...savedAssignment(line), mode: "fallback" as const, ranks: [b, a, a], members: [a, a, b], slots: ["2", "3", "4", ""] };
+    const next = unifiedTaskSwitchMode(before, "workload_pool", line);
+    expect(next.members).toEqual([b, a, a]);
+    expect(next.slots).toEqual(["4", "2", "3", ""]);
+    expect(before.members).toEqual([a, a, b]);
+    const edited = { ...before, ranks: [{ provider: M1, model: "m1-gemma" }, b] };
+    expect(unifiedTaskSwitchMode(edited, "workload_pool", line).members).toEqual(edited.ranks);
+    expect(unifiedTaskSwitchMode(edited, "workload_pool", line).slots).toEqual(["1", "4", "", ""]);
+    const automatic = { ...edited, slots: ["", "", "", ""] };
     expect(unifiedTaskSwitchMode(automatic, "workload_pool", line).slots).toEqual(["", "", "", ""]);
   });
 });
