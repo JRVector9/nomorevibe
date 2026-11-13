@@ -9,7 +9,7 @@ import { PrototypeEmpty, PrototypePanel, PrototypeStat, PrototypeTag, n } from "
 
 export { PrototypeQualityWorkspace } from "./PrototypeProductQuality";
 
-const language:Record<string,string> = { en:"영어", "zh-Hans":"중국어 간체", "zh-Hant":"중국어 번체" };
+const language:Record<string,string> = { en:"영어", "zh-Hans":"중국어 간체", "zh-Hant":"중국어 번체 (보관)", ja:"일본어" };
 const recoveryReason:Record<string,string> = { product_not_public:"현재 공개 대상이 아닙니다",takedown_pending:"내림 요청 검토 중",intro_editor_hold:"소개 확인 대기",ineligible:"현재 번역 대상 아님",empty_source:"원문 없음",source_native:"원문과 같은 언어",source_too_long:"원문 길이 상한 초과",exhausted:"자동 시도 상한 소진",retry_wait:"재시도 시각 대기",not_failed:"실패 작업 아님" };
 export async function PrototypeTranslationsWorkspace({ admin, query, cursor }: { admin: { login: string; exp: number }; query: string;cursor?:string }) {
   const [summary, queue] = await Promise.all([productTranslationAdminSummary().catch(() => null), productTranslationAdminQueue({ state: "failed", q: query, cursor, limit: 20 }).catch(() => null)]);

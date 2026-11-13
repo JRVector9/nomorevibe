@@ -113,7 +113,7 @@ export const notificationSettings = pgTable("notification_settings", {
     and ${table.followedMaker} in ('instant', 'weekly', 'off') and ${table.followedCategory} in ('weekly', 'off')
     and ${table.newListingMine} in ('instant', 'off')`),
   check("notification_settings_digest_check", sql`${table.digestWeekday} between 0 and 6 and ${table.digestHour} between 0 and 23`),
-  check("notification_settings_locale_check", sql`${table.locale} in ('ko', 'en', 'zh-Hans', 'zh-Hant')`),
+  check("notification_settings_locale_check", sql`${table.locale} in ('ko', 'en', 'zh-Hans', 'zh-Hant', 'ja')`),
 ]);
 
 export const emailOutbox = pgTable("email_outbox", {

@@ -1261,6 +1261,13 @@
       "when": 1794355200007,
       "tag": "0183_console_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1794528000000,
+      "tag": "0184_japanese_product_translation",
+      "breakpoints": true
     }
   ]
 }

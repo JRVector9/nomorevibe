@@ -22,7 +22,7 @@ const INK = { card: "#10141c", fg: "#f0f3fa", fg2: "#98a2b8", chip: "rgba(255, 2
 type Script = "kr" | "sc" | "tc";
 type Weight = 400 | 700;
 type Face = { script: Script; weight: Weight; data: ArrayBuffer; covers: Set<number> };
-const SCRIPTS: Record<Locale, Script> = { ko: "kr", en: "kr", "zh-Hans": "sc", "zh-Hant": "tc" };
+const SCRIPTS: Record<Locale, Script> = { ko: "kr", en: "kr", ja: "sc", "zh-Hans": "sc", "zh-Hant": "tc" };
 /** standalone 빌드에 실리게 next.config 의 outputFileTracingIncludes 가 이 폴더를 넣는다 */
 const FONT_DIR = path.join(process.cwd(), "assets/fonts");
 /** 실은 글꼴(처음 쓸 때 읽어 프로세스에 둔다)과, 실을지 정할 때만 본 글꼴의 글자 목록 */

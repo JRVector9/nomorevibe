@@ -10,6 +10,7 @@ import { categoryKey, categoryOfKey } from "./follow-keys";
  */
 const CATALOGS: Record<Locale, () => Promise<Dictionary["me"]>> = {
   ko: () => import("@/messages/ko/me").then((module) => module.me),
+  ja: () => import("@/messages/ja/me").then((module) => module.me),
   en: () => import("@/messages/en/me").then((module) => module.me),
   "zh-Hans": () => import("@/messages/zh-Hans/me").then((module) => module.me),
   "zh-Hant": () => import("@/messages/zh-Hant/me").then((module) => module.me),
@@ -17,6 +18,7 @@ const CATALOGS: Record<Locale, () => Promise<Dictionary["me"]>> = {
 /** 분야 이름(팔로한 분야 묶음) */
 const LABELS: Record<Locale, () => Promise<Dictionary["labels"]>> = {
   ko: () => import("@/messages/ko/labels").then((module) => module.labels),
+  ja: () => import("@/messages/ja/labels").then((module) => module.labels),
   en: () => import("@/messages/en/labels").then((module) => module.labels),
   "zh-Hans": () => import("@/messages/zh-Hans/labels").then((module) => module.labels),
   "zh-Hant": () => import("@/messages/zh-Hant/labels").then((module) => module.labels),

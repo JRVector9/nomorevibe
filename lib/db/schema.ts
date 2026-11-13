@@ -511,10 +511,10 @@ export const productTranslations = pgTable("product_translations", {
   primaryKey({ columns: [table.productId, table.locale, table.field] }),
   index("product_translations_pending_idx").on(table.retryAt, table.updatedAt, table.productId)
     .where(sql`${table.status} in ('pending', 'failed')`),
-  check("product_translations_locale_check", sql`${table.locale} in ('en', 'zh-Hans', 'zh-Hant')`),
+  check("product_translations_locale_check", sql`${table.locale} in ('en', 'zh-Hans', 'zh-Hant', 'ja')`),
   check("product_translations_field_check", sql`${table.field} in ('tagline', 'description')`),
   check("product_translations_status_check", sql`${table.status} in ('pending', 'ready', 'failed', 'reviewed')`),
-  check("product_translations_source_locale_check", sql`${table.sourceLocale} is null or ${table.sourceLocale} in ('ko', 'en', 'zh-Hans', 'zh-Hant')`),
+  check("product_translations_source_locale_check", sql`${table.sourceLocale} is null or ${table.sourceLocale} in ('ko', 'en', 'zh-Hans', 'zh-Hant', 'ja')`),
   check("product_translations_value_check", sql`${table.sourceHash} ~ '^[0-9a-f]{64}$' and ${table.attempts} >= 0
     and ((${table.status} in ('ready', 'reviewed') and ${table.text} is not null and length(btrim(${table.text})) > 0 and ${table.errorCode} is null)
       or (${table.status} in ('pending', 'failed') and ${table.text} is null))`),

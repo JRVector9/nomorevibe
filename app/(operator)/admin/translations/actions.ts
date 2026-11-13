@@ -30,7 +30,7 @@ export const retryTranslationAction = webWriteAction(async function retryTransla
     const expected = createHmac("sha256", secret).update(`product-translation-admin:${admin.login}:${expiresAt}`).digest("hex");
     if (!timingSafeEqual(Buffer.from(nonce, "hex"), Buffer.from(expected, "hex"))) throw new Error("forbidden");
     const locale = field(form, "locale"), targetField = field(form, "field");
-    if (!["en", "zh-Hans", "zh-Hant"].includes(locale) || !isProductTranslationField(targetField)
+    if (!["en", "zh-Hans", "ja"].includes(locale) || !isProductTranslationField(targetField)
       || field(form, "expectedStatus") !== "failed") throw new ProductTranslationAdminError("invalid");
     const result = await retryProductTranslation({ productId: Number(field(form, "productId")), locale: locale as ProductTranslationLocale,
       field: targetField, expectedSourceHash: field(form, "expectedSourceHash"), expectedCurrentSourceHash: field(form, "expectedCurrentSourceHash"),

@@ -962,7 +962,7 @@ function validProductTranslationItems(value: unknown): value is ProductTranslati
     !!item && typeof item === "object" && !Array.isArray(item)
     && Object.keys(item).sort().join(",") === "field,locale,name,text"
     && typeof item.name === "string" && typeof item.text === "string" && !!item.text.trim()
-    && ["en", "zh-Hans", "zh-Hant"].includes(item.locale) && ["tagline", "description"].includes(item.field))
+    && ["en", "zh-Hans", "zh-Hant", "ja"].includes(item.locale) && ["tagline", "description"].includes(item.field))
     && value.reduce((count, item) => count + item.text.length, 0) <= productTranslationPolicy().maxSourceChars;
 }
 /** No descriptor or injected request enables a product serving deployment. */

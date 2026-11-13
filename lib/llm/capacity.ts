@@ -500,7 +500,7 @@ export type ReasonTranslationGatewayTerminalEvidence = Readonly<z.infer<typeof r
 
 /** Fixed demanded targets. Shape/hash helpers never authenticate a product or demand row. */
 export const productTranslationMemberSchema = z.object({ productId: positive, slug: identity(80),
-  locale: z.enum(["en", "zh-Hans", "zh-Hant"]), field: z.enum(["tagline", "description"]), sourceHash: sha64,
+  locale: z.enum(["en", "zh-Hans", "zh-Hant", "ja"]), field: z.enum(["tagline", "description"]), sourceHash: sha64,
   demand: z.object({ rowIdentityHash: sha64, attempts: z.number().int().nonnegative().max(3).safe() }).strict(),
 }).strict();
 type ParsedProductTranslationMember = z.infer<typeof productTranslationMemberSchema>;

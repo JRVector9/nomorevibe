@@ -272,7 +272,10 @@ function productTranslationChatBody(items: readonly ProductTranslationGatewayIte
     "Return only a JSON array of strings, in the input order, with exactly the input count.",
   ].join(" ");
   const input = items.map(item => ({ ...item, protectedTokens: productTranslationProtectedTokens(item.text) }));
-  return { routeId: "product-translate" as const, system: translationSystemPrompt(system, "product-translate", model, items.length), user: JSON.stringify(input), temperature: 0,
+  return { routeId: "product-translate" as const, system: translationSystemPrompt(system, "product-translate", model, items.length)
+      + (items.some(item => item.locale === "ja")
+        ? " For ja, translate into natural Japanese software prose with kana; preserve the source meaning, names, protected tokens, numbers and citations. Do not output Chinese or Korean for ja."
+        : ""), user: JSON.stringify(input), temperature: 0,
     maxTokens: Math.min(modelRequestBudget("product-translate").maxTokens, 600 + Math.ceil(items.reduce((count, item) => count + item.text.length, 0) * 2)),
   };
 }
