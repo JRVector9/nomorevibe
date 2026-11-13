@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
+import type { SeedCursor } from '@/lib/crawl/jobs/seed';
 import type { JobLease } from "@/lib/jobs/control";
 import { claimFetchFixtureJob } from "./fetch-fixtures";
 
@@ -66,6 +67,30 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   if (fetchLease) await db.delete(jobs).where(and(eq(jobs.name, fetchLease.name), eq(jobs.leaseToken, fetchLease.token)));
+});
+
+it.each(['incomplete','partial_collision'] as const)('persists disabled latest work across head adoption: %s',async mode=>{
+  await saveSettings({discover:{sort:'recent',queries:[{label:'Claude',kind:'commits',query:'Claude',enabled:true,builder:null,priority:100}]}},'test');
+  searchCommits.mockResolvedValue({ok:true,value:{items:[]}});
+  await tick();
+  const base=(await getJobState('crawl-seed'))!.cursor as SeedCursor;
+  const old={from:'2026-10-01T00:00:00Z',to:'2026-10-04T00:00:00Z'};
+  const partial={items:[{repo:'a/saved',sha:null,attributions:[null],attributionLimited:false}],
+    itemIndex:0,size:1,incomplete:false,saturated:false,capped:false};
+  const incomplete=[{signal:'disabled',window:{from:old.from,to:old.from},retryAt:new Date(Date.now()+86_400_000).toISOString()}];
+  const retired={page:2,window:old,cycleWindow:old,pendingWindows:[],pendingPage:partial};
+  const settled={...base,cursorVersion:3 as const,coverageVersion:2 as const,waiting:true,
+    retryAt:new Date(Date.now()+60*60_000).toISOString(),states:{}};
+  await db.update(jobs).set({cursor:{...base,window:old,cycleWindow:old,waiting:false,retryAt:undefined,
+    latestScan:{...settled,states:{disabled:retired},incompleteWindows:incomplete},
+    latestHead:{...settled,incompleteWindows:[],states:mode==='partial_collision' ? {disabled:{...retired,pendingPage:undefined}} : {}}}})
+    .where(eq(jobs.name,'crawl-seed'));
+  await tick();
+  const persisted=(await getJobState('crawl-seed'))!.cursor as SeedCursor;
+  expect(persisted.latestScan?.states?.disabled.pendingPage).toEqual(partial);
+  expect(persisted.latestScan?.incompleteWindows).toEqual(incomplete);
+  if(mode==='incomplete') expect(persisted.latestHead).toBeUndefined();
+  else expect(persisted.latestHead).toBeDefined();
 });
 
 describe("레포 검색 신호", () => {

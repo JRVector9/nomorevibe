@@ -181,7 +181,15 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     }});
   nextLane = budget.nextLane;
   const position=(cursor:SearchCursor,label:string) => label === cursor.signal ? cursor : cursor.states?.[label];
-  if (head && latest && searchDrained(latest,activeLabels) && activeLabels.every(label=>{
+  const retainedIncomplete=[...(latest?.incompleteWindows ?? []),...(head?.incompleteWindows ?? [])]
+    .filter((entry,index,entries)=>entries.findIndex(other=>other.signal === entry.signal && sameWindow(other.window,entry.window)) === index);
+  // Disabled queries still own their saved pages. If both cursors contain one,
+  // retain both archives until the query can run and establish continuous coverage.
+  // A shallow merge cannot represent two independent partial pages for that query.
+  const archivedCollision=head && latest && [...new Set([latest.signal,...Object.keys(latest.states ?? {})])]
+    .some(label=>!activeLabels.includes(label) && position(head!,label));
+  if (head && latest && !archivedCollision && retainedIncomplete.length <= MAX_INCOMPLETE_WINDOWS
+    && searchDrained(latest,activeLabels) && activeLabels.every(label=>{
     const through=position(latest!,label)?.cycleWindow?.to;
     const begins=position(head!,label)?.cycleWindow?.from;
     return through && begins && latest!.querySignatures?.[label] === head!.querySignatures?.[label]
@@ -189,7 +197,8 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   })) {
     // The delayed cursor has genuinely drained all active queries through now.
     // Adopt the head's partial work while retaining disabled query positions.
-    head.states={...latest.states,...head.states};
+    head.states={...latest.states,[latest.signal]:signalState(latest,latest.cycleWindow!),...head.states};
+    head.incompleteWindows=retainedIncomplete;
     head.querySignatures={...latest.querySignatures,...head.querySignatures};
     latest=head;head=undefined;headTurn=true;
   }
