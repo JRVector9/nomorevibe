@@ -45,3 +45,37 @@ it("counts each unfinished repository once across stages, keeps retries, and rel
     throw rollback;
   })).rejects.toBe(rollback);
 });
+
+it("preserves case-insensitive admission when exact matches and historical case variants coexist", async () => {
+  const rollback = new Error("fixture_rollback");
+  const prefix = `queue-case-${randomUUID()}`;
+  await expect(db.transaction(async tx => {
+    const now = new Date();
+    const read = () => readReviewBacklogInTransaction(tx, now, Date.now() + 3000);
+    const before = await read();
+    await tx.insert(crawlCandidates).values([
+      { repo: `${prefix}/exact-terminal`, state: "published" },
+      { repo: `${prefix}/CASE-terminal`, state: "rejected" },
+      { repo: `${prefix}/active`, state: "approved" },
+      { repo: `${prefix}/ACTIVE`, state: "rejected" },
+    ]);
+    await tx.insert(crawlDocuments).values([
+      { repo: `${prefix}/exact-terminal`, repoMeta: {} },
+      { repo: `${prefix}/case-terminal`, repoMeta: {} },
+      { repo: `${prefix}/active`, repoMeta: {} },
+      { repo: `${prefix}/orphan`, repoMeta: {} },
+      { repo: `${prefix}/ORPHAN`, repoMeta: {} },
+    ]);
+    await tx.insert(crawlFrontier).values([
+      { repo: `${prefix}/ORPHAN`, signal: "fixture", discoveredAt: new Date(now.getTime() - 1000) },
+      { repo: `${prefix}/refresh`, signal: "admin-evidence-refresh", discoveredAt: new Date(now.getTime() - 1000) },
+      { repo: `${prefix}/alias`, signal: "fixture", aliasOf: `${prefix}/orphan`, discoveredAt: new Date(now.getTime() - 1000) },
+      { repo: `${prefix}/future`, signal: "fixture", state: "done", discoveredAt: new Date(now.getTime() + 1000) },
+    ]);
+    const after = await read();
+    expect(after.downstreamRepositories - before.downstreamRepositories).toBe(2);
+    expect(after.queuedRepositories - before.queuedRepositories).toBe(3);
+    expect(after.recentNew - before.recentNew).toBe(1);
+    throw rollback;
+  })).rejects.toBe(rollback);
+});

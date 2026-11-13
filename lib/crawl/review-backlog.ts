@@ -34,7 +34,12 @@ export async function readReviewBacklogInTransaction(tx: ProductTransaction, now
       where ${crawlCandidates.state} in ('new', 'approved', 'needs_review')
       union
       select lower(${crawlDocuments.repo}) from ${crawlDocuments}
+      -- Most documents already have a byte-identical candidate. Remove those
+      -- by byte equality before the indexed case-insensitive fallback;
+      -- folding both complete histories made each admission read scan ~800k rows.
       where not exists (select 1 from ${crawlCandidates}
+        where ${crawlCandidates.repo} = ${crawlDocuments.repo})
+      and not exists (select 1 from ${crawlCandidates}
         where lower(${crawlCandidates.repo}) = lower(${crawlDocuments.repo}))
     ), queued as (
       select repo from downstream

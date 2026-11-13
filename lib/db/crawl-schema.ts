@@ -62,6 +62,8 @@ export const crawlFrontier = pgTable(
   },
   (t) => [
     index("crawl_frontier_identity_idx").on(sql`lower(${t.repo})`),
+    index("crawl_frontier_admission_recent_idx").on(t.discoveredAt).where(sql`${t.aliasOf} is null
+      and ${t.signal} not in ('review-source-refresh', 'star-auto-source-refresh', 'admin-evidence-refresh')`),
     // 큐에서 꺼내는 쿼리 전용: WHERE state=? AND next_attempt_at<=now() ORDER BY priority DESC
     index("crawl_frontier_dequeue_idx").on(t.state, t.nextAttemptAt, t.priority.desc()),
   ],
@@ -192,6 +194,7 @@ export const crawlCandidates = pgTable(
   },
   (t) => [
     index("crawl_candidates_state_idx").on(t.state, t.updatedAt.desc()),
+    index("crawl_candidates_identity_idx").on(sql`lower(${t.repo})`),
     // 발행분 재검수·본문 채우기는 products.slug 로 후보를 찾아 repo 로 원본에 잇는다 — repo 까지 담아 표를 다시 읽지 않게.
     // 발행된 것(수 %)만 담는다: 나머지는 늘 null 이라 찾을 일이 없다. 100만 행 실측에서 전부 담으면 생성(쓰기 잠금)
     // 3.4초·74MB, 발행분만 담으면 0.1초·2.5MB 였다
