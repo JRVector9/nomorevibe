@@ -3,6 +3,11 @@ import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
 import { beginModelDispatch, markModelDispatchIndeterminate, requestModelSlot } from "@/lib/llm/capacity-repository";
+import { searchVerifyGenerationHash, searchVerifyLogicalWorkKey, searchVerifyInputHash, searchVerifyDispatchBindingHash, type SearchVerifyInput } from "@/lib/llm/capacity";
+import type { JobContext } from "@/lib/jobs/runner";
+import { markAutomaticOwnerGone, type ModelCapacityReclaimCursor } from "@/lib/operations/model-capacity-owner-gone";
+import { JobLeaseLostError } from "@/lib/jobs/control";
+import { markExitedCallerIndeterminate } from "@/lib/operations/dr/exited-caller";
 import { closeOwnerGoneReviews, markOwnerGoneIndeterminate } from "@/lib/operations/dr/owner-gone";
 import { readModelCapacityUnknowns } from "@/lib/operations/model-capacity-unknowns";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
@@ -233,5 +238,91 @@ it("the owner's own exit record after the dispatch is enough without a successor
     expect(await stateOf(row.value.requestId)).toBe("indeterminate");
   } finally {
     await admin`DELETE FROM operations_observations WHERE key = ${`worker-exit:text:${owner.bootId}`}`;
+  }
+});
+
+
+async function exitedCallerFixture(singleton = false) {
+  await installPolicy();
+  const owner = ownerOf();
+  if (singleton) { owner.instanceId = "m3-text"; instances.push(owner.instanceId); }
+  await opened(owner, 180);
+  await spawnedNotExited(owner, 121);
+  const row = await dispatchedRow(owner);
+  const [intent] = await admin`SELECT run_id FROM dr_process_group_events WHERE owner_instance_id=${owner.instanceId} AND owner_boot_id=${owner.bootId}::uuid AND kind='spawn_intent'`;
+  await admin`INSERT INTO dr_process_group_events (owner_instance_id,owner_boot_id,kind,seq,run_id,pid,method,recorded_at)
+    VALUES (${owner.instanceId},${owner.bootId}::uuid,'group_exited',1,${intent.run_id}::uuid,4242,'pgid_esrch_after_sigkill',clock_timestamp()-interval '119 minutes')`;
+  const hash = "b".repeat(64);
+  const input: SearchVerifyInput = {member:{productId:17,slug:"caller-exit-fixture",evidenceHash:hash,
+    profile:{rowIdentityHash:hash,sourceRevision:1,verifyAttempts:0},keywordsHash:hash,keywordCount:1,mode:"full",policyHash:hash},
+    model:"fixture-model",execution:0,step:{kind:"full"},parent:null};
+  const binding = {...input,kind:"search_verify_gateway" as const,version:1 as const,generationHash:searchVerifyGenerationHash(input),
+    logicalWorkKey:searchVerifyLogicalWorkKey(input),inputHash:searchVerifyInputHash(input),deadlineAt:Date.now()-7_100_000,
+    provider:"abcllm" as const,routeId:"product-search-verify" as const,wireHash:hash,servingContractHash:hash,totalTokenBound:8192,chargedTokens:8192,
+    job:{name:"product-search-verify" as const,token:randomUUID(),requestedVersion:0},
+    role:{...owner,role:"text" as const,release:"fixture",kind:"primary" as const,epoch:1,batch:{mode:"legacy" as const}}};
+  const bindingHash=searchVerifyDispatchBindingHash(binding);
+  await admin`UPDATE model_capacity_requests SET class='background',pool='text',route_id='product-search-verify',provider='abcllm',
+    work_key=${binding.logicalWorkKey+":"+binding.inputHash},logical_work_key=${binding.logicalWorkKey},logical_member_keys=ARRAY['search-verify:17'],
+    dispatch_binding=${JSON.stringify(binding)}::text::jsonb,dispatch_binding_hash=${bindingHash},
+    dispatched_at=clock_timestamp()-interval '120 minutes' WHERE request_id=${row.value.requestId}::uuid`;
+  const role = await roleLease(owner, true);
+  return { ...row, owner, role, hash:bindingHash };
+}
+
+it("same live supervisor: exited caller proof marks only the request, preserves binding/terminal and dry-run rolls back", async () => {
+  const fixture = await exitedCallerFixture(), id = fixture.value.requestId;
+  const original = (await admin`SELECT token,dispatch_binding,dispatch_binding_hash,terminal_evidence,settled_at FROM model_capacity_requests WHERE request_id=${id}::uuid`)[0];
+  expect((await markOwnerGoneIndeterminate({requestIds:[id],operator:"jr"},false)).rows[0].reason).toBe("owner_holds_role_lease");
+  expect((await markExitedCallerIndeterminate({requestIds:[id],operator:"jr"},false)).rows[0].kind).toBe("marked");
+  expect(await stateOf(id)).toBe("dispatched");
+  expect(await audits(id)).toEqual([]);
+  const [first, second] = await Promise.all([1,2].map(() => markExitedCallerIndeterminate({requestIds:[id],operator:"jr"},true)));
+  expect([first.rows[0].kind,second.rows[0].kind].sort()).toEqual(["marked","not_dispatched"]);
+  expect(await stateOf(id)).toBe("indeterminate");
+  expect((await admin`SELECT token,dispatch_binding,dispatch_binding_hash,terminal_evidence,settled_at FROM model_capacity_requests WHERE request_id=${id}::uuid`)[0]).toEqual(original);
+  expect((await events(id)).at(-1)).toMatchObject({kind:"dispatch_indeterminate",reason:"process_exit",evidence:{kind:"caller_process_exited",bindingHash:fixture.hash}});
+  expect((await audits(id)).map(row=>row.action)).toEqual(["model-capacity-caller-exited"]);
+  expect((await admin`SELECT owner_boot_id FROM role_leases WHERE role=${fixture.role}`)[0].owner_boot_id).toBe(fixture.owner.bootId);
+});
+
+it("caller-exit recovery refuses a foreign owner with no writes", async () => {
+  const fixture = await exitedCallerFixture(), id = fixture.value.requestId;
+  expect((await markExitedCallerIndeterminate({requestIds:[id],operator:"jr",allowedOwnerInstanceIds:["other"]},true)).rows[0])
+    .toMatchObject({kind:"blocked",reason:"owner_not_singleton"});
+  expect(await stateOf(id)).toBe("dispatched");
+  expect(await audits(id)).toEqual([]);
+});
+
+
+it("caller-exit recovery cannot write under a missing maintenance lease", async () => {
+  const fixture = await exitedCallerFixture(), id = fixture.value.requestId;
+  await expect(markExitedCallerIndeterminate({requestIds:[id],operator:"jr",
+    jobLease:{name:"model-capacity-reclaim",token:randomUUID(),requestedVersion:0}},true)).rejects.toBeInstanceOf(JobLeaseLostError);
+  expect(await stateOf(id)).toBe("dispatched");
+  expect(await audits(id)).toEqual([]);
+});
+
+
+it("maintenance discovers a lost child durably while the singleton supervisor still holds its lease", async () => {
+  const fixture=await exitedCallerFixture(true), id=fixture.value.requestId;
+  const token=randomUUID(), [prior]=await admin`SELECT to_jsonb(j) AS value FROM jobs j WHERE name='model-capacity-reclaim'`;
+  try {
+    await admin`INSERT INTO jobs(name,lease_token,locked_at) VALUES('model-capacity-reclaim',${token},clock_timestamp())
+      ON CONFLICT(name) DO UPDATE SET lease_token=excluded.lease_token,locked_at=excluded.locked_at`;
+    expect((await markExitedCallerIndeterminate({requestIds:[id],operator:"fixture-auto",
+      allowedOwnerInstanceIds:["m3-text"],jobLease:{name:"model-capacity-reclaim",token,requestedVersion:0}},false)).rows[0]).toMatchObject({kind:"marked"});
+    let saved: ModelCapacityReclaimCursor | null=null;
+    const logs:string[]=[];
+    const ctx={lease:{name:"model-capacity-reclaim",token,requestedVersion:0},cursor:null,hasBudget:()=>true,
+      save:async (cursor:ModelCapacityReclaimCursor)=>{saved=cursor;},log:(name:string)=>{logs.push(name);}} as unknown as JobContext<ModelCapacityReclaimCursor>;
+    expect(await markAutomaticOwnerGone(ctx,"fixture-auto")).not.toBeNull();
+    expect(saved).not.toBeNull();
+    expect(logs).toContain("model_capacity.caller_exited_checked");
+    expect(await stateOf(id)).toBe("indeterminate");
+  } finally {
+    if (prior) await admin`UPDATE jobs j SET lease_token=r.lease_token,locked_at=r.locked_at
+      FROM jsonb_populate_record(NULL::jobs,${JSON.stringify(prior.value)}::text::jsonb) r WHERE j.name=r.name`;
+    else await admin`DELETE FROM jobs WHERE name='model-capacity-reclaim' AND lease_token=${token}`;
   }
 });
