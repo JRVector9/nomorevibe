@@ -30,8 +30,8 @@ export function unifiedTaskDuplicate(row: Pick<TaskAssignRow, "mode" | "choices"
 export const unifiedTaskNeedsAttention = (row: TaskAssignRow) => unifiedTaskDuplicate(row) || row.status.level === "warn" || row.status.level === "bad";
 
 /** The applied draft is confirmed only when every reviewed action returned success, in its original order. */
-export function unifiedTaskSavesConfirmed(results: readonly Readonly<{ kind: "execution" | "ranks"; ok: boolean; issues?: readonly string[] }>[], expected: readonly ("execution" | "ranks")[]): boolean {
-  return expected.length > 0 && results.length === expected.length && expected.every((kind, index) => results[index].kind === kind && results[index].ok && !results[index].issues?.length);
+export function unifiedTaskSavesConfirmed(results: readonly Readonly<{ kind: "execution" | "ranks"; ok: boolean; issues?: readonly string[]; unconfirmed?: boolean }>[], expected: readonly ("execution" | "ranks")[]): boolean {
+  return expected.length > 0 && results.length === expected.length && expected.every((kind, index) => results[index].kind === kind && results[index].ok && !results[index].unconfirmed && !results[index].issues?.length);
 }
 
 /** Keep the capacity warning visible; the full sharing inventory remains in the expandable impact detail. */
@@ -122,15 +122,22 @@ export function unifiedTaskPoolMembers(draft: AssignmentState, members: readonly
   };
 }
 
-/** Empty pool rows start with the current live fallback choices; changing mode never changes saved ranks. */
+/** Moving from ranks to a pool carries the reviewed ranks, including edits; reopening a pool keeps its members. */
 export function unifiedTaskSwitchMode(draft: AssignmentState, mode: AssignmentState["mode"], line: FlowRankLine): AssignmentState {
   if (mode === "workload_pool" && !aiTaskSupportsPool(line.task, line.slot)) return draft;
-  if (mode === "workload_pool" && !draft.members.some(Boolean)) {
+  if (mode === "workload_pool" && draft.mode !== "workload_pool") {
     const members = draft.ranks.filter((choice): choice is AiRankChoice => !!choice).slice(0, 4);
     const features = aiTaskPoolFeatures(line.task, line.slot);
+    // Consume matching occurrences once so repeated models retain distinct caps even after reorder.
+    const remaining = draft.members.map((choice, index) => ({ choice, cap: draft.slots?.[index] ?? "" }));
+    const automatic = remaining.some(row => row.choice) && remaining.filter(row => row.choice).every(row => row.cap === "");
+    const slots = members.map(choice => {
+      const index = remaining.findIndex(row => row.choice?.provider === choice.provider && row.choice.model === choice.model);
+      if (index < 0) return automatic ? "" : "1";
+      return remaining.splice(index, 1)[0].cap;
+    });
     return { ...draft, mode, members,
-      // A new, reviewed draft starts at one slot per selected model, as in the approved editor. Existing saved pools are left intact.
-      ...(features.slotCaps ? { slots: Array.from({ length: 4 }, (_, index) => members[index] ? draft.slots?.[index] || "1" : "") } : {}),
+      ...(features.slotCaps ? { slots: Array.from({ length: 4 }, (_, index) => slots[index] ?? "") } : {}),
       reserve: features.reserve && !!draft.reserve };
   }
   return { ...draft, mode };
