@@ -1,7 +1,7 @@
 import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
 import { gatewayHttpRejectedTerminalSql, gatewayHttpRejectedEventTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
-import { japaneseProductTerminalSql, japaneseProductEventSql } from "@/lib/llm/japanese-product-translation-sql";
+import { japaneseProductLogicalSql, japaneseProductMembersSql, japaneseProductDispatchSql, japaneseProductTerminalSql, japaneseProductEventSql } from "@/lib/llm/japanese-product-translation-sql";
 import { randomBytes, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -702,7 +702,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(current0174[name], `${name}: exact prior ordinals plus the 0174 HTTP-rejected branch`).toBe(`CHECK (${inner(current0168[name])} OR (${branch}))`);
     }
     // 0175 replaces the two defective 0168 leaves in place (same ordinal) with the corrected twins; every other leaf and CHECK is byte-identical.
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    await migrateThrough(175);
     const current0175 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const repaired: Record<string, [string, string]> = {
       model_capacity_requests_dispatch_check: [applied0168.model_capacity_requests_dispatch_check, opencodeTaskDispatchSql],
@@ -712,6 +712,16 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       if (!pair) { expect(current0175[name], `${name}: unchanged by 0175`).toBe(current0174[name]); continue; }
       expect(current0174[name].split(`(${pair[0]})`), `${name}: the applied 0168 leaf occurs once before 0175`).toHaveLength(2);
       expect(current0175[name], `${name}: 0168 leaf replaced in place by the corrected twin`).toBe(current0174[name].replace(`(${pair[0]})`, () => `(${pair[1]})`));
+    }
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const current0184 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const japanese: Record<string, string> = { model_capacity_requests_logical_check: japaneseProductLogicalSql,
+      model_capacity_requests_members_check: japaneseProductMembersSql, model_capacity_requests_dispatch_check: japaneseProductDispatchSql,
+      model_capacity_requests_terminal_check: japaneseProductTerminalSql, model_capacity_events_terminal_check: japaneseProductEventSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = japanese[name];
+      expect(current0184[name], `${name}: 0184 preserves every earlier ordinal`).toBe(branch
+        ? `CHECK (${inner(current0175[name])} OR (${branch}))` : current0175[name]);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
