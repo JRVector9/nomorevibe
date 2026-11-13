@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Fragment, type ReactNode } from "react";
-import { buildConsoleFlow, buildConsoleStrip, type ConsoleFlowRow } from "@/lib/operations/console-home-model";
+import { buildConsoleFlow, buildConsoleStrip, consoleStageExecution, type ConsoleFlowRow, type ConsoleStageExecution } from "@/lib/operations/console-home-model";
 import type { ConsoleHomeRead, ConsoleJobControl } from "@/lib/operations/console-home-read";
 import { buildConsoleTasks, CONSOLE_TASK_LIMITS, formatCount, formatKst, type ConsoleAction, type ConsoleTask, type ConsoleTaskBoard } from "@/lib/operations/console-tasks";
 import { consoleTaskAnchor } from "@/lib/operations/console-alerts";
@@ -56,13 +56,14 @@ export function ConsoleHome({ data, csrf, changeWatch, panel }: {
             <colgroup><col /><col style={{ width: 132 }} /><col style={{ width: 84 }} /><col style={{ width: 96 }} /><col style={{ width: 116 }} /></colgroup>
             <thead><tr><th scope="col">단계</th><th scope="col">상태</th><th scope="col" className="n">대기</th><th scope="col" className="n">최근 처리</th><th scope="col">23시간 추이</th></tr></thead>
             <tbody>
-              {flow.main.length ? flow.main.map(row => <FlowRow key={row.key} row={row} />)
+              {flow.main.length ? flow.main.map(row => <FlowRow key={row.key} row={row} execution={consoleStageExecution(row.key, data.executions, data.inputs.ranks)} />)
                 : <tr><td colSpan={5} className="ch-none">흐름을 셀 수 없음 — 다음 자동 갱신에서 다시 읽습니다.</td></tr>}
               <tr className="ch-grp-row"><th scope="rowgroup" colSpan={5}>공개 뒤</th></tr>
-              {flow.post.map(row => <FlowRow key={row.key} row={row} />)}
+              {flow.post.map(row => <FlowRow key={row.key} row={row} execution={consoleStageExecution(row.key, data.executions, data.inputs.ranks)} />)}
             </tbody>
           </table>
         </div>
+        <p className="ch-mode-note">방식은 저장된 설정이며, 실제 동시 호출 수를 뜻하지 않습니다.</p>
       </section>
     </div>
     {/* 바꾼 것 지켜보기(조각 1c) — 시안 화면 1 처럼 할 일·흐름 아래 전체 폭. 비어 있으면 아무것도 그리지 않는다 */}
@@ -109,9 +110,10 @@ function KeptList({ board }: { board: ConsoleTaskBoard }) {
   </details>;
 }
 
-function FlowRow({ row }: { row: ConsoleFlowRow }) {
+function FlowRow({ row, execution }: { row: ConsoleFlowRow; execution: ConsoleStageExecution | null }) {
   return <tr>
-    <th scope="row">{row.href ? <Link prefetch={false} href={row.href}>{row.label}</Link> : row.label}</th>
+    <th scope="row"><span className="ch-stage-name">{row.href ? <Link prefetch={false} href={row.href}>{row.label}</Link> : row.label}
+      {execution && <span className="ch-execution" title={execution.detail} aria-label={execution.detail}>{execution.label}</span>}</span></th>
     <td><span className="ch-st" data-tone={row.tone}><i aria-hidden="true" />{row.status}</span></td>
     <td className="n">{row.waiting === null ? "—" : formatCount(row.waiting)}</td>
     <td className="n">{row.rate ? <>{formatCount(row.rate.value)}<small>/{row.rate.per}</small></> : "—"}</td>

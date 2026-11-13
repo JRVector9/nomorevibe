@@ -205,6 +205,27 @@
 .admin-prototype .ch-table tbody th a:hover {
   color: var(--blue);
 }
+.admin-prototype .ch-stage-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(4px / .8) calc(6px / .8);
+  min-width: 0;
+}
+.admin-prototype .ch-execution {
+  max-width: 100%;
+  padding: calc(1px / .8) calc(5px / .8);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .ch-mode-note {
+  color: var(--muted);
+  font-size: calc(12px + var(--admin-font-delta, 0px));
+}
 .admin-prototype .ch-table .n {
   text-align: right;
   font-family: var(--f-mono);
