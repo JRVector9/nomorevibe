@@ -1723,7 +1723,7 @@
   font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .modal-body p {
-  line-height: 1.9;
+  line-height: 1.5;
 }
 .admin-prototype .modal-body .facts {
   margin: 0 0 18px;
@@ -1742,7 +1742,7 @@
   padding: 18px;
   border-radius: 8px;
   color: var(--green);
-  line-height: 1.9;
+  line-height: 1.5;
   font-size: calc(12px + var(--admin-font-delta, 0px));
 }
 .admin-prototype .error {
