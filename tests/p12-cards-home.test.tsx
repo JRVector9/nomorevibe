@@ -86,7 +86,7 @@ describe("정식 주소 (SEO-04)", () => {
     const variants: Record<string, string>[] = [{ sort: "recent" }, { ai: "1" }, { shown: "36" }, { saved: "1" }, { personal: "1" }, { q: "  " }];
     for (const params of variants) {
       expect(await home(params)).toMatchObject({ title: "nomorevibe — AI로 만든 것들, 세상에 나오다.", alternates: { canonical: "http://localhost:3000/", types: rss,
-        languages: { ko: "http://localhost:3000/", en: "http://localhost:3000/en", "zh-Hans": "http://localhost:3000/zh-Hans", "zh-Hant": "http://localhost:3000/zh-Hant", "x-default": "http://localhost:3000/" } } });
+        languages: { ko: "http://localhost:3000/", en: "http://localhost:3000/en", "zh-Hans": "http://localhost:3000/zh-Hans", ja: "http://localhost:3000/ja", "x-default": "http://localhost:3000/" } } });
     }
   });
 

@@ -54,7 +54,7 @@ END $preflight$;
 ${japaneseTranslationRules.map(rule => `INSERT INTO model_capacity_check_rules(table_name,constraint_name,ordinal,predicate,source)
 SELECT '${rule.table}', '${rule.name}', coalesce(max(ordinal),0)+1, $branch$${rule.sql}$branch$, '${JAPANESE_TRANSLATION_TAG}'
 FROM model_capacity_check_rules WHERE table_name='${rule.table}' AND constraint_name='${rule.name}'
-HAVING count(*) > 0 AND count(*) FILTER (WHERE source='${JAPANESE_TRANSLATION_TAG}')=0;`).join("\n--> statement-breakpoint\n")}
+HAVING count(*) > 0 AND COUNT(*) FILTER (WHERE source = '${JAPANESE_TRANSLATION_TAG}') = 0;`).join("\n--> statement-breakpoint\n")}
 --> statement-breakpoint
 DO $postflight$
 DECLARE target record;
