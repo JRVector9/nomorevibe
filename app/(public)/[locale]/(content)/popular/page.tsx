@@ -3,8 +3,7 @@ import { PaginationNotice } from "@/components/home/PaginationNotice";
 import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 import {localizeProductList} from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
-import { getTranslator, getDictionary } from "@/lib/i18n/dictionary";
-import { I18nProvider } from "@/lib/i18n/context";
+import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
 import { formatNumber } from "@/lib/i18n/format";
 import Link from 'next/link';
@@ -49,12 +48,13 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const locale=await getRequestLocale();
  const params = await searchParams;
  if (publicPaginationBlocked(params, "page")) return PaginationNotice({ path: localePath(locale, "/popular"), params, locale });
- const [t,labels,dictionary]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels"),getDictionary(locale,"browse")]);
+ // 목록·카드는 서버가 글자로 그린다 — 브라우저 부품(저장 단추)은 레이아웃의 공용 사전만 쓰므로 목록 사전을 RSC 데이터로 넘기지 않는다
+ const [t,labels]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels")]);
  const count=(n:number)=>formatNumber(n,locale);
  const state=parsePopularParams(params);
  const filters={personal:state.personal,ai:state.ai,category:state.category};
  const selected=STAR_TIERS.find(t=>t.key===state.tier)!;
- const now=new Date().toISOString();
+ const now=new Date();
  let result:Awaited<ReturnType<typeof getPopularPage>>|undefined;
  let facets:PopularFacets|undefined;
  // 원본 목록은 보기·언어와 무관하다. 워커 조회는 그대로 두고 공개 읽기만 30초 공유·복제본 경로를 쓴다.
@@ -71,8 +71,8 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const first=result?(result.page-1)*result.pageSize+1:1;
  const items=(await localizeProductList(result?.items??[],locale)).map((item,index)=>rankedCard(item,first+index));
 
- return <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={now}><main className="wrap popular-page">
-  {!result && <RenderReadRecovery key={now} />}
+ return <main className="wrap popular-page">
+  {!result && <RenderReadRecovery key={now.toISOString()} />}
   <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs"><Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("popular.title")}</span></nav>
   <div className="popular-heading">
    <h1>{t("popular.title")}</h1>
@@ -124,12 +124,12 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
     </div>
    </div>
    {items.length===0?<p className="popular-empty">{t("popular.filteredEmpty")}</p>
-    :state.view==='cards'?<RankedCards items={items} now={now}/>:<PopularList items={items} now={now}/>}
+    :state.view==='cards'?<RankedCards items={items} now={now} locale={locale} t={labels}/>:<PopularList items={items} now={now} locale={locale} t={labels}/>}
    {result.total>0&&<nav className="popular-pagination" aria-label={t("nav.pages")}>
     {result.page>1?<Link prefetch={false} href={href({page:result.page-1})}>‹ {t("nav.previous")}</Link>:<span aria-disabled="true">‹ {t("nav.previous")}</span>}
     <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+items.length-1),total:count(result.total) })}</span>
     {result.page<result.pages?<Link prefetch={false} href={href({page:result.page+1})}>{t("nav.next")} ›</Link>:<span aria-disabled="true">{t("nav.next")} ›</span>}
    </nav>}
   </section>}
- </main></I18nProvider>;
+ </main>;
 }

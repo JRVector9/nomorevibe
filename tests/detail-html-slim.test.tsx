@@ -61,15 +61,14 @@ describe("상세 브라우저 부품에 넘기는 값", () => {
     expect(JSON.stringify(summary)).not.toContain("long summary");
   });
 
-  it("상세 화면은 부품에 고른 값을 넘긴다", () => {
+  it("상세 화면은 부가 자료를 API 자리로, 머리·소개·README 발췌는 서버 부품으로 그린다(2026-11-14)", () => {
     const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/page.tsx", "utf8");
-    for (const part of ["ProductHero", "FactsStrip", "InfoCard", "PreviewFigure"]) expect(source).toMatch(new RegExp(`<${part} product=\\{clientProduct\\}`));
-    expect(source).toContain("freshness={detailFreshness(detail.freshness)}");
-    expect(source).toContain("<UpdateTimeline summary={timelineSummary(detail.updates, now)}");
-    expect(source).toContain("<RelatedRow category={product.category} items={relatedCards}");
-    // 서버 부품(소개·README)은 원래 제품을 받는다 — 설명·발췌는 서버에서만 쓴다
+    for (const slot of ["DetailFactsSlot", "DetailActivitySlot", "DetailInfoSlot", "DetailRelatedSlot"]) expect(source).toContain(`<${slot} slug={product.slug} />`);
+    for (const part of ["FactsStrip", "InfoCard", "UpdateTimeline", "RelatedRow", "LanguageBar", "clientProduct"]) expect(source).not.toContain(`<${part} `);
+    // 서버 부품(머리·소개·README 발췌)은 원래 제품을 받는다 — 값은 글자로만 실린다
+    expect(source).toContain("<ProductHero product={product}");
     expect(source).toContain("<IntroSection product={product}");
-    expect(source).toContain("<ReadmeSection product={product}");
+    expect(source).toContain("<ReadmeExcerptSection slug={product.slug}");
   });
 });
 
@@ -119,8 +118,8 @@ describe("닫힌 창의 속은 열 때 그린다", () => {
   });
 
   const pulse: HomePulseView = {
-    asOf: "2026-10-10T00:00:00Z", asOfLabel: "10월 10일", timezone: "Asia/Seoul", methodVersion: "1",
-    born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, active: [], categories: [], tools: null, total: 10,
+    asOf: "2026-10-10T00:00:00Z", asOfLabel: "10월 10일", methodVersion: "1",
+    born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, activeCount: 0, categories: [], tools: null,
   };
 
   it("집계 기준 창 — 주소에 metric 이 없으면 본문을 그리지 않고, 있으면 서버도 그린다", () => {

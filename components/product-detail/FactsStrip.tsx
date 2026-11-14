@@ -62,7 +62,8 @@ const licenseName = (license: LicenseValue) => hasSpdx(license) ? license.spdxId
  * 칸마다 왼쪽·위 선을 긋고 바깥 틀이 첫 줄·첫 칸의 선을 가린다.
  */
 export function FactsStrip({ product, repository, license, health, visits }: {
-  product: DetailClientProduct;
+  /** 사실 칸이 읽는 제품 칸만(lib/domain/products/detail-extras.ts) */
+  product: Pick<DetailClientProduct, "accessMode" | "repoGone" | "repoUrl" | "createdAt">;
   repository: ProductDetailView["repository"];
   license: ProductDetailView["license"];
   health: ProductDetailView["health"];

@@ -1,8 +1,8 @@
 import type { Locale } from "@/lib/i18n/locales";
 import Link from "next/link";
 import { connection } from "next/server";
-import { CompactRow } from "@/components/home/CompactRow";
-import { compactCardItem } from "@/components/home/compact-item";
+import { CompactRowMarkup } from "@/components/cards/markup";
+import "@/components/home/cards.css";
 import { pageTitle } from "@/lib/copy/brand";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
@@ -35,9 +35,9 @@ async function risingProjects(): Promise<ProductListItem[]> {
 export async function PublicNotFound({ locale }: { locale: Locale }) {
   // 빌드 때 굳히지 않는다 — 그때는 DB 가 없어 빈 목록이 박히고, 헤더(검색어를 읽는다)가 브라우저에서야 그려진다
   await connection();
-  const t = await getTranslator(locale, "common");
-  // 이 화면은 모든 공개 화면의 RSC 데이터에 404 경계로 함께 실린다 — 카드가 읽는 칸만 넘긴다(compact-item.ts)
-  const rising = (await localizeProductList(await risingProjects(), locale)).map((item) => compactCardItem(item, locale));
+  const [t, labels] = await Promise.all([getTranslator(locale, "common"), getTranslator(locale, "labels")]);
+  // 이 화면은 모든 공개 화면의 RSC 데이터에 404 경계로 함께 실린다 — 카드는 서버가 글자로 그려 목록 행을 JSON 으로 싣지 않는다
+  const rising = await localizeProductList(await risingProjects(), locale);
 
   return (
     // 위아래 여백은 안쪽 상자에 — .wrap(app/home.css)이 레이어 밖 규칙이라 main 의 padding 유틸리티를 덮는다(error·global-error 도 같다)
@@ -70,7 +70,7 @@ export async function PublicNotFound({ locale }: { locale: Locale }) {
             {t("navigation.homeLink")}
           </Link>
         </p>
-        <CompactRow id="rising" title={t("notFound.rising")} items={rising} trailing="category" more={{ href: localePath(locale, "/rising"), label: t("navigation.viewAll") }} />
+        <CompactRowMarkup ctx={{ locale, t: labels, now: new Date() }} id="rising" title={t("notFound.rising")} items={rising} trailing="category" more={{ href: localePath(locale, "/rising"), label: t("navigation.viewAll") }} />
       </div>
     </main>
   );

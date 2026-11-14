@@ -106,3 +106,25 @@ function leadingSentences(text: string): string {
   const last = endings.at(-1);
   return last ? prefix.slice(0, last.index + 1) : "";
 }
+
+/**
+ * 상세 서버 HTML 에 화면 글자로 남기는 README 발췌의 길이(2026-11-15 사람 결정).
+ *
+ * README 전문은 서버 HTML·RSC 데이터에서 빼고 같은 출처 API 로 브라우저가 불러온다. JS 를 실행하지 않는 검색·AI 답변 봇이
+ * README 핵심 글자로도 상세를 찾게 앞부분 몇 문장만 남긴다 — 저장된 발췌(최대 600자)를 이만큼에서 문단·문장 경계로 자른다.
+ */
+export const README_EXCERPT_DISPLAY_CHARS = 320;
+
+export function shortReadmeExcerpt(excerpt: string | null | undefined, max = README_EXCERPT_DISPLAY_CHARS): string | null {
+  const text = excerpt?.trim();
+  if (!text) return null;
+  if (text.length <= max) return text;
+  const head = text.slice(0, max + 1);
+  const paragraph = head.lastIndexOf("\n\n");
+  if (paragraph >= max / 2) return text.slice(0, paragraph).trimEnd();
+  const endings = [...head.matchAll(/[.!?](?=\s)|[。！？]/g)].filter((match) => match.index < max);
+  const sentence = endings.at(-1);
+  if (sentence && sentence.index >= max / 3) return head.slice(0, sentence.index + 1);
+  const space = head.lastIndexOf(" ", max - 1);
+  return `${head.slice(0, space > max / 2 ? space : max - 1).trimEnd()}…`;
+}

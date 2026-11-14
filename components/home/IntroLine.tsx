@@ -1,8 +1,6 @@
-"use client";
-
 import Link from "next/link";
 import { metricHref, type BrowseState } from "@/components/home/browse-state";
-import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { KOREAN_BROWSE_I18N, type BrowseI18n } from "@/lib/i18n/browse-i18n";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 
@@ -18,9 +16,8 @@ import type { HomePulse } from "@/lib/domain/products/home-pulse";
  * 찾아 모은 것이고, 'AI'는 저장소에 남은 AI 코딩 도구 흔적에서, ✓는 메이커가 도메인 소유권을 확인한 곳에만 붙는다.
  * 자세한 수집·근거·내려달라는 요청은 게재 기준(/policy)이 맡는다.
  */
-export function IntroLine({ pulse, total, state }: { pulse: HomePulse; total: number; state: BrowseState }) {
-  const locale = useLocale();
-  const t = useTranslations("browse");
+export function IntroLine({ pulse, total, state, i18n = KOREAN_BROWSE_I18N }: { pulse: Pick<HomePulse, "born" | "updates">; total: number; state: BrowseState; i18n?: BrowseI18n }) {
+  const { locale, t } = i18n;
   const count = (n: number) => formatNumber(n, locale);
   return (
     <section className="intro-line" aria-label={t("intro.label")}>
