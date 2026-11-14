@@ -345,7 +345,8 @@ describe("함정 경로", () => {
   });
 
   it("공통 바닥글에 사람 눈·보조 기술에 안 보이는 함정 링크가 /api/ 아래로 걸린다", () => {
-    const html = renderToStaticMarkup(createElement(SiteFooter, { locale: "ko", messages: common }, null));
+    const props: Parameters<typeof SiteFooter>[0] = { locale: "ko", messages: common, children: null };
+    const html = renderToStaticMarkup(createElement(SiteFooter, props));
     expect(TRAP_PATH.startsWith("/api/")).toBe(true);
     const link = html.match(/<a [^>]*data-nmv-trap[^>]*>/)?.[0] ?? "";
     expect(link).toContain(`href="${TRAP_PATH}"`);
