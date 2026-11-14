@@ -115,7 +115,10 @@ describe("찾기·바꾸기 — 이름 하나로 화면, 조치, 기록", () => 
       ["log", "Show HN이 나온 기록", "/admin/log?q=hn-show-seed"],
     ]);
     expect(searchConsoleCommands("audit-qwen", { models: [], jobs: [] }).map(row => [row.kind, row.href])).toEqual([
-      ["open", "/admin/status?tab=jobs&job=audit-qwen"], ["action", "/admin/status?tab=jobs&job=audit-qwen"], ["log", "/admin/log?q=audit-qwen"]]);
+      ["open", "/admin/flow?stage=audit"],
+      ["action", "/admin/flow?stage=audit#sp-jobs"], ["action", "/admin/flow?stage=audit#sp-jobs"],
+      ["action", "/admin/flow?stage=audit#sp-jobs"], ["action", "/admin/flow?stage=audit#sp-jobs"],
+      ["action", "/admin/flow?stage=audit#sp-models"], ["log", "/admin/log?q=%EA%B0%90%EC%82%AC%20%EA%B1%B0%EC%A0%88"]]);
     expect(searchConsoleCommands("접수", { models: [], jobs: [] })).toContainEqual(expect.objectContaining({ kind: "action", title: "모델 접수 멈추기·열기",
       href: "/admin/models/dashboard#admission" }));
     expect(searchConsoleCommands("a", { models: [supa], jobs: [] })).toEqual([]);

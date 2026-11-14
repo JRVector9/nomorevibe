@@ -67,6 +67,8 @@ describe("human and audit recovery panels", () => {
     expect(html).toContain('href="/admin/audit?tab=audit"');
     expect(html).toContain('href="/admin/audit?tab=policy"');
     expect(html).toContain('href="/admin/audit?tab=history"');
+    expect(html).toContain('id="sp-models"');
+    expect(html).toContain('href="/admin/models#tasks"');
     expect(text(html)).toContain("이미 공개된 제품의 재검수 결과");
     expect(html).not.toContain('class="sp-rank"');
   });

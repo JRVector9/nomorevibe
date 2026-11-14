@@ -85,7 +85,7 @@ export function StagePanel({ panel, editor, context, limits, limitRows, limitImp
         <StageModels lines={panel.models} editor={editor} context={context} lockReason={lockReason} initial={modelsInitial} stageLabel={panel.label} poolHelp={poolHelp} />
       </section>}
 
-      {panel.key === "audit" && <section className="sp-sec" aria-labelledby="sp-audit-recovery">
+      {panel.key === "audit" && <section className="sp-sec" id="sp-models" aria-labelledby="sp-audit-recovery">
         <span className="sp-lab" id="sp-audit-recovery">감사 거절 처리</span>
         <p className="sp-note">이미 공개된 제품의 재검수 결과입니다. 원본·화면과 두 번째 의견을 확인하고,
           기존 감사 화면에서 유지·내리기 또는 표본을 확인한 정책 처리를 합니다.</p>
