@@ -2,7 +2,7 @@
 
 import { useTranslations } from "@/lib/i18n/context";
 import { useSavedSlugs } from "@/components/home/useSavedSlugs";
-import { SaveButtonMarkup } from "./markup";
+import { SaveButtonMarkup } from "./save-button";
 
 /**
  * 서버가 그린 카드의 저장(북마크) 단추 — 카드에서 브라우저로 넘어가는 값은 slug·이름(단추 이름)뿐이다.

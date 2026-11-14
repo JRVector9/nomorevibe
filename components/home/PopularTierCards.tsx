@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import type { ReactNode } from "react";
-import { LazyRankedPanel } from "@/components/cards/LazyCards";
+import { LazyRankedPanelSlot as LazyRankedPanel } from "@/components/cards/lazy-slots";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";

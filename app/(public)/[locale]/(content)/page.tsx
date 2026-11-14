@@ -28,7 +28,7 @@ import {
 } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactCardMarkup, CompactRowMarkup } from "@/components/cards/markup";
-import { LazyCompactRow } from "@/components/cards/LazyCards";
+import { LazyCompactRow } from "@/components/cards/lazy-slots";
 import "@/components/home/cards.css";
 import { starGrowthNote, starGrowthView } from "@/components/home/star-growth-copy";
 import { IntroLine } from "@/components/home/IntroLine";

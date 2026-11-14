@@ -1,6 +1,5 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Icon } from "@/components/home/icons";
 import { translatedCategory } from "@/components/home/i18n";
 import type { TaglineSource } from "@/lib/db/schema";
 import type { ProductActivity } from "@/lib/domain/products/activity";
@@ -8,12 +7,12 @@ import { listedRepositoryOwner } from "@/lib/domain/products/github-owner";
 import type { StarObservation } from "@/lib/domain/products/star-change";
 import type { StarGrowthItem } from "@/lib/domain/products/star-growth";
 import type { ProductTranslationSelection } from "@/lib/domain/products/translation-policy";
-import { trackAttrs } from "@/lib/analytics/attrs";
 import type { TimeInput } from "@/lib/format/time";
 import { formatDate, formatNumber } from "@/lib/i18n/format";
 import type { Locale } from "@/lib/i18n/locales";
 import { localePath } from "@/lib/i18n/routing";
 import { ActivityView, StarsCell, TaglineView, TileView, type Labels } from "./views";
+export { SaveButtonMarkup } from "./save-button";
 
 /**
  * 카드·띠·순위 목록의 마크업(2026-11-14 공개 HTML 줄이기) — 서버 부품과 브라우저 부품이 같은 모양을 쓴다.
@@ -52,22 +51,6 @@ export type CardProduct = StarObservation & {
 const ownerOf = (product: CardProduct) => product.owner !== undefined ? product.owner : listedRepositoryOwner(product.repoUrl ?? null, product.repoRenamedTo);
 
 export type CardContext = { locale: Locale; t: Labels; now: Date | string | number };
-
-/** 저장 단추의 모양 — 누르는 일은 부르는 쪽(SaveToggle·ProjectCard)이 정한다 */
-export function SaveButtonMarkup({ slug, name, saved, onClick, t }: { slug: string; name: string; saved: boolean; onClick?: () => void; t: Labels }) {
-  return (
-    <button
-      type="button"
-      className={`cover-saved${saved ? " active" : ""}`}
-      aria-label={t(saved ? "card.unsave" : "card.save", { name })}
-      aria-pressed={saved}
-      onClick={onClick}
-      {...trackAttrs("product_save", { product_slug: slug, action: saved ? "unsave" : "save" })}
-    >
-      <Icon name="bookmark" size={16} />
-    </button>
-  );
-}
 
 /**
  * 홈 카드 — 타일 · 이름 · @소유자 · 한 줄 소개 · 메타 한 줄("분야 · 최근 업데이트 n일 전" / ★ 증가).

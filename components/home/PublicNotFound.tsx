@@ -1,7 +1,7 @@
 import type { Locale } from "@/lib/i18n/locales";
 import Link from "next/link";
 import { connection } from "next/server";
-import { NotFoundRising } from "@/components/cards/LazyCards";
+import { NotFoundRisingSlot as NotFoundRising } from "@/components/cards/lazy-slots";
 import "@/components/home/cards.css";
 import { pageTitle } from "@/lib/copy/brand";
 import { getTranslator } from "@/lib/i18n/dictionary";
