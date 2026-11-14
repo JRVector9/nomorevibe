@@ -27,6 +27,7 @@ export function BrowseFilters({
   state,
   counts,
   categoryOrderCounts = counts,
+  categoryOrder,
   countsKnown = true,
   total,
   resultCount,
@@ -37,6 +38,8 @@ export function BrowseFilters({
   counts: Record<string, number>;
   /** 공개 전체 집계로 분야 순서를 고정한다. 숫자는 현재 목록 자격의 counts를 쓴다. */
   categoryOrderCounts?: Record<string, number>;
+  /** 분야 알약 차례(서버가 chipCategories 로 정한 것) — 주면 categoryOrderCounts 대신 쓴다. 차례만 정하는 집계 수를 브라우저로 넘기지 않는다 */
+  categoryOrder?: readonly string[];
   countsKnown?: boolean;
   total: number;
   resultCount: number;
@@ -54,7 +57,7 @@ export function BrowseFilters({
   const countable = countsKnown && !(state.query || state.builder || state.observedTool);
   const showCounts = countable;
   // 알약의 차례·목록은 전체 수로 정한다 — 만든 방식을 켜고 끌 때 분야 알약이 사라지거나 자리를 바꾸지 않게
-  const categories = chipCategories(categoryOrderCounts);
+  const categories = categoryOrder ?? chipCategories(categoryOrderCounts);
   // 검색어가 있으면 기본 순서(관련도)를 맨 앞 탭으로 둔다 — 없으면 아무 탭도 켜지지 않았다(UX-12)
   const tabs: readonly HomeSort[] = state.query ? ["relevance", ...TABS] : TABS;
 

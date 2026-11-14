@@ -18,11 +18,14 @@ const LINK = "text-accent-ink underline underline-offset-2";
  * 웹사이트의 도메인 확인도 남긴다. 조직 저장소는 GitHub 로그인만으로 확인하지 않는다.
  */
 export function UnclaimedOwnerContact({ productId, repoUrl, slug, installable = false, authEnabled = true, githubEnabled = true }: {
-  productId: number; repoUrl: string | null; slug: string; installable?: boolean; authEnabled?: boolean; githubEnabled?: boolean;
+  /** 로그인 운영자 확인이 켜졌을 때만 — 꺼져 있으면 상세가 내부 id 를 싣지 않는다 */
+  productId?: number;
+  /** 저장소 주소 — 넘기면 GitHub 저장소일 때만 그린다. 상세 화면은 서버에서 먼저 가리고 넘기지 않는다(주소를 RSC 데이터에 싣지 않는다) */
+  repoUrl?: string | null; slug: string; installable?: boolean; authEnabled?: boolean; githubEnabled?: boolean;
 }) {
   const t = useTranslations("detail");
   const locale = useLocale();
-  if (!githubOwnerFromRepositoryUrl(repoUrl)) return null;
+  if (repoUrl !== undefined && !githubOwnerFromRepositoryUrl(repoUrl)) return null;
 
   return (
     <section id="owner-claim" className="scroll-mt-24 rounded-[18px] border border-line p-5 [&_summary]:flex [&_summary]:min-h-11 [&_summary]:items-center">

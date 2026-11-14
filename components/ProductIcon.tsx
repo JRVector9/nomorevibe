@@ -80,7 +80,7 @@ export function ProductIcon({
   return (
     <span
       aria-hidden="true"
-      className="product-monogram inline-flex shrink-0 items-center justify-center rounded-[10px] font-bold text-fg"
+      className="product-monogram"
       style={{ width: size, height: size, background: `var(--tile-${tileTint(category, name)})`, fontSize: Math.max(13, size * 0.42) }}
     >
       {monogramLetter(name)}

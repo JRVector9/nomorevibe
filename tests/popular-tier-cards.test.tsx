@@ -38,12 +38,14 @@ describe("홈 '많이 쓰이는 프로젝트' — 구간 탭 + 발견하기 카�
     expect(tabs.match(/tabindex="0"/g)).toHaveLength(1);
   });
 
-  it("구간마다 카드 3장을 그려 두고 고른 판만 보인다 — 다른 판은 hidden", async () => {
+  it("첫 구간 카드 3장만 서버가 그리고 다른 판은 hidden 빈 판 — 탭을 처음 고를 때 받는다(2026-11-14 공개 HTML 줄이기)", async () => {
     const html = renderToStaticMarkup(await PopularTiers({}));
     const panels = [...html.matchAll(/<div role="tabpanel"[^>]*>/g)].map((m) => m[0]);
     expect(panels).toHaveLength(4);
     expect(panels.map((panel) => panel.includes("hidden"))).toEqual([false, true, true, true]);
-    expect(html.match(/class="project-card"/g)).toHaveLength(12);
+    expect(html.match(/class="project-card"/g)).toHaveLength(3);
+    // 숨은 판은 비어 있다 — 제품 값은 서버 HTML 에 없다
+    expect(html).not.toContain("noticed-1");
   });
 
   it("카드는 이름을 자르지 않고 한국어 소개·미리보기 커버·순위·저장을 보인다", async () => {

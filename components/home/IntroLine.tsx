@@ -18,7 +18,8 @@ import type { HomePulse } from "@/lib/domain/products/home-pulse";
  * 찾아 모은 것이고, 'AI'는 저장소에 남은 AI 코딩 도구 흔적에서, ✓는 메이커가 도메인 소유권을 확인한 곳에만 붙는다.
  * 자세한 수집·근거·내려달라는 요청은 게재 기준(/policy)이 맡는다.
  */
-export function IntroLine({ pulse, total, state }: { pulse: HomePulse; total: number; state: BrowseState }) {
+/** pulse 는 이 줄이 그리는 두 수만 받는다 — 집계 전체(분야·활발한 목록)를 브라우저 부품 속성으로 싣지 않는다(2026-11-14) */
+export function IntroLine({ pulse, total, state }: { pulse: Pick<HomePulse, "born" | "updates">; total: number; state: BrowseState }) {
   const locale = useLocale();
   const t = useTranslations("browse");
   const count = (n: number) => formatNumber(n, locale);

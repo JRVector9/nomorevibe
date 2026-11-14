@@ -3,8 +3,8 @@ import { PaginationNotice } from "@/components/home/PaginationNotice";
 import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 import { localizeProductList } from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
-import { getTranslator, getDictionary } from "@/lib/i18n/dictionary";
-import { I18nProvider } from "@/lib/i18n/context";
+import { bundledOrDictionary, getTranslator } from "@/lib/i18n/dictionary";
+import { BrowseMessages } from "@/lib/i18n/bundled/browse";
 import { localePath } from "@/lib/i18n/routing";
 import { formatNumber, formatDateTime } from "@/lib/i18n/format";
 import Link from "next/link";
@@ -15,7 +15,7 @@ import { Icon } from "@/components/home/icons";
 import { RankedCards } from "@/components/home/RankedCards";
 import { PopularList } from "@/app/(public)/[locale]/(content)/popular/PopularList";
 import { StarGrowthSummary } from "@/components/home/StarGrowthSummary";
-import { starGrowthNote } from "@/components/home/star-growth-copy";
+import { starGrowthNote, starGrowthView } from "@/components/home/star-growth-copy";
 import { getStarGrowthPage, type StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { pageTitle } from "@/lib/copy/brand";
 import { logger } from "@/lib/observability/logger";
@@ -42,7 +42,8 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   const locale = await getRequestLocale();
   const params = await searchParams;
   if (publicPaginationBlocked(params, "page")) return PaginationNotice({ path: localePath(locale, "/rising"), params, locale });
-  const [t,dictionary] = await Promise.all([getTranslator(locale,"browse"),getDictionary(locale,"browse")]);
+  // 한국어 목록 사전은 JS 조각(BrowseMessages)으로 — 급상승 요약(브라우저 부품)만 읽는다
+  const [t,labels,dictionary] = await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels"),bundledOrDictionary(locale,"browse")]);
   const count = (n: number) => formatNumber(n,locale);
   const view = firstValue(params.view) === "cards" ? "cards" : "list";
   const now = new Date();
@@ -56,7 +57,7 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   const first = result ? (result.page - 1) * result.pageSize + 1 : 1;
   const items = (await localizeProductList(result?.items ?? [],locale)).map((product, index) => ({ ...product, rank: first + index }));
   return (
-    <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={now.toISOString()}><main className="wrap popular-page">
+    <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap popular-page">
       {!result && <RenderReadRecovery key={now.toISOString()} />}
       <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs">
         <Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("growth.title")}</span>
@@ -78,10 +79,10 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
           </nav>}
         </div>
         {!result || result.snapshot.status !== "ready" ? <div className="popular-empty" role="status">
-          <StarGrowthSummary snapshot={result?.snapshot ?? null} now={now} />
+          <StarGrowthSummary snapshot={starGrowthView(result?.snapshot ?? null)} now={now} />
         </div> : <>
           <p className="row-note">{t("growth.cycle", { asOf:formatDateTime(result.snapshot.asOf,now,locale),next:formatDateTime(result.snapshot.nextCycle,now,locale) })}</p>
-          {view === "cards" ? <RankedCards items={items} now={now.toISOString()} /> : <PopularList items={items} now={now.toISOString()} />}
+          {view === "cards" ? <RankedCards items={items} now={now} locale={locale} t={labels} /> : <PopularList items={items} now={now} locale={locale} t={labels} />}
           <nav className="popular-pagination" aria-label={t("nav.pages")}>
             {result.page > 1 ? <Link prefetch={false} href={href(result.page - 1)}>‹ {t("nav.previous")}</Link> : <span aria-disabled="true">‹ {t("nav.previous")}</span>}
             <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+items.length-1),total:count(result.total) })}</span>
@@ -89,6 +90,6 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
           </nav>
         </>}
       </section>
-    </main></I18nProvider>
+    </main></BrowseMessages>
   );
 }

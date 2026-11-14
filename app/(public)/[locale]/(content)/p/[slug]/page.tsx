@@ -4,16 +4,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DetailEntry } from "@/components/product-detail/DetailEntry";
 import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
-import { FactsStrip } from "@/components/product-detail/FactsStrip";
-import { InfoCard } from "@/components/product-detail/InfoCard";
+import { DetailActivitySlot, DetailFactsSlot, DetailInfoSlot, DetailRelatedSlot } from "@/components/product-detail/DetailExtras";
 import { IntroSection } from "@/components/product-detail/IntroSection";
-import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
-import { ReadmeFallback, ReadmeSection } from "@/components/product-detail/ReadmeSection";
+import { ReadmeExcerptSection } from "@/components/product-detail/ReadmeExcerpt";
 import { ProductHero } from "@/components/product-detail/ProductHero";
 import { GithubStarButton } from "@/components/product-detail/GithubStarButton";
-import { RelatedRow } from "@/components/product-detail/RelatedRow";
-import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { FeedbackForm } from "@/components/product-detail/FeedbackForm";
 import { FeedbackList } from "@/components/product-detail/FeedbackList";
 import { FeedbackSettingsMenu } from "@/components/product-detail/FeedbackSettingsMenu";
@@ -42,14 +38,14 @@ import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
 import { githubFeedbackDeliveryEnabled, githubStarEnabled, productFeedbackEnabled, publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import { parseGithubRepository } from "@/lib/github/repositories";
+import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 import { getProductGithubBinding } from "@/lib/domain/github-installations/bindings";
 import { TalkBand } from "@/components/social/TalkBand";
 import { talkVisibility } from "@/lib/social/flags";
 import { productTalk, type ProductTalk } from "@/lib/social/talk";
 import { productFollowSlots } from "@/components/me/FollowSlot";
 import { tryPanelMessages } from "@/components/feedback/try-messages";
-import { detailClientProduct, detailFreshness, timelineSummary } from "@/components/product-detail/client-data";
-import { compactCardItem } from "@/components/home/compact-item";
+import { shortReadmeExcerpt } from "@/lib/domain/products/readme-excerpt";
 
 export const dynamic = "force-dynamic";
 
@@ -117,15 +113,13 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
   const detail = await publicRead("detail", ["detail", slug], () => getProductDetail(slug));
   if (!detail) notFound();
 
-  const [t, labels, localized, related] = await Promise.all([
+  const [t, labels, localized] = await Promise.all([
     getTranslator(locale, "detail"), getTranslator(locale, "labels"),
     localizeProductList([detail.product], locale, ["tagline", "description"]),
-    localizeProductList(detail.related, locale),
   ]);
   const product = localized[0];
   const categoryName = translatedCategory(product.category, labels);
   const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
-  const risingTotal = detail.relatedTotal ?? null;
   const githubDeliveryAvailable = githubFeedbackDeliveryEnabled()
     && Boolean((await getProductGithubBinding(product.id).catch(() => null))?.enabled);
   // SNS 화제 띠(C안) — 화면을 켰거나 관리자 미리보기일 때만 읽는다. 실패해도 상세는 그대로 연다
@@ -146,9 +140,13 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
     repoUrl: product.repoUrl, repoGone: product.repoGone, image: product.ogImage, languages,
   });
 
-  // 브라우저 부품에는 읽는 칸만 넘긴다(client-data.ts) — 한 객체를 여러 부품이 받아도 RSC 데이터에는 한 번만 실린다
-  const clientProduct = detailClientProduct(product);
-  const relatedCards = related.map((item) => compactCardItem(item, locale));
+  /*
+   * 서버 HTML 에는 제목·한 줄 소개·분야·README 발췌(몇 문장)·최소 JSON-LD 만 글자로 남긴다(2026-11-14 공개 HTML 줄이기,
+   * 2026-11-15 README 사람 결정). 사실 칸·정보 카드·언어·업데이트·같은 분야 목록과 README 전문은 브라우저가 같은 출처 API
+   * (/api/products/[slug]/details·/readme, 공개 API 읽기 관문)로 불러온다 — 제품 값을 JSON 으로 HTML 에 싣지 않는다.
+   */
+  const readmeExcerpt = shortReadmeExcerpt(detail.readmeExcerpt);
+  const media = detail.media.map(({ src, width, height, altText, sourceMissing, lastSuccessAt }) => ({ src, width, height, altText, sourceMissing, lastSuccessAt }));
 
   return (
     <I18nProvider locale={locale} dictionaries={{}} now={now.toISOString()}><main className="wrap pb-14">
@@ -162,7 +160,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         <span className="min-w-0 truncate text-fg">{product.name}</span>
       </nav>
 
-      <ProductHero product={clientProduct} unclaimed={detail.unclaimed} risingRank={detail.risingRank} talkRank={talk?.qualifies ? talk.rank : null} health={detail.health} languages={languages}
+      <ProductHero product={product} i18n={{ locale, t, labels }} now={now} unclaimed={detail.unclaimed} risingRank={detail.risingRank} talkRank={talk?.qualifies ? talk.rank : null} health={detail.health} languages={languages}
         repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null} follow={productFollowSlots(product, detail.repository?.facts?.repositoryUrl ?? null)}
         personalGithubStar={githubStarEnabled() && !product.repoGone && product.repoUrl && parseGithubRepository(product.repoUrl)
           ? <GithubStarButton key={product.slug} slug={product.slug} stars={product.stars} /> : undefined}
@@ -173,14 +171,11 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
         <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-9">
-          <FactsStrip product={clientProduct} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
-          <IntroSection product={product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed}>
-            <Suspense fallback={<ReadmeFallback product={product} readmeExcerpt={detail.readmeExcerpt} pending />}>
-              <ReadmeSection product={product} readmeExcerpt={detail.readmeExcerpt} />
-            </Suspense>
+          <DetailFactsSlot slug={product.slug} />
+          <IntroSection product={product} profile={detail.profile} readmeExcerpt={readmeExcerpt} unclaimed={detail.unclaimed}>
+            <ReadmeExcerptSection slug={product.slug} repoUrl={product.repoUrl} repoGone={product.repoGone} excerpt={readmeExcerpt} t={t} />
           </IntroSection>
-          <LanguageBar repository={detail.repository} />
-          <UpdateTimeline summary={timelineSummary(detail.updates, now)} now={now} />
+          <DetailActivitySlot slug={product.slug} />
           {productFeedbackEnabled() && (
             <section id="feedback" className="scroll-mt-24 space-y-4 border-t border-line pt-5" aria-label={t("page.feedback")}>
               <FeedbackList key={product.slug} slug={product.slug}
@@ -192,10 +187,11 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         </div>
 
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
-          <InfoCard product={clientProduct} repository={detail.repository} freshness={detailFreshness(detail.freshness)} unclaimed={detail.unclaimed} />
-          <PreviewFigure product={clientProduct} media={detail.media} />
-          {detail.unclaimed && (
-            <UnclaimedOwnerContact productId={product.id} repoUrl={product.repoUrl} slug={product.slug} installable={product.accessMode === "installable"}
+          <DetailInfoSlot slug={product.slug} />
+          <PreviewFigure product={{ name: product.name, ogImage: product.ogImage }} media={media} />
+          {detail.unclaimed && githubOwnerFromRepositoryUrl(product.repoUrl) && (
+            // 내부 id 는 로그인 운영자 확인(API)이 켜졌을 때만 넘긴다 — 꺼져 있으면 단추가 쓰지 않는다
+            <UnclaimedOwnerContact productId={publicUserAuthEnabled() ? product.id : undefined} slug={product.slug} installable={product.accessMode === "installable"}
               authEnabled={publicUserAuthEnabled()} githubEnabled={githubStarEnabled()} />
           )}
           {product.status === "unverified" && (
@@ -209,7 +205,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         </aside>
       </div>
 
-      <RelatedRow category={product.category} items={relatedCards} total={risingTotal} basis={detail.relatedBasis} />
+      <DetailRelatedSlot slug={product.slug} />
     </main></I18nProvider>
   );
 }

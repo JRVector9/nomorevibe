@@ -1,8 +1,29 @@
 import { defineConfig } from "vitest/config";
 import { availableParallelism } from "node:os";
 import path from "node:path";
+import type { Plugin } from "vite";
+
+/**
+ * "use client" 파일의 부품에 경계 표시를 단다 — 공개 HTML 데이터 시험(tests/public-html-payload*.test.tsx)이
+ * 서버 부품은 펼치고 브라우저 부품에서 멈춰, RSC 데이터로 넘어갈 속성만 모은다. 다른 시험에는 영향이 없다(보이지 않는 속성 하나).
+ */
+const CLIENT_DIRECTIVE = /^(?:\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/))*\s*["']use client["']/;
+function clientBoundaryMarker(): Plugin {
+  return {
+    name: "nmv-client-boundary-marker",
+    enforce: "post",
+    transform(code, id) {
+      if (id.includes("/node_modules/") || !/\.(?:tsx?|jsx?)$/.test(id.split("?")[0]) || !CLIENT_DIRECTIVE.test(code)) return null;
+      const names = [...code.matchAll(/export\s+(?:async\s+)?function\s+([A-Z][\w$]*)/g), ...code.matchAll(/export\s+const\s+([A-Z][\w$]*)\s*=/g)]
+        .map((match) => match[1]);
+      if (names.length === 0) return null;
+      return { code: `${code}\n;for (const c of [${names.join(", ")}]) if (typeof c === "function") Object.defineProperty(c, "$$nmvClientBoundary", { value: true });\n`, map: null };
+    },
+  };
+}
 
 export default defineConfig({
+  plugins: [clientBoundaryMarker()],
   test: {
     environment: "node",
     include: ["tests/**/*.test.{ts,tsx}"],

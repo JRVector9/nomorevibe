@@ -1,7 +1,6 @@
 import { publicPaginationBlocked } from "@/lib/web/public-pagination";
 import { getRequestLocale } from "@/lib/i18n/server";
-import { getTranslator,getDictionary } from "@/lib/i18n/dictionary";
-import { I18nProvider } from "@/lib/i18n/context";
+import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
 import type { Metadata, ResolvingMetadata } from "next";
 import { LOCALES } from "@/lib/i18n/locales";
@@ -61,19 +60,19 @@ export async function generateMetadata({ params, searchParams }: Props, parent: 
 
 export default async function CategoryPage({ params, searchParams }: Props) {
   const locale=await getRequestLocale();
-  const [t,labels,dictionary]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels"),getDictionary(locale,"browse")]);
+  const [t,labels]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels")]);
   const [{ category: raw }, search] = await Promise.all([params, searchParams]);
   const category = parseCategory(raw);
   if (!category) notFound();
   // 정식 주소는 소문자 하나 — 나머지 조건은 그대로 붙여 보낸다(홈의 옛 주소와 같은 규칙)
   if (raw !== categorySlug(category)) redirect(categoryRedirect({ ...search, category },locale) ?? localePath(locale,`/c/${categorySlug(category)}`));
-  if (hiddenByDefault(category)) return <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><HiddenCategory locale={locale} t={t} label={translatedCategory(category,labels)} /></I18nProvider>;
+  if (hiddenByDefault(category)) return <HiddenCategory locale={locale} t={t} labels={labels} label={translatedCategory(category,labels)} />;
   return HomeScreen({ params: { ...search, category },
     titleAction: <FollowSlot target="category" targetKey={categorySlug(category)} name={translatedCategory(category, labels)} variant="chip" /> });
 }
 
 /** 기본 목록에서 뺀 분야 — 지운 것이 아니라 본인이 등록·확인한 것만 보인다(운영자 결정 D2) */
-function HiddenCategory({label,locale,t}:{label:string;locale:Locale;t:Translator<"browse">}) {
+function HiddenCategory({label,locale,t,labels}:{label:string;locale:Locale;t:Translator<"browse">;labels:Translator<"labels">}) {
   return (
     <main className="wrap">
       <section className="feed" aria-labelledby="category-hidden-title">
@@ -83,7 +82,7 @@ function HiddenCategory({label,locale,t}:{label:string;locale:Locale;t:Translato
             {t("category.hiddenHint")}{" "}
             <Link prefetch={false} href={localePath(locale,"/policy#excluded")}>{t("nav.listingPolicy")}</Link>
           </p>
-          <CategoryLinks />
+          <CategoryLinks locale={locale} t={t} labels={labels} />
           <Link prefetch={false} href={localePath(locale,"/")} className="secondary">{t("nav.home")}</Link>
         </div>
       </section>

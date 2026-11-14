@@ -847,8 +847,9 @@ describe("evidence product detail components", () => {
     expect(source).toContain('<main className="wrap pb-14">');
     expect(source).not.toContain("max-w-[1220px]");
     // 분야 급상승 총수는 상세 모델이 같은 완료된 8시간 회차로 읽은 값이다 — 실패하면 숫자 없이 표시한다.
-    expect(source).toContain("const risingTotal = detail.relatedTotal ?? null;");
-    expect(source).toMatch(/<RelatedRow[^>]*total=\{risingTotal\}/);
+    // 같은 분야 목록은 부가 자료 API(/api/products/[slug]/details)로 브라우저가 받는다(2026-11-14 공개 HTML 줄이기)
+    const extras = readFileSync("lib/domain/products/detail-extras.ts", "utf8");
+    expect(extras).toContain("total: detail.relatedTotal ?? null");
     expect(source).not.toMatch(/countProducts|risingLoad/);
     // 없는 제품은 진짜 404 — 기본 정보로 notFound() 를 먼저 부르고, 본문만 Suspense 안에서 머리 골격을 보이며 채운다.
     // 구간 loading.tsx 는 응답을 먼저 흘려 상태를 200 으로 굳히므로 두지 않는다(UX-38)
@@ -857,19 +858,20 @@ describe("evidence product detail components", () => {
     expect(notFoundAt).toBeGreaterThan(-1);
     expect(notFoundAt).toBeLessThan(source.indexOf("<Suspense fallback={<DetailSkeleton />}>"));
     expect(renderToStaticMarkup(<DetailSkeleton />)).toContain('aria-busy="true"');
-    // 읽기 순서: 히어로 → 핵심 사실 → 소개 → 언어 → 업데이트 → 댓글 → 정보 → 미리보기 → 운영자 → 같은 분야
+    // 읽기 순서: 히어로 → 핵심 사실 → 소개(README 발췌) → 언어·업데이트 → 댓글 → 정보 → 미리보기 → 운영자 → 같은 분야
+    // 핵심 사실·언어·업데이트·정보·같은 분야는 서버 HTML 에 자리만 두고 브라우저가 부가 자료 API 로 채운다
     const order = [
       "<ProductHero",
-      "<FactsStrip",
+      "<DetailFactsSlot",
       "<IntroSection",
-      "<LanguageBar",
-      "<UpdateTimeline",
+      "<ReadmeExcerptSection",
+      "<DetailActivitySlot",
       "<FeedbackList",
       "<FeedbackForm",
-      "<InfoCard",
+      "<DetailInfoSlot",
       "<PreviewFigure",
       "<UnclaimedOwnerContact",
-      "<RelatedRow",
+      "<DetailRelatedSlot",
     ].map((needle) => source.indexOf(needle));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((left, right) => left - right));
