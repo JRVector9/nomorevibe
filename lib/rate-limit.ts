@@ -98,10 +98,12 @@ export async function pruneExpiredRateLimits(lease?: JobLease): Promise<number> 
  * 그때의 실제 방문자는 Cloudflare 가 덮어써 보내는 CF-Connecting-IP 에 있다. 위조 방지 조건:
  *  - TRUST_CF_CONNECTING_IP=1 로 명시했을 때만 본다(기본 꺼짐).
  *  - TRUSTED_PROXY_HOPS ≥ 1 이어야 한다 — 우리 프록시가 기록한 피어를 봐야 Cloudflare 경유인지 가릴 수 있다.
- *  - 그 피어(hop 으로 고른 값)가 루프백·사설(RFC1918)·링크로컬·ULA 주소일 때만 믿는다. 즉 같은 기계/사설망의
- *    cloudflared 가 넘겨준 요청이다. 공인 주소에서 Traefik 에 바로 들어온 요청이 머리를 꾸며도 무시된다.
+ *  - 그 피어(hop 으로 고른 값)가 isPrivateAddress 대역(루프백·RFC1918·링크로컬·ULA·CGNAT/Tailscale·벤치마크)일 때만
+ *    믿는다. 즉 같은 기계/사설망의 cloudflared·프록시가 넘겨준 요청이다. 공인 주소에서 Traefik 에 바로 들어온
+ *    요청이 머리를 꾸며도 무시된다.
  *  - 값이 IP 문자열이 아니면 무시한다.
  * 운영은 원 서버가 Tunnel 로만 공개되어 있어야 한다(Traefik 의 80/443 이 인터넷에 직접 열려 있으면 안 된다).
+ * 사설망(LAN·Tailscale)에서 Traefik 에 바로 닿는 쪽은 피어가 사설 주소로 보이므로 CF-Connecting-IP 를 꾸밀 수 있다.
  */
 /** 머리만 본다 — 서버 액션은 Request 없이 next/headers 의 머리만 받는다 */
 type WithHeaders = { headers: Pick<Headers, "get"> };
@@ -159,16 +161,23 @@ export function publicClientIp(req: WithHeaders): string | null {
   return value;
 }
 
-/** 루프백·사설·링크로컬·ULA·미지정 주소. IP 문자열이 아니면 false */
+/**
+ * 방문자 한 명을 가리키지 않는 주소 — 루프백·사설(RFC1918)·링크로컬·ULA·미지정, 그리고
+ * 100.64.0.0/10(RFC6598 공유 주소: 통신사 CGNAT·Tailscale)과 198.18.0.0/15(RFC2544 벤치마크 대역: OrbStack 등).
+ * 뒤의 두 대역도 인터넷에서 그대로 오지 않으므로, 프록시 피어가 이 대역이면 모든 방문자가 같은 값을 나눈다.
+ * IPv4-mapped IPv6(::ffff:a.b.c.d, ::ffff:hhhh:hhhh, 0:0:0:0:0:ffff:…)는 안의 IPv4 로 본다. IP 문자열이 아니면 false
+ */
 export function isPrivateAddress(value: string): boolean {
-  const ip = value.startsWith("::ffff:") && isIP(value.slice(7)) === 4 ? value.slice(7) : value;
+  const ip = mappedIpv4(value) ?? value;
   const family = isIP(ip);
   if (family === 4) {
     const [a, b] = ip.split(".").map(Number);
     return a === 10 || a === 127 || a === 0
       || (a === 172 && b >= 16 && b <= 31)
       || (a === 192 && b === 168)
-      || (a === 169 && b === 254);
+      || (a === 169 && b === 254)
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 198 && (b === 18 || b === 19));
   }
   if (family === 6) {
     const lower = ip.toLowerCase();
@@ -177,4 +186,18 @@ export function isPrivateAddress(value: string): boolean {
       || /^fe[89ab][0-9a-f]:/.test(lower);
   }
   return false;
+}
+
+/** IPv4-mapped IPv6 이면 안의 IPv4(점 표기), 아니면 null */
+function mappedIpv4(value: string): string | null {
+  if (isIP(value) !== 6) return null;
+  const match = /^(?:::|(?:0{1,4}:){5})ffff:(.+)$/i.exec(value);
+  if (!match) return null;
+  const rest = match[1];
+  if (isIP(rest) === 4) return rest;
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(rest);
+  if (!hex) return null;
+  const high = parseInt(hex[1], 16);
+  const low = parseInt(hex[2], 16);
+  return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
 }
