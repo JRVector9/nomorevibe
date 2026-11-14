@@ -96,7 +96,7 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
       { kind: "link", label: "단계에 붙이기", href: "/admin/models?model=conn-m1max#model-attach" },
       { kind: "link", label: "모델 상세", href: "/admin/models?model=conn-m1max#model-detail" }]);
     expect(all.find(task => task.id === "tidy:duplicate-ranks")!.actions[0]).toMatchObject({ label: "순위 고치기", href: expect.stringMatching(/^\/admin\/flow\?stage=[a-z-]+#sp-models$/) });
-    expect(all.find(task => task.id === "pile:audit")!.actions[0]).toMatchObject({ label: "거절 목록 보기", href: "/admin/audit?tab=audit" });
+    expect(all.find(task => task.id === "pile:audit")!.actions).toMatchObject([{ label: "단계 열기", href: "/admin/flow?stage=audit" }, { label: "거절 목록 보기", href: "/admin/audit?tab=audit" }]);
   });
 
   it("draws the strip and the flow table from the same reads", () => {
@@ -111,7 +111,7 @@ describe("console tasks — fixture (2026-11-12 08:59 KST)", () => {
     expect(flow.main.find(row => row.key === "first")).toMatchObject({ tone: "bad" });
     expect(flow.main.find(row => row.key === "first")!.spark).toHaveLength(23);
     expect(flow.post.map(row => [row.label, row.tone, row.status, row.waiting])).toEqual([
-      ["한국어 소개", "off", "일감 없음", 0], ["공개 번역", "warn", "쌓임", 187380], ["사유 번역", "warn", "쌓임", 78863], ["소개 검수", "bad", "멈춤", 2143]]);
+      ["한국어 소개", "off", "일감 없음", 0], ["공개 번역", "warn", "쌓임", 187380], ["사유 번역", "warn", "쌓임", 78863], ["소개 검수", "bad", "멈춤", 2143], ["감사 거절", "off", "미확인", null]]);
   });
 });
 
