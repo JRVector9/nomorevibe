@@ -4,7 +4,7 @@
 - [x] 빈 시작 커밋·브랜치 push·Draft PR 생성 및 head/base 확인.
 - [x] A: robots 학습 거부·검색/답변 허용·Content-Signal, llms.txt 안내.
 - [x] C: 원본 우회 및 변환 실패 원본 fallback 제거, OG 미리보기 제한.
-- [ ] tests/anti-scrape-seo*.test.ts와 관련 회귀·타입·린트.
+- [x] tests/anti-scrape-seo*.test.ts와 관련 회귀·타입·린트.
 - [x] 운영 DB 없는 로컬 Next + curl 실제 응답 검증.
 - [ ] 의미별 커밋·push, 같은 PR의 필수 check 성공 확인, 보고함 제출.
 
@@ -63,3 +63,16 @@ Node 24.22.1 / Next 16.4.1 Turbopack, 환경파일을 제외한 scratch 사본 +
 - robots/llms는 자발적 정책이며 대량 수집의 기술적 차단은 별도 작업의 rate limit/IP/Cloudflare 설정에 달림. 이 PR에서 변경하지 않음.
 
 배포 준비 대상: 위 robots/llms/OG 코드와 시험. 이 작업에서 병합·배포·운영 DB·Cloudflare 설정 변경은 하지 않음. 실제 외부 검색/SNS 크롤러의 운영 재수집 확인은 배포 후 사람 검증 사항이다.
+
+## 최종 로컬 검사
+
+- `npx next typegen`: 통과.
+- Node 24.22.1 `node node_modules/typescript/bin/tsc --noEmit --incremental false`: 최종 소스에서 exit 0, 진단 없음.
+- `npx eslint app/robots.ts app/llms.txt/route.ts 'app/api/og-cache/[slug]/route.ts' lib/domain/products/og-variants.ts lib/i18n/routing.ts tests/anti-scrape-seo*.test.ts tests/og-variants.test.ts`: exit 0, 진단 없음.
+- `npx vitest run tests/anti-scrape-seo*.test.ts tests/og-variants.test.ts tests/robots.test.ts tests/product-json-ld.test.ts tests/p12-cards-images.test.tsx tests/detail-html-slim.test.tsx tests/public-translation-languages.test.ts tests/render-recovery-proxy.test.ts`: 9파일 77시험 통과. anti-scrape-seo는 3파일 37시험.
+- `git diff --check`: 통과. 수동 전체 unit·전체 DB·전체 build는 정책에 따라 실행하지 않음. 필수 GitHub CI는 그대로 실행·확인 예정.
+- 화면 변경 없음. OG JPEG/WebP는 실제 HTTP 본문을 sharp로 디코딩하여 크기와 형식 확인. 운영 SNS/검색 재수집이나 배포 완료로 표현하지 않음.
+
+품질: 동일 robots 정책 시험 17/27 → 27/27; 합성 OG 응답 4,039,433B/1600×840 PNG → 4,769B/1200×630 JPEG. 측정 명령은 위 시험 및 curl+sharp. 운영 트래픽/차단율/SEO 순위 측정 없음(운영·Cloudflare 접근 범위 밖).
+
+남은 일: 원격 필수 CI check 확인과 보고함 제출. 로컬 차단 사항 없음.
