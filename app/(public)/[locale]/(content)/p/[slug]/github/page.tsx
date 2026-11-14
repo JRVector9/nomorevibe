@@ -1,4 +1,5 @@
 import { I18nProvider } from "@/lib/i18n/context";
+import { PublicSkeleton } from "@/components/PublicSkeleton";
 import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { localePath } from "@/lib/i18n/routing";
@@ -53,7 +54,7 @@ export default async function GithubSettingsPage({ params, searchParams }: Props
     <h1 className="mt-6 text-2xl font-semibold">{t("settings.title")}</h1>
     {repository ? <>
       <p className="mt-3 text-[14px] leading-6">{t("settings.repository")} <a href={repository.htmlUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">{repository.fullName}</a></p>
-      <Suspense fallback={<p className="mt-6 text-[14px]">{t("settings.checkingSession")}</p>}><MakerSettings slug={slug} searchParams={searchParams} /></Suspense>
+      <Suspense fallback={<PublicSkeleton lines={1} className="mt-6 max-w-64" />}><MakerSettings slug={slug} searchParams={searchParams} /></Suspense>
     </> : <p className="mt-6 text-[14px] leading-6">{t("settings.noRepository")}</p>}
   </main></I18nProvider>;
 }

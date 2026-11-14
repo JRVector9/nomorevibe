@@ -29,8 +29,6 @@ export const browse = defineCatalog<typeof Schema>()({
   "home.metaTitle": "nomorevibe — AIで作ったプロダクトを、世界へ。",
   "home.feedTitle": "見つけたいプロジェクト",
   "home.projects": "プロジェクト一覧",
-  "home.searching": "検索中…",
-  "home.loading": "読み込み中…",
   "home.translatedSearch": "英語の「{query}」でも検索しました。",
   "home.aiNote": "リポジトリにAIコーディングツールの痕跡がある公開プロジェクトを掲載日順に表示します。",
   "home.recentNote": "サービスの掲載日または確認日を基準に、確認済みを優先します。GitHubリポジトリの作成日とは異なります。",

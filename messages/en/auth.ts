@@ -39,7 +39,6 @@ export const auth = defineCatalog<typeof KoreanAuth>()({
   "github.signIn": "Sign in with GitHub",
   "github.connectionDescription": "Connect your own GitHub account to add or remove stars on projects.",
   "github.signInDescription": "Sign in with your GitHub account to star projects and leave feedback. A NoMoreVibe account is created automatically on your first visit.",
-  "github.loading": "Checking connection…",
   "github.connected": "Connected as @{login}",
   "github.starsRetained": "Disconnecting keeps the GitHub stars you have already added.",
   "github.disconnect": "Disconnect GitHub",

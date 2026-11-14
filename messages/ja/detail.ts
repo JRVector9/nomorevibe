@@ -17,7 +17,6 @@ export const detail = defineCatalog<typeof Schema>()({
   "page.feedback": "プロジェクトのコメント",
   "page.unlisted": "まだ一般公開されていません",
   "page.verify": "ドメイン所有権を確認すると公開一覧に掲載されます。プロジェクトフォルダで {command} を実行してください。",
-  "page.loading": "プロジェクトを読み込み中",
   "notFound.title": "プロジェクトが見つかりません",
   "notFound.description": "アドレスの変更、所有者の要請、掲載ポリシーなどにより削除された可能性があります。名前で検索してみてください。",
   "hero.rising": "急上昇 {rank}位",

@@ -25,7 +25,6 @@ export const auth = defineCatalog<typeof Schema>()({
   "github.connect": "GitHubと連携",
   "github.disconnect": "GitHub連携を解除",
   "github.reconnect": "GitHubと再連携",
-  "github.loading": "連携状況を確認中…",
   "github.connected": "@{login} と連携済み",
   "feedback.metadataTitle": "プロジェクトのフィードバック — NoMoreVibe",
   "feedback.backToProduct": "{name} に戻る",
