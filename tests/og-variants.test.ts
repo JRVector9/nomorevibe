@@ -71,23 +71,23 @@ describe("썸네일 경로", () => {
     expect(mocks.og).toHaveBeenCalledTimes(1);
   });
 
-  it("작은 그림은 늘리지 않고, 원본 주소는 예전 그대로 원본을 보낸다", async () => {
+  it("작은 그림은 늘리지 않고, 확장자 없는 주소는 SNS용 JPEG를 보낸다", async () => {
     const icon = await png(96, 96);
     mocks.og.mockResolvedValue({ data: icon, contentType: "image/png" });
     const small = await call("/api/og-cache/tiny-icon.webp?size=1200");
     expect((await sharp(Buffer.from(await small.arrayBuffer())).metadata()).width).toBe(96);
     const legacy = await call("/api/og-cache/tiny-icon");
-    expect(legacy.headers.get("content-type")).toBe("image/png");
-    expect(legacy.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(legacy.headers.get("content-type")).toBe("image/jpeg");
+    expect(legacy.headers.get("cache-control")).toContain("s-maxage=86400");
     expect(legacy.headers.get("cache-tag")).toBe("og-tiny-icon");
-    expect(Buffer.from(await legacy.arrayBuffer()).equals(icon)).toBe(true);
+    expect(await sharp(Buffer.from(await legacy.arrayBuffer())).metadata()).toMatchObject({ format: "jpeg", width: 96, height: 96 });
   });
 
-  it("줄이지 못하는 그림은 원본으로 보내고, 없는 것·잘못된 이름은 거절한다", async () => {
+  it("줄이지 못하는 그림도 원본을 내주지 않고, 없는 것·잘못된 이름은 거절한다", async () => {
     mocks.og.mockResolvedValue({ data: Buffer.from("not an image"), contentType: "image/png" });
     const broken = await call("/api/og-cache/broken-one.webp?size=640");
-    expect(broken.status).toBe(200);
-    expect(broken.headers.get("content-type")).toBe("image/png");
+    expect(broken.status).toBe(422);
+    expect(broken.headers.get("cache-control")).toContain("no-store");
     mocks.og.mockResolvedValue(null);
     expect((await call("/api/og-cache/missing.webp")).status).toBe(404);
     expect((await call("/api/og-cache/Bad_Slug.webp")).status).toBe(400);
