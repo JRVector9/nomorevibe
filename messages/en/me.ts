@@ -224,7 +224,6 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "tried.rejectedNote": "We decided not to publish it · only you can see it",
   "tried.verified": "Visit confirmed",
   "tried.reply": "Maker reply",
-  "tried.loading": "Loading…",
   "tried.loadError": "Couldn't load the list.",
   "tried.retry": "Try again",
   "tried.none": "No projects with this rating.",

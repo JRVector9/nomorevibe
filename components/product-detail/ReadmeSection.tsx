@@ -1,4 +1,5 @@
 import type { ComponentPropsWithoutRef } from "react";
+import { PublicSkeleton } from "@/components/PublicSkeleton";
 import { getTranslator } from "@/lib/i18n/dictionary";
 import { getRequestLocale } from "@/lib/i18n/server";
 import ReactMarkdown from "react-markdown";
@@ -26,12 +27,13 @@ export async function ReadmeFallback({ product, readmeExcerpt, pending = false, 
   const repo = product.repoUrl ? safeExternalUrl(product.repoUrl) : null;
   if (!repo || product.repoGone) return null;
   return (
-    <section aria-labelledby="readme-title" className="flex flex-col gap-3">
+    <section aria-labelledby="readme-title" aria-busy={pending || undefined} className="flex flex-col gap-3">
       <h2 id="readme-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">README</h2>
-      <p role={pending ? "status" : undefined} className="m-0 text-[13px] leading-6 text-fg-2">
-        {pending ? t("readme.loading") : tooLarge ? t("readme.tooLarge") : t("readme.unavailable")}
+      {pending && <PublicSkeleton />}
+      {(!pending || readmeExcerpt) && <p className="m-0 text-[13px] leading-6 text-fg-2">
+        {!pending && (tooLarge ? t("readme.tooLarge") : t("readme.unavailable"))}
         {readmeExcerpt && ` ${t("readme.excerptNote")}`}
-      </p>
+      </p>}
       {readmeExcerpt && <blockquote role="region" aria-label={t("readme.excerpt")} tabIndex={0} lang={englishLang(readmeExcerpt)} className={`m-0 whitespace-pre-wrap ${scrollClass}`}>{readmeExcerpt}</blockquote>}
       <OriginalLink url={safeExternalUrl(sourceUrl ?? null) ?? `${repo}#readme`} label={t("readme.full")} />
     </section>

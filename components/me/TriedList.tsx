@@ -1,6 +1,7 @@
 "use client";
 
 import "./tried.css";
+import { PublicSkeleton } from "@/components/PublicSkeleton";
 import Link from "next/link";
 import { memo, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ProductIcon } from "@/components/ProductIcon";
@@ -200,7 +201,7 @@ export function TriedList({ account, initial, authEnabled }: {
       </section>
     );
   }
-  if (!items) return <section className="tried" aria-busy="true"><p className="tried-status">{t("tried.loading")}</p></section>;
+  if (!items) return <section className="tried" aria-busy="true"><PublicSkeleton className="py-5" /></section>;
 
   const mergePrompt = offer.length > 0 && (
     <div className="tried-merge">
