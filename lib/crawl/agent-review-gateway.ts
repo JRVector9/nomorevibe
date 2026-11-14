@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport, reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
 import { clearProviderRateLimit, parseRetryAfterMs, recordProviderRateLimit, type ProviderRateLimitKey } from "@/lib/llm/provider-rate-limit";
+import type { ProviderRateLimitBackoffPolicy } from "@/lib/llm/provider-rate-limit-policy";
 import { logger } from "@/lib/observability/logger";
 import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-end-fetch";
 import { gatewayNotSentWitness, issueGatewayNotStarted, readGatewayNotStarted, type GatewayNotStarted } from "@/lib/llm/gateway-not-started";
@@ -254,10 +255,11 @@ export const contractReasoningReserve = (contract: object): number => {
  * 결과 미확정 대신 확정 정산(reconcileGatewayHttpRejected)으로 칸을 바로 비운다. 그 밖의 상태(200·5xx·다른 4xx)는 빈 객체다.
  */
 function noteTextRouteStatus(dispatch: GatewayHttpRejectedDispatch & { binding: ProviderRateLimitKey },
-  response: { status: number; headers: { get(name: string): string | null } }): { rejected: GatewayHttpRejected } | Record<never, never> {
+  response: { status: number; headers: { get(name: string): string | null } },
+  backoff?: ProviderRateLimitBackoffPolicy): { rejected: GatewayHttpRejected } | Record<never, never> {
   const binding = dispatch.binding, key = { routeId: binding.routeId, provider: binding.provider, model: binding.model };
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"), Date.now());
-  if (response.status === 429) recordProviderRateLimit(key, retryAfterMs);
+  if (response.status === 429) recordProviderRateLimit(key, retryAfterMs, undefined, backoff);
   else clearProviderRateLimit(key);
   return gatewayHttpRejectedWitness(dispatch, response.status, retryAfterMs);
 }
@@ -1112,7 +1114,8 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
-    const rejected = noteTextRouteStatus(owned, response);
+    const rejected = noteTextRouteStatus(owned, response,
+      "rateLimitBackoff" in state.contract ? state.contract.rateLimitBackoff : undefined);
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null, ...rejected };

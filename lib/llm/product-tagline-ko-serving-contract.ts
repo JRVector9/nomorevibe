@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { providerRateLimitBackoffSchema } from "./provider-rate-limit-policy";
 import { ABCLLM_STRICT_TERMINAL_OPT_IN, startupGatewayServingContracts } from "./gateway-serving-contract-config";
 import { DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, resolveProviderServingContract, servingContractProvider,
   type GatewayContractProvider } from "./direct-serving-contract";
@@ -25,6 +26,8 @@ export const productTaglineKoServingContractSchema = z.object({
   // 추론 토큰이 max_tokens 에 포함되는 모델(예: LG EXAONE K-EXAONE — 추론이 늘 켜져 있다)의 여유(2026-11-11, 사유 번역 #894 와 같은 칸). 있으면 요청의
   // max_tokens 에 이만큼 더한다(productTaglineKoGatewayWire). 연결의 「추론 토큰 여유」로 계약을 만들 때만 생긴다 — 없는 계약의 hash·wire 는 그대로다.
   reasoningTokenReserve: z.number().int().min(1).max(32_768).optional(),
+  // Explicit opt-in: probe persistent provider 429 less often without changing other models or the wire.
+  rateLimitBackoff: providerRateLimitBackoffSchema.optional(),
 }).strict();
 export type ProductTaglineKoGatewayServingContract = Readonly<z.infer<typeof productTaglineKoServingContractSchema>>;
 /** 엔진 직접 계약(PR 3b-E) — direct-openai-chat-v1, provider local-direct. 게이트웨이가 없어 엄격 terminal opt-in 표시가 없다(엔진 완결 응답이 terminal). */

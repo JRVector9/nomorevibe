@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel } from "@/lib/llm/capacity-deferred";
 import { assertProviderNotRateLimited, clearProviderRateLimit, parseRetryAfterMs, providerRateLimitBackoffMs, providerRateLimitedUntil,
   recordProviderRateLimit, resetProviderRateLimitsForTest, PROVIDER_RATE_LIMIT_MAX_BACKOFF_MS, PROVIDER_RATE_LIMIT_RETRY_AFTER_MAX_MS } from "@/lib/llm/provider-rate-limit";
+import { providerRateLimitBackoffSchema } from "@/lib/llm/provider-rate-limit-policy";
 
 /** 공급자 429 쉼(2026-11-11) — 경로·공급자·장부 모델마다, Retry-After 는 최소값, 없으면 지수 backoff. 운영 값이 아니다(시각은 고정 숫자). */
 const NOW = Date.parse("2026-11-11T01:47:26.000Z");
@@ -21,6 +22,31 @@ describe("Retry-After 읽기", () => {
 });
 
 describe("쉼 기록", () => {
+  it("uses an explicit selected-contract policy for persistent 429 without changing default models or other keys", () => {
+    const policy = providerRateLimitBackoffSchema.parse({ initialBackoffMs: 30 * 60_000, maxBackoffMs: 6 * 60 * 60_000 });
+    expect(Array.from({ length: 7 }, () => recordProviderRateLimit(exaone, null, NOW, policy).waitMs))
+      .toEqual([30, 60, 120, 240, 360, 360, 360].map(minutes => minutes * 60_000));
+    resetProviderRateLimitsForTest();
+    const first = recordProviderRateLimit(exaone, null, NOW, policy);
+    expect(first).toEqual({ consecutive: 1, waitMs: 30 * 60_000, until: NOW + 30 * 60_000 });
+    expect(() => assertProviderNotRateLimited(exaone, NOW + 29 * 60_000)).toThrow(ModelCapacityDeferredError);
+    expect(() => assertProviderNotRateLimited({ ...exaone, model: "gpt-oss-120b" }, NOW + 1)).not.toThrow();
+    expect(recordProviderRateLimit(exaone, 3_600_000, NOW, policy).waitMs).toBe(3_600_000);
+    expect(providerRateLimitBackoffMs(8)).toBe(PROVIDER_RATE_LIMIT_MAX_BACKOFF_MS);
+    clearProviderRateLimit(exaone);
+    expect(providerRateLimitedUntil(exaone, NOW + 1)).toBeNull();
+    expect(recordProviderRateLimit(exaone, null, NOW, policy).consecutive).toBe(1);
+  });
+
+  it("rejects malformed opt-in policies instead of shortening or inventing a cooldown", () => {
+    for (const policy of [
+      { initialBackoffMs: 1, maxBackoffMs: 3_600_000 },
+      { initialBackoffMs: 60_000, maxBackoffMs: 30_000 },
+      { initialBackoffMs: 30_000, maxBackoffMs: 86_400_001 },
+      { initialBackoffMs: 30_000, maxBackoffMs: 60_000, extra: true },
+    ]) expect(providerRateLimitBackoffSchema.safeParse(policy).success).toBe(false);
+  });
+
   it("연속 429 마다 30초부터 두 배(최대 30분), Retry-After 가 더 길면 그 값을 지킨다", () => {
     expect([1, 2, 3, 6, 7, 40].map(providerRateLimitBackoffMs)).toEqual([30_000, 60_000, 120_000, 960_000, PROVIDER_RATE_LIMIT_MAX_BACKOFF_MS, PROVIDER_RATE_LIMIT_MAX_BACKOFF_MS]);
     expect(recordProviderRateLimit(exaone, 1_000, NOW)).toEqual({ consecutive: 1, waitMs: 30_000, until: NOW + 30_000 });

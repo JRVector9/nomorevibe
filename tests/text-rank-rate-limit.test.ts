@@ -24,6 +24,21 @@ describe("순위 대체", () => {
       textRankRow("product-tagline-ko", EXAONE, { rank: 2, connectionId: SECOND, baseUrl: SECOND_BASE, label: "LG EXAONE" })]);
     return new TextTaskRanks(resolveTextTaskRanks("product-tagline-ko"));
   };
+  it("skips a model's conservative opt-in cooldown and continues on the existing fallback", async () => {
+    setServingContractSnapshotForTest([textContract("product-tagline-ko", EXAONE, { baseUrl: SECOND_BASE }),
+      textContract("product-tagline-ko", "gpt-oss-120b")]);
+    setAiTaskModelsForTest([
+      textRankRow("product-tagline-ko", EXAONE, { rank: 1, connectionId: SECOND, baseUrl: SECOND_BASE, label: "LG EXAONE" }),
+      textRankRow("product-tagline-ko", "gpt-oss-120b", { rank: 2 }),
+    ]);
+    recordProviderRateLimit({ routeId: "product-tagline-ko", provider: "abcllm", model: EXAONE }, null, Date.now(),
+      { initialBackoffMs: 1_800_000, maxBackoffMs: 21_600_000 });
+    const ranks = new TextTaskRanks(resolveTextTaskRanks("product-tagline-ko")), called: string[] = [];
+    expect(await ranks.run(async chosen => { called.push(chosen.identity); return chosen.identity; }))
+      .toMatchObject({ kind: "served", value: "gpt-oss-120b" });
+    expect(called).toEqual(["gpt-oss-120b"]);
+    expect(ranks.summary()).toMatchObject({ "served.2": 1, "unusable.1.rate_limited": 1 });
+  });
   it("쉬는 순위는 부르지 않고 같은 일을 다음 순위로 넘긴다 — 다른 경로의 쉼은 상관없다", async () => {
     recordProviderRateLimit({ routeId: "product-tagline-ko", provider: "abcllm", model: "gpt-oss-120b" }, 60_000);
     recordProviderRateLimit({ routeId: "reason-translate", provider: "abcllm", model: EXAONE }, 60_000);

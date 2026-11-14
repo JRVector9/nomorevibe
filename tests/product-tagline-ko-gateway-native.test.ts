@@ -11,7 +11,8 @@ import { productTaglineKoInputHash, productTaglineKoLogicalWorkKey, productTagli
 import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGateway, readProductTaglineKoGatewayTerminal,
   readProductTranslationGatewayTerminal, readReasonTranslationGatewayTerminal,
   type PreparedProductTaglineKoGatewayCall } from "@/lib/crawl/agent-review-gateway";
-import type { ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
+import { productTaglineKoServingContractSchema, productTaglineKoServingContractHash,
+  type ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { providerRateLimitedUntil, resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 
 const fixture = vi.hoisted(() => ({ contract: null as ProductTaglineKoServingContract | null }));
@@ -100,6 +101,31 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
   if (failed) throw original; if (errors.length) throw new AggregateError(errors);
 }
 afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); resetProviderRateLimitsForTest(); });
+it("keeps the 524288 context/ledger bound out of the upstream output-token request", () => {
+  fixture.contract = { version: 1, protocol: "abcllm-product-tagline-ko-total-bound-v1", routeId: "product-tagline-ko", provider: "abcllm",
+    model, responseModel: model, endpoint: "http://127.0.0.1/v1/chat/completions", deploymentRevision: "local-only", totalTokenBound: 524_288 };
+  pinDirect(fixture.contract);
+  const batch = [...items(), { name: "Editor", tagline: "Editor helps organize software projects" }];
+  const plain = prepared(batch), wire = productTaglineKoGatewayWire(batch, model);
+  expect(plain.totalTokenBound).toBe(524_288);
+  expect(JSON.parse(wire).max_tokens).toBe(1_050);
+  expect(plain.wireHash).toBe(createHash("sha256").update(wire).digest("hex"));
+  expect(JSON.parse(wire)).not.toHaveProperty("totalTokenBound");
+  fixture.contract = { ...fixture.contract, reasoningTokenReserve: 8196 };
+  pinDirect(fixture.contract);
+  const reserved = prepared(batch), reservedWire = productTaglineKoGatewayWire(batch, model, 8196);
+  expect(JSON.parse(reservedWire).max_tokens).toBe(9_246);
+  expect(reserved.totalTokenBound).toBe(524_288);
+  expect(reserved.wireHash).toBe(createHash("sha256").update(reservedWire).digest("hex"));
+});
+it("keeps old contract bytes without opt-in and rejects invalid recovery policy in serving validation", () => {
+  const plain = { version: 1, protocol: "abcllm-product-tagline-ko-total-bound-v1", routeId: "product-tagline-ko", provider: "abcllm",
+    model, responseModel: model, deploymentRevision: "local-only", endpoint: "http://127.0.0.1/v1/chat/completions", totalTokenBound: 524_288 } as const;
+  const contract = productTaglineKoServingContractSchema.parse(plain);
+  expect(JSON.stringify(contract)).toBe(JSON.stringify(plain));
+  expect(productTaglineKoServingContractHash(contract)).toBe(createHash("sha256").update(JSON.stringify(plain)).digest("hex"));
+  expect(productTaglineKoServingContractSchema.safeParse({ ...plain, rateLimitBackoff: { initialBackoffMs: 60_000, maxBackoffMs: 30_000 } }).success).toBe(false);
+});
 it("sends the original ordered tagline batch once and issues an immutable opaque terminal", async () => {
   await server(async ({ bodies }) => {
     const batch = items(), call = prepared(batch), owned = dispatch(batch, call);
@@ -309,6 +335,31 @@ it("cools only this route and model after a 429, honours Retry-After, and clears
     expect(until! - Date.now()).toBeLessThanOrEqual(120_000);
     expect(providerRateLimitedUntil({ ...key, routeId: "reason-translate" })).toBeNull();
     // 시험이 가짜로 쉼을 지난 뒤처럼 다시 보내 200 을 받으면 쉼이 지워진다(이 함수는 쉼을 보지 않는다 — 장부에 묻기 전의 용량 호출자가 본다)
+    reply(response => response.end(JSON.stringify(envelope())));
+    const next = prepared(batch);
+    expect((await send(batch, dispatch(batch, next), next)).result).toEqual({ ok: true, outputs });
+    expect(providerRateLimitedUntil(key)).toBeNull();
+  });
+});
+
+it("applies the selected contract's conservative 429 recovery without changing its request body or terminal evidence", async () => {
+  await server(async ({ bodies, reply }) => {
+    const batch = items(), plain = prepared(batch);
+    fixture.contract = { ...fixture.contract!, rateLimitBackoff: { initialBackoffMs: 1_800_000, maxBackoffMs: 21_600_000 } } as ProductTaglineKoServingContract;
+    pinDirect(fixture.contract);
+    const call = prepared(batch), owned = dispatch(batch, call), before = Date.now();
+    expect(call.wireHash).toBe(plain.wireHash);
+    expect(call.servingContractHash).not.toBe(plain.servingContractHash);
+    reply(response => { response.statusCode = 429; response.end("rate limited"); });
+    expect(withoutRejected(await send(batch, owned, call), 429, owned, null)).toEqual({ result: { ok: false, error: "rate_limit" }, terminal: null });
+    const key = { routeId: "product-tagline-ko", provider: "abcllm", model };
+    const until = providerRateLimitedUntil(key)!;
+    expect(until - before).toBeGreaterThanOrEqual(1_800_000);
+    expect(until - Date.now()).toBeLessThanOrEqual(1_800_000);
+    expect(bodies).toEqual([originalWire(batch, model)]);
+    expect(providerRateLimitedUntil({ ...key, model: "another-model" })).toBeNull();
+    // The low-level transport does not bypass admission in production. Here we
+    // directly simulate a later successful probe to verify the unchanged reset.
     reply(response => response.end(JSON.stringify(envelope())));
     const next = prepared(batch);
     expect((await send(batch, dispatch(batch, next), next)).result).toEqual({ ok: true, outputs });
