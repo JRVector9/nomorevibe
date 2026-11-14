@@ -1,10 +1,13 @@
+"use client";
+
 import { formatDate } from "@/lib/i18n/format";
-import { KOREAN_BROWSE_I18N, type BrowseI18n } from "@/lib/i18n/browse-i18n";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
 import type { HomeNewsItem } from "@/lib/news/repository";
 
 /** 빌더를 위한 AI 소식 — 흥미가 낮아 맨 아래 13px 세 줄. now 는 '올해'를 정하는 서버 시각 */
-export function NewsList({ news, now, i18n = KOREAN_BROWSE_I18N }: { news: HomeNewsItem[]; now: Date; i18n?: BrowseI18n }) {
-  const { locale, t } = i18n;
+export function NewsList({ news, now }: { news: HomeNewsItem[]; now: Date }) {
+  const locale = useLocale();
+  const t = useTranslations("browse");
   if (news.length === 0) return null;
   return (
     <section id="news" className="news-band" aria-labelledby="news-title">

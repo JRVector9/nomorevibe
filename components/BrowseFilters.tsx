@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import {
   chipCategories,
@@ -7,7 +9,7 @@ import {
   type BrowseState,
   type HomeSort,
 } from "@/components/home/browse-state";
-import { KOREAN_BROWSE_I18N, type BrowseI18n } from "@/lib/i18n/browse-i18n";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { translatedCategory } from "@/components/home/i18n";
 
@@ -17,7 +19,6 @@ export type { BrowseState, HomeSort } from "@/components/home/browse-state";
  * 목록을 좁히는 줄.
  *
  * 탭과 분야 알약은 주소가 상태다. JS 없이 GET으로 동작하고, 공유·뒤로가기가 따라온다.
- * 서버 부품이다(2026-11-14) — 분야별 수는 그려진 글자로만 실리고 집계 객체는 브라우저로 넘어가지 않는다.
  */
 
 const TABS: readonly HomeSort[] = ["ai", "recent", "all-time"];
@@ -26,17 +27,19 @@ export function BrowseFilters({
   state,
   counts,
   categoryOrderCounts = counts,
+  categoryOrder,
   countsKnown = true,
   total,
   resultCount,
   listLabel,
   approximate = false,
-  i18n = KOREAN_BROWSE_I18N,
 }: {
   state: BrowseState;
   counts: Record<string, number>;
   /** 공개 전체 집계로 분야 순서를 고정한다. 숫자는 현재 목록 자격의 counts를 쓴다. */
   categoryOrderCounts?: Record<string, number>;
+  /** 분야 알약 차례(서버가 chipCategories 로 정한 것) — 주면 categoryOrderCounts 대신 쓴다. 차례만 정하는 집계 수를 브라우저로 넘기지 않는다 */
+  categoryOrder?: readonly string[];
   countsKnown?: boolean;
   total: number;
   resultCount: number;
@@ -44,17 +47,17 @@ export function BrowseFilters({
   listLabel?: string;
   /** 결과 수가 관련도순 검색(섞은 수)이라 '약 n개'로 써야 하는지 */
   approximate?: boolean;
-  /** 요청 언어와 번역기 — 없으면 기본 언어 */
-  i18n?: BrowseI18n;
 }) {
-  const { locale, t, labels } = i18n;
+  const locale = useLocale();
+  const t = useTranslations("browse");
+  const labels = useTranslations("labels");
   const count = (n: number) => formatNumber(n, locale);
   const narrowed = Boolean(state.query || state.category || state.builder || state.observedTool || state.ai);
   // 검색·도구·빌더 상태에서는 기존 정책대로 수를 숨긴다.
   const countable = countsKnown && !(state.query || state.builder || state.observedTool);
   const showCounts = countable;
   // 알약의 차례·목록은 전체 수로 정한다 — 만든 방식을 켜고 끌 때 분야 알약이 사라지거나 자리를 바꾸지 않게
-  const categories = chipCategories(categoryOrderCounts);
+  const categories = categoryOrder ?? chipCategories(categoryOrderCounts);
   // 검색어가 있으면 기본 순서(관련도)를 맨 앞 탭으로 둔다 — 없으면 아무 탭도 켜지지 않았다(UX-12)
   const tabs: readonly HomeSort[] = state.query ? ["relevance", ...TABS] : TABS;
 

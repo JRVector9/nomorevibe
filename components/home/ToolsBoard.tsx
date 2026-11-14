@@ -1,6 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import { hrefWith, type BrowseState } from "@/components/home/browse-state";
-import { KOREAN_BROWSE_I18N, type BrowseI18n } from "@/lib/i18n/browse-i18n";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 
 import type { HomePulse } from "@/lib/domain/products/home-pulse";
@@ -10,8 +12,9 @@ import type { HomePulse } from "@/lib/domain/products/home-pulse";
  *
  * 알약은 흔적으로 거른다 — 메이커가 신고한 값은 별도의 `?builder=` 필터다.
  */
-export function ToolsBoard({ tools, state, i18n = KOREAN_BROWSE_I18N }: { tools: HomePulse["tools"]; state: BrowseState; i18n?: BrowseI18n }) {
-  const { locale, t } = i18n;
+export function ToolsBoard({ tools, state }: { tools: HomePulse["tools"]; state: BrowseState }) {
+  const locale = useLocale();
+  const t = useTranslations("browse");
   const count = (n: number) => formatNumber(n, locale);
   if (!tools || tools.rows.length === 0) return null;
   return (

@@ -20,12 +20,13 @@ describe("README 발췌 표시 길이(2026-11-15 사람 결정 — 몇 문장·�
 
 describe("측정 도구(scripts/public-payload-report.ts)", () => {
   const flight = `0:["$","div",null,{"children":"x"}]\n1:{"slug":"a","name":"A","repoUrl":"https://github.com/a/a","id":3}\n2:T6,héllo3:[{"slug":"b","name":"B"}]\n`;
-  const html = `<html><body><p data-readme-excerpt="">Lead text</p><script>self.__next_f.push([1,${JSON.stringify(flight)}])</script></body></html>`
+  // RSC 글에도 같은 속성 이름이 나온다 — 발췌 길이는 서버 HTML 의 상자만 잰다
+  const html = `<html><body><h2>소개</h2><p data-readme-excerpt="">Lead text</p><script>self.__next_f.push([1,${JSON.stringify(flight)}])</script><script>self.__next_f.push([1,"x:{\\"data-readme-excerpt\\":\\"\\"}\\n"])</script></body></html>`
     .replace("<p data-readme-excerpt=\"\">Lead text</p>", "<blockquote data-readme-excerpt=\"\">Lead &amp; text</blockquote>");
 
   // T 줄의 길이는 UTF-8 바이트 수다(é 는 2바이트)
   it("HTML 안 RSC 조각을 잇고 줄(T 길이 글 포함)을 값으로 푼다", () => {
-    expect(extractFlight(html)).toBe(flight);
+    expect(extractFlight(html)).toBe(`${flight}x:{"data-readme-excerpt":""}\n`);
     const rows = parseFlightRows(flight);
     expect(rows).toHaveLength(4);
     expect(rows[2]).toBe("héllo");

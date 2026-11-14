@@ -68,9 +68,9 @@ export function productObjects(value: unknown, found: Record<string, unknown>[] 
   return found;
 }
 
-/** RSC 데이터에 금지 칸 이름이 JSON 키로 나오는지 */
+/** RSC 데이터에 금지 칸 이름이 JSON 키로 나오는지 — id 는 숫자 값(내부 순차 id)일 때만. 문서 요소의 id 속성(글자)은 세지 않는다 */
 export function forbiddenKeysIn(flight: string, fields: readonly string[] = FORBIDDEN_FIELDS): string[] {
-  return fields.filter((field) => flight.includes(`"${field}":`));
+  return fields.filter((field) => field === "id" ? /"id":\d/.test(flight) : flight.includes(`"${field}":`));
 }
 
 function visibleText(html: string): string {
@@ -83,7 +83,8 @@ export function measurePage(html: string, readmeMarker?: string) {
   const rows = parseFlightRows(flight);
   const products = productObjects(rows);
   const fields = [...new Set(products.flatMap((item) => Object.keys(item)))].sort();
-  const excerpt = /data-readme-excerpt[^>]*>([\s\S]*?)<\/blockquote>/.exec(html)?.[1]?.replace(/<[^>]+>/g, "");
+  // 서버 HTML 의 발췌 상자만 — RSC 데이터 글 안의 같은 속성 이름은 보지 않는다
+  const excerpt = /<blockquote[^>]*\bdata-readme-excerpt[^>]*>([\s\S]*?)<\/blockquote>/.exec(html.replace(/<script[\s\S]*?<\/script>/g, ""))?.[1]?.replace(/<[^>]+>/g, "");
   return {
     htmlBytes: Buffer.byteLength(html),
     rscBytes: Buffer.byteLength(flight),

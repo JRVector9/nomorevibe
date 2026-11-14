@@ -112,7 +112,7 @@ const rising = (slug: string): ProductListItem => ({
 });
 
 describe("없는 주소", () => {
-  it("한국어 안내·검색창·지금 뜨는 다섯·홈 링크", async () => {
+  it("한국어 안내·검색창·홈 링크 — 지금 뜨는 다섯은 화면을 열 때 API 로 받는다(2026-11-14 공개 HTML 줄이기)", async () => {
     mocks.getStarGrowthPage.mockResolvedValue({ items: ["a", "b", "c", "d", "e"].map(rising) });
 
     const html = await render(NotFound());
@@ -121,9 +121,9 @@ describe("없는 주소", () => {
     expect(html).toContain("찾는 페이지가 없거나 내려갔습니다");
     expect(html).toMatch(/<form role="search"[^>]* action="\/" method="get"/);
     expect(html).toContain('name="q"');
-    expect(html).toContain("지금 뜨는 프로젝트");
-    expect(mocks.getStarGrowthPage).toHaveBeenCalledWith({ limit: 5 });
-    for (const slug of ["a", "b", "c", "d", "e"]) expect(hrefs(html)).toContain(`/p/${slug}`);
+    // 이 화면은 모든 공개 화면의 RSC 데이터에 404 경계로 실린다 — 서버는 목록을 읽지 않고 카드를 싣지 않는다
+    expect(mocks.getStarGrowthPage).not.toHaveBeenCalled();
+    for (const slug of ["a", "b", "c", "d", "e"]) expect(hrefs(html)).not.toContain(`/p/${slug}`);
     expect(hrefs(html)).toContain("/");
     expect(html).not.toContain("This page could not be found");
   });

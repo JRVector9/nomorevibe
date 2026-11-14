@@ -28,6 +28,7 @@ import {
 } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactCardMarkup, CompactRowMarkup } from "@/components/cards/markup";
+import { LazyCompactRow } from "@/components/cards/LazyCards";
 import "@/components/home/cards.css";
 import { starGrowthNote, starGrowthView } from "@/components/home/star-growth-copy";
 import { IntroLine } from "@/components/home/IntroLine";
@@ -497,8 +498,6 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
     logger.error("home.star_growth_failed", { error });
     return null;
   });
-  const newWindow = completedWindows(now);
-  const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["new-repositories", newWindow.weekStart, newWindow.asOf, NEW_THIS_WEEK_MIN_STARS, 5, 0], () => getNewThisWeek(5, newWindow.weekStart, newWindow.asOf)).catch(() => []);
 
   /*
    * 서로 기다릴 필요가 없는 것은 함께 시작한다 — 시즌·검색어 해석·카테고리 개수·검증 수(2026-10-06: 시즌을 받은 뒤에야
@@ -624,10 +623,10 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   const asideFailure = [pulseResult, newsResult]
     .find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
-  const [stripData, freshData, aiCounts, talk] = await Promise.all([stripLoad, newLoad, aiCountsLoad, talkLoad]);
-  const [localizedList, localizedUnclaimed, localizedStrip, fresh] = await Promise.all([
+  const [stripData, aiCounts, talk] = await Promise.all([stripLoad, aiCountsLoad, talkLoad]);
+  const [localizedList, localizedUnclaimed, localizedStrip] = await Promise.all([
     localizeProductList(list,locale), localizeProductList(unclaimed,locale),
-    localizeProductList(stripData?.items ?? [],locale), localizeProductList(freshData,locale),
+    localizeProductList(stripData?.items ?? [],locale),
   ]);
   list = localizedList;
   unclaimed = localizedUnclaimed;
@@ -658,7 +657,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   return (
     <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap">
       {dbDown && <RenderReadRecovery key={now.toISOString()} />}
-      {!scoped && <IntroLine pulse={pulse} total={total} state={state} i18n={i18n} />}
+      {!scoped && <IntroLine pulse={{ born: pulse.born, updates: pulse.updates }} total={total} state={state} />}
       {!filtered && talk && <TalkHero lead={talk.lead} rest={talk.rest} sources={talk.sources} preview={talk.preview} t={t} locale={locale} />}
       {!filtered && (
         <CompactRowMarkup ctx={cards} id="rising" priority title={t("growth.title")} note={<>{starGrowthNote(strip?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></>}
@@ -688,15 +687,15 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
 
         {/* 검색 결과가 그려지면 search 한 번 — 검색어 정리(소문자·64자·이메일/숫자 지움)는 분석 런타임이 한다 */}
         {query && !dbDown && <TrackOnMount name="search" params={{ search_term: query, result_count: resultCount, surface: "search" }} />}
+        {/* 분야 알약은 차례만 넘긴다 — 수는 알약에 보이는 경우(검색·도구·빌더 거르기가 아닐 때)에만 */}
         <BrowseFilters
           state={state}
-          counts={facetCounts}
-          categoryOrderCounts={counts}
+          counts={query || builder || observedTool ? {} : facetCounts}
+          categoryOrder={chipCategories(counts)}
           countsKnown={!dbDown}
           total={total}
           resultCount={resultCount}
           approximate={approximate}
-          i18n={i18n}
         />
 
         {dbDown ? (
@@ -751,16 +750,17 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
         </Suspense>
       )}
       {!filtered && (
-        <CompactRowMarkup ctx={cards} id="new" title={t("new.title")} note={t("new.note", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}
-          more={{ href: "/?new=1", label: t("nav.all") }} items={fresh} trailing="listed" />
+        // 첫 화면 아래 — 제목·모두 보기만 서버 HTML 에 두고 카드는 화면 가까이 오면 받는다(2026-11-14 공개 HTML 줄이기)
+        <LazyCompactRow id="new" title={t("new.title")} note={t("new.note", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}
+          more={{ href: localePath(locale, "/?new=1"), label: t("nav.all") }} list="new" trailing="listed" />
       )}
       {!scoped && (
         <div className="two-col">
-          <ToolsBoard tools={pulse.tools} state={state} i18n={i18n} />
+          <ToolsBoard tools={pulse.tools} state={state} />
           <ActiveList active={pulse.active} projects={pulse.updates.projects} i18n={i18n} />
         </div>
       )}
-      {!scoped && <NewsList news={news} now={now} i18n={i18n} />}
+      {!scoped && <NewsList news={news} now={now} />}
       {!query && <LaunchBand />}
 
       <Suspense>

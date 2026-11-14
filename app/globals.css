@@ -206,3 +206,17 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 아이콘이 없을 때의 이니셜 칸(ProductIcon) — 카드마다 같은 유틸리티 여섯 개를 HTML·RSC 데이터에 두 번씩 싣지 않게 한 이름으로(2026-11-14 공개 HTML 줄이기).
+   크기·바탕·글자 크기는 칸마다 달라 style 로 남는다. 유틸리티로 덮을 수 있게 components 층에 둔다. */
+@layer components {
+  .product-monogram {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    font-weight: 700;
+    color: var(--color-fg);
+  }
+}

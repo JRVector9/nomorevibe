@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   getProductIdentity: vi.fn(),
   getProductDetail: vi.fn(),
   getReadmeContent: vi.fn(),
+  getPopularGroups: vi.fn(),
+  getStarGrowthPage: vi.fn(),
+  getNewThisWeek: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit", async (original) => ({
   ...await original<typeof import("@/lib/rate-limit")>(),
@@ -22,9 +25,18 @@ vi.mock("@/lib/domain/products/detail-view", async (original) => ({
   getProductDetail: mocks.getProductDetail,
 }));
 vi.mock("@/lib/domain/products/readme-content", () => ({ getReadmeContent: mocks.getReadmeContent }));
+vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: mocks.getPopularGroups }));
+vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage: mocks.getStarGrowthPage }));
+vi.mock("@/lib/domain/products/view", async (original) => ({
+  ...await original<typeof import("@/lib/domain/products/view")>(),
+  getNewThisWeek: mocks.getNewThisWeek,
+}));
 
 const readmeRoute = await import("@/app/api/products/[slug]/readme/route");
 const detailsRoute = await import("@/app/api/products/[slug]/details/route");
+const cardsModule = await import("@/app/api/product-cards/route");
+/** 경로 매개변수가 없는 route — withRoute 의 둘째 인자는 빈 params */
+const cardsRoute = { GET: (req: Request) => cardsModule.GET(req, { params: Promise.resolve({}) } as never) };
 const { reviveDetailExtras } = await import("@/lib/domain/products/detail-extras");
 
 const BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -72,6 +84,9 @@ beforeEach(() => {
   mocks.rateLimitWindow.mockReset().mockResolvedValue({ allowed: true, count: 1, retryAfterSeconds: 600 });
   mocks.getProductIdentity.mockReset().mockResolvedValue(product);
   mocks.getProductDetail.mockReset().mockResolvedValue(detail);
+  mocks.getPopularGroups.mockReset().mockResolvedValue([{ key: "rising", total: 1, items: [] }, { key: "noticed", total: 1, items: [{ ...related, stars: 6_000, ownerType: "User" }] }]);
+  mocks.getStarGrowthPage.mockReset().mockResolvedValue({ items: [related] });
+  mocks.getNewThisWeek.mockReset().mockResolvedValue([related]);
   mocks.getReadmeContent.mockReset().mockResolvedValue({ state: "available", markdown: "# ggml\n\nTensor library body.\n",
     sourceUrl: "https://github.com/ggml-org/ggml#readme", repositoryRootUrl: "https://github.com/ggml-org/ggml/blob/master/" });
 });
@@ -79,6 +94,7 @@ beforeEach(() => {
 const routes = [
   ["readme", (req: Request) => readmeRoute.GET(req, params("ggml"))],
   ["details", (req: Request) => detailsRoute.GET(req, params("ggml"))],
+  ["cards", (req: Request) => cardsRoute.GET(new Request(req.url.replace(/\/api\/products\/ggml\/cards.*/, "/api/product-cards?list=rising"), { headers: req.headers }))],
 ] as const;
 
 describe("README 전문·부가 자료 API — 공개 API 읽기 관문을 그대로", () => {
@@ -143,5 +159,23 @@ describe("부가 자료 API", () => {
     expect((await detailsRoute.GET(request("/api/products/ggml/details?locale=xx"), params("ggml"))).status).toBe(200);
     mocks.getProductDetail.mockResolvedValueOnce(null);
     expect((await detailsRoute.GET(request("/api/products/missing/details"), params("missing"))).status).toBe(404);
+  });
+});
+
+describe("첫 화면 밖 카드 API(/api/product-cards)", () => {
+  it.each(["list=popular&tier=noticed&personal=1", "list=rising", "list=new"])("%s: 카드가 그리는 칸과 운영 주체만 — 저장소 주소·메이커·내부 id·상태는 없다", async (query) => {
+    const response = await cardsRoute.GET(request(`/api/product-cards?${query}&locale=ko`));
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    for (const key of ['"repoUrl":', '"makerName":', '"status":', '"unclaimed":', '"builderClaim":', '"stack":']) expect(text).not.toContain(key);
+    expect(text).not.toMatch(/"id":\d/);
+    const { items } = JSON.parse(text);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ slug: "other", name: "Other", owner: { login: "a", profileUrl: "https://github.com/a" } });
+  });
+
+  it("모르는 목록·구간은 400", async () => {
+    expect((await cardsRoute.GET(request("/api/product-cards?list=all"))).status).toBe(400);
+    expect((await cardsRoute.GET(request("/api/product-cards?list=popular&tier=huge"))).status).toBe(400);
   });
 });

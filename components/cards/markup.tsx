@@ -45,7 +45,11 @@ export type CardProduct = StarObservation & {
   listedAt?: TimeInput;
   repoCreatedAt?: TimeInput;
   ownerType?: "User" | "Organization" | null;
+  /** 서버가 정한 운영 주체 — 브라우저가 API 로 받은 카드(card-item.ts)는 저장소 주소 대신 이것을 쓴다 */
+  owner?: { login: string; profileUrl: string } | null;
 };
+
+const ownerOf = (product: CardProduct) => product.owner !== undefined ? product.owner : listedRepositoryOwner(product.repoUrl ?? null, product.repoRenamedTo);
 
 export type CardContext = { locale: Locale; t: Labels; now: Date | string | number };
 
@@ -80,7 +84,7 @@ export function ProjectCardMarkup({ product, ctx, save, priority = false, headin
   children?: ReactNode;
 }) {
   const { locale, t, now } = ctx;
-  const owner = listedRepositoryOwner(product.repoUrl ?? null, product.repoRenamedTo);
+  const owner = ownerOf(product);
   const maker = owner ? `@${owner.login}` : product.makerName ? `@${product.makerName.replace(/^@/, "")}` : null;
   const builder = product.builder && product.builderClaim === "reported" ? product.builder : null;
   const href = localePath(locale, `/p/${product.slug}`);
@@ -197,7 +201,7 @@ export function PopularRowMarkup({ product, rank, ctx, save }: { product: CardPr
   const { locale, t, now } = ctx;
   const count = (n: number) => formatNumber(n, locale);
   const href = localePath(locale, `/p/${product.slug}`);
-  const owner = listedRepositoryOwner(product.repoUrl ?? null, product.repoRenamedTo);
+  const owner = ownerOf(product);
   const account = product.ownerType === "User" ? t("card.personal") : product.ownerType === "Organization" ? t("card.organization") : null;
   return (
     <li className="popular-row">

@@ -1,43 +1,24 @@
 import type { Locale } from "@/lib/i18n/locales";
 import Link from "next/link";
 import { connection } from "next/server";
-import { CompactRowMarkup } from "@/components/cards/markup";
+import { NotFoundRising } from "@/components/cards/LazyCards";
 import "@/components/home/cards.css";
 import { pageTitle } from "@/lib/copy/brand";
-import type { ProductListItem } from "@/lib/domain/products/view";
-import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
-import { logger } from "@/lib/observability/logger";
 import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
-import { localizeProductList } from "@/lib/i18n/products";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 
 /**
  * 없는 주소 — Next 기본 영어 404 대신 길을 낸다(2026-10-08 UX 감사 UX-10).
  *
- * 검색창, 지금 뜨는 프로젝트 다섯, 홈 링크. 내려간 프로젝트 주소로 들어온 사람도 여기로 온다(상세 전용 안내는 the product route’s not-found.tsx).
+ * 검색창, 지금 뜨는 프로젝트 다섯(화면을 열 때 /api/product-cards 로 받는다), 홈 링크. 내려간 프로젝트 주소로 들어온 사람도 여기로 온다(상세 전용 안내는 the product route’s not-found.tsx).
  * 404 응답에는 Next 가 noindex 를 붙인다.
  */
-
-/** 홈 '지금 뜨는' 띠와 같은 목록·같은 담기 열쇠(the shared home page) — 없는 주소가 몰려도 DB 를 더 부르지 않는다 */
-const RISING_COUNT = 5;
-
-async function risingProjects(): Promise<ProductListItem[]> {
-  try {
-    return (await getStarGrowthPage({ limit: RISING_COUNT })).items;
-  } catch (error) {
-    // 목록을 못 읽어도 안내와 검색창은 선다
-    logger.warn("not_found.rising_unavailable", { error });
-    return [];
-  }
-}
 
 export async function PublicNotFound({ locale }: { locale: Locale }) {
   // 빌드 때 굳히지 않는다 — 그때는 DB 가 없어 빈 목록이 박히고, 헤더(검색어를 읽는다)가 브라우저에서야 그려진다
   await connection();
-  const [t, labels] = await Promise.all([getTranslator(locale, "common"), getTranslator(locale, "labels")]);
-  // 이 화면은 모든 공개 화면의 RSC 데이터에 404 경계로 함께 실린다 — 카드는 서버가 글자로 그려 목록 행을 JSON 으로 싣지 않는다
-  const rising = await localizeProductList(await risingProjects(), locale);
+  const t = await getTranslator(locale, "common");
 
   return (
     // 위아래 여백은 안쪽 상자에 — .wrap(app/home.css)이 레이어 밖 규칙이라 main 의 padding 유틸리티를 덮는다(error·global-error 도 같다)
@@ -70,7 +51,8 @@ export async function PublicNotFound({ locale }: { locale: Locale }) {
             {t("navigation.homeLink")}
           </Link>
         </p>
-        <CompactRowMarkup ctx={{ locale, t: labels, now: new Date() }} id="rising" title={t("notFound.rising")} items={rising} trailing="category" more={{ href: localePath(locale, "/rising"), label: t("navigation.viewAll") }} />
+        {/* 이 화면은 모든 공개 화면의 RSC 데이터에 404 경계로 함께 실린다 — 지금 뜨는 다섯은 화면을 열 때 받는다(2026-11-14 공개 HTML 줄이기) */}
+        <NotFoundRising title={t("notFound.rising")} more={{ href: localePath(locale, "/rising"), label: t("navigation.viewAll") }} />
       </div>
     </main>
   );

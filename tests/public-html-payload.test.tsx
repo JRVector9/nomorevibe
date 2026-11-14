@@ -80,7 +80,8 @@ async function flight(node: unknown): Promise<Flight & { json: string; html: str
   return { ...out, json: out.clientJson.join("\n"), html: out.text.join(" ") };
 }
 
-const forbiddenKeys = (json: string) => FORBIDDEN.filter((field) => json.includes(`"${field}":`));
+/** 금지 칸 이름 — id 는 숫자 값일 때만(내부 순차 id). 문서 요소의 id 속성("projects-title" 같은 글자)은 아니다 */
+const forbiddenKeys = (json: string) => FORBIDDEN.filter((field) => field === "id" ? /"id":\d/.test(json) : json.includes(`"${field}":`));
 
 /** 제품 행처럼 보이는 객체 — slug 와 함께 소개·별·분야 같은 값을 가진 것(저장 단추의 slug·이름은 아니다) */
 function productObjects(json: string): Record<string, unknown>[] {
@@ -240,8 +241,11 @@ describe("홈·목록 — 카드는 서버가 글자로 그리고 제품 행을 
     const page = await flight(await HomeContent({ params: {} }));
     expect(forbiddenKeys(page.json)).toEqual([]);
     expect(productObjects(page.json)).toEqual([]);
-    // 화면은 그대로 그린다 — 목록·지금 뜨는·새로 나온·많이 쓰이는·가장 활발한(서버 HTML 글자)
-    for (const name of ["Fixture 1", "Fixture 4", "Fixture 11", "Fixture 21", "Fixture 41", "Fixture 61"]) expect(page.html).toContain(name);
+    // 첫 화면은 서버 HTML 글자로 — 목록·지금 뜨는·많이 쓰이는 첫 구간·가장 활발한
+    for (const name of ["Fixture 1", "Fixture 4", "Fixture 21", "Fixture 41", "Fixture 61"]) expect(page.html).toContain(name);
+    // 첫 화면 아래 '이번 주 새로 나온' 카드·숨은 구간은 서버 HTML 에 없다 — 화면 가까이 오거나 탭을 고를 때 API 로 받는다
+    expect(page.html).not.toContain("Fixture 11");
+    expect(page.boundaries).toContain("LazyCompactRow");
     // 집계 창에는 가장 활발한 목록 대신 수만, 회차의 실행 번호 없이
     expect(page.json).not.toContain('"active":');
     expect(page.json).not.toContain('"runId":');
