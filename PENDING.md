@@ -1,5 +1,18 @@
 # 남은 작업
 
+## 1차 근거 대기·승인 잇기(PR #954) — 2026-11-14, 운영 미적용(코드·단위·작업 전용 DB 시험만)
+
+- 고침: 준비된 1차 대기열이 AI 제작 근거 스캔이 자리 잡을 때까지(스캔 대기열에 있는 저장소만, 원본을 본 뒤 최대 6시간) 기다리고,
+  이미 승인된 후보는 원본이 그대로이고 근거(스캔 결과)만 늘면 그 승인을 모델 호출 없이 잇는다(`lib/crawl/first-review-evidence.ts`).
+  배포 전 30시간 실측: 1차 모델 호출 12,347건 중 3,225건(26%)이 스캔 완료 전 심사 뒤 같은 원본을 다시 심사한 것.
+- 「1차 대기」 수(발견 유입 조절·처리량·재판정 양보)는 이제 근거를 기다리는 후보를 세지 않는다. 스캔이 멈추면 그 후보는 6시간 뒤에 대기 수에 들어온다.
+- **배포 뒤(대표, READ ONLY)** — 배포 시각 전후 같은 길이 구간을 견준다:
+  1. 이른 심사가 줄었는지 — `select a.snapshot->>'scanState' st, count(*) from crawl_review_attempts a where a.kind='automatic' and a.state='succeeded' and a.reused_from_attempt_id is null and a.provider<>'rules' and a.started_at > now() - interval '6 hours' group by 1;` (pending 비율이 크게 줄고, 남는 pending 은 원본을 본 지 6시간 넘은 후보·스캔 대기열 밖 후보)
+  2. 같은 원본의 두 번째 모델 호출 — 위 30시간 측정과 같은 식(후보·candidateJudgedAt 묶음의 이른 호출 뒤 complete 호출 수).
+  3. 승인 잇기 — `select count(*) from crawl_review_attempts a join crawl_review_attempts b on b.id=a.reused_from_attempt_id where a.started_at > now() - interval '6 hours' and a.input_hash<>b.input_hash;`
+  4. 1차가 굶지 않는지 — 원본을 본 지 6시간이 넘었는데 1차 시도가 없는 준비 후보 수가 늘지 않는지, `crawl.agent_review_tick` 의 admitted·calls.
+- 남은 일: 효과 측정 전에는 감소량을 주장하지 않는다.
+
 ## 공개분 추가 검수·감사 두 번째 의견 줄 머리 막힘(입력 기한 지남) — 2026-11-03, 운영 미적용(코드·단위·일회용 DB 시험만)
 
 - 원인: 입력 유효 기한(`validUntil` = min(수집, 스캔) + 24시간)이 지난 대상은 호출 직전 증명(`lib/llm/local-model-domain.ts`)이 늘 거절하는데,
