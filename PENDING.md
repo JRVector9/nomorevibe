@@ -641,7 +641,7 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 | `CLAUDE_CODE_OAUTH_TOKEN` | reviewer. 리뷰 오류는 보류·제한 재시도 |
 | `CRAWL_REVIEW_READY` | 웹 모드 변경 준비 플래그. true여야 observe/enforce 전환 가능 |
 | `TRUSTED_PROXY_HOPS` | 웹 프록시 환경의 클라이언트 IP 판별. 실제 hop 수에 맞춤 |
-| `TRUST_CF_CONNECTING_IP` | `1`이면 Tunnel(사설 피어) 경유 요청에 한해 CF-Connecting-IP를 방문자 IP로 쓴다. 운영 권장 `TRUSTED_PROXY_HOPS=1`과 함께 — `docs/operations/2026-11-14-anti-scrape-api-rate-limit.md` |
+| `TRUST_CF_CONNECTING_IP` | `1`이면 사설 피어(Traefik 뒤 같은 기계·사설망) 경유 요청에 한해 CF-Connecting-IP를 방문자 IP로 쓴다. 운영 웹 두 곳은 이미 `TRUSTED_PROXY_HOPS=2`(피어 `192.168.97.1`)라 켤 때 이 값 `1`만 넣고 hop은 그대로 둔다(2026-11-14 09Z 실측). 미설정이면 IP 한도·함정 차단이 걸리지 않는다. LAN·Tailscale에서 Traefik에 직접 닿으면 위조 가능 — `docs/operations/2026-11-14-anti-scrape-api-rate-limit.md` |
 
 ### 확인
 
