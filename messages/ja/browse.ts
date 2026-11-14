@@ -5,9 +5,6 @@ import { browse as english } from "@/messages/en/browse";
 /** Product content is Japanese; untranslated support/account/policy copy explicitly falls back to English. */
 export const browse = defineCatalog<typeof Schema>()({
   ...english,
-  "pagination.title": "一覧の閲覧範囲を超えています",
-  "pagination.hint": "検索語やカテゴリを絞り込んで、他のプロジェクトを探してください。",
-  "pagination.restart": "最初のページに戻る",
   "sort.ai": "AIで制作",
   "sort.recent": "新着順",
   "sort.allTime": "GitHubスター順",

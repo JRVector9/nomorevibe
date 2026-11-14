@@ -2,9 +2,6 @@ import { defineCatalog } from "@/lib/i18n/messages";
 import type { browse as schema } from "@/messages/ko/browse";
 
 export const browse = defineCatalog<typeof schema>()({
-  "pagination.title": "已超出清單瀏覽範圍",
-  "pagination.hint": "請縮小搜尋範圍或選擇分類，尋找更多專案。",
-  "pagination.restart": "返回第一頁",
   "sort.ai": "使用AI製作",
   "sort.recent": "最新收錄",
   "sort.allTime": "GitHub星數最多",

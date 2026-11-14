@@ -21,7 +21,7 @@
 - [x] 변경 파일 ESLint·i18n
 - [x] 기존 목록·sitemap DB 회귀(55435)
 - [x] 시험 DB Next 서버 curl 및 1440/390 브라우저·스크린숏·안내 검수
-- [ ] 검증 후 의미 단위 커밋·이 브랜치 push
+- [x] 검증 후 의미 단위 커밋·이 브랜치 push
 - [ ] PR 본문 실제 결과 반영·필수 check 성공 확인
 - [ ] 보고함 보고 및 결과 첨부
 
@@ -44,3 +44,10 @@
 - 브라우저 시험 초기에는 홈 아래 다른 구획 카드까지 세어 실패했고, `#projects`로 범위를 바로잡았다. 이어 기존 6px 넘침에 실패해 main의 같은 값과 대조했으며, 기존 목록에만 이 baseline을 명시 적용했다. 안내는 넘침 0 기준을 유지했다. 첫 screenshot의 caret 숨김이 수화 전 input 스타일을 바꾼 경고는 caret 초기 상태 촬영으로 피했다. 기존 레이아웃 파일은 변경하지 않았다.
 
 병합·배포 안 함. 운영 DB 접근·운영 설정·Cloudflare 변경 없음.
+
+
+## CI 번들 제한 보완
+
+첫 ready CI [43576110713](https://github.com/JRVector9/nomorevibe/actions/runs/43576110713)의 Next 빌드는 완료됐지만 번들 크기 검사에서 홈이 Brotli 175.2KB로 기존 한도 175.1KB를 초과했다. 기준선은 변경하지 않았다. 안내 문구가 공용 클라이언트 browse 사전에 실리지 않게 다섯 언어 문구를 서버 전용 PaginationNotice로 옮겼다. 따라서 최종 메시지 사전 파일은 main과 동일하다.
+
+수정 뒤 같은 단위 61/61·typegen→tsc·ESLint·i18n을 재실행해 통과했다. scratch/runtime에서 `SKIP_NEXT_TYPECHECK=1 npm run build`(별도 tsc 통과) 및 기존 `node scripts/bundle-size.mjs` 통과: 홈 **175.2 → 175.1KB**, 상세 191.4KB, 등록 156.5KB. 실제 수치이며 반올림 표기다. 생성한 production standalone Next 서버도 시험 DB 55435로 띄워 curl 15경로와 두 폭 브라우저 12개 화면·클릭 검증을 재실행해 통과했다. 최종 첨부 스크린숏은 이 production 서버에서 다시 촬영했다. 운영에는 올리지 않았다.

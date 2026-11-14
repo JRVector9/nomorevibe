@@ -2,9 +2,6 @@ import { defineCatalog } from "@/lib/i18n/messages";
 import type { browse as schema } from "@/messages/ko/browse";
 
 export const browse = defineCatalog<typeof schema>()({
-  "pagination.title": "You have reached the browsing limit",
-  "pagination.hint": "Narrow your search or choose a category to find more projects.",
-  "pagination.restart": "Back to the first page",
   "sort.ai": "Made with AI",
   "sort.recent": "Recently listed",
   "sort.allTime": "Most GitHub stars",
