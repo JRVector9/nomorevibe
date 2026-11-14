@@ -1,4 +1,8 @@
 export const browse = {
+  "pagination.title": "목록 탐색 범위를 벗어났습니다",
+  "pagination.hint": "더 많은 프로젝트를 찾으려면 검색어나 분야를 좁혀 주세요.",
+  "pagination.restart": "첫 쪽으로 돌아가기",
+
   "sort.ai": "AI로 제작",
   "sort.recent": "최근 등록",
   "sort.allTime": "GitHub 스타 많은 순",

@@ -1,3 +1,5 @@
+import { publicPaginationBlocked } from "@/lib/web/public-pagination";
+import { PaginationNotice } from "@/components/home/PaginationNotice";
 import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 import { localizeProductList } from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
@@ -21,13 +23,13 @@ import "@/app/(public)/[locale]/(content)/popular/popular.css";
 
 export const dynamic = "force-dynamic";
 export async function generateMetadata(props: PageProps<"/[locale]/rising">, parent: ResolvingMetadata): Promise<Metadata> {
-  void props;
+  const paginationBlocked = publicPaginationBlocked(await props.searchParams, "page");
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "browse");
   const title = pageTitle(t("growth.title"));
   const description = t("growth.description");
   return {
-    title, description, alternates: canonicalAlternates("/rising", locale),
+    title, description, ...(paginationBlocked ? { robots: { index: false, follow: true } } : {}), alternates: canonicalAlternates("/rising", locale),
     openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale), title, description, url: localePath(locale, "/rising") },
   };
 }
@@ -38,9 +40,10 @@ const VIEWS = [{ key: "list", label: "nav.listView", icon: "list" }, { key: "car
 
 export default async function RisingPage({ searchParams }: { searchParams: Promise<{ page?: SearchValue; cycle?: SearchValue; view?: SearchValue }> }) {
   const locale = await getRequestLocale();
+  const params = await searchParams;
+  if (publicPaginationBlocked(params, "page")) return PaginationNotice({ path: localePath(locale, "/rising"), params, locale });
   const [t,dictionary] = await Promise.all([getTranslator(locale,"browse"),getDictionary(locale,"browse")]);
   const count = (n: number) => formatNumber(n,locale);
-  const params = await searchParams;
   const view = firstValue(params.view) === "cards" ? "cards" : "list";
   const now = new Date();
   let result: StarGrowthPage | null = null;

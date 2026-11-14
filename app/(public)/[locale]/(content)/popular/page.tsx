@@ -1,3 +1,5 @@
+import { publicPaginationBlocked } from "@/lib/web/public-pagination";
+import { PaginationNotice } from "@/components/home/PaginationNotice";
 import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 import {localizeProductList} from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
@@ -24,13 +26,13 @@ import './popular.css';
 export const dynamic='force-dynamic';
 // 구간·거르기·정렬·보기(?tier= 등)는 같은 화면의 보기다 — 정식 주소는 /popular 하나(SEO-04)
 export async function generateMetadata(props: PageProps<"/[locale]/popular">, parent: ResolvingMetadata): Promise<Metadata> {
- void props;
+ const paginationBlocked = publicPaginationBlocked(await props.searchParams, "page");
  const locale = await getRequestLocale();
  const t = await getTranslator(locale, "browse");
  const title = pageTitle(t("popular.title"));
  const description = t("popular.description");
  return {
-  title, description, alternates: canonicalAlternates("/popular", locale),
+  title, description, ...(paginationBlocked ? { robots: { index: false, follow: true } } : {}), alternates: canonicalAlternates("/popular", locale),
   openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale), title, description, url: localePath(locale, "/popular") },
  };
 }
@@ -45,9 +47,11 @@ const VIEWS=[{key:'list',label:'nav.listView',icon:'list'},{key:'cards',label:'n
  */
 export default async function PopularPage({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}){
  const locale=await getRequestLocale();
+ const params = await searchParams;
+ if (publicPaginationBlocked(params, "page")) return PaginationNotice({ path: localePath(locale, "/popular"), params, locale });
  const [t,labels,dictionary]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels"),getDictionary(locale,"browse")]);
  const count=(n:number)=>formatNumber(n,locale);
- const state=parsePopularParams(await searchParams);
+ const state=parsePopularParams(params);
  const filters={personal:state.personal,ai:state.ai,category:state.category};
  const selected=STAR_TIERS.find(t=>t.key===state.tier)!;
  const now=new Date().toISOString();
