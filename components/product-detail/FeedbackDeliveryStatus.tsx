@@ -3,7 +3,9 @@
 import { useTranslations } from "@/lib/i18n/context";
 import type { FeedbackView } from "@/lib/domain/feedback/contract";
 
-export function FeedbackDeliveryStatus({ feedback, compact = false }: { feedback: FeedbackView; compact?: boolean }) {
+export function FeedbackDeliveryStatus({ feedback, compact = false }: {
+  feedback: Pick<FeedbackView, "deliveryState" | "githubIssueUrl" | "externalIssueState" | "lastErrorCode">; compact?: boolean;
+}) {
   const t = useTranslations("detail");
   if (compact && feedback.deliveryState === "local_only" && !feedback.githubIssueUrl) return null;
 

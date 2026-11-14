@@ -11,27 +11,18 @@ import { ensureSchema, resetTables } from "./setup";
  * 보냈는지(claim_invited_at)가 그렇게 새어 나갔다. 그래서 나가는 필드 목록 자체를 잰다.
  */
 
-/** 공개 응답에 있어야 하는 필드 — 스킬과 밖의 호출자가 이것을 보고 있다 */
+/**
+ * 공개 응답에 있어야 하는 필드 — 스킬의 클레임 확인이 이것을 보고 있다.
+ * 2026-11-14 외부 수집 방지: 우리 화면은 이 JSON 을 부르지 않으므로 스킬이 보여 주는 이름·소개까지만 남겼다
+ * (내부 id·설명·스택·메이커·저장소·출처·시각은 화면 HTML 에서 본다).
+ */
 const PUBLIC_FIELDS = [
-  "id",
   "slug",
   "url",
   "name",
   "tagline",
-  "description",
   "category",
-  "builder",
-  "stack",
-  "ogImage",
-  "makerName",
-  "repoUrl",
   "status",
-  "source",
-  "claimedAt",
-  "verifyMethod",
-  "verifiedAt",
-  "createdAt",
-  "updatedAt",
 ].sort();
 
 async function seeded(slug = "found-app") {
@@ -52,7 +43,8 @@ async function seeded(slug = "found-app") {
 }
 
 async function get(slug: string) {
-  const response = await GET(new Request(`https://nomorevibe.test/api/products/${slug}`), {
+  // 스킬은 curl 에 자기 이름을 싣는다(skill/SKILL.md) — 이름 없는 curl 은 공개 읽기 관문이 거절한다
+  const response = await GET(new Request(`https://nomorevibe.test/api/products/${slug}`, { headers: { "user-agent": "nomorevibe-skill/1" } }), {
     params: Promise.resolve({ slug }),
   } as never);
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
@@ -78,9 +70,9 @@ describe("GET /api/products/<slug> — 밖으로 나가는 것", () => {
       name: "FoundApp",
       url: "https://found-app.test",
       status: "seeded",
-      source: "crawler",
-      repoUrl: "https://github.com/someone/found-app",
     });
+    expect(body).not.toHaveProperty("id");
+    expect(body).not.toHaveProperty("repoUrl");
   });
 
   it("허용 목록에 없는 것은 나가지 않는다 — 운영자가 언제 초대했는지도", async () => {

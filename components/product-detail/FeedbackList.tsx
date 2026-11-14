@@ -7,6 +7,7 @@ import type { DetailTextKey } from "./format";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { FeedbackView } from "@/lib/domain/feedback/contract";
+import type { PublicFeedbackItem } from "@/lib/domain/feedback/public-view";
 import { FeedbackDeliveryStatus } from "./FeedbackDeliveryStatus";
 import { loadMeState, recheckMeState } from "@/components/me/account-store";
 
@@ -15,7 +16,7 @@ export { FeedbackDeliveryStatus };
 export const FEEDBACK_SUBMITTED_EVENT = "nmv:feedback-submitted";
 export type FeedbackSubmittedDetail = { feedback: FeedbackView; replayed: boolean; created: boolean };
 
-function upsertReceipt(items: FeedbackView[], item: FeedbackView, limit: number): FeedbackView[] {
+function upsertReceipt<T extends PublicFeedbackItem>(items: T[], item: T, limit: number): T[] {
   return [item, ...items.filter((previous) => previous.id !== item.id)]
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) || (left.id < right.id ? 1 : left.id > right.id ? -1 : 0))
     .slice(0, limit);
@@ -44,7 +45,8 @@ export function FeedbackItem({ feedback }: { feedback: FeedbackView }) {
   );
 }
 
-function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
+/** 공개 목록은 /api/products/<slug>/feedback 의 줄인 항목(PublicFeedbackItem)만 받는다 */
+function CompactFeedbackItem({ feedback }: { feedback: PublicFeedbackItem }) {
   const t = useTranslations("detail");
   const locale = useLocale();
   const now = useServerNow();
@@ -95,7 +97,7 @@ export async function loadMineFeedback(slug: string, signal?: AbortSignal): Prom
 export function FeedbackList({ slug, children, settings }: { slug: string; children?: ReactNode; settings?: ReactNode }) {
   const t = useTranslations("detail");
   const locale = useLocale();
-  const [publicFeedback, setPublicFeedback] = useState<FeedbackView[]>([]);
+  const [publicFeedback, setPublicFeedback] = useState<PublicFeedbackItem[]>([]);
   const [publicTotal, setPublicTotal] = useState<number | null>(null);
   const [mine, setMine] = useState<FeedbackView[] | null>(null);
   const [view, setView] = useState<"public" | "mine">("public");
@@ -119,7 +121,7 @@ export function FeedbackList({ slug, children, settings }: { slug: string; child
     await Promise.all([
       fetch(`/api/products/${encodeURIComponent(slug)}/feedback`, { cache: "no-store", signal }).then(async (response) => {
         if (!response.ok) throw new Error("feedback_unavailable");
-        const data = await response.json() as { feedback: FeedbackView[]; total?: number };
+        const data = await response.json() as { feedback: PublicFeedbackItem[]; total?: number };
         if (!Array.isArray(data.feedback) || data.total !== undefined && (!Number.isSafeInteger(data.total) || data.total < data.feedback.length)) throw new Error("feedback_unavailable");
         if (!current()) return;
         publicIds.current = new Set(data.feedback.map((item) => item.id));
@@ -159,7 +161,7 @@ export function FeedbackList({ slug, children, settings }: { slug: string; child
       receiptIds.current.add(item.id);
       if (item.reviewState === "accepted") {
         publicIds.current.add(item.id);
-        setPublicFeedback((items) => upsertReceipt(items, { ...item, reviewReason: null }, 50));
+        setPublicFeedback((items) => upsertReceipt<PublicFeedbackItem>(items, { ...item, reviewReason: null }, 50));
         if (detail.created && !detail.replayed && !known) setPublicTotal((total) => total === null ? null : total + 1);
         setPublicLoaded(true);
         setView("public");

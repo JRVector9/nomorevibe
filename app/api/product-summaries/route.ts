@@ -5,6 +5,7 @@ import { DEFAULT_LOCALE, isLocale } from "@/lib/i18n/locales";
 import { localizeSummaries, readSavedJson, readSlugList, savedSummaries, SUMMARY_BODY_BYTES, SUMMARY_SLUG_LIMIT } from "@/lib/me/saved";
 import { logger } from "@/lib/observability/logger";
 import { rateLimit, trustedClientIp } from "@/lib/rate-limit";
+import { guardPublicApiRead } from "@/lib/http/anti-scrape";
 
 /** 쿠키를 읽지 않는 공개 읽기 — 누가 불러도 같은 답이다. 몸이 있는 요청이라 엣지·브라우저는 담지 않는다 */
 const headers = { "Cache-Control": "no-store" };
@@ -17,6 +18,9 @@ const headers = { "Cache-Control": "no-store" };
  * (fenced DB 동안은 503 — 브라우저 목록은 그대로고 카드만 못 그린다).
  */
 export const POST = withRoute("products.summaries", async (request: Request) => {
+  // 공개 API 읽기와 같은 관문(수집 도구 거절·함정 차단·IP 읽기 한도) — 아래 자체 한도는 그대로 둔다
+  const refused = await guardPublicApiRead(request, "products.summaries");
+  if (refused) return refused;
   try {
     // 믿을 프록시가 IP 를 알려 줄 때만 센다 — 모르면 모두가 한 통을 나눠 써 서로를 막는다(구독 끊기와 같다)
     const ip = trustedClientIp(request);

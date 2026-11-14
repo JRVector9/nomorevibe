@@ -26,7 +26,8 @@ const SITE = "https://nomorevibe.example";
 type Account = { id: number; token: string; csrf: string };
 
 function call(method: string, path: string, { account, csrf = account?.csrf, origin = SITE, body }: { account?: Account; csrf?: string | null; origin?: string | null; body?: unknown } = {}) {
-  const headers = new Headers();
+  // 브라우저처럼 이름을 싣는다 — 공개 읽기 관문(lib/http/anti-scrape.ts)은 이름 없는 요청을 거절한다
+  const headers = new Headers({ "user-agent": "Mozilla/5.0 Chrome/131.0" });
   if (account) headers.set("cookie", `nmv_user=${account.token}`);
   if (csrf) headers.set("x-csrf-token", csrf);
   if (origin) headers.set("origin", origin);
@@ -415,6 +416,6 @@ describe("로그아웃 목록 카드 — POST /api/product-summaries", () => {
     expect(body.items[0]).not.toHaveProperty("id");
     const tooMany = await summaries(call("POST", "/api/product-summaries", { body: { slugs: Array.from({ length: 101 }, (_, index) => `s-${index}`) } }), noParams);
     expect(tooMany.status).toBe(400);
-    expect((await summaries(new Request(`${SITE}/api/product-summaries`, { method: "POST", body: "slugs=alpha" }), noParams)).status).toBe(415);
+    expect((await summaries(new Request(`${SITE}/api/product-summaries`, { method: "POST", body: "slugs=alpha", headers: { "user-agent": "Mozilla/5.0 Chrome/131.0" } }), noParams)).status).toBe(415);
   });
 });

@@ -5,14 +5,23 @@ import { PublicAuthError, publicAuthErrorResponse, requirePublicMutation } from 
 import { productFeedbackEnabled } from "@/lib/domain/github-integration/flags";
 import { WEB_FENCED_RETRY_AFTER, webWriteRoute } from "@/lib/operations/dr/web-gate";
 import { trackServer } from "@/lib/analytics/server";
+import { guardPublicApiRead } from "@/lib/http/anti-scrape";
+import { publicFeedbackItem } from "@/lib/domain/feedback/public-view";
 
 const headers = { "Cache-Control": "private, no-store" };
 type Context = { params: Promise<{ slug: string }> };
 
-export async function GET(_request: Request, context: Context) {
+/**
+ * 공개 의견 목록 — 상세 화면(FeedbackList)이 브라우저에서 부른다. 화면이 그리는 것만 내보낸다:
+ * 내부 제품 id·작성자 계정 id·제품 이름·전달 오류 코드는 공개 목록에 쓰이지 않는다(내 의견은 /api/me/feedback 이 따로 준다).
+ */
+export async function GET(request: Request, context: Context) {
   if (!productFeedbackEnabled()) return Response.json({ error: "feedback_disabled" }, { status: 404, headers });
+  const refused = await guardPublicApiRead(request, "products.feedback.list");
+  if (refused) return refused;
   const { slug } = await context.params;
-  return Response.json(await listProductFeedbackWithTotal(slug), { headers });
+  const { feedback, total } = await listProductFeedbackWithTotal(slug);
+  return Response.json({ feedback: feedback.map(publicFeedbackItem), total }, { headers });
 }
 
 export const POST = webWriteRoute(async (request: Request, context: Context) => {
