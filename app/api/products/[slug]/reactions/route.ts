@@ -9,6 +9,7 @@ import { deleteReaction, putReaction, readReaction } from "@/lib/domain/reaction
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 import { trustedClientIp } from "@/lib/rate-limit";
 import { trackServer } from "@/lib/analytics/server";
+import { guardPublicApiRead } from "@/lib/http/anti-scrape";
 
 /**
  * 써봤어요 — 내 평가와 공개 요약(GET), 저장·바꾸기(PUT), 지우기(DELETE). 피드백 설계 5.2절.
@@ -29,6 +30,8 @@ async function slugOf(context: Context): Promise<string> {
 }
 
 export async function GET(request: Request, context: Context) {
+  const refused = await guardPublicApiRead(request, "products.reactions.read");
+  if (refused) return refused;
   try {
     requireReactionsEnabled();
     const slug = await slugOf(context);

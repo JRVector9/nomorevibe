@@ -105,7 +105,9 @@ describe("feedback request boundaries", () => {
     const { GET } = await import("@/app/api/products/[slug]/feedback/route");
     const mine = await import("@/app/api/me/feedback/route");
     requestMocks.productList.mockResolvedValue({ feedback: [], total: 0 });
-    const response = await GET(new Request("https://nomorevibe.example/api/products/tool/feedback"), { params: Promise.resolve({ slug: "tool" }) });
+    // 공개 API 읽기 관문(lib/http/anti-scrape.ts)은 이름 없는 요청을 403 으로 거절한다 — 화면처럼 브라우저 이름을 싣는다
+    const response = await GET(new Request("https://nomorevibe.example/api/products/tool/feedback", { headers: { "user-agent": "Mozilla/5.0 Chrome/131.0" } }), { params: Promise.resolve({ slug: "tool" }) });
+    expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect((await mine.GET(new Request("https://nomorevibe.example/api/me/feedback"))).status).toBe(401);
     requestMocks.session.mockResolvedValue({ user: { id: 7, displayName: "user" }, csrfToken: "csrf" });

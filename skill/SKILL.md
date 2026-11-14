@@ -16,7 +16,9 @@ API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{
   - **수정 키는 `.nomorevibe.json`에 저장하지 않는다. 수정 키는 프로젝트 파일에 저장하거나 기록하지 않는다.**
   - 수정 키, 인증 헤더, 제공자 자격 증명은 화면·로그·명령 결과에 출력하지 않는다.
   - 파일 생성 시 `chmod 600` 적용
-- 모든 API 호출은 `curl -s`로 하고, 응답 JSON의 `error` 필드를 사용자에게 그대로 전달한다
+- 모든 API 호출은 `curl -s -A 'nomorevibe-skill/1'`로 하고, 응답 JSON의 `error` 필드를 사용자에게 그대로 전달한다.
+  공개 읽기 API는 이름 없는 curl 같은 수집 도구 요청을 403(`automated_client_refused`)으로 거절하므로 `-A` 값을 빼지 않는다.
+  아래 예시의 `curl -s`도 모두 같은 `-A` 값을 붙여 실행한다. 공개 읽기가 429(`rate_limited`)면 `Retry-After` 초만큼 기다린다
 - 변경 명령은 `.nomorevibe.json`의 `api`를 유효한 http(s) **origin**으로 정규화한 뒤, 수정 키를
   `credentials[origin][slug]`에서만 찾는다. 즉 수정 키는 **API origin과 slug의 조합**에 결박한다.
   인증 요청 목적지는 일치한 credential의 origin만 사용하며 프로젝트 파일에 적힌 임의 URL로 수정 키를
@@ -222,7 +224,7 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
 
 등록할 때 409에 `status: "seeded"`가 왔거나, 사용자가 "내 제품이 이미 올라와 있다"고 할 때.
 
-1. **확인**: `curl -s <API>/api/products/<slug>` — 응답에 `claimable: true`와 `verify`가 있으면
+1. **확인**: `curl -s -A 'nomorevibe-skill/1' <API>/api/products/<slug>` — 응답에 `claimable: true`와 `verify`가 있으면
    아직 주인이 없는 제품이다. 사용자에게 현재 등록된 이름·소개를 보여주고 본인 제품이 맞는지 묻는다.
 2. **소유 증명**: `verify.file` 정보로 검증 파일을 만든다 (등록 8번과 같은 방식). 재배포를 안내한다.
 3. **가져오기**: `curl -s -X POST <API>/api/products/<slug>/verify`

@@ -33,6 +33,12 @@ async function routeRequest(req: NextRequest) {
   if (isAdminProtectedPath(stripLocale(pathname))) {
     if (locale || !adminIngressAllowed(req.headers)) return new NextResponse(null, { status: 404, headers: { "Cache-Control": "private, no-store" } });
   }
+  // 검색(?q=)은 엣지에 담기지 않아(next.config.ts) 요청마다 DB 검색이 돈다 — IP 별 한도(lib/http/anti-scrape.ts)
+  if (isSearchRequest(req)) {
+    const { guardSearch } = await import("@/lib/http/anti-scrape");
+    const limited = await guardSearch(req);
+    if (limited) return limited;
+  }
   // Keep the administrator gate first, independently of all locale routing.
   if (pathname === "/admin" || pathname.startsWith("/admin/")) {
     if (pathname === "/admin/login" || pathname === "/admin/login/") return passThrough(req, DEFAULT_LOCALE);
@@ -59,6 +65,15 @@ async function routeRequest(req: NextRequest) {
   const internal = req.nextUrl.clone();
   internal.pathname = `/${DEFAULT_LOCALE}${pathname === "/" ? "" : pathname}`;
   return NextResponse.rewrite(internal, { request: { headers: localeHeaders(req, DEFAULT_LOCALE) } });
+}
+
+/** 공개 화면의 검색 요청 — API·관리자·정적 파일은 빼고, 빈 q 는 검색이 아니다 */
+function isSearchRequest(req: NextRequest): boolean {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  if (!req.nextUrl.searchParams.get("q")?.trim()) return false;
+  const pathname = stripLocale(req.nextUrl.pathname);
+  return !(pathname === "/api" || pathname.startsWith("/api/") || pathname === "/admin" || pathname.startsWith("/admin/")
+    || pathname.startsWith("/_next/") || /\.[a-z0-9]{2,5}$/i.test(pathname));
 }
 
 function localeHeaders(req: NextRequest, locale: Locale): Headers {

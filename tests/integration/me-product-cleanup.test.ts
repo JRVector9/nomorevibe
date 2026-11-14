@@ -72,7 +72,8 @@ describe("제품 완전 삭제와 팔로", () => {
 describe("로그아웃 목록 카드 — POST /api/product-summaries", () => {
   const noParams = { params: Promise.resolve({}) };
   const call = (slugs: string[], ip?: string) => new Request(`${SITE}/api/product-summaries`, { method: "POST",
-    headers: { "content-type": "application/json", ...(ip ? { "x-forwarded-for": ip } : {}) }, body: JSON.stringify({ slugs, locale: "ko" }) });
+    // 브라우저 이름을 싣는다 — 이름 없는 요청은 공개 읽기 관문(lib/http/anti-scrape.ts)이 403 으로 거절한다
+    headers: { "content-type": "application/json", "user-agent": "Mozilla/5.0 Chrome/131.0", ...(ip ? { "x-forwarded-for": ip } : {}) }, body: JSON.stringify({ slugs, locale: "ko" }) });
 
   it("브라우저마다 다른 목록은 공용 메모에 담지 않는다 — 방금 내린 제품은 다음 요청에서 바로 빠진다", async () => {
     const { POST } = await import("@/app/api/product-summaries/route");

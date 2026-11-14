@@ -641,6 +641,7 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 | `CLAUDE_CODE_OAUTH_TOKEN` | reviewer. 리뷰 오류는 보류·제한 재시도 |
 | `CRAWL_REVIEW_READY` | 웹 모드 변경 준비 플래그. true여야 observe/enforce 전환 가능 |
 | `TRUSTED_PROXY_HOPS` | 웹 프록시 환경의 클라이언트 IP 판별. 실제 hop 수에 맞춤 |
+| `TRUST_CF_CONNECTING_IP` | `1`이면 Tunnel(사설 피어) 경유 요청에 한해 CF-Connecting-IP를 방문자 IP로 쓴다. 운영 권장 `TRUSTED_PROXY_HOPS=1`과 함께 — `docs/operations/2026-11-14-anti-scrape-api-rate-limit.md` |
 
 ### 확인
 
