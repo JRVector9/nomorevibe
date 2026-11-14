@@ -48,6 +48,12 @@ describe("1차 대기열 — AI 제작 근거 스캔을 기다린다", () => {
     expect((await predicateText({ staleScanOnly: true })).sql).not.toContain(WAIT);
     expect((await predicateText({})).sql).not.toContain(WAIT);
   });
+
+  it("격리 replay 는 근거가 얼어 있어 기다리지 않는다 — 고정 권한 프로필에 스캔 대기열 표가 없다", async () => {
+    const { withReviewReplayContext } = await import("@/lib/crawl/review-replay-context");
+    const text = await withReviewReplayContext({ referenceTime: new Date("2026-11-14T00:00:00.000Z") }, () => predicateText({ readyOnly: true }));
+    expect(text.sql).not.toContain(WAIT);
+  });
 });
 
 const snapshot = (over: Partial<ReviewSnapshot> = {}): ReviewSnapshot => ({

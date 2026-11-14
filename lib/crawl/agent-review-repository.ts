@@ -819,8 +819,10 @@ export function firstReviewAbstainedPredicate(settings: CrawlSettings): SQL {
 export function reviewCandidatePredicate(settings: CrawlSettings, options: ReviewCandidateOptions = {}): SQL {
   if (!settings.enabled || settings.reviewMode === "off") return sql`false`;
   const scanFresh = sql`(fres.completed_at <= ${reviewSemanticNowSql()} AND fres.completed_at > ${reviewSemanticNowSql()} - interval '24 hours')`;
-  // 준비된 1차 대상(readyOnly)은 AI 제작 근거 스캔이 자리 잡을 때까지(상한 6시간) 기다린다 — first-review-evidence.ts
-  const awaitEvidence = options.readyOnly === true && !options.staleScanOnly && !options.includeEvidenceWaiting;
+  // 준비된 1차 대상(readyOnly)은 AI 제작 근거 스캔이 자리 잡을 때까지(상한 6시간) 기다린다 — first-review-evidence.ts.
+  // 격리 replay 는 근거가 얼어 있어 기다릴 것이 없고, 고정 권한 프로필(pipeline-replay-handler-profile.ts)에 스캔 대기열 표가 없다
+  const awaitEvidence = options.readyOnly === true && !options.staleScanOnly && !options.includeEvidenceWaiting
+    && !currentReplayDb() && !storedReviewEvidenceRequired();
   return and(
     not(liveAgentReviewItem(sql`${crawlCandidates.id}`)),
     options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
