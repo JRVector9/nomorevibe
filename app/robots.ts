@@ -17,11 +17,20 @@ export const dynamic = "force-dynamic";
 
 export default function robots(): MetadataRoute.Robots {
   return {
-    rules: {
-      userAgent: "*",
-      allow: "/",
-      disallow: ["/go/", "/admin", "/api/"],
-    },
+    rules: [
+      {
+        // 검색·답변용 봇도 이 규칙을 상속한다. Google-Extended는 사람 결정으로 허용.
+        userAgent: "*",
+        allow: "/",
+        disallow: ["/go/", "/admin", "/api/"],
+        other: { "Content-Signal": "search=yes, ai-input=yes, ai-train=no" },
+      },
+      {
+        // 공식 출처·혼합 용도 예외는 docs/tasks/2026-11-14-anti-scrape-seo.md 참고.
+        userAgent: ["GPTBot", "ClaudeBot", "CCBot", "Bytespider", "Meta-ExternalAgent", "Amazonbot", "Google-CloudVertexBot", "Applebot-Extended", "AI2Bot"],
+        disallow: "/",
+      },
+    ],
     sitemap: `${siteOrigin()}/sitemap.xml`,
   };
 }
