@@ -39,7 +39,6 @@ export const auth = defineCatalog<typeof KoreanAuth>()({
   "github.signIn": "使用 GitHub 登入",
   "github.connectionDescription": "連接您本人的 GitHub 帳號，即可為專案新增或取消星號。",
   "github.signInDescription": "使用您本人的 GitHub 帳號登入，為專案加星並留下回饋。首次使用時會自動建立 NoMoreVibe 帳號。",
-  "github.loading": "正在檢查連接狀態…",
   "github.connected": "已連接 @{login}",
   "github.starsRetained": "中斷連接後，已新增的 GitHub 星號會保留。",
   "github.disconnect": "中斷 GitHub 連接",

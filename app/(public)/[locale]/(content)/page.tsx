@@ -341,7 +341,7 @@ export async function HomeScreen({ params, titleAction }: { params: HomeParams; 
   const category = parseCategory(firstValue(params.category));
   const title = newOnly ? t("new.title") : query ? t("home.searchTitle", { query }) : category ? t("home.categoryTitle", { category: translatedCategory(category, labels) }) : undefined;
   return (
-    <Suspense key={key} fallback={<FeedSkeleton title={title} busy={t(!newOnly && query ? "home.searching" : "home.loading")} label={t("home.projects")} />}>
+    <Suspense key={key} fallback={<FeedSkeleton title={title} label={t("home.projects")} />}>
       <HomeContent params={params} titleAction={titleAction} />
     </Suspense>
   );
@@ -402,14 +402,14 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
 }
 
 /** 목록을 찾는 동안 — 카드 9장(첫 쪽 분량)의 골격. 검색·분야면 결과 화면과 같은 제목을 두어 다 찾았을 때 자리가 튀지 않게 */
-function FeedSkeleton({ title, busy, label }: { title?: string; busy: string; label: string }) {
+function FeedSkeleton({ title, label }: { title?: string; label: string }) {
   return (
     <main className="wrap">
       <section id="projects" aria-labelledby={title ? "projects-title" : undefined} aria-label={title ? undefined : label} aria-busy="true" className="feed">
         <div className="row-head">
           <div>
             {title ? <h1 id="projects-title" className="row-title">{title}</h1> : <div className="skeleton-line skeleton-title" aria-hidden="true" />}
-            <p className="row-note">{busy}</p>
+            <div className="mt-2 h-[18px] w-40 max-w-full rounded bg-bg-soft" aria-hidden="true" />
           </div>
         </div>
         <div className="skeleton-line skeleton-tabs" aria-hidden="true" />

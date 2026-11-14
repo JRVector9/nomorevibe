@@ -1,5 +1,6 @@
 "use client";
 
+import { PublicSkeleton } from "@/components/PublicSkeleton";
 import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatNumber, formatDate } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
@@ -204,7 +205,7 @@ export function FeedbackList({ slug, children, settings }: { slug: string; child
       </div>
       {children}
       {view === "mine" && publicError && <p className="text-[13px] text-fg-2">{t("feedback.countUnavailable")}</p>}
-      {!loaded && <p role="status" className="text-[14px] text-fg-2">{t("feedback.loading")}</p>}
+      {!loaded && <PublicSkeleton className="py-4" />}
       {error && <div role="alert"><p className="text-[14px]">{t(error)}</p><button type="button" className="min-h-11 text-[14px] underline" onClick={() => { void load(); }}>{t("feedback.retry")}</button></div>}
       {loaded && !error && feedback.length === 0 && <p className="py-5 text-[14px] text-fg-2">{view === "mine" ? t("feedback.emptyMine") : t("feedback.empty")}</p>}
       {((view === "public" && (publicTotal !== null && publicTotal > 50 || feedback.length >= 50)) || (view === "mine" && feedback.length >= 100)) && <p className="text-[13px] text-fg-2">{view === "mine" ? t("feedback.limitMine") : t("feedback.limitPublic")}</p>}

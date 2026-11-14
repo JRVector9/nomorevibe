@@ -36,7 +36,6 @@ export const auth = {
   "github.signIn": "GitHub로 로그인",
   "github.connectionDescription": "본인 GitHub 계정으로 프로젝트에 스타를 추가하거나 취소하려면 연결해 주세요.",
   "github.signInDescription": "본인 GitHub 계정으로 로그인하고 프로젝트에 스타와 피드백을 남기세요. 처음 이용하면 NoMoreVibe 계정이 자동으로 만들어집니다.",
-  "github.loading": "연결 상태 확인 중…",
   "github.connected": "@{login} 연결됨",
   "github.starsRetained": "연결을 해제해도 이미 남긴 GitHub 스타는 유지됩니다.",
   "github.disconnect": "GitHub 연결 해제",

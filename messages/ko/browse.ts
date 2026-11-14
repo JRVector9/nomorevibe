@@ -23,8 +23,6 @@ export const browse = {
   "home.metaTitle": "nomorevibe — AI로 만든 것들, 세상에 나오다.",
   "home.feedTitle": "발견할 가치가 있는 프로젝트",
   "home.projects": "프로젝트 목록",
-  "home.searching": "찾는 중입니다…",
-  "home.loading": "불러오는 중입니다…",
   "home.translatedSearch": "영어로 “{query}”도 함께 찾았습니다.",
   "home.aiNote": "저장소에서 AI 코딩 도구 흔적을 확인한 공개 프로젝트 · 최근 등록순입니다.",
   "home.recentNote": "서비스에 등록·검증된 시각 기준 · 검증된 프로젝트를 먼저 표시합니다. GitHub 저장소 생성일과 다릅니다.",

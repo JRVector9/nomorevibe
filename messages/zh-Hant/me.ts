@@ -224,7 +224,6 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "tried.rejectedNote": "決定不公開 · 只有自己看得到",
   "tried.verified": "已確認造訪",
   "tried.reply": "開發者回覆",
-  "tried.loading": "正在載入…",
   "tried.loadError": "未能載入清單。",
   "tried.retry": "重新載入",
   "tried.none": "沒有這個評價的專案。",

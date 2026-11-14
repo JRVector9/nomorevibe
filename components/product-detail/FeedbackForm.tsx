@@ -1,5 +1,6 @@
 "use client";
 
+import { PublicSkeleton } from "@/components/PublicSkeleton";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
@@ -186,7 +187,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
         <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-card text-[13px] text-fg">{session?.user ? session.user.displayName.slice(0, 1) : "+"}</span>
         <span>{t("feedback.composePlaceholder")}</span><span className="ml-auto text-[13px] text-fg">{session?.user ? t("feedback.write") : t("feedback.loginWrite")}</span>
       </button>}
-      {!session && !sessionError && <p role="status" className="mt-2 text-[13px] text-fg-2">{t("feedback.checkingSession")}</p>}
+      {!session && !sessionError && <PublicSkeleton lines={1} className="mt-2 max-w-64" />}
       {sessionError && <p role="alert" className="mt-2 text-[13px] leading-6">{t("feedback.sessionFailed")} <button type="button" onClick={() => { setSessionError(false); setSessionAttempt((attempt) => attempt + 1); }} className="min-h-11 underline underline-offset-2">{t("action.retry")}</button></p>}
       {expanded && session?.user && draft && <form id="feedback-composer" onSubmit={submit} aria-busy={pending} className="rounded-lg border border-line p-3">
         <p className="mb-3 text-[13px] font-medium">{session.user.displayName}<span className="ml-2 font-normal text-fg-2">{t("feedback.writing")}</span></p>
