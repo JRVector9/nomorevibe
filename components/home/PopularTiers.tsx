@@ -10,6 +10,7 @@ import {popularHref} from '@/lib/domain/products/stars';
 import {PopularFilter} from './PopularFilter';
 import {PopularTierCards} from './PopularTierCards';
 import {rankedCard} from './popular-cards';
+import {RankedCards} from './RankedCards';
 import {logger} from '@/lib/observability/logger';
 
 /**
@@ -18,18 +19,23 @@ import {logger} from '@/lib/observability/logger';
  */
 export async function PopularTiers({personal=false}:{personal?:boolean}){
  const locale=await getRequestLocale();
- const t=await getTranslator(locale,"browse");
+ const [t,labels]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels")]);
  let groups;
  try{groups=await publicRead("list", ["popular-groups", personal], () => getPopularGroups(personal));}catch(error){
   logger.warn('home.popular_unavailable',{error});
   return <section className="popular-section" id="popular"><h2>{t("popular.title")}</h2><p role="status">{t("error.load")}</p></section>;
  }
- const tiers=await Promise.all(groups.map(async group=>({key:group.key,label:t(`tier.${group.key}`),range:t(`tierRange.${group.key}`),total:group.total,href:localePath(locale,popularHref(group.key,personal)),
-  items:(await localizeProductList(group.items,locale)).map((item,index)=>rankedCard(item,index+1))})));
+ const now=new Date();
+ // 카드 판은 여기서 글자로 그린다 — 탭 부품(브라우저)에는 구간 이름·수·주소와 그린 판만 넘어간다
+ const tiers=await Promise.all(groups.map(async group=>{
+  const items=(await localizeProductList(group.items,locale)).map((item,index)=>rankedCard(item,index+1));
+  return {key:group.key,label:t(`tier.${group.key}`),range:t(`tierRange.${group.key}`),total:group.total,href:localePath(locale,popularHref(group.key,personal)),
+   panel:items.length?<RankedCards items={items} now={now} locale={locale} t={labels}/>:null};
+ }));
  return <section className="popular-section" id="popular" aria-labelledby="popular-title">
   <div className="row-head"><div><h2 id="popular-title" className="row-title">{t("popular.title")}</h2>
    <p className="row-note">{t("popular.homeNote")} · <Link prefetch={false} href={localePath(locale,"/?metric=popular#popular")} scroll={false}>{t("nav.methodology")}</Link></p></div>
    <div><Suspense><PopularFilter personal={personal}/></Suspense></div></div>
-  <PopularTierCards groups={tiers} now={new Date().toISOString()}/>
+  <PopularTierCards groups={tiers}/>
  </section>;
 }

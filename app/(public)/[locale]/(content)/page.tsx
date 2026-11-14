@@ -27,10 +27,9 @@ import {
   shownWindow,
 } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";
-import { CompactRow } from "@/components/home/CompactRow";
-import { CompactCard } from "@/components/home/CompactCard";
-import { compactCardItem } from "@/components/home/compact-item";
-import { starGrowthNote } from "@/components/home/star-growth-copy";
+import { CompactCardMarkup, CompactRowMarkup } from "@/components/cards/markup";
+import "@/components/home/cards.css";
+import { starGrowthNote, starGrowthView } from "@/components/home/star-growth-copy";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
@@ -269,10 +268,16 @@ function EmptyReason({
 
 /** 집계 기준 창에 넘기는 집계 — 기준 시각은 이 창에서만 KST 를 밝힌다(UX-28) */
 function serializePulse(pulse: Pulse, now: Date, locale: Locale = "ko") {
+  // 창이 읽는 칸만 — 가장 활발한 목록(제품 값)·공개 수는 서버가 그린 구획에만 있다(2026-11-14 공개 HTML 줄이기)
   return {
-    ...pulse,
     asOf: pulse.asOf.toISOString(),
     asOfLabel: `${formatDateTime(pulse.asOf, now, locale)} KST`,
+    methodVersion: pulse.methodVersion,
+    born: pulse.born,
+    updates: pulse.updates,
+    activeCount: pulse.active.length,
+    categories: pulse.categories,
+    tools: pulse.tools,
   };
 }
 
@@ -350,9 +355,10 @@ export async function HomeScreen({ params, titleAction }: { params: HomeParams; 
 /** 신규 모두 보기는 일반 최신순·필터와 독립된 목록이다. 기간은 매 요청 서버에서 정한다. */
 async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
   const locale = await getRequestLocale();
-  const [t, dictionary] = await Promise.all([getTranslator(locale, "browse"), bundledOrDictionary(locale, "browse")]);
+  const [t, labels, dictionary] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels"), bundledOrDictionary(locale, "browse")]);
   const count = (n: number) => formatNumber(n, locale);
   const now = new Date();
+  const cards = { locale, t: labels, now };
   const { weekStart, asOf } = completedWindows(now);
   const pageSize = 15;
   const value = firstValue(pageParam);
@@ -390,7 +396,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
         </div>
         {failed ? <p>{t("error.list")} {t("error.retry")}</p>
           : items.length === 0 ? <p>{t("new.empty", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}</p>
-            : <div className="compact-grid">{items.map((product, index) => <CompactCard key={product.slug} product={compactCardItem(product, locale)} trailing="listed" priority={index < 3} headingLevel={2} />)}</div>}
+            : <div className="compact-grid">{items.map((product, index) => <CompactCardMarkup key={product.slug} product={product} ctx={cards} trailing="listed" priority={index < 3} headingLevel={2} />)}</div>}
         {!failed && pages > 1 && <nav className="row-head" aria-label={t("new.pages")}>
           {page > 1 && <Link prefetch={false} href={href(page - 1)}>{t("nav.previous")}</Link>}
           <span>{count(page)} / {count(pages)}</span>
@@ -628,6 +634,9 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   const strip = stripData ? { ...stripData, items: localizedStrip } : null;
 
   const state = { ...browseState, sort: effectiveSort };
+  // 서버가 그리는 구획의 언어·번역기 — 카드·필터·집계 구획은 글자로만 실리고 값은 브라우저로 넘어가지 않는다
+  const i18n = { locale, t, labels };
+  const cards = { locale, t: labels, now };
   const savedCandidates = savedOnly ? [...list, ...unclaimed] : list;
   // 0건 안내(EmptyReason 의 걸러서 0건)가 뜨는 때 — 아래 '주인을 기다리는' 목록이 붙으면 없다고 말하지 않는다
   const empty = !dbDown && !savedOnly && list.length === 0 && unclaimed.length === 0;
@@ -649,10 +658,10 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   return (
     <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap">
       {dbDown && <RenderReadRecovery key={now.toISOString()} />}
-      {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
+      {!scoped && <IntroLine pulse={pulse} total={total} state={state} i18n={i18n} />}
       {!filtered && talk && <TalkHero lead={talk.lead} rest={talk.rest} sources={talk.sources} preview={talk.preview} t={t} locale={locale} />}
       {!filtered && (
-        <CompactRow id="rising" priority title={t("growth.title")} note={<>{starGrowthNote(strip?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></>}
+        <CompactRowMarkup ctx={cards} id="rising" priority title={t("growth.title")} note={<>{starGrowthNote(strip?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></>}
           summary={(strip?.items.length ?? 0) === 0 ? <p className="row-note" role="status">{!strip
             ? t("growth.unavailable")
             : strip.snapshot.status === "warming"
@@ -661,7 +670,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
                 ? t("growth.empty")
                 : t("growth.delayed")}</p> : undefined}
           more={{ href: strip ? `/rising?${new URLSearchParams({ cycle: strip.snapshot.asOf })}` : "/rising", label: t("nav.all") }}
-          items={(strip?.items ?? []).map((item) => compactCardItem(item, locale))} trailing="category" />
+          items={strip?.items ?? []} trailing="category" />
       )}
 
       <section id="projects" aria-labelledby="projects-title" className="feed">
@@ -687,6 +696,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           total={total}
           resultCount={resultCount}
           approximate={approximate}
+          i18n={i18n}
         />
 
         {dbDown ? (
@@ -698,7 +708,10 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           </div>
         ) : savedOnly || list.length > 0 ? (
           <ProjectGrid
-            now={now.toISOString()}
+            now={now}
+            locale={locale}
+            t={t}
+            labels={labels}
             key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${observedTool ?? ""}-${ai ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
             totalCount={resultCount}
             products={savedCandidates}
@@ -726,7 +739,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           <section className="unclaimed-block" data-track-list="unclaimed">
             <h2>{t("home.unclaimed")}</h2>
             <div className="mt-3">
-              <ProjectGrid now={now.toISOString()} products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />
+              <ProjectGrid now={now} locale={locale} t={t} labels={labels} products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />
             </div>
           </section>
         )}
@@ -738,20 +751,20 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
         </Suspense>
       )}
       {!filtered && (
-        <CompactRow id="new" title={t("new.title")} note={t("new.note", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}
-          more={{ href: "/?new=1", label: t("nav.all") }} items={fresh.map((item) => compactCardItem(item, locale))} trailing="listed" />
+        <CompactRowMarkup ctx={cards} id="new" title={t("new.title")} note={t("new.note", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}
+          more={{ href: "/?new=1", label: t("nav.all") }} items={fresh} trailing="listed" />
       )}
       {!scoped && (
         <div className="two-col">
-          <ToolsBoard tools={pulse.tools} state={state} />
-          <ActiveList active={pulse.active} projects={pulse.updates.projects} />
+          <ToolsBoard tools={pulse.tools} state={state} i18n={i18n} />
+          <ActiveList active={pulse.active} projects={pulse.updates.projects} i18n={i18n} />
         </div>
       )}
-      {!scoped && <NewsList news={news} now={now} />}
+      {!scoped && <NewsList news={news} now={now} i18n={i18n} />}
       {!query && <LaunchBand />}
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse, now, locale)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={filtered ? undefined : strip?.snapshot ?? null} />
+        <MethodologyDialog pulse={serializePulse(pulse, now, locale)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={filtered ? undefined : starGrowthView(strip?.snapshot ?? null)} />
       </Suspense>
     </main></BrowseMessages>
   );

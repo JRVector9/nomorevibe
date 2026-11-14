@@ -2,23 +2,23 @@
 
 import Link from "next/link";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import type { RankedCardProduct } from "@/components/home/popular-cards";
-import { RankedCards } from "@/components/home/RankedCards";
+import type { ReactNode } from "react";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import { trackAttrs } from "@/lib/analytics/attrs";
 
 
-export type PopularTierGroup = { key: string; label: string; range: string; total: number; href: string; items: RankedCardProduct[] };
+/** 구간 탭 하나 — 카드 판(panel)은 서버가 그려 넘긴다. 제품 값은 이 부품으로 넘어오지 않는다 */
+export type PopularTierGroup = { key: string; label: string; range: string; total: number; href: string; panel: ReactNode };
 
 /**
  * 홈 '많이 쓰이는 프로젝트'의 구간 탭과 카드 3장(2026-10-11 시안 안 C) — 탭은 발견하기 정렬 탭과 같은 모양(.tabs),
- * 카드는 발견하기 카드(ProjectCard) 그대로라 이름·소개가 잘리지 않고 사이트 미리보기 그림이 썸네일이 된다.
+ * 카드는 발견하기 카드 마크업 그대로(서버가 그린 판)라 이름·소개가 잘리지 않고 사이트 미리보기 그림이 썸네일이 된다.
  * 네 구간을 서버가 함께 그려 두고 탭은 보이는 판만 바꾼다(주소는 그대로) — 전체 목록은 '모두 보기'가 /popular 로 간다.
  * 화살표·Home·End 로 탭을 옮긴다(WAI-ARIA 탭 패턴).
  */
-export function PopularTierCards({ groups, now }: { groups: PopularTierGroup[]; now: string }) {
+export function PopularTierCards({ groups }: { groups: PopularTierGroup[] }) {
   const locale = useLocale();
   const t = useTranslations("browse");
   const count = (n: number) => formatNumber(n, locale);
@@ -61,7 +61,7 @@ export function PopularTierCards({ groups, now }: { groups: PopularTierGroup[]; 
           data-track-list={`popular_${tier.key}`}
           className="popular-tier-panel">
           <p className="row-note">★ {tier.range} · {t("popular.stars")}</p>
-          {tier.items.length ? <RankedCards items={tier.items} now={now} /> : <p className="popular-empty">{t("popular.empty")}</p>}
+          {tier.panel ?? <p className="popular-empty">{t("popular.empty")}</p>}
         </div>
       ))}
     </>

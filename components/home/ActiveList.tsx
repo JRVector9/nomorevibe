@@ -1,18 +1,14 @@
-"use client";
-
 import Link from "next/link";
 import { ProductIcon } from "@/components/ProductIcon";
-import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { KOREAN_BROWSE_I18N, type BrowseI18n } from "@/lib/i18n/browse-i18n";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import { translatedCategory } from "./i18n";
 import type { HomePulse } from "@/lib/domain/products/home-pulse";
 
 /** 이번 주 가장 활발한 — 새 버전 수 상위 5, 막대 없이 번호·아이콘·이름·숫자만 */
-export function ActiveList({ active, projects }: { active: HomePulse["active"]; projects: number }) {
-  const locale = useLocale();
-  const t = useTranslations("browse");
-  const labels = useTranslations("labels");
+export function ActiveList({ active, projects, i18n = KOREAN_BROWSE_I18N }: { active: HomePulse["active"]; projects: number; i18n?: BrowseI18n }) {
+  const { locale, t, labels } = i18n;
   const count = (n: number) => formatNumber(n, locale);
   const rows = active.slice(0, 5);
   return (

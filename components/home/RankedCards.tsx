@@ -1,25 +1,26 @@
-"use client";
-
-import { ProjectCard } from "@/components/home/ProjectCard";
-import type { RankedCardProduct } from "@/components/home/popular-cards";
-import { useSavedSlugs } from "@/components/home/useSavedSlugs";
+import { ProjectCardMarkup, type CardProduct } from "@/components/cards/markup";
+import { SaveToggle } from "@/components/cards/SaveToggle";
+import type { Labels } from "@/components/cards/views";
+import type { Locale } from "@/lib/i18n/locales";
+import "./cards.css";
 
 /**
- * 자리가 붙은 카드 격자 — 발견하기 카드(ProjectCard)를 그대로 쓰고 제목 앞에 순위를 단다.
- * 홈 '많이 쓰이는 프로젝트'(구간마다 상위 3)와 /popular 카드 보기가 함께 쓴다. 저장은 홈 목록과 같은 저장소다.
+ * 자리가 붙은 카드 격자 — 발견하기 카드 마크업을 그대로 쓰고 제목 앞에 순위를 단다. 서버가 글자로 그린다(저장 단추만 브라우저).
+ * 홈 '많이 쓰이는 프로젝트'(구간마다 상위 3)·/popular·/rising 카드 보기가 함께 쓴다.
  */
-export function RankedCards({ items, now, headingLevel = 3 }: {
-  items: RankedCardProduct[];
-  /** 서버가 읽은 시각(ISO) — '새 프로젝트' 같은 글자가 서버와 브라우저에서 같게 */
-  now: string;
+export function RankedCards({ items, now, locale, t, headingLevel = 3 }: {
+  items: (CardProduct & { rank: number })[];
+  now: Date | string;
+  locale: Locale;
+  t: Labels;
   headingLevel?: 2 | 3;
 }) {
-  const [saved, toggle] = useSavedSlugs();
+  const ctx = { locale, t, now };
   return (
     <div className="projects-grid">
       {items.map((product) => (
-        <ProjectCard key={product.slug} product={product} rank={product.rank} saved={saved.has(product.slug)} onToggleSave={toggle}
-          now={now} headingLevel={headingLevel} />
+        <ProjectCardMarkup key={product.slug} product={product} rank={product.rank} ctx={ctx} headingLevel={headingLevel}
+          save={<SaveToggle slug={product.slug} name={product.name} />} />
       ))}
     </div>
   );

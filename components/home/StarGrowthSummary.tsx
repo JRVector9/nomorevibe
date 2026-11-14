@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { StarGrowthSnapshot } from "@/lib/domain/products/star-growth";
+import type { StarGrowthSnapshotView } from "./star-growth-copy";
 import { formatNumber, formatDateTime } from "@/lib/i18n/format";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
@@ -15,7 +15,7 @@ const REASONS = {
 } as const;
 
 /** Home and full list expose the same closed cycle and unavailable-data state. */
-export function StarGrowthSummary({ snapshot, now }: { snapshot: StarGrowthSnapshot | null; now: Date | string }) {
+export function StarGrowthSummary({ snapshot, now }: { snapshot: StarGrowthSnapshotView | null; now: Date | string }) {
   const locale = useLocale();
   const t = useTranslations("browse");
   const count = (n: number) => formatNumber(n, locale);
@@ -23,7 +23,7 @@ export function StarGrowthSummary({ snapshot, now }: { snapshot: StarGrowthSnaps
   const countsKnown = snapshot.targetCount !== null && snapshot.successCount !== null && snapshot.failureCount !== null;
   const rate = countsKnown && snapshot.targetCount! > 0 ? Math.round(snapshot.successCount! / snapshot.targetCount! * 100) : null;
   const expired = snapshot.reason === "cycle-changed" || snapshot.reason === "invalid-cycle";
-  const message = snapshot.reason === "missing-run" ? t(snapshot.status === "warming" ? "growth.warming" : "growth.missingRun")
+  const message = snapshot.reason === "missing-run" ? t(snapshot.state === "warming" ? "growth.warming" : "growth.missingRun")
     : snapshot.reason === "below-threshold" ? t("growth.noGains", { count: count(snapshot.comparableCount) })
       : snapshot.reason && snapshot.reason in REASONS ? t(REASONS[snapshot.reason as keyof typeof REASONS]) : null;
   return <>

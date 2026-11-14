@@ -13,8 +13,8 @@ vi.mock("next/navigation", () => ({
 const { MethodologyDialog } = await import("@/components/home/MethodologyDialog");
 
 const pulse: HomePulseView = {
-  asOf: "2026-10-10T00:00:00Z", asOfLabel: "10월 10일", timezone: "Asia/Seoul", methodVersion: "1",
-  born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, active: [], categories: [], tools: null, total: 10,
+  asOf: "2026-10-10T00:00:00Z", asOfLabel: "10월 10일", methodVersion: "1",
+  born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, activeCount: 0, categories: [], tools: null,
 };
 const render = (aiLevels: Record<1 | 2 | 3, number> | null) => renderToStaticMarkup(createElement(MethodologyDialog, { pulse, aiLevels }));
 

@@ -11,7 +11,7 @@ import { stripLocale } from "@/lib/i18n/routing";
 import { translatedCategory } from "./i18n";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import type { HomePulseView } from "@/components/home/types";
-import type { StarGrowthSnapshot } from "@/lib/domain/products/star-growth";
+import type { StarGrowthSnapshotView } from "@/components/home/star-growth-copy";
 import { StarGrowthSummary, starGrowthNote } from "@/components/home/StarGrowthSummary";
 
 /**
@@ -39,7 +39,7 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
   pulse: HomePulseView;
   /** AI 제작 근거 단계마다의 전체 공개 수(탐색 칩은 현재 정렬 자격 안에서 별도 집계) — 못 읽었으면 null(수 없이 기준만) */
   aiLevels?: Record<AiLevel, number> | null;
-  starGrowth?: StarGrowthSnapshot | null;
+  starGrowth?: StarGrowthSnapshotView | null;
 }) {
   const locale = useLocale();
   const t = useTranslations("browse");
@@ -155,7 +155,7 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
     </>,
     active: <>
       <h3>{t("method.activeTitle")}</h3><p>{t("method.activeSummary")}</p>
-      <Details><p>{t("method.activeOrder")}</p><Formula>{t("method.activeFormula", { count: count(pulse.active.length) })}</Formula><p>{t("method.activeCaveat")}</p></Details>
+      <Details><p>{t("method.activeOrder")}</p><Formula>{t("method.activeFormula", { count: count(pulse.activeCount) })}</Formula><p>{t("method.activeCaveat")}</p></Details>
     </>,
     categories: <>
       <h3>{t("method.categoriesTitle")}</h3><p>{t("method.categoriesSummary")}</p>

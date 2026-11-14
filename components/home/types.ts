@@ -6,14 +6,13 @@ import type { ProductTranslationSelection } from "@/lib/domain/products/translat
 export type HomePulseView = {
   asOf: string;
   asOfLabel: string;
-  timezone: "Asia/Seoul";
   methodVersion: string;
   born: { current: number; previous: number; change: number | null };
   updates: { projects: number; releases: number };
-  active: { slug: string; name: string; category: string; releases: number; stars: number | null; ogImage: string | null }[];
+  /** 이번 주 가장 활발한 프로젝트 수 — 목록(제품 값)은 서버가 그린 구획(ActiveList)에만 있다 */
+  activeCount: number;
   categories: { key: string; total: number; born: number }[];
   tools: { scanned: number; withTool: number; rows: { label: string; count: number }[] } | null;
-  total: number;
 };
 
 export type HomeCardProduct = StarObservation & {

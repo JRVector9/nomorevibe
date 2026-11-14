@@ -1,13 +1,15 @@
 "use client";
 
-import Link from "next/link";
-import { useLocale } from "@/lib/i18n/context";
-import { localePath } from "@/lib/i18n/routing";
-import { CompactCard } from "@/components/home/CompactCard";
+import { CompactRowMarkup } from "@/components/cards/markup";
+import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import type { CompactCardItem } from "@/components/home/compact-item";
+import "./cards.css";
 
-/** 홈의 가로 띠 — '지금 뜨는'·'이번 주 새로 나온'·상세의 '같은 분야에서 지금 뜨는' 이 같은 모양을 쓴다 */
-export function CompactRow({ id, title, note, summary, more, items, trailing, priority = false }: {
+/**
+ * 가로 띠의 브라우저 부품판 — 상세 '같은 분야'(브라우저가 API 로 받은 값)가 쓴다.
+ * 홈·없는 주소는 서버가 같은 마크업(CompactRowMarkup)으로 그린다(components/home/CompactRowServer.tsx).
+ */
+export function CompactRow(props: {
   id: string;
   title: string;
   note?: React.ReactNode;
@@ -15,24 +17,8 @@ export function CompactRow({ id, title, note, summary, more, items, trailing, pr
   more?: { href: string; label: string };
   items: CompactCardItem[];
   trailing: "category" | "listed";
-  /** 화면 첫 띠 — 앞 세 장의 그림을 늦추지 않고 먼저 받는다(PERF-03, 홈 LCP 는 '지금 뜨는' 첫 카드) */
   priority?: boolean;
 }) {
-  const locale = useLocale();
-  if (items.length === 0 && !summary) return null;
-  return (
-    <section id={id} className="row-section" aria-labelledby={`${id}-title`}>
-      <div className="row-head">
-        <div>
-          <h2 id={`${id}-title`} className="row-title">{title}</h2>
-          {note && <p className="row-note">{note}</p>}
-        </div>
-        {more && <Link prefetch={false} className="row-more" href={localePath(locale, more.href)}>{more.label} ›</Link>}
-      </div>
-      {summary}
-      {items.length > 0 && <div className="compact-grid">
-        {items.map((product, index) => <CompactCard key={product.slug} product={product} trailing={trailing} priority={priority && index < 3} />)}
-      </div>}
-    </section>
-  );
+  const ctx = { locale: useLocale(), t: useTranslations("labels"), now: useServerNow() };
+  return <CompactRowMarkup {...props} ctx={ctx} />;
 }
