@@ -63,3 +63,9 @@ TSX·me 사전이 현재 분류기의 좁은 웹 문구 허용 범위 밖이라 
 - 최종 runtime 동일 문서 head `c151dd89706080dc5fbdd95a725bc6450f693bb4`도 정확한 SHA로 scope를 재측정해 trusted=true/full18앱을 확인했다.
 - 스크린샷은 관리자 로컬 우회를 끈 익명 상태로 최종 재촬영했다. 시험용 제품 `public-loading-copy-61648196`만 정리했고 기존 시험 행은 초기화하지 않았다. 두 로컬 서버를 종료했으며 대용량 Next 출력은 작업 scratch로 옮겼다.
 - 개발 체크리스트의 로컬 항목은 모두 완료했다. 필수 CI의 최종 head/성공 여부와 보고 등록 영수증은 PR 본문·보고함을 최종 근거로 삼는다.
+
+## 남은 일·차단 (2026-11-14 15:16 UTC)
+
+- [ ] **필수 CI check 통과: 계정 청구·사용 한도 때문에 차단.** ready head `da802898282d6291473c6dc41be7441ff77daf84` 실행 https://github.com/JRVector9/nomorevibe/actions/runs/43609206478 의 scope/check는 runner 배정·step 실행 없이 실패했다. scope annotation: “The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings”. 코드 시험 실패가 아니다.
+- 계정 소유자의 청구·한도 복구 후 같은 PR의 최신 head CI를 재실행하고 필수 check 성공을 확인해야 한다. 사람 결정 요청을 등록했다. 결제·사용 한도·권한·workflow runner·필수 검사 정책은 변경하지 않았고 우회하지 않는다.
+- 구현·로컬 회귀·정적 검사·화면 확인·scope 측정은 완료. CI 통과까지 작업 전체 완료로 기록하지 않는다. PR은 ready로 보존하며 병합·배포하지 않는다.
