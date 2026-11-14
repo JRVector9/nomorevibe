@@ -20,4 +20,3 @@ export function SaveButtonMarkup({ slug, name, saved, onClick, t }: { slug: stri
     </button>
   );
 }
-
