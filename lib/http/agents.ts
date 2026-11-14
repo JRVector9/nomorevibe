@@ -47,7 +47,10 @@ export function refusedApiAgent(userAgent: string | null | undefined): boolean {
  * 보통 방문자와 같은 한도를 받는다. 이 봇들은 robots.txt 의 /api/ Disallow 를 지키므로 API 한도에 걸릴 일이 드물다.
  */
 export const VERIFIABLE_SEARCH_BOTS: ReadonlyArray<{ pattern: RegExp; hosts: readonly string[] }> = [
-  { pattern: /\b(?:Googlebot|Google-InspectionTool)\b/i, hosts: ["googlebot.com", "google.com", "googleusercontent.com"] },
+  // 공식 안내(developers.google.com/search/docs/crawling-indexing/verifying-googlebot): 일반 크롤러는 googlebot.com,
+  // 특수 크롤러는 google.com. googleusercontent.com 은 넣지 않는다 — 사용자가 시킨 가져오기용(gae.)뿐 아니라
+  // GCP VM 의 역방향 이름(*.bc.googleusercontent.com)도 그 아래라, GCP 에서 Googlebot 이름을 대면 확인된 봇이 된다.
+  { pattern: /\b(?:Googlebot|Google-InspectionTool)\b/i, hosts: ["googlebot.com", "google.com"] },
   { pattern: /\b(?:bingbot|BingPreview)\b/i, hosts: ["search.msn.com"] },
   { pattern: /\bApplebot\b/i, hosts: ["applebot.apple.com"] },
   { pattern: /\bYeti\b/i, hosts: ["naver.com"] },

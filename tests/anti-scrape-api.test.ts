@@ -145,6 +145,46 @@ describe("클라이언트 IP — 신뢰 프록시 홉과 CF-Connecting-IP", () =
     }
     for (const ip of ["8.8.8.8", "172.32.0.1", "203.0.113.9", "2001:db8::1", "not-an-ip"]) expect(isPrivateAddress(ip), ip).toBe(false);
   });
+
+  it("100.64.0.0/10(CGNAT·Tailscale)과 198.18.0.0/15(벤치마크·OrbStack)는 방문자 주소가 아니다 — 경계값", () => {
+    const privateIps = ["100.64.0.0", "100.100.1.2", "100.127.255.255", "198.18.0.0", "198.19.255.255"];
+    const publicIps = ["100.63.255.255", "100.128.0.0", "198.17.255.255", "198.20.0.0"];
+    for (const ip of privateIps) {
+      expect(isPrivateAddress(ip), ip).toBe(true);
+      expect(isPrivateAddress(`::ffff:${ip}`), `::ffff:${ip}`).toBe(true);
+    }
+    for (const ip of publicIps) {
+      expect(isPrivateAddress(ip), ip).toBe(false);
+      expect(isPrivateAddress(`::ffff:${ip}`), `::ffff:${ip}`).toBe(false);
+    }
+    // 16진 표기와 풀어 쓴 IPv4-mapped 도 같은 판정
+    expect(isPrivateAddress("::ffff:6440:0")).toBe(true); // 100.64.0.0
+    expect(isPrivateAddress("::FFFF:647F:FFFF")).toBe(true); // 100.127.255.255
+    expect(isPrivateAddress("::ffff:643f:ffff")).toBe(false); // 100.63.255.255
+    expect(isPrivateAddress("::ffff:6480:0")).toBe(false); // 100.128.0.0
+    expect(isPrivateAddress("0:0:0:0:0:ffff:c612:1")).toBe(true); // 198.18.0.1
+    expect(isPrivateAddress("::ffff:c614:0")).toBe(false); // 198.20.0.0
+    expect(isPrivateAddress("::ffff:c0a8:6101")).toBe(true); // 192.168.97.1
+
+    // 프록시 피어가 이 대역이면 publicClientIp 가 그 값을 쓰지 않는다(모두가 한 통을 나누지 않게)
+    const headers = (values: Record<string, string>) => ({ headers: new Headers(values) });
+    for (const peer of ["100.64.0.1", "198.18.0.1", "::ffff:100.100.0.7"]) {
+      expect(publicClientIp(headers({ "x-forwarded-for": peer })), peer).toBeNull();
+    }
+    expect(publicClientIp(headers({ "x-forwarded-for": "100.128.0.1" }))).toBe("100.128.0.1");
+    // CF-Connecting-IP 를 켜면 이 대역 피어(같은 기계·사설망 프록시) 뒤의 실제 방문자를 쓴다
+    vi.stubEnv("TRUST_CF_CONNECTING_IP", "1");
+    expect(publicClientIp(headers({ "x-forwarded-for": "198.18.0.1", "cf-connecting-ip": PUBLIC_IP }))).toBe(PUBLIC_IP);
+  });
+
+  it("운영 형태: TRUSTED_PROXY_HOPS=2 이고 X-Forwarded-For 가 피어 하나(192.168.97.1)면 TRUST_CF_CONNECTING_IP=1 일 때만 방문자 IP 가 잡힌다", () => {
+    const headers = (values: Record<string, string>) => ({ headers: new Headers(values) });
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "2");
+    const req = headers({ "x-forwarded-for": "192.168.97.1", "cf-connecting-ip": PUBLIC_IP });
+    expect(publicClientIp(req)).toBeNull();
+    vi.stubEnv("TRUST_CF_CONNECTING_IP", "1");
+    expect(publicClientIp(req)).toBe(PUBLIC_IP);
+  });
 });
 
 describe("User-Agent 분류", () => {
@@ -238,6 +278,41 @@ describe("공개 API 읽기 관문", () => {
     expect(await verifiedSearchBot(UA.googlebot, "203.0.113.5")).toBe(false);
     setSearchBotResolverForTest({ reverse: async () => ["googlebot.com.evil.example"], lookup: async () => ["203.0.113.5"] });
     expect(await verifiedSearchBot(UA.googlebot, "203.0.113.5")).toBe(false);
+  });
+
+  it("GCP VM 역방향 이름(*.bc.googleusercontent.com)은 정방향이 맞아도 확인된 Googlebot 이 아니다", async () => {
+    const ip = "34.64.10.20";
+    const name = "20.10.64.34.bc.googleusercontent.com";
+    setSearchBotResolverForTest({
+      reverse: async (value) => value === ip ? [name] : [],
+      lookup: async (host) => host === name ? [ip] : [],
+    });
+    expect(await verifiedSearchBot(UA.googlebot, ip)).toBe(false);
+    expect(await verifiedSearchBot("Mozilla/5.0 (compatible; Google-InspectionTool/1.0;)", ip)).toBe(false);
+    // 사용자가 시킨 가져오기용 이름(gae.googleusercontent.com)도 Googlebot 이름으로는 받지 않는다
+    setSearchBotResolverForTest({ reverse: async () => ["1-2-3-4.gae.googleusercontent.com"], lookup: async () => [ip] });
+    expect(await verifiedSearchBot(UA.googlebot, ip)).toBe(false);
+
+    // 읽기 한도와 함정 차단도 그대로 받는다
+    setSearchBotResolverForTest({
+      reverse: async (value) => value === ip ? [name] : [],
+      lookup: async (host) => host === name ? [ip] : [],
+    });
+    mocks.rateLimitWindow.mockResolvedValue({ allowed: false, count: 400, retryAfterSeconds: 30 });
+    expect((await antiScrape.guardPublicApiRead(request("/api/x", { ua: UA.googlebot, ip }), "test"))?.status).toBe(429);
+  });
+
+  it("진짜 googlebot.com·google.com 역방향 이름은 정방향이 같은 IP 면 여전히 확인된다", async () => {
+    const hosts: Record<string, string> = {
+      "66.249.66.1": "crawl-66-249-66-1.googlebot.com",
+      "66.249.90.77": "geo-crawl-66-249-90-77.geo.googlebot.com",
+      "66.249.80.5": "rate-limited-proxy-66-249-80-5.google.com",
+    };
+    setSearchBotResolverForTest({
+      reverse: async (value) => hosts[value] ? [hosts[value]] : [],
+      lookup: async (host) => Object.entries(hosts).filter(([, name]) => name === host).map(([value]) => value),
+    });
+    for (const ip of Object.keys(hosts)) expect(await verifiedSearchBot(UA.googlebot, ip), ip).toBe(true);
   });
 });
 
