@@ -7,8 +7,8 @@
 - [x] 끝 상태 2: 이미 승인된 후보는 근거만 늘었을 때 그 승인을 모델 호출 없이 잇는다. 발행된 후보는 원래 1차 대상이 아니다(실측 확인).
 - [x] 끝 상태 3: 대기열 선택·건너뜀 표·커서 굶음 회귀 시험(tests/first-review-evidence-wait.test.ts, tests/integration/first-review-evidence-wait.test.ts). 옛 코드에서 실패 확인.
 - [x] 끝 상태 4: typegen·tsc·바꾼 파일 eslint·관련 vitest·작업 전용 DB 통합 시험(직렬 21파일 + 영향 64파일).
-- [ ] 끝 상태 5: ready 전환 뒤 필수 CI(check) 통과 확인.
-- [ ] 끝 상태 6: 보고함 제출.
+- [x] 끝 상태 5: ready 전환 뒤 필수 CI 통과 — run 43595529311(head eb24957c) check·typecheck·lint·unit 2·integration 6·integration-ledger·build 모두 pass. Draft 때의 check 실패(run 43595506809)는 설계상 실패.
+- [x] 끝 상태 6: 보고함 제출.
 
 ## 실측 (운영 DB 읽기 전용, 2026-11-14 11:2x~11:3xZ)
 
