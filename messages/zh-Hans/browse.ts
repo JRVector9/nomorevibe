@@ -26,8 +26,6 @@ export const browse = defineCatalog<typeof schema>()({
   "home.metaTitle": "nomorevibe — 让AI制作的产品走向世界。",
   "home.feedTitle": "值得发现的项目",
   "home.projects": "项目列表",
-  "home.searching": "正在搜索…",
-  "home.loading": "正在加载…",
   "home.translatedSearch": "同时搜索了英文“{query}”。",
   "home.aiNote": "在代码仓库中发现AI编程工具痕迹的公开项目，按最近收录排序。",
   "home.recentNote": "按本站收录或验证时间排序，已验证项目优先。这与GitHub仓库创建时间不同。",

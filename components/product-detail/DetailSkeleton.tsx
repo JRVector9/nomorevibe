@@ -1,6 +1,5 @@
 "use client";
 
-import { useTranslations } from "@/lib/i18n/context";
 /** 회색 막대 하나 — 실제 글자 자리의 크기로 */
 const BAR = "animate-pulse rounded-[8px] bg-bg-soft";
 
@@ -14,25 +13,25 @@ const BAR = "animate-pulse rounded-[8px] bg-bg-soft";
  * 없는 제품도 404 대신 200 을 낸다. 페이지가 제품을 먼저 찾고(없으면 404) 그다음에 이 골격을 흘린다(app/p/[slug]/page.tsx).
  */
 export function DetailSkeleton() {
-  const t = useTranslations("detail");
   return (
     <main aria-busy="true" aria-live="polite" className="wrap pb-14">
-      <span className="sr-only">{t("page.loading")}</span>
-      <div className={`mt-4 h-[18px] w-[180px] ${BAR}`} />
-      <section className="border-b border-line pb-7 pt-6">
-        <div className="flex flex-wrap items-start gap-[22px]">
-          <div className={`h-20 w-20 shrink-0 rounded-[18px] ${BAR}`} />
-          <div className="flex min-w-0 flex-[1_1_480px] flex-col gap-2.5">
-            <div className={`h-10 w-[240px] max-w-full ${BAR}`} />
-            <div className={`h-[26px] w-[520px] max-w-full ${BAR}`} />
-            <div className={`h-[19px] w-[360px] max-w-full ${BAR}`} />
-            <div className="mt-2 flex flex-wrap gap-2">
-              {["w-[120px]", "w-20", "w-20", "w-11"].map((width, index) => <div key={index} className={`h-11 rounded-full ${width} ${BAR}`} />)}
+      <div aria-hidden="true">
+        <div className={`mt-4 h-[18px] w-[180px] ${BAR}`} />
+        <section className="border-b border-line pb-7 pt-6">
+          <div className="flex flex-wrap items-start gap-[22px]">
+            <div className={`h-20 w-20 shrink-0 rounded-[18px] ${BAR}`} />
+            <div className="flex min-w-0 flex-[1_1_480px] flex-col gap-2.5">
+              <div className={`h-10 w-[240px] max-w-full ${BAR}`} />
+              <div className={`h-[26px] w-[520px] max-w-full ${BAR}`} />
+              <div className={`h-[19px] w-[360px] max-w-full ${BAR}`} />
+              <div className="mt-2 flex flex-wrap gap-2">
+                {["w-[120px]", "w-20", "w-20", "w-11"].map((width, index) => <div key={index} className={`h-11 rounded-full ${width} ${BAR}`} />)}
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-      <div className={`mt-7 h-[180px] max-w-[760px] rounded-[18px] border border-line ${BAR}`} />
+        </section>
+        <div className={`mt-7 h-[180px] max-w-[760px] rounded-[18px] border border-line ${BAR}`} />
+      </div>
     </main>
   );
 }

@@ -26,8 +26,6 @@ export const browse = defineCatalog<typeof schema>()({
   "home.metaTitle": "nomorevibe — AI-built products, out in the world.",
   "home.feedTitle": "Projects worth discovering",
   "home.projects": "Project list",
-  "home.searching": "Searching…",
-  "home.loading": "Loading…",
   "home.translatedSearch": "Also searched for “{query}” in English.",
   "home.aiNote": "Public projects with traces of AI coding tools in their repositories, sorted by newest listing.",
   "home.recentNote": "Based on service listing or verification time; verified projects appear first. This is separate from GitHub repository creation.",

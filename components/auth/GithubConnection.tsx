@@ -1,5 +1,6 @@
 "use client";
 
+import { PublicSkeleton } from "@/components/PublicSkeleton";
 import { useEffect, useState } from "react";
 import { useTranslations } from "@/lib/i18n/context";
 import type { MessageKey } from "@/lib/i18n/messages";
@@ -73,7 +74,7 @@ export function GithubConnection({ returnTo = "/", signedIn = false }: { returnT
     <section className={signedIn ? "mt-7 border-t border-line pt-6" : "mt-6"} aria-label={signedIn ? t("github.connectionSection") : t("github.signInSection")}>
       <h2 className="text-[17px] font-semibold">{signedIn ? t("github.connectionSection") : t("github.signIn")}</h2>
       <p className="mt-2 text-[14px] leading-6 text-fg-2">{signedIn ? t("github.connectionDescription") : t("github.signInDescription")}</p>
-      {loading ? <p className="mt-3 text-[14px]" role="status">{t("github.loading")}</p> : connection?.state === "active" ? <>
+      {loading ? <PublicSkeleton lines={1} className="mt-3 max-w-64" /> : connection?.state === "active" ? <>
         <p className="mt-3 text-[14px]" role="status">{t("github.connected", { login: connection.login })}</p>
         <p className="mt-2 text-[14px] text-fg-2">{t("github.starsRetained")}</p>
         <button type="button" disabled={busy} onClick={disconnect} className="mt-3 min-h-11 rounded-lg border border-line px-4 text-[14px]">{t("github.disconnect")}</button>

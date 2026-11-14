@@ -141,8 +141,10 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
     // 구간 시작 전부터 지금까지 아무것도 바뀌지 않았고 지금도 준비된 후보는 구간 내내 준비 대기였다(고갈 아님의 증인).
     const noLeases = absentTables.includes("pipeline_item_leases") ? sql`with pipeline_item_leases (stage, work_key, token, lease_until, updated_at) as (
       select null::varchar, null::varchar, null::uuid, null::timestamptz, null::timestamptz where false) ` : sql``;
+    // AI 제작 근거를 기다리는 후보(first-review-evidence.ts)는 준비 대기가 아니다. 스캔 대기열 표가 없거나(옛 스키마) 읽을 수 없으면 예전처럼 센다
+    const [evidenceQueue] = await query(sql`select coalesce(has_table_privilege(to_regclass('public.agent_repository_claims'), 'SELECT'), false) as readable`);
     const witnesses = await query(sql`${noLeases}select ${crawlCandidates.id} as id from ${crawlCandidates} where ${and(
-      reviewCandidatePredicate(settings, { readyOnly: true }),
+      reviewCandidatePredicate(settings, { readyOnly: true, includeEvidenceWaiting: evidenceQueue?.readable !== true }),
       sql`${crawlCandidates.updatedAt} <= ${start}`,
       sql`not exists (select 1 from crawl_documents d where d.repo = ${crawlCandidates.repo} and d.fetched_at > ${start})`,
       sql`not exists (select 1 from agent_repository_scans s where s.repository_key = lower(${crawlCandidates.repo})

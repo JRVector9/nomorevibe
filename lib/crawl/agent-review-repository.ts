@@ -33,6 +33,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { FIRST_REVIEW_SKIP_STREAK_LIMIT, firstReviewSkipReasonText } from "./first-review-skips";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
+import { evidenceOnlyGrew, firstReviewEvidenceWaitingSql } from "./first-review-evidence";
 import { DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
 import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql } from './held-qwen-retry-policy';
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
@@ -101,6 +102,13 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
     UNION ALL (SELECT provider, model FROM model_capacity_requests
       WHERE logical_work_key = ${logicalKey} AND state = 'waiting' AND queue_until > clock_timestamp()
         AND ${firstReviewIdentitySql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
+  // 이미 승인한 후보의 근거만 늘었다 — 그 승인을 낸 모델을 고른다. claim 이 그 판단을 모델 호출 없이 잇는다(semantic_reuse, first-review-evidence.ts).
+  // 호출이 없으니 칸 수·포화를 보지 않는다. 쉬거나 막힌 모델이면 예전처럼 새로 고른다
+  if (!active.length && !attempts[0]?.live) {
+    const carried = await evidenceGrowthApproval(context, executor);
+    const keep = carried && pool.find(row => row.provider === carried.provider && row.model === carried.model);
+    if (keep && !blocked.has(firstReviewerKey(keep))) return keep;
+  }
   // New work only: retain every existing waiting/reserved/dispatched/live binding.
   // The locked recheck below still receives exactly one selected reviewer.
   if (state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
@@ -143,6 +151,41 @@ async function firstReviewCappedKeys(resolution: NonNullable<ReturnType<typeof f
     WHERE ${firstReviewLiveLedgerSql()} GROUP BY provider, model`);
   return reviewPoolCappedKeys(caps, new Map(Array.from(rows, row => [firstReviewerKey(row), Number(row.n)])));
 }
+/** 시도의 결정을 지금 입력에 옮긴다 — 근거 id 는 관측 내용이 같은 지금 근거의 id 로 바꾼다(스캔 행이 바뀌면 id 가 달라진다) */
+function carriedReviewOutcome(previous: Pick<CrawlReviewAttempt, "outcome" | "snapshot">, current: ReviewInput): ReviewOutcome | undefined {
+  if (!previous.outcome) return undefined;
+  return { ...previous.outcome, evidenceIds: previous.outcome.evidenceIds.map(id => {
+    if (id === "product") return id;
+    const old = previous.snapshot.evidence.find(item => item.id === id);
+    return current.snapshot.evidence.find(item => old && reviewHash(item.observation) === reviewHash(old.observation))?.id ?? id;
+  }) };
+}
+
+/**
+ * 이미 승인된 후보(state approved)의 마지막 1차 승인이 지금 입력과 「근거만 늘었다」(first-review-evidence.ts evidenceOnlyGrew) 관계면 그 시도.
+ * 원본(README·메타·판정 시각 등)이 바뀌었으면 null — 그때는 예전처럼 다시 심사한다.
+ *
+ * 그 승인은 지금 1차 심사자(firstReviewers — 발행 관문 activeReviewIdentity 와 같은 풀)의 것이고, 지금 정책·프롬프트·규칙 버전이며,
+ * enforce 에서는 후보에 적용된 바로 그 시도(signals.agentReviewAttemptId)여야 한다. 옮긴 결정이 지금 입력의 검증(validateReviewOutcome —
+ * 인용 근거·AI 근거 자격)을 지나지 못하면 null 이다. 결과 행은 claim 이 같은 모델의 semantic_reuse 로 남긴다(호출·예약 없음).
+ */
+async function evidenceGrowthApproval(context: ReviewDomainContext, executor: Executor = db): Promise<CrawlReviewAttempt | null> {
+  if (context.candidate.state !== "approved") return null;
+  const [latest] = await executor.select().from(crawlReviewAttempts).where(and(
+    eq(crawlReviewAttempts.candidateId, context.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
+    eq(crawlReviewAttempts.state, "succeeded"), ne(crawlReviewAttempts.provider, "rules"),
+    eq(crawlReviewAttempts.policyHash, context.input.policyHash),
+    eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION), eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
+  )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
+  if (!latest?.provider || !latest.model || latest.outcome?.decision !== "approve" || latest.inputHash === context.input.inputHash
+    || !hasFirstReviewer(firstReviewers(context.settings), { provider: latest.provider, model: latest.model })
+    || context.settings.reviewMode === "enforce" && context.candidate.signals?.agentReviewAttemptId !== latest.id
+    || !evidenceOnlyGrew(latest, context.input)) return null;
+  try { validateReviewOutcome(context.input, carriedReviewOutcome(latest, context.input)); }
+  catch { return null; }
+  return latest;
+}
+
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
   /** any_age 는 사람 몫 위임 검수와 그 승인의 발행 확인만 쓴다(agent-review-contract.ts ReviewEvidenceAge) */
@@ -752,6 +795,11 @@ export type ReviewCandidateOptions = {
    * 12일에 한 번 차례가 왔다. 그동안 심사도, 발행도, 사람 대기열에도 들지 않았다.
    */
   staleScanOnly?: boolean;
+  /**
+   * readyOnly 에서도 AI 제작 근거 스캔을 기다리는 후보(first-review-evidence.ts firstReviewEvidenceWaitingSql)를 그대로 둔다.
+   * 이 owner 가 이미 모델 줄에 세워 둔 후보를 다시 볼 때(listOwnPendingFirstReviewCandidates)만 쓴다 — 받은 예약을 버리지 않게.
+   */
+  includeEvidenceWaiting?: boolean;
 };
 
 /** Shared by worker selection and uncapped operations queue counts. */
@@ -771,6 +819,10 @@ export function firstReviewAbstainedPredicate(settings: CrawlSettings): SQL {
 export function reviewCandidatePredicate(settings: CrawlSettings, options: ReviewCandidateOptions = {}): SQL {
   if (!settings.enabled || settings.reviewMode === "off") return sql`false`;
   const scanFresh = sql`(fres.completed_at <= ${reviewSemanticNowSql()} AND fres.completed_at > ${reviewSemanticNowSql()} - interval '24 hours')`;
+  // 준비된 1차 대상(readyOnly)은 AI 제작 근거 스캔이 자리 잡을 때까지(상한 6시간) 기다린다 — first-review-evidence.ts.
+  // 격리 replay 는 근거가 얼어 있어 기다릴 것이 없고, 고정 권한 프로필(pipeline-replay-handler-profile.ts)에 스캔 대기열 표가 없다
+  const awaitEvidence = options.readyOnly === true && !options.staleScanOnly && !options.includeEvidenceWaiting
+    && !currentReplayDb() && !storedReviewEvidenceRequired();
   return and(
     not(liveAgentReviewItem(sql`${crawlCandidates.id}`)),
     options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
@@ -783,14 +835,17 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
     eq(crawlCandidates.decidedBy, "auto"),
     sql`NOT ${starAutoApprovalPredicate(settings)}`,
     sql`EXISTS (SELECT 1 FROM crawl_documents fd
-      LEFT JOIN LATERAL (SELECT fs.completed_at FROM agent_repository_scans fs
+      LEFT JOIN LATERAL (SELECT fs.id, fs.state, fs.completed_at, fs.last_error_code, fs.detector_version, fs.coverage, fs.cursor
+        FROM agent_repository_scans fs
         WHERE fs.repository_key = lower(${crawlCandidates.repo}) AND fs.scope = ''
         ORDER BY fs.started_at DESC, fs.id DESC LIMIT 1) fres ON true
       WHERE fd.repo = ${crawlCandidates.repo}
         AND fd.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
         AND fd.fetched_at <= ${reviewSemanticNowSql()} AND fd.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours'
         AND ${options.staleScanOnly ? sql`fres.completed_at IS NOT NULL AND NOT ${scanFresh}`
-          : sql`(fres.completed_at IS NULL OR ${scanFresh})`})`,
+          : sql`(fres.completed_at IS NULL OR ${scanFresh})`}
+        ${awaitEvidence ? sql`AND NOT ${firstReviewEvidenceWaitingSql({ repo: sql`${crawlCandidates.repo}`, judgedAt: sql`${crawlCandidates.judgedAt}`,
+          fetchedAt: sql`fd.fetched_at`, scan: sql`fres`, detectorVersion: settings.agentEvidence.detectorVersion, now: reviewSemanticNowSql() })}` : sql``})`,
     sql`(${crawlCandidates.state} = 'approved' OR (${crawlCandidates.state} = 'needs_review'
       AND ${inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS])}))`,
     sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
@@ -931,7 +986,7 @@ export async function listOwnPendingFirstReviewCandidates(settings: CrawlSetting
       byModel.flatMap(rows => rows.filter(row => row.state === state)[index] ?? [])).flat());
     if (!ordered.length) return [];
     const candidates = await tx.select().from(crawlCandidates).where(and(inArray(crawlCandidates.id, ordered.map(row => row.id)),
-      reviewCandidatePredicate(settings, { readyOnly: true })));
+      reviewCandidatePredicate(settings, { readyOnly: true, includeEvidenceWaiting: true })));
     const byId = new Map(candidates.map(candidate => [candidate.id, candidate]));
     return ordered.flatMap(row => { const candidate = byId.get(row.id); return candidate ? [{ candidate, reviewer: row.reviewer,
       workKey: row.workKey, state: row.state }] : []; });
@@ -1251,17 +1306,14 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       if (retryState.waiting) {
         return { kind: "skipped", reason: "retry_wait" };
       }
-      const reusable = rows.find(row => row.inputHash === current.inputHash && row.state === "succeeded"
+      const sameInput = rows.find(row => row.inputHash === current.inputHash && row.state === "succeeded"
         && row.provider === input.provider && row.model === input.model
         && row.promptVersion === REVIEW_PROMPT_VERSION && row.rulesVersion === REVIEW_RULES_VERSION && row.outcome);
+      // 이미 승인된 후보의 근거(스캔 결과)만 늘었으면 같은 모델의 그 승인을 잇는다 — 원본이 바뀌었으면 새로 심사한다(first-review-evidence.ts)
+      const grown = sameInput || input.provider === "rules" ? null : await evidenceGrowthApproval(locked, tx);
+      const reusable = sameInput ?? (grown && grown.provider === input.provider && grown.model === input.model ? grown : undefined);
       // Fresh scans may replace observation IDs without changing semantic evidence.
-      const copiedOutcome = reusable?.outcome ? { ...reusable.outcome,
-        evidenceIds: reusable.outcome.evidenceIds.map(id => {
-          if (id === "product") return id;
-          const old = reusable.snapshot.evidence.find(item => item.id === id);
-          return current.snapshot.evidence.find(item => old && reviewHash(item.observation) === reviewHash(old.observation))?.id ?? id;
-        }),
-      } : undefined;
+      const copiedOutcome = reusable ? carriedReviewOutcome(reusable, current) : undefined;
       if (consumer && !reusable && input.provider !== "rules" && capacity?.mode === "disabled")
         throw new ModelCapacityDeferredError("disabled");
       if (!reusable && input.provider !== "rules" && capacity && capacity.mode !== "disabled") {

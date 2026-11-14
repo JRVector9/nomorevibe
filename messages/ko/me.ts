@@ -222,7 +222,6 @@ export const me = {
   "tried.rejectedNote": "공개하지 않기로 했어요 · 나만 봐요",
   "tried.verified": "써봄 확인",
   "tried.reply": "메이커 답장",
-  "tried.loading": "불러오는 중…",
   "tried.loadError": "목록을 불러오지 못했어요.",
   "tried.retry": "다시 불러오기",
   "tried.none": "이 평가로 남긴 프로젝트가 없어요.",
