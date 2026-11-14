@@ -2,7 +2,8 @@ import { modelTimeoutMs, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/ll
 import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport, reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
-import { clearProviderRateLimit, parseRetryAfterMs, recordProviderRateLimit, type ProviderRateLimitKey } from "@/lib/llm/provider-rate-limit";
+import { clearProviderRateLimit, parseRetryAfterMs, parseRetryAfterMillisecondsMs, recordProviderQuotaHeaders,
+  recordProviderRateLimit, type ProviderRateLimitKey } from "@/lib/llm/provider-rate-limit";
 import type { ProviderRateLimitBackoffPolicy } from "@/lib/llm/provider-rate-limit-policy";
 import { logger } from "@/lib/observability/logger";
 import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-end-fetch";
@@ -258,8 +259,11 @@ function noteTextRouteStatus(dispatch: GatewayHttpRejectedDispatch & { binding: 
   response: { status: number; headers: { get(name: string): string | null } },
   backoff?: ProviderRateLimitBackoffPolicy): { rejected: GatewayHttpRejected } | Record<never, never> {
   const binding = dispatch.binding, key = { routeId: binding.routeId, provider: binding.provider, model: binding.model };
-  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"), Date.now());
-  if (response.status === 429) recordProviderRateLimit(key, retryAfterMs, undefined, backoff);
+  const now = Date.now(), standardRetry = parseRetryAfterMs(response.headers.get("retry-after"), now);
+  const millisecondRetry = backoff?.honorQuotaHeaders ? parseRetryAfterMillisecondsMs(response.headers.get("retry-after-ms")) : null;
+  const retryAfterMs = standardRetry === null ? millisecondRetry : millisecondRetry === null ? standardRetry : Math.max(standardRetry, millisecondRetry);
+  if (backoff?.honorQuotaHeaders && (response.status === 200 || response.status === 429)) recordProviderQuotaHeaders(key, response.headers, now, response.status === 429);
+  if (response.status === 429) recordProviderRateLimit(key, retryAfterMs, now, backoff);
   else clearProviderRateLimit(key);
   return gatewayHttpRejectedWitness(dispatch, response.status, retryAfterMs);
 }

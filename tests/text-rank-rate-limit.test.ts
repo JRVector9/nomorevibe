@@ -5,7 +5,7 @@ import { setAiTaskModelsForTest } from "@/lib/llm/ai-task-models-snapshot";
 import type { TextTaskRankBinding } from "@/lib/llm/ai-task-rank-scope";
 import { resolveTextTaskRanks, TextTaskRanks, type TextRankResolution } from "@/lib/llm/ai-task-resolver";
 import type { AiTaskExecutionConfig } from "@/lib/llm/ai-task-execution-config";
-import { recordProviderRateLimit, resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
+import { recordProviderQuotaHeaders, recordProviderRateLimit, resetProviderRateLimitsForTest } from "@/lib/llm/provider-rate-limit";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { textContract, textRankRow } from "./text-task-ranks-fixture";
 
@@ -45,6 +45,15 @@ describe("순위 대체", () => {
     const ranks = twoRanks(), called: number[] = [];
     expect(await ranks.run(async binding => { called.push(binding.rank); return binding.rank; })).toMatchObject({ kind: "served", value: 2 });
     expect(called).toEqual([2]);
+    expect(ranks.summary()).toMatchObject({ "served.2": 1, "unusable.1.rate_limited": 1 });
+  });
+  it("skips a quota-exhausted model before running work and keeps the other model available", async () => {
+    recordProviderQuotaHeaders({ routeId: "product-tagline-ko", provider: "abcllm", model: "gpt-oss-120b" },
+      new Headers({ "x-minute-rate-limit": "17", "x-minute-rate-limit-remaining": "0" }));
+    const ranks = twoRanks(), called: string[] = [];
+    expect(await ranks.run(async binding => { called.push(binding.identity); return binding.identity; }))
+      .toMatchObject({ kind: "served", value: EXAONE });
+    expect(called).toEqual([EXAONE]);
     expect(ranks.summary()).toMatchObject({ "served.2": 1, "unusable.1.rate_limited": 1 });
   });
   it("모든 순위가 쉬면 일을 부르지 않고 포화로 본다(잡은 model_capacity 로 미룬다, degraded 아님)", async () => {
