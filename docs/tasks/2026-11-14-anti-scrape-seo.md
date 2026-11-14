@@ -76,3 +76,19 @@ Node 24.22.1 / Next 16.4.1 Turbopack, 환경파일을 제외한 scratch 사본 +
 품질: 동일 robots 정책 시험 17/27 → 27/27; 합성 OG 응답 4,039,433B/1600×840 PNG → 4,769B/1200×630 JPEG. 측정 명령은 위 시험 및 curl+sharp. 운영 트래픽/차단율/SEO 순위 측정 없음(운영·Cloudflare 접근 범위 밖).
 
 남은 일: 원격 필수 CI check 확인과 보고함 제출. 로컬 차단 사항 없음.
+
+## CI 피드백 후 범위 내 보완
+
+첫 ready CI `43572289837`의 build는 Next 컴파일이 아닌 `scripts/bundle-size.mjs`에서 실패했다. 같은 Node24·환경파일 없는 scratch 빌드로 main과 head를 비교했다. 홈 JS가 main 179,328B (한도179,336B, 여유8B) → 최초 head179,393B가 되어 57B 초과했다. llms 기계 경로를 추가한 같은 함수만 정리하여 동등한 접두사/기계 파일 판정을 한 정규식으로 합쳤다. 기존 API/admin/공개 식별자/비슷한 이름을 유지하는 회귀 시험을 보강했다. 기준선·허용 폭·CI 설정·middleware/proxy 변경 없음.
+
+최종 `next build` 및 `node scripts/bundle-size.mjs` 통과:
+
+| 경로 | main br bytes → 최종 br bytes | 기존 한도 |
+|---|---|---|
+| `/[locale]` | 179,328 → 179,258 | 179,336 |
+| `/[locale]/p/[slug]` | 195,980 → 195,910 | 197,314 |
+| `/[locale]/launch` | 160,224 → 160,154 | 168,273 |
+
+최종 범위 시험 9파일78시험(anti-scrape-seo38)·변경 파일 ESLint 통과. 최종 Node24 `NODE_OPTIONS=--max-old-space-size=4096 node node_modules/typescript/bin/tsc --noEmit`도 통과. 실제 로컬 production Next 서버에서 `/robots.txt` 200/401B와 `/llms.txt` 200/1480B 재확인(경로 함수 최종 소스).
+
+첫 CI typecheck는 TypeScript 진단 대신 exit134로 종료(로컬 동일4GiB 모드 통과). 원격 상세 로그는 REST 한도 소진으로 아직 읽지 못했으므로 OOM 등 원인을 확정하지 않는다. REST reset08:11:32Z까지 해당 자원 호출 중단; 별도 GraphQL resource로 상태 확인. 수정 head의 필수 CI 결과와 최종 인계는 PR 본문 및 보고함 첨부 완료 보고서에 기록한다. 이전 실패/미완료 실행은 성공으로 기록하지 않는다.

@@ -9,6 +9,19 @@ describe("anti-scrape SEO llms.txt", () => {
     expect(localePath("ko", "/llms.txt")).toBe("/llms.txt");
     expect(localePath("en", "/llms.txt")).toBe("/llms.txt");
   });
+  it("preserves existing machine endpoint matching without capturing similar public paths", () => {
+    for (const path of ["/api", "/admin", "/_next", "/go", "/badge", "/webhooks", "/oauth"]) {
+      expect(isLocaleExcludedPath(path)).toBe(true);
+      expect(isLocaleExcludedPath(`${path}/child`)).toBe(true);
+      expect(isLocaleExcludedPath(`${path}-product`)).toBe(false);
+    }
+    for (const path of ["/feed.xml", "/sitemap.xml", "/sitemap", "/sitemaps", "/robots.txt", "/llms.txt", "/manifest.webmanifest", "/install.sh", "/skill.md"]) {
+      expect(isLocaleExcludedPath(path)).toBe(true);
+      expect(isLocaleExcludedPath(`${path}/child`)).toBe(true);
+      expect(isLocaleExcludedPath(`${path}-product`)).toBe(false);
+    }
+    for (const path of ["/p/llms.txt", "/p/sitemap.xml", "/c/robots.txt", "/rankings/llms.txt", "/feedback/llms.txt"]) expect(isLocaleExcludedPath(path)).toBe(false);
+  });
   it("responds with compact, cacheable navigation, citation guidance and training refusal", async () => {
     process.env.NEXT_PUBLIC_SITE_URL = "https://nomorevibe.com/";
     const response = GET();

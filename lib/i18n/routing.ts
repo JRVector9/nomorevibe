@@ -46,12 +46,10 @@ export function switchLocale(path: string, locale: Locale): string {
 
 /** Machine endpoints and public files retain their existing contracts. */
 export function isLocaleExcludedPath(pathname: string): boolean {
-  const first = pathname.split("/", 2)[1];
-  if (["api", "admin", "_next", "go", "badge", "webhooks", "oauth"].includes(first)) return true;
   // Public identifiers can contain dots, including names ending in an asset suffix.
-  if (["p", "c", "rankings", "feedback"].includes(first)) return false;
+  if (/^\/(?:p|c|rankings|feedback)(?:\/|$)/.test(pathname)) return false;
   return /\.(?:avif|gif|ico|jpe?g|png|svg|webp|css|js|map|woff2?|ttf|otf)$/i.test(pathname)
-    || ["/feed.xml", "/sitemap.xml", "/sitemap", "/sitemaps", "/robots.txt", "/llms.txt", "/manifest.webmanifest", "/install.sh", "/skill.md"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
+    || /^\/(?:api|admin|_next|go|badge|webhooks|oauth|feed\.xml|sitemap(?:\.xml|s)?|robots\.txt|llms\.txt|manifest\.webmanifest|install\.sh|skill\.md)(?:\/|$)/.test(pathname);
 }
 
 /** Public account return addresses cannot target admin, API, or machine routes. */
