@@ -69,3 +69,18 @@ TSX·me 사전이 현재 분류기의 좁은 웹 문구 허용 범위 밖이라 
 - [ ] **필수 CI check 통과: 계정 청구·사용 한도 때문에 차단.** ready head `da802898282d6291473c6dc41be7441ff77daf84` 실행 https://github.com/JRVector9/nomorevibe/actions/runs/43609206478 의 scope/check는 runner 배정·step 실행 없이 실패했다. scope annotation: “The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings”. 코드 시험 실패가 아니다.
 - 계정 소유자의 청구·한도 복구 후 같은 PR의 최신 head CI를 재실행하고 필수 check 성공을 확인해야 한다. 사람 결정 요청을 등록했다. 결제·사용 한도·권한·workflow runner·필수 검사 정책은 변경하지 않았고 우회하지 않는다.
 - 구현·로컬 회귀·정적 검사·화면 확인·scope 측정은 완료. CI 통과까지 작업 전체 완료로 기록하지 않는다. PR은 ready로 보존하며 병합·배포하지 않는다.
+
+## CI 시험 기대 수정 후속 (2026-11-14)
+
+위 청구 차단은 과거 실행 기록이다. 공개 전환 뒤 실제 실행 `43609519502`는 unit 1건에서 실패했다.
+동일 PR #955의 head `43c71394`를 이어받으며 화면 구현은 변경하지 않는다.
+
+- [x] 수정 전 `npx vitest run tests/home-unclaimed.test.tsx tests/public-loading-copy.test.tsx`: **1실패/104통과** 재현.
+- [x] `tests/` 전체(통합 포함)를 `rg -n -i 'loading|searching|checkingSession|row-note|찾는 중|불러오는 중' tests` 및 제거한 메시지 키로 검색.
+- [x] 유일한 옛 문구 기대 `tests/home-unclaimed.test.tsx`의 검색 fallback 시험 수정: 결과 제목, 카드 9장, `aria-busy`, 장식의 `aria-hidden`, 로딩 문구 부재, 결과 미노출 확인.
+- 검색된 `tests/public-loading-copy.test.tsx`는 이미 문구 부재 회귀 검사라 유지. `tests/p12-cards-home.test.tsx`의 `.row-note a`는 CSS 밑줄 검사라 유지. 통합의 Loading fixture는 외부 수집·감사 자료이며 공개 대기 화면 기대가 아니므로 유지. 제거한 9개 메시지 키를 요구하는 시험은 없음.
+- [x] 수정 후 같은 명령 **105/105 통과**, `npx next typegen`, `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p .`, `npx eslint tests/home-unclaimed.test.tsx`, `git diff --check` 통과.
+- [x] 사용자 요청으로 `npx vitest run` 한 번 실행: **878파일/11,132건 전부 통과**, 통합 제외 기본 설정, 무관한 실패 없음. Node v22.22.1, 기존 node_modules 링크 사용.
+- [ ] 기존 원격 작업 브랜치로 일반 push, ready 유지, 새 head 필수 check 성공 확인.
+
+선택: 기존 SSR 마크업을 검사하는 시험만 최소 수정한다. 화면·창 변경이 없으므로 이번 후속 작업의 앱 조작·새 스크린샷은 해당 없음. 기존 UI 검증 기록은 위에 보존한다.

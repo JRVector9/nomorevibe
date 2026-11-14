@@ -380,13 +380,16 @@ describe("빈 화면 문구", () => {
     expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ builder: "Codex", aiLevels: [1, 2, 3] }));
   });
 
-  it("검색어가 있으면 결과를 기다리지 않고 틀과 '찾는 중'부터 보낸다", async () => {
+  it("검색어가 있으면 결과를 기다리지 않고 제목과 문구 없는 접근 가능한 카드 골격부터 보낸다", async () => {
     getPublicList.mockResolvedValue([product("searched-project")]);
 
     const html = await renderPage({ q: "searched" });
 
-    expect(html).toContain("“searched” 검색 결과");
-    expect(html).toContain("찾는 중입니다");
+    expect(html).toContain('<h1 id="projects-title" class="row-title">“searched” 검색 결과</h1>');
+    expect(html).toMatch(/<section[^>]*aria-labelledby="projects-title"[^>]*aria-busy="true"/);
+    expect(html).toContain('<div class="projects-grid" aria-hidden="true">');
+    expect(html.match(/class="skeleton-card"/g)).toHaveLength(9);
+    expect(html).not.toMatch(/찾는 중|불러오는 중|loading|searching/i);
     expect(html).not.toContain("searched-project");
   });
 
