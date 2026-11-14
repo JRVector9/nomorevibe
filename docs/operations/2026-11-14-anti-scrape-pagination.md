@@ -22,8 +22,8 @@
 - [x] 기존 목록·sitemap DB 회귀(55435)
 - [x] 시험 DB Next 서버 curl 및 1440/390 브라우저·스크린숏·안내 검수
 - [x] 검증 후 의미 단위 커밋·이 브랜치 push
-- [ ] PR 본문 실제 결과 반영·필수 check 성공 확인
-- [ ] 보고함 보고 및 결과 첨부
+- [x] PR 본문 실제 결과 반영·코드 커밋 필수 check 성공 확인
+- [x] 보고함 제출용 보고서·검증 로그·스크린숏 12장 준비(제출 영수증은 최종 보고에 기록)
 
 ## 검증 기록
 
@@ -51,3 +51,12 @@
 첫 ready CI [43576110713](https://github.com/JRVector9/nomorevibe/actions/runs/43576110713)의 Next 빌드는 완료됐지만 번들 크기 검사에서 홈이 Brotli 175.2KB로 기존 한도 175.1KB를 초과했다. 기준선은 변경하지 않았다. 안내 문구가 공용 클라이언트 browse 사전에 실리지 않게 다섯 언어 문구를 서버 전용 PaginationNotice로 옮겼다. 따라서 최종 메시지 사전 파일은 main과 동일하다.
 
 수정 뒤 같은 단위 61/61·typegen→tsc·ESLint·i18n을 재실행해 통과했다. scratch/runtime에서 `SKIP_NEXT_TYPECHECK=1 npm run build`(별도 tsc 통과) 및 기존 `node scripts/bundle-size.mjs` 통과: 홈 **175.2 → 175.1KB**, 상세 191.4KB, 등록 156.5KB. 실제 수치이며 반올림 표기다. 생성한 production standalone Next 서버도 시험 DB 55435로 띄워 curl 15경로와 두 폭 브라우저 12개 화면·클릭 검증을 재실행해 통과했다. 최종 첨부 스크린숏은 이 production 서버에서 다시 촬영했다. 운영에는 올리지 않았다.
+
+
+## 코드 CI 완료 영수증
+
+코드 커밋 `055e91f2a2cd25872ff5aebd0a12c3082c59d92a`의 [CI 43576650245](https://github.com/JRVector9/nomorevibe/actions/runs/43576650245)에서 필수 [check](https://github.com/JRVector9/nomorevibe/actions/runs/43576650245/job/132394577226) **SUCCESS**를 확인했다. typecheck/lint/unit 2묶음/build/DB integration 6묶음/integration-ledger 모두 성공했다. 이미지 publish·refresh-caches는 PR 정책상 skip이며 배포 성공으로 기록하지 않는다.
+
+이 문서 결과 기록 커밋 뒤 최종 head의 check도 확인하고 PR 본문·보고함에 최종 커밋과 함께 남긴다. 개발 구역의 남은 구현·로컬 검증은 없고 막힌 항목도 없다. 운영 반영은 범위 밖이며, 배포된 것은 없다. 별도 병합·배포 절차를 거칠 웹 앱 코드만 준비됐다. 운영 env 설정 변경은 필요 없고, 별도 운영 결정으로 기본값을 조절할 때만 웹 앱 `PUBLIC_LIST_MAX_PAGES`를 설정할 수 있다.
+
+공유 REST API 한도 도달로 2026-11-14 08:36:58 UTC `gh run list`가 HTTP 403(rate limit exceeded)이었다. 추가 REST 폴링을 중단하고 같은 인증의 PR 상태 조회(GraphQL)를 60초 간격으로 사용했다. 인증·접근 권한 변경은 없었다.
