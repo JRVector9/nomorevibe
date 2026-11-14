@@ -73,7 +73,7 @@ describe("console home read", () => {
     expect(data.conveyor).toBe(conveyor);
     expect(data.inputs).toMatchObject({
       admission: { mode: "draining", since: "2026-11-11T23:00:00.000Z" }, devices: [{ deviceId: "d1", active: 1, models: [{ model: "m1", active: 1 }] }],
-      takedown: { count: 2, overdue: 1 }, agreed: { approve: 3, reject: 1 }, audit: { open: 5, overdue: 2, oldestWaitDays: 9 },
+      takedown: { count: 2, overdue: 1 }, agreed: { approve: 3, reject: 1 }, audit: { open: 5, held: 1, overdue: 2, oldestWaitDays: 9 },
       jobs: [{ name: "product-intro-check", paused: true, lastRunAt: "2026-11-03T17:02:32.000Z" }, { name: "crawl-fetch", paused: false, lastRunAt: null }],
       connections: [{ id: "c1", models: ["m1", "m2"], allowedTasks: ["reason-translate"], keySetAt: null }],
       ranks: [{ task: "reason-translate", slot: 1, rank: 1, connectionId: "c1", model: "m1", enabled: true }],
@@ -114,7 +114,7 @@ describe("console home read", () => {
     const { readConsoleHome } = await import("@/lib/operations/console-home-read");
     const data = await readConsoleHome();
     expect(data.inputs).toMatchObject({ progress: null, ledger: null, connections: null, admission: null, devices: null,
-      takedown: { count: 2, overdue: 1 }, audit: { open: 5, overdue: 2, oldestWaitDays: 9 } });
+      takedown: { count: 2, overdue: 1 }, audit: { open: 5, held: 1, overdue: 2, oldestWaitDays: 9 } });
     expect(data.inputs.ranks).toHaveLength(1);
     // 못 읽은 지켜보기·표시는 null(0건이 아니다)
     expect([data.inputs.changeWatch, data.inputs.kept, data.jobVersions]).toEqual([null, null, null]);

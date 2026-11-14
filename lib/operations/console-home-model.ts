@@ -51,6 +51,7 @@ export function consoleStageExecution(stage: string,
   ranks: ConsoleTaskInputs["ranks"]): ConsoleStageExecution | null {
   const tasks = stagePanel(stage)?.tasks ?? [];
   if (!tasks.length) return null;
+  if (stage === "human" || stage === "audit") return { label: "별도 설정", detail: "기존 위임·감사 설정에서 모델과 실행 조건을 정합니다. 단계 패널에서 설정을 확인할 수 있습니다." };
   const policies = tasks.flatMap<{ label: ConsoleStageExecution["label"]; text: string }>(id => {
     const task = aiTask(id);
     if (!task) return [];
@@ -76,7 +77,8 @@ const BELT_TONE: Record<BeltTone, ConsoleTone> = { flow: "ok", slow: "warn", jam
 /** 공개 뒤 단계 — 시안 순서. 진행 판정(readWorkerProgress)의 단계 열쇠 */
 const POST_PUBLISH = ["tagline-ko", "product-translate", "reason-translate", "intro-check"] as const;
 
-export function buildConsoleFlow(conveyor: Conveyor | null, progress: ConsoleProgress | null, board: Pick<ConsoleTaskBoard, "marks">):
+export function buildConsoleFlow(conveyor: Conveyor | null, progress: ConsoleProgress | null, board: Pick<ConsoleTaskBoard, "marks">,
+  audit: ConsoleTaskInputs["audit"] = null):
   { main: ConsoleFlowRow[]; post: ConsoleFlowRow[] } {
   const main: ConsoleFlowRow[] = (conveyor?.stations ?? []).map(station => {
     const stopped = board.marks.stopped.includes(station.key);
@@ -90,7 +92,7 @@ export function buildConsoleFlow(conveyor: Conveyor | null, progress: ConsolePro
   });
   if (conveyor?.human) {
     const human = conveyor.human;
-    main.push({ key: "human", label: "사람 확인", href: "/admin/review?tab=human", tone: BELT_TONE[human.tone], status: human.status, waiting: human.waiting,
+    main.push({ key: "human", label: "사람 확인", href: consoleStageHref("human"), tone: BELT_TONE[human.tone], status: human.status, waiting: human.waiting,
       rate: human.decided24h === null ? null : { value: human.decided24h, per: "24시간" }, spark: null });
   }
   if (conveyor) main.push({ key: "public", label: "공개", href: "/admin/products", tone: conveyor.published === null ? "off" : "ok",
@@ -110,5 +112,9 @@ export function buildConsoleFlow(conveyor: Conveyor | null, progress: ConsolePro
       : stage.alarm ? ["bad", "막힘"] : ["ok", "흐름"];
     return { key, label, href, tone, status, waiting, rate: stage.completed5m == null ? null : { value: stage.completed5m, per: "5분" }, spark: null };
   });
+  post.push({ key: "audit", label: "감사 거절", href: consoleStageHref("audit"),
+    tone: !audit || audit.open === 0 ? "off" : "warn",
+    status: !audit ? "미확인" : audit.open === 0 ? "일감 없음" : audit.overdue > 0 ? "오래 기다림" : "확인 필요",
+    waiting: audit?.open ?? null, rate: null, spark: null });
   return { main, post };
 }

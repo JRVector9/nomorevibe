@@ -116,14 +116,38 @@ describe("stage panel — other stages", () => {
 
   it("knows every stage on the flow table and nothing else", () => {
     expect(STAGE_PANELS.map(def => def.key)).toEqual(["discover", "fetch", "judge", "first", "second", "profile", "publish", "keywords",
-      "tagline-ko", "product-translate", "reason-translate", "intro-check"]);
-    expect(buildStagePanel(input("first", { key: "human" as never }))).toBeNull();
+      "human", "tagline-ko", "product-translate", "reason-translate", "intro-check", "audit"]);
+    expect(buildStagePanel(input("first", { key: "missing" as never }))).toBeNull();
     expect([stagePanelKeyOf("keyword-verify"), stagePanelKeyOf("crawl-tagline"), stagePanelKeyOf("first"), stagePanelKeyOf("uptime")])
       .toEqual(["keywords", "profile", "first", null]);
     expect([stagePanelHref("keyword-verify", "models"), stagePanelHref("intro-check")]).toEqual(["/admin/flow?stage=keywords#sp-models", "/admin/flow?stage=intro-check"]);
     // 2차는 투표자 셋 — 「동시에」는 투표자 1에서만(지원 범위는 ai-task-execution-config 한 곳)
     expect(panel("second").models!.map(line => [line.label, line.poolSupported])).toEqual([["2차 AI 검수 · 투표자 1", true], ["2차 AI 검수 · 투표자 2", false],
       ["2차 AI 검수 · 투표자 3", false]]);
+  });
+
+  it("opens the human queue's canonical model settings without inventing an ai_task_models assignment", () => {
+    const human = panel("human");
+    const queue = consoleFixtureInputs().conveyor!.human!;
+    expect(human.facts).toContainEqual({ label: "대기", value: queue.waiting.toLocaleString("en-US") });
+    expect(human.models).toBeNull();
+    expect(human.tasks).toEqual(["human-review"]);
+    expect(human.jobs.map(row => row.job)).toContain("human-deepseek-review");
+    expect(human.links).toContainEqual({ label: "확인할 목록 보기", href: "/admin/review?tab=human" });
+  });
+
+  it("uses the existing audit universe and keeps an unread count distinct from an empty queue", () => {
+    const known = buildStagePanel(input("audit", {}, { audit: { open: 8, held: 3, overdue: 2, oldestWaitDays: 11 } }))!;
+    expect(known).toMatchObject({ key: "audit", status: "오래 기다림", tone: "warn", models: null });
+    expect(known.facts).toEqual([
+      { label: "열린 거절", value: "8" }, { label: "공개 보류", value: "3" },
+      { label: "7일 넘음", value: "2" }, { label: "가장 오래된 것", value: "11일" },
+    ]);
+    expect(known.jobs.map(row => row.job)).toEqual(["product-audit", "audit-qwen", "audit-second-opinion", "audit-screen-review"]);
+    const unread = buildStagePanel(input("audit", {}, { audit: null }))!;
+    expect(unread.status).toBe("미확인");
+    expect(unread.facts.every(fact => fact.value === null)).toBe(true);
+    expect(buildStagePanel(input("audit", {}, { audit: { open: 0, overdue: 0, oldestWaitDays: null } }))!.status).toBe("일감 없음");
   });
 });
 

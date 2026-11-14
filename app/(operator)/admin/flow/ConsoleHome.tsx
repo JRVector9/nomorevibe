@@ -31,7 +31,7 @@ export function ConsoleHome({ data, csrf, changeWatch, panel }: {
 }) {
   const board = buildConsoleTasks(data.inputs);
   const strip = buildConsoleStrip({ conveyor: data.conveyor, admission: data.inputs.admission, progress: data.inputs.progress });
-  const flow = buildConsoleFlow(data.conveyor, data.inputs.progress, board);
+  const flow = buildConsoleFlow(data.conveyor, data.inputs.progress, board, data.inputs.audit);
   const shown = board.groups.filter(group => group.tasks.length || group.unknown.length);
   const unknown = board.groups.some(group => group.unknown.length);
   return <div className="console-home">

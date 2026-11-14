@@ -195,7 +195,7 @@ export type ConsoleTaskInputs = {
   /** 두 모델이 같은 결론을 낸 사람 몫(sharedHumanQueueOverview.agreed — 오늘 할 일의 「확정 필요」와 같은 수) */
   agreed: { approve: number; reject: number } | null;
   /** 감사 거절 적체(openBacklogStats) */
-  audit: { open: number; overdue: number; oldestWaitDays: number | null } | null;
+  audit: { open: number; held?: number; overdue: number; oldestWaitDays: number | null } | null;
   connections: readonly ConsoleConnection[] | null;
   ranks: readonly ConsoleRank[] | null;
   pools: readonly ConsolePoolMember[] | null;
@@ -568,7 +568,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     fact: [`열린 거절 ${formatCount(inputs.audit.open)}건`, `${limits.auditOverdueDays}일 넘은 것 ${formatCount(inputs.audit.overdue)}건`,
       inputs.audit.oldestWaitDays !== null ? `가장 오래된 것 ${formatCount(inputs.audit.oldestWaitDays)}일` : null].filter(Boolean).join(" · "),
     // 감사 거절에는 묶음 화면이 없다(3b 는 심사 보류만 묶는다) — 사람 확인 화면의 「요청과 감사」와 같은 목록을 바로 연다
-    why: null, actions: [link("거절 목록 보기", AUDIT_REJECTS_HREF)],
+    why: null, actions: [link("단계 열기", consoleStageHref("audit")), link("거절 목록 보기", AUDIT_REJECTS_HREF)],
   });
 
   // ── 정리 1: 모델이 거절한 호출이 하루 10건 이상이고 호출의 10% 이상인 모델(보내기 전에 끝난 호출은 모델의 거절이 아니라 세지 않는다).

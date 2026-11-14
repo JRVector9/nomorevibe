@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -34,7 +35,7 @@ function editor(executions = consoleFixtureExecutions()) {
 }
 
 function render(key: StagePanelInput["key"], options: { csrf?: typeof csrf | null; lockReason?: string | null; withEditor?: boolean;
-  executions?: ReturnType<typeof consoleFixtureExecutions>; modelsInitial?: StageModelsInitial } = {}) {
+  executions?: ReturnType<typeof consoleFixtureExecutions>; modelsInitial?: StageModelsInitial; modelSettings?: ReactNode } = {}) {
   const inputs = consoleFixtureInputs();
   const executions = options.executions ?? consoleFixtureExecutions();
   const panel = buildStagePanel({ key, now: inputs.now, conveyor: inputs.conveyor as StagePanelInput["conveyor"], inputs, board: buildConsoleTasks(inputs),
@@ -45,8 +46,31 @@ function render(key: StagePanelInput["key"], options: { csrf?: typeof csrf | nul
   return renderToStaticMarkup(<StagePanel panel={panel} editor={options.withEditor === false ? null : editor(executions)} context={previewContext(inputs)} limits={limits}
     limitRows={scope.rows} limitImpact={scope.impact} changes={stageChanges(watch.rows, panel)} changesRead csrf={options.csrf === undefined ? csrf : options.csrf}
     jobVersions={{ "crawl-agent-review": 27001, "crawl-fetch": 3 }} readOnly={false} lockReason={options.lockReason ?? null} now={new Date(inputs.now)}
-    modelsInitial={options.modelsInitial} />);
+    modelsInitial={options.modelsInitial} modelSettings={options.modelSettings} />);
 }
+
+describe("human and audit recovery panels", () => {
+  it("renders canonical human controls inside the stage panel and preserves the queue link", () => {
+    const html = render("human", { modelSettings: <p>기존 위임 모델 편집기</p> });
+    expect(html).toContain('data-stage="human"');
+    expect(html).toContain('id="sp-models"');
+    expect(text(html)).toContain("기존 위임 모델 편집기");
+    expect(html).toContain('href="/admin/review?tab=human"');
+    expect(html).not.toContain('class="sp-rank"');
+    expect(text(html)).toContain("위임·감사 설정의 저장 기록은 전체 기록에서 확인");
+    expect(text(html)).not.toContain("이 단계에 닿은 변경이 없습니다");
+  });
+
+  it("takes audit rejects to existing review and policy actions with separate recovery context", () => {
+    const html = render("audit");
+    expect(html).toContain('data-stage="audit"');
+    expect(html).toContain('href="/admin/audit?tab=audit"');
+    expect(html).toContain('href="/admin/audit?tab=policy"');
+    expect(html).toContain('href="/admin/audit?tab=history"');
+    expect(text(html)).toContain("이미 공개된 제품의 재검수 결과");
+    expect(html).not.toContain('class="sp-rank"');
+  });
+});
 
 describe("stage panel — AI 1차 (fixture 2026-11-12 08:59 KST)", () => {
   const html = render("first");
