@@ -10,8 +10,8 @@
 - [x] 고정 회귀 시험 `tests/public-loading-copy.test.tsx` 및 옛 main 실패 비교.
 - [x] i18n, typegen, tsc, 변경 파일 eslint, 관련 vitest.
 - [x] 시험 DB 55435 로컬 Next 서버에서 홈·상세 JS 켬/끔 1440/390 화면·콘솔 확인.
-- [ ] deploy scope만 실행하고 결과 기록.
-- [ ] PR ready 및 필수 CI check 성공 확인, 보고함 결과·artifacts 첨부.
+- [x] deploy scope만 실행하고 결과 기록.
+- 마지막 외부 확인: 이 문서 커밋을 포함한 PR head를 ready로 바꾸고 필수 CI check를 확인한다. 최종 head·CI·보고 영수증은 PR 본문과 보고함에 기록한다.
 
 ## 조사한 대기 화면
 
@@ -39,9 +39,19 @@ ko/en/ja/zh-Hans 및 기존 zh-Hant 사전의 사용하지 않는 위 키를 제
 - Chromium 156.0.8078.4, Desktop Chrome UA, 1440×1000 / 390×844, JS 켬/끔 × 홈/상세 8화면: HTTP 200, 대기 문구 0, 콘솔 오류 0, 페이지 오류 0. JS 끔은 정상 골격, JS 켬은 본문 전환 확인.
 - 별도 요청 지연으로 댓글 골격을 1440/390에서 확인. 댓글 설정 메뉴를 실제 열고 닫았으며 오류 0.
 - 14개 로컬 HTML(홈·정렬·검색·신규·카테고리·인기·다국어 홈/상세·익명 써봄): 본문의 대상 문구 0, 제거한 9개 키의 HTML/RSC 잔존 0. 사용자가 검색한 뒤에만 쓰는 공통 검색 상태 키는 유지한다.
-- 익명 홈의 기존 카테고리 칩 줄은 390px에서 약 6px 넘침을 관측했으며 기준 main과 비교 중. 변경한 골격과 상세는 넘침 없음.
+- 익명 홈의 기존 카테고리 칩 줄은 390px에서 문서 폭 396px·칩 우측 396.40625px. 동일 시험 DB·익명 설정의 기준 main과 수정본이 **396px → 396px**로 동일함을 별도 서버 비교로 확인. 이 작업 밖의 기존 CSS는 변경하지 않음. 변경한 골격과 상세는 넘침 없음.
 - 첫 촬영에서 Playwright의 기본 커서 숨김과 hydration이 겹쳐 경고 1건. `caret: initial` 및 본문 전환 대기 후 전체 8화면 오류 0. 최초 결과도 artifacts에 보존.
 - 첫 추가 조작 시험은 공유 버튼에 없는 dialog를 기대해 timeout(시험 가정 오류). 실제 댓글 설정 메뉴를 열고 닫는 조작으로 교정해 통과, 최초 로그 보존.
 - 화면 파일은 작업 artifacts의 `home/detail-{1440,390}-js-{on,off}.png`, `detail-feedback-pending-{1440,390}.png`, `detail-feedback-menu-{1440,390}.png`에 저장.
 - 실기 Safari/Android, 전체 수동 unit·DB 통합은 미실행. 저장소 정책대로 필수 CI로 확인.
 병합·배포·운영 설정·운영 DB·Cloudflare 변경 금지.
+
+## 배포 범위와 선택
+
+`npm run deploy -- scope --base f8c20f156c0a7fe78401712900f9bf19cd0789b4 --sha c01748f7ec26e3eec1fb3d95abaf297602bd6bbb`:
+`deployment-scope-v2`, trusted=true, exact_ancestor_tree_diff, **full / 18앱**.
+TSX·me 사전이 현재 분류기의 좁은 웹 문구 허용 범위 밖이라 전체로 분류된다. scope만 실행했고 plan/run·병합·배포는 실행하지 않았다.
+첫 `--sha HEAD` 입력은 `invalid_commit_identity`(trusted=false)였으므로 유효 결과로 쓰지 않고 40자리 SHA로 다시 측정했다. 최초 로그도 보존.
+
+선택: 기존 스트리밍 경계를 두고 공통 텍스트 없는 골격을 사용했다. 상태 표현은 `aria-busy`에 맡겨 로딩 문구가 HTML/RSC로 중복되는 원인을 없애면서 기존 화면을 가장 적게 바꾼다.
+저장 탭의 클라이언트 전용 동작, 관리자, 인증 후 알림 설정, 기존 모바일 칩 CSS는 범위를 넓히지 않는다.
