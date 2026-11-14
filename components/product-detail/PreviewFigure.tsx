@@ -15,7 +15,7 @@ import { PreviewImageDialog } from "./PreviewImageDialog";
  * README 이미지는 정사각 로고여도 여기 둔다 — 히어로 아이콘 자리는 사이트 아이콘·GitHub 아바타만 쓰므로(UX-32) 다른 곳에 보일 자리가 없다.
  * 작은 로고는 늘리지 않고 원래 크기대로 가운데 둔다(카드 표지와 같다).
  */
-export function PreviewFigure({ product, media }: { product: DetailClientProduct; media: ProductDetailView["media"] }) {
+export function PreviewFigure({ product, media }: { product: Pick<DetailClientProduct, "name" | "ogImage">; media: Pick<ProductDetailView["media"][number], "src" | "width" | "height" | "altText" | "sourceMissing" | "lastSuccessAt">[] }) {
   const t = useTranslations("detail");
   const locale = useLocale();
   const serverNow = useServerNow();

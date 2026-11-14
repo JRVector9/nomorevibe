@@ -23,7 +23,8 @@ const REJECTIONS: Partial<Record<ClaimItem["result"], NoticeKey>> = {
 };
 
 /** Cached public HTML carries no session. Only an explicit click can claim this exact product. */
-export function GithubOwnershipClaim({ productId, slug, authEnabled = true, githubEnabled = true }: { productId: number; slug: string; authEnabled?: boolean; githubEnabled?: boolean }) {
+/** productId 는 로그인 운영자 확인이 켜졌을 때만 온다(상세 화면이 꺼져 있으면 내부 id 를 싣지 않는다) */
+export function GithubOwnershipClaim({ productId, slug, authEnabled = true, githubEnabled = true }: { productId?: number; slug: string; authEnabled?: boolean; githubEnabled?: boolean }) {
   const t = useTranslations("detail");
   const locale = useLocale();
   const [busy, setBusy] = useState(false);
@@ -42,6 +43,7 @@ export function GithubOwnershipClaim({ productId, slug, authEnabled = true, gith
 
   async function claim() {
     if (pending.current || verified) return;
+    if (productId === undefined) { setNotice("owner.claim.unavailable"); return; }
     pending.current = true;
     setBusy(true);
     setNotice(null);
@@ -77,6 +79,7 @@ export function GithubOwnershipClaim({ productId, slug, authEnabled = true, gith
 
   async function repositoryFile(complete: boolean) {
     if (pending.current || verified || (complete && !challenge)) return;
+    if (productId === undefined) { setNotice("owner.claim.unavailable"); return; }
     pending.current = true;
     setBusy(true);
     setNotice(null);

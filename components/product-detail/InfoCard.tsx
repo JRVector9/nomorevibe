@@ -39,7 +39,8 @@ function checkedFrom(freshness: DetailFreshness[], t: Translator<"detail">): str
  * '정보 갱신'은 GitHub·공개 페이지에서 사실을 읽은 때다 — AI 흔적 검사('무엇으로 만들었나')와는 다른 일이다(UX-16).
  */
 export function InfoCard({ product, repository, freshness, unclaimed }: {
-  product: DetailClientProduct;
+  /** 정보 카드가 읽는 제품 칸만(lib/domain/products/detail-extras.ts) */
+  product: Pick<DetailClientProduct, "slug" | "url" | "accessMode" | "category" | "makerName" | "repoGone" | "repoUrl" | "stack">;
   repository: ProductDetailView["repository"];
   /** 출처마다 어디서·언제 읽었는지만(client-data.ts detailFreshness) — 원본 수집 값은 넘기지 않는다 */
   freshness: DetailFreshness[];
