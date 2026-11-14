@@ -47,6 +47,20 @@ it('실제 선택한 모델·장비를 정식 감사 기록에 남긴다', async
   expect(mocks.audits).toContainEqual(expect.objectContaining({ action: 'human-review-deepseek', detail: expect.objectContaining({ host: 'gpu3090', modelPool: ['gpu3090:review'],
     models: [expect.objectContaining({ key: 'gpu3090:review', equipment: 'gpu3090', model: 'qwen3.8-flash-next' })] }) }));
 });
+it('위임을 켜면 기존 세대 CAS를 올리고 사람 검토 잡을 한 번 예약한다', async () => {
+  const generation = DEFAULT_CRAWL_SETTINGS.humanReview.generation;
+  const result = await setHumanReviewEnabled({ enabled: true, expectedGeneration: generation, actor: 'operator', expectedModelPoolKeys: ['gpu3090:review'] });
+  expect(result).toMatchObject({ ok: true, settings: { humanReview: { enabled: true, generation: generation + 1 } } });
+  expect(mocks.request).toHaveBeenCalledTimes(1);
+  expect(mocks.request).toHaveBeenCalledWith('human-deepseek-review', expect.anything());
+});
+it('낡은 세대의 활성화는 저장과 잡 예약을 모두 막는다', async () => {
+  const result = await setHumanReviewEnabled({ enabled: true, expectedGeneration: DEFAULT_CRAWL_SETTINGS.humanReview.generation + 1,
+    actor: 'operator', expectedModelPoolKeys: ['gpu3090:review'] });
+  expect(result.ok).toBe(false);
+  expect(mocks.update).not.toHaveBeenCalled();
+  expect(mocks.request).not.toHaveBeenCalled();
+});
 it('배정 표 지문을 확인하고 실제 표 모델을 감사하며 낡은 사람 풀은 쓰지 않는다', async () => {
   const registry = readModelRegistry();
   const model = registry.models.find(row => row.key === 'gpu3090:review')!;

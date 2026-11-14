@@ -121,7 +121,8 @@ async function StagePanelLoaded({ def, data, extraRead, poolHelpRead, csrf, read
     : !data.executions ? "실행 방식을 읽지 못했습니다 — 확인할 때까지 배정을 저장할 수 없습니다." : null;
   return <StagePanel panel={panel} editor={extra.editor} context={previewContext(data.inputs)} limits={extra.limits} limitRows={extra.limitRows}
     limitImpact={extra.limitImpact} changes={extra.changes ? stageChanges(extra.changes.rows, panel) : []} changesRead={!!extra.changes}
-    csrf={csrf} jobVersions={data.jobVersions} readOnly={readOnly} lockReason={lockReason} now={new Date(data.checkedAt)} poolHelp={poolHelp} />;
+    csrf={csrf} jobVersions={data.jobVersions} readOnly={readOnly} lockReason={lockReason} now={new Date(data.checkedAt)} poolHelp={poolHelp}
+    modelSettings={def.key === "human" ? <HumanModelSettings readOnly={readOnly} /> : undefined} />;
 }
 
 type DeskRead = Promise<OperatorDesk | null>;

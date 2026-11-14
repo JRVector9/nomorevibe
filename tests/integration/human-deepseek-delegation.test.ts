@@ -114,6 +114,7 @@ async function review(repo: string, result: DeepSeekReviewResult, repoCheck?: De
 const sweep = async () => withHumanJob(async lease => refreshStaleDelegatedSources(lease, await getSettings()));
 const frontierOf = async (repo: string) => (await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, repo)))[0];
 const fetchRequests = async () => (await db.select().from(jobs).where(eq(jobs.name, "crawl-fetch")))[0]?.requestedVersion ?? 0;
+const publishRequests = async () => (await db.select().from(jobs).where(eq(jobs.name, "crawl-publish")))[0]?.requestedVersion ?? 0;
 
 describe("사람 몫 위임 검수 — 고르기", () => {
   it("사람 큐에 최근 들어온 것부터 고르고, 24시간 지난 근거도 고르며, 읽는 수에 상한이 있다", async () => {
@@ -168,10 +169,12 @@ describe("사람 몫 위임 검수 — 24시간 지난 근거의 승인", () => 
   it("24~72시간(48시간) 지난 입력도 저장소가 있으면 승인해 발행한다 — 되돌리지 않고, 근거 나이·저장소 확인을 감사에 남긴다", async () => {
     const floor = await auditFloor();
     const { row } = await split(0, { ageHours: 48 });
+    const beforePublishRequests = await publishRequests();
     const { claim, state } = await review(row.repo, approve, "present");
     expect(state).toBe("applied");
     expect(claim!.input.validUntil.getTime()).toBeLessThan(Date.now());
     expect(await candidateRow(row.id)).toMatchObject({ state: "approved", decidedBy: "deepseek" });
+    expect(await publishRequests()).toBe(beforePublishRequests + 1);
     const [audit] = await auditRowsAfter(floor, "candidate-deepseek-decision");
     expect(audit.detail).toMatchObject({ evidenceExpired: true, repoCheck: "present", outcome: { decision: "approve" } });
     expect((audit.detail as { evidenceAgeHours: number }).evidenceAgeHours).toBeGreaterThanOrEqual(48);

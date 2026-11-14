@@ -37,5 +37,5 @@ export const setHumanReview = webWriteAction(async function setHumanReview(_prev
     ...(fingerprint ? { expectedModelSourceFingerprint: fingerprint } : {}) });
   if (!result.ok) return { error: result.issues.join(' ') };
   for (const path of ['/admin', '/admin/models', '/admin/models/human', '/admin/flow', '/admin/review', '/admin/status']) revalidatePath(path);
-  return { message: enabled === 'true' ? '선택한 사람 위임 검수 모델에 맡깁니다.' : '모델 자동 판단을 껐습니다. 진행 중인 결과도 적용하지 않습니다.' };
+  return { message: enabled === 'true' ? '자동 위임 설정을 저장했습니다. 모델의 유효한 승인은 기존 최종 발행 검사로 이어집니다.' : '모델 자동 판단을 껐습니다. 진행 중인 결과도 적용하지 않습니다.' };
 });

@@ -8,7 +8,7 @@ import { STATION_JOBS } from "./flow-response";
  */
 export type StagePanelKey =
   | "discover" | "fetch" | "judge" | "first" | "second" | "profile" | "publish" | "keywords"
-  | "tagline-ko" | "product-translate" | "reason-translate" | "intro-check";
+  | "human" | "audit" | "tagline-ko" | "product-translate" | "reason-translate" | "intro-check";
 
 export type StagePanelDef = Readonly<{
   key: StagePanelKey;
@@ -46,6 +46,10 @@ export const STAGE_PANELS: readonly StagePanelDef[] = Object.freeze([
     links: [{ label: "발행 대기 보기", href: "/admin/review?tab=publish&stage=publish" }] },
   { key: "keywords", label: "키워드 등록", station: "keywords", progress: ["keywords", "keyword-verify"], jobs: STATION_JOBS.keywords,
     tasks: ["product-search-profile", "product-search-verify"], links: [{ label: "검색 반영 진단", href: "/admin/status?tab=diagnostics" }] },
+  { key: "human", label: "사람 확인", station: null, progress: [],
+    jobs: [{ job: "human-deepseek-review", label: "사람 몫 AI 위임" }], tasks: ["human-review"],
+    links: [{ label: "확인할 목록 보기", href: "/admin/review?tab=human" },
+      { label: "묶어서 결정", href: "/admin/review/batches" }] },
   { key: "tagline-ko", label: "한국어 소개", station: null, progress: ["tagline-ko"], jobs: [{ job: "product-tagline-ko", label: "한국어 소개" }],
     tasks: ["product-tagline-ko"], links: [{ label: "소개·번역", href: "/admin/products?tab=translations" }] },
   { key: "product-translate", label: "공개 번역", station: null, progress: ["product-translate"], jobs: [{ job: "product-translate", label: "공개 번역" }],
@@ -54,6 +58,11 @@ export const STAGE_PANELS: readonly StagePanelDef[] = Object.freeze([
     tasks: ["reason-translate"], links: [] },
   { key: "intro-check", label: "소개 검수", station: null, progress: ["intro-check"], jobs: [{ job: "product-intro-check", label: "소개 검수" }],
     tasks: ["product-intro-check"], links: [{ label: "소개·번역", href: "/admin/products?tab=translations" }] },
+  { key: "audit", label: "감사 거절", station: null, progress: [], tasks: ["product-audit", "audit-second-opinion", "screen-review"],
+    jobs: [{ job: "product-audit", label: "발행분 감사" }, { job: "audit-qwen", label: "감사 직접 모델" }, { job: "audit-second-opinion", label: "감사 두 번째 의견" },
+      { job: "audit-screen-review", label: "감사 화면 판별" }],
+    links: [{ label: "감사 거절 확인·처리", href: "/admin/audit?tab=audit" },
+      { label: "표본·정책 처리", href: "/admin/audit?tab=policy" }] },
 ] satisfies StagePanelDef[]);
 
 export const stagePanel = (key: string | null | undefined): StagePanelDef | null => STAGE_PANELS.find(panel => panel.key === key) ?? null;

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { formatListTime } from "@/lib/format/time";
 import { secondsText, type LimitsRow, type LimitsView } from "@/lib/operations/admin-limits-view";
 import { CHANGE_VERDICT_LABELS, CHANGE_VERDICT_TONES, type ChangeWatchRow } from "@/lib/operations/change-watch";
@@ -22,7 +23,7 @@ export const STAGE_PANEL_CLOSE_HREF = "/admin/flow";
  * 다섯 구역: 머리 · 왜 이런가 · 모델 · 한도 · 최근 바뀐 것. 모델을 쓰지 않는 단계는 같은 틀에 작업(주기·마지막 성공)과 관련 설정이 나온다.
  * 이 칸이 직접 바꾸는 것은 모두 기존 서버 동작이다: 작업 멈춤·재개(JobControl), 순위·실행 방식(StageModels), 실시간 한도(LimitsEditor).
  */
-export function StagePanel({ panel, editor, context, limits, limitRows, limitImpact, changes, changesRead, csrf, jobVersions, readOnly, lockReason, now, modelsInitial, poolHelp = null }: {
+export function StagePanel({ panel, editor, context, limits, limitRows, limitImpact, changes, changesRead, csrf, jobVersions, readOnly, lockReason, now, modelsInitial, poolHelp = null, modelSettings }: {
   panel: StagePanelModel; editor: FlowRankEditor | null; context: PreviewContext;
   limits: LimitsView | null; limitRows: readonly string[]; limitImpact: Record<string, string[]>;
   changes: readonly ChangeWatchRow[]; changesRead: boolean;
@@ -32,6 +33,8 @@ export function StagePanel({ panel, editor, context, limits, limitRows, limitImp
   modelsInitial?: StageModelsInitial;
   /** 「동시에」 도움말이 읽은 한도(장비·실시간 한도·수집·판정 설정) */
   poolHelp?: PoolHelpContext | null;
+  /** 기존 사람 위임 모델 편집기 — 해당 패널이 열렸을 때만 서버에서 읽는다. */
+  modelSettings?: ReactNode;
 }) {
   const rows = limits?.groups.flatMap(group => group.rows).filter(row => limitRows.includes(row.id)) ?? [];
   return <>
@@ -72,9 +75,25 @@ export function StagePanel({ panel, editor, context, limits, limitRows, limitImp
         })}</ul>
       </section>
 
-      {panel.models && <section className="sp-sec" id="sp-models" aria-labelledby="sp-models-title">
+      {modelSettings && <section className="sp-sec" id="sp-models" aria-labelledby="sp-models-title">
+        <span className="sp-lab" id="sp-models-title">모델 · AI 위임</span>
+        {modelSettings}
+      </section>}
+
+      {!modelSettings && panel.models && <section className="sp-sec" id="sp-models" aria-labelledby="sp-models-title">
         <span className="sp-lab" id="sp-models-title">모델</span>
         <StageModels lines={panel.models} editor={editor} context={context} lockReason={lockReason} initial={modelsInitial} stageLabel={panel.label} poolHelp={poolHelp} />
+      </section>}
+
+      {panel.key === "audit" && <section className="sp-sec" id="sp-models" aria-labelledby="sp-audit-recovery">
+        <span className="sp-lab" id="sp-audit-recovery">감사 거절 처리</span>
+        <p className="sp-note">이미 공개된 제품의 재검수 결과입니다. 원본·화면과 두 번째 의견을 확인하고,
+          기존 감사 화면에서 유지·내리기 또는 표본을 확인한 정책 처리를 합니다.</p>
+        <p className="sp-note">유지 결정과 보류 해제는 기존 감사 화면의 검사에 따라 적용하며, 처리 기록을 남깁니다.</p>
+        <div className="sp-acts">
+          <Link prefetch={false} className="button small" href="/admin/models#tasks">감사 작업 모델 보기</Link>
+          <Link prefetch={false} className="button small" href="/admin/audit?tab=history">감사 처리 기록</Link>
+        </div>
       </section>}
 
       {panel.models && <section className="sp-sec" id="sp-limits" aria-labelledby="sp-limits-title">
@@ -94,8 +113,11 @@ export function StagePanel({ panel, editor, context, limits, limitRows, limitImp
 
       <section className="sp-sec" aria-labelledby="sp-changes">
         <span className="sp-lab" id="sp-changes">최근 바뀐 것</span>
+        {(panel.key === "human" || panel.key === "audit") && <p className="sp-note">이 목록은 작업 제어와 경로별 모델 변경을 보여 줍니다. 위임·감사 설정의 저장 기록은 전체 기록에서 확인할 수 있습니다.</p>}
         {!changesRead ? <p className="sp-note">바뀐 것을 읽지 못했습니다.</p>
-          : !changes.length ? <p className="sp-note">최근 24시간에 이 단계에 닿은 변경이 없습니다.</p>
+          : !changes.length ? <p className="sp-note">{panel.key === "human" || panel.key === "audit"
+            ? "최근 24시간에 이 목록이 추적하는 변경은 없습니다."
+            : "최근 24시간에 이 단계에 닿은 변경이 없습니다."}</p>
           : <ul className="sp-cause sp-when">{changes.map(row => <li key={row.key}>
             <span className="sp-num">{formatKst(row.at)}</span>
             <span>{row.title} · {row.actor}<small>{row.beforeText ? `${row.beforeText} → ` : ""}{row.afterText}</small>

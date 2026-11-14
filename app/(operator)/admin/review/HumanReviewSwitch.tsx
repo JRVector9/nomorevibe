@@ -24,8 +24,8 @@ export function HumanReviewSwitch({ enabled, generation, ready, modelLabel, mode
       </button>
     </div>
     <p className='text-fg-2'>{enabled ? `${modelLabel} 자동 위임` : '사람이 직접 판단'} · {modelLocation} · 변경은 다음 작업부터 반영</p>
-    <p className='leading-relaxed text-fg-3'>심사 큐의 직접 판단·확정 대기를 승인 또는 거부합니다. 판단 보류·실패는 사람 큐에 남습니다.
-      스팸 의심·원본 소실은 자동 승인하지 않으며, 소개·발행 검사는 유지합니다. 기존 사람 결정과 공개 제품은 바꾸지 않습니다.</p>
+    <p className='leading-relaxed text-fg-3'>심사 큐의 직접 판단·확정 대기를 승인 또는 거부합니다. 근거와 확신 기준을 충족한 승인은 기존 최종 발행 검사로 이어집니다.
+      판단 보류·낮은 확신·실패는 사람 큐에 남습니다. 스팸 의심·원본 소실은 자동 승인하지 않으며, 소개·발행 검사는 유지합니다. 기존 사람 결정과 공개 제품은 바꾸지 않습니다.</p>
     <p className={readOnly ? 'text-fg-3' : ready ? 'text-fg-3' : 'text-warn'}>{readOnly
       ? '읽기 전용입니다 — 이 화면에서는 자동 위임을 바꾸지 않습니다'
       : ready ? '모델 연결 확인됨(GET /models 메타데이터)' : '모델 연결 미확인 — 끄기는 항상 가능합니다'}</p>

@@ -41,7 +41,11 @@ describe("saved execution policy beside a home flow stage", () => {
     expect(consoleStageExecution("intro-check", [execution("product-intro-check", "workload_pool")], [])?.label).toBe("별도 설정");
   });
 
-  it.each(["discover", "fetch", "judge", "human", "public", "unknown"])("leaves %s without a model policy badge", stage => {
+  it.each(["discover", "fetch", "judge", "public", "unknown"])("leaves %s without a model policy badge", stage => {
     expect(consoleStageExecution(stage, null, null)).toBeNull();
+  });
+
+  it.each(["human", "audit"])("keeps %s on its canonical model settings rather than unused task ranks", stage => {
+    expect(consoleStageExecution(stage, null, null)).toMatchObject({ label: "별도 설정" });
   });
 });

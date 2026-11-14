@@ -1,0 +1,16 @@
+/* Home drawers keep a fixed width even when the viewport enables desktop form columns. */
+.admin-prototype .human-model-editor--panel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .human-model-editor--panel :is(section, form, fieldset, label, details, .grid) {
+  min-width: 0;
+  max-width: 100%;
+}
+.admin-prototype .human-model-editor--panel :is(select, input) {
+  min-width: 0;
+  max-width: 100%;
+}
+.admin-prototype .human-model-editor--panel select {
+  width: 100%;
+}

@@ -5,10 +5,13 @@ import { HUMAN_MODEL_STAGES, readHumanModelSource } from '@/lib/operations/human
 import { StageModelPoolsForm } from '../StageModelPoolsForm';
 import { AssignmentForm, type AssignmentFormValues } from '../assignments/AssignmentForm';
 import { HumanReviewSwitch } from '../../review/HumanReviewSwitch';
+import './human-model-panel.css';
 
 const SOURCE_LABELS = { table: '배정 표', pool: '사람 위임 검수 풀', default: '등록부 기본값', unknown: '확인 불가' } as const;
 
-export async function HumanModelEditor() {
+export async function HumanModelEditor({ scope = 'all', readOnly = false }: {
+  scope?: 'all' | 'human-review'; readOnly?: boolean;
+} = {}) {
   let data: Awaited<ReturnType<typeof readHumanModelSource>>;
   try { data = await readHumanModelSource(); } catch {
     return <section className='grid gap-2 rounded-xl border border-line bg-bg-card p-3 text-[13px]'>
@@ -17,7 +20,7 @@ export async function HumanModelEditor() {
     </section>;
   }
 
-  const preview = adminWorkspaceReadOnly();
+  const preview = readOnly || adminWorkspaceReadOnly();
   const unknown = data.unknown || data.source === 'unknown';
   const formReadOnly = preview || data.saveBlocked;
   const { enabled, generation } = data.settings.humanReview;
@@ -33,9 +36,10 @@ export async function HumanModelEditor() {
     : data.source === 'pool' ? '사람 위임 검수 풀'
     : data.source === 'default' ? '등록부 기본값' : '출처 확인 불가';
   const tableEffective = data.source === 'table';
-  const poolStageIds = tableEffective ? HUMAN_MODEL_STAGES.filter(stage => stage !== 'human-review') : HUMAN_MODEL_STAGES;
+  const requestedStages = scope === 'human-review' ? ['human-review'] as const : HUMAN_MODEL_STAGES;
+  const poolStageIds = tableEffective ? requestedStages.filter(stage => stage !== 'human-review') : requestedStages;
 
-  return <div className='grid gap-3 text-[13px]'>
+  return <div className={`grid gap-3 text-[13px]${scope === 'human-review' ? ' human-model-editor--panel' : ''}`}>
     <section className='grid gap-2 rounded-xl border border-line bg-bg-card p-3'>
       <div className='flex flex-wrap items-start justify-between gap-2'>
         <div>
@@ -56,6 +60,7 @@ export async function HumanModelEditor() {
     <section className='grid gap-2 rounded-xl border border-line bg-bg-card p-3'>
       <HumanReviewSwitch enabled={enabled} generation={generation} ready={ready}
         modelLabel={modelLabel} modelLocation={modelLocation} readOnly={preview} />
+      {!data.settings.enabled && <p role='status' className='text-warn'>수집·검수 전체가 꺼져 있습니다. 자동 위임을 켜도 전체 실행이 재개되기 전에는 후보를 판단하지 않습니다.</p>}
       <p><Link href='/admin/review?tab=human' prefetch={false} className='text-accent-ink underline'>사람 검토 큐 열기 →</Link></p>
     </section>
 
@@ -97,13 +102,15 @@ export async function HumanModelEditor() {
       </details>}
     </section>}
 
-    <div>
-      <span id='split-confirm' className='block scroll-mt-24' />
-      <span id='split-tiebreak' className='block scroll-mt-24' />
-      <span id='held-review-retry' className='block scroll-mt-24' />
+    {poolStageIds.length > 0 && <div>
+      {scope === 'all' && <>
+        <span id='split-confirm' className='block scroll-mt-24' />
+        <span id='split-tiebreak' className='block scroll-mt-24' />
+        <span id='held-review-retry' className='block scroll-mt-24' />
+      </>}
       <StageModelPoolsForm pools={data.pools} models={data.models} defaults={data.defaults} version={data.version}
         stageIds={poolStageIds} readOnly={formReadOnly} />
-    </div>
+    </div>}
     <p className='text-[13px] text-fg-3'>저장된 작업 순위 설정은 사람 확인 모델 선택에 적용되지 않습니다. 위 단계 풀·배정 표·등록부 기본값만 사용합니다.</p>
   </div>;
 }

@@ -40,7 +40,7 @@ const ledgerCache = sharedLoader<ConsoleLedgerRow[]>({ namespace: "admin:console
 type Capacity = { admission: ConsoleTaskInputs["admission"]; devices: ConsoleDevice[] | null };
 const capacityCache = sharedLoader<Capacity>({ namespace: "admin:console:capacity", ttlMs: 15_000, staleMs: 120_000, store: sharedStore });
 // v2: 장비마다 한도와 경로별 점유(routes)를 함께 싣는다(단계 패널 「그 칸을 쓰는 다른 단계」)
-const auditCache = sharedLoader<NonNullable<ConsoleTaskInputs["audit"]>>({ namespace: "admin:console:audit-backlog", ttlMs: 60_000, staleMs: 600_000, store: sharedStore });
+const auditCache = sharedLoader<NonNullable<ConsoleTaskInputs["audit"]>>({ namespace: "admin:console:audit-backlog-v2", ttlMs: 60_000, staleMs: 600_000, store: sharedStore });
 
 const quiet = (event: string) => (error: unknown) => {
   logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
@@ -116,7 +116,7 @@ export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
     capacityCache("v2", loadCapacity, fresh).catch(quiet("console.capacity_unavailable")),
     auditCache("v1", async () => {
       const stats = await openBacklogStats();
-      return { open: stats.open, overdue: stats.overdue, oldestWaitDays: stats.oldestWaitDays };
+      return { open: stats.open, held: stats.held, overdue: stats.overdue, oldestWaitDays: stats.oldestWaitDays };
     }, fresh).catch(quiet("console.audit_unavailable")),
     listJobStates().catch(quiet("console.jobs_unavailable")),
     adminJobControlVersions().catch(quiet("console.job_versions_unavailable")),

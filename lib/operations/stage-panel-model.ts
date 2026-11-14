@@ -193,7 +193,7 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
   if (!def) return null;
   const now = Date.parse(input.now);
   const { inputs } = input;
-  const flow = buildConsoleFlow(input.conveyor as Conveyor | null, inputs.progress, input.board);
+  const flow = buildConsoleFlow(input.conveyor as Conveyor | null, inputs.progress, input.board, inputs.audit);
   const row = [...flow.main, ...flow.post].find(entry => entry.key === def.key) ?? null;
   const station = def.station ? input.conveyor?.stations.find(entry => entry.key === def.station) ?? null : null;
   const progress = def.progress.map(key => inputs.progress?.stages.find(stage => stage.stage === key)).filter(stage => !!stage);
@@ -205,7 +205,7 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
   const settled24 = inputs.ledger ? inputs.ledger.filter(entry => routes.includes(entry.routeId)).reduce((sum, entry) => sum + entry.settled, 0) : null;
   const waiting = station ? station.waiting : progress.length ? progress.reduce<number | null>((sum, stage) => stage.waiting == null || sum === null ? null : sum + stage.waiting, 0) : null;
   const oldest = station ? station.oldestMinutes : progress.reduce<number | null>((max, stage) => stage.oldestMinutes == null ? max : Math.max(max ?? 0, stage.oldestMinutes), null);
-  const facts: StageFact[] = [
+  let facts: StageFact[] = [
     { label: "대기", value: waiting === null ? (station?.key === "discover" ? "—" : null) : formatCount(waiting) },
     { label: "가장 오래된 것", value: waiting ? oldest === null ? null : formatDuration(oldest) : "—" },
     station?.doneHour != null ? { label: "최근 1시간", value: formatCount(station.doneHour) }
@@ -214,11 +214,33 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
     station ? { label: "24시간", value: station.done24h === null ? null : formatCount(station.done24h) }
       : { label: "24시간 모델 처리", value: settled24 === null ? null : formatCount(settled24) },
   ];
+  if (def.key === "human") {
+    const human = input.conveyor?.human;
+    facts = [
+      { label: "대기", value: human ? formatCount(human.waiting) : null },
+      { label: "직접 판단", value: human ? formatCount(human.direct) : null },
+      { label: "확정 대기", value: human ? formatCount(human.agreed) : null },
+      { label: "24시간 사람 결정", value: human?.decided24h == null ? null : formatCount(human.decided24h) },
+    ];
+  } else if (def.key === "audit") {
+    const audit = inputs.audit;
+    facts = [
+      { label: "열린 거절", value: audit ? formatCount(audit.open) : null },
+      { label: "공개 보류", value: audit?.held == null ? null : formatCount(audit.held) },
+      { label: "7일 넘음", value: audit ? formatCount(audit.overdue) : null },
+      { label: "가장 오래된 것", value: audit?.oldestWaitDays == null ? null : `${formatCount(audit.oldestWaitDays)}일` },
+    ];
+  }
   const spark = station?.spark?.length ? station.spark.slice(0, -1) : null;
 
   // ② 왜 이런가 — 읽은 사실만
   const why: StageWhy[] = [];
   let explained = false;
+  if (def.key === "audit" && inputs.audit) {
+    explained = true;
+    why.push({ label: "처리 대상", text: `공개 제품의 열린 감사 거절 ${formatCount(inputs.audit.open)}건입니다. 새 후보의 사람 확인과 별도인 기존 감사 목록과 같은 수입니다.` });
+    if (inputs.audit.overdue > 0) why.push({ label: "오래 기다림", text: `7일 넘게 기다린 거절 ${formatCount(inputs.audit.overdue)}건이 있습니다.` });
+  }
   const states = new Map((input.jobStates ?? []).map(state => [state.name, state]));
   const jobs: StageJobView[] = def.jobs.map(({ job, label: name }) => {
     const state = states.get(job) ?? null;
@@ -287,7 +309,8 @@ export function buildStagePanel(input: StagePanelInput): StagePanel | null {
     const seconds = rows && settled ? rows.reduce((sum, entry) => sum + (entry.avgSeconds ?? 0) * entry.settled, 0) / settled : null;
     return [slots, settled === null ? "24시간 셀 수 없음" : `24시간 ${formatCount(settled)}건`, seconds === null ? null : `${seconds.toFixed(1)}초`].filter(Boolean).join(" · ");
   };
-  const models: StageModelLine[] | null = def.tasks.length ? def.tasks.flatMap(taskId => {
+  // 위임·감사는 기존 설정과 고정된 감사 출처가 정본이다. 미사용 순위를 실행 모델로 표시하지 않는다.
+  const models: StageModelLine[] | null = def.key === "human" || def.key === "audit" ? null : def.tasks.length ? def.tasks.flatMap(taskId => {
     const task = aiTask(taskId);
     if (!task) return [];
     return Array.from({ length: task.slots }, (_, index) => index + 1).map((slot): StageModelLine => {
