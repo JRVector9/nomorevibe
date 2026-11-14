@@ -51,7 +51,7 @@ export function isLocaleExcludedPath(pathname: string): boolean {
   // Public identifiers can contain dots, including names ending in an asset suffix.
   if (["p", "c", "rankings", "feedback"].includes(first)) return false;
   return /\.(?:avif|gif|ico|jpe?g|png|svg|webp|css|js|map|woff2?|ttf|otf)$/i.test(pathname)
-    || ["/feed.xml", "/sitemap.xml", "/sitemap", "/sitemaps", "/robots.txt", "/manifest.webmanifest", "/install.sh", "/skill.md"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
+    || ["/feed.xml", "/sitemap.xml", "/sitemap", "/sitemaps", "/robots.txt", "/llms.txt", "/manifest.webmanifest", "/install.sh", "/skill.md"].some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
 /** Public account return addresses cannot target admin, API, or machine routes. */

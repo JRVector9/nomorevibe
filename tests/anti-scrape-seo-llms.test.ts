@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { GET, dynamic } from "@/app/llms.txt/route";
+import { isLocaleExcludedPath, localePath } from "@/lib/i18n/routing";
 
 afterEach(() => { delete process.env.NEXT_PUBLIC_SITE_URL; });
 describe("anti-scrape SEO llms.txt", () => {
+  it("keeps the machine URL outside locale rewrites and canonical redirects", () => {
+    expect(isLocaleExcludedPath("/llms.txt")).toBe(true);
+    expect(localePath("ko", "/llms.txt")).toBe("/llms.txt");
+    expect(localePath("en", "/llms.txt")).toBe("/llms.txt");
+  });
   it("responds with compact, cacheable navigation, citation guidance and training refusal", async () => {
     process.env.NEXT_PUBLIC_SITE_URL = "https://nomorevibe.com/";
     const response = GET();
