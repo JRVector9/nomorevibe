@@ -40,7 +40,7 @@ C 검증: `npx vitest run tests/anti-scrape-seo-og.test.ts tests/og-variants.tes
 
 ## 로컬 HTTP 실측
 
-Node 24.22.1 / Next 16.4.1 Turbopack, 환경파일을 제외한 scratch 사본 + 작업 전용 loopback PostgreSQL 합성 fixture. 운영 DB 접근 없음.
+Node 24.22.3 / Next 16.4.1 Turbopack, 환경파일을 제외한 scratch 사본 + 작업 전용 loopback PostgreSQL 합성 fixture. 운영 DB 접근 없음.
 
 | curl 경로 | 상태 | 실제 응답 |
 |---|---|---|
@@ -67,7 +67,7 @@ Node 24.22.1 / Next 16.4.1 Turbopack, 환경파일을 제외한 scratch 사본 +
 ## 최종 로컬 검사
 
 - `npx next typegen`: 통과.
-- Node 24.22.1 `node node_modules/typescript/bin/tsc --noEmit --incremental false`: 최종 소스에서 exit 0, 진단 없음.
+- Node 24.22.3 `node node_modules/typescript/bin/tsc --noEmit --incremental false`: 최종 소스에서 exit 0, 진단 없음.
 - `npx eslint app/robots.ts app/llms.txt/route.ts 'app/api/og-cache/[slug]/route.ts' lib/domain/products/og-variants.ts lib/i18n/routing.ts tests/anti-scrape-seo*.test.ts tests/og-variants.test.ts`: exit 0, 진단 없음.
 - `npx vitest run tests/anti-scrape-seo*.test.ts tests/og-variants.test.ts tests/robots.test.ts tests/product-json-ld.test.ts tests/p12-cards-images.test.tsx tests/detail-html-slim.test.tsx tests/public-translation-languages.test.ts tests/render-recovery-proxy.test.ts`: 9파일 77시험 통과. anti-scrape-seo는 3파일 37시험.
 - `git diff --check`: 통과. 수동 전체 unit·전체 DB·전체 build는 정책에 따라 실행하지 않음. 필수 GitHub CI는 그대로 실행·확인 예정.
