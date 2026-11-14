@@ -1,3 +1,5 @@
+import { publicPaginationBlocked } from "@/lib/web/public-pagination";
+import { PaginationNotice } from "@/components/home/PaginationNotice";
 import { localizeProductList } from "@/lib/i18n/products";
 import { Suspense, type ReactNode } from "react";
 import type { Metadata, ResolvingMetadata } from "next";
@@ -295,7 +297,7 @@ export async function generateMetadata({ searchParams }: Props, parent: Resolvin
   const title = newOnly ? pageTitle(t("new.title")) : browseTitle({ query }, locale, t);
   return {
     title,
-    ...(query ? { robots: { index: false, follow: true } } : {}),
+    ...(query || publicPaginationBlocked(params, "home") ? { robots: { index: false, follow: true } } : {}),
     alternates: canonicalAlternates("/", locale, readyLocales),
     openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale, readyLocales), title, url: localePath(locale, "/") },
   };
@@ -328,6 +330,10 @@ export default async function HomePage({ searchParams }: Props) {
  */
 export async function HomeScreen({ params, titleAction }: { params: HomeParams; titleAction?: ReactNode }) {
   const locale = await getRequestLocale();
+  if (publicPaginationBlocked(params, "home")) {
+    const category = parseCategory(firstValue(params.category));
+    return PaginationNotice({ path: localePath(locale, category ? `/c/${category.toLowerCase()}` : "/"), params, locale });
+  }
   const [t, labels] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels")]);
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   const newOnly = firstValue(params.new) === "1";

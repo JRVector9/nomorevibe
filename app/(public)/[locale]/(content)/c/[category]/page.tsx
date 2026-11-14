@@ -1,3 +1,4 @@
+import { publicPaginationBlocked } from "@/lib/web/public-pagination";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator,getDictionary } from "@/lib/i18n/dictionary";
 import { I18nProvider } from "@/lib/i18n/context";
@@ -45,7 +46,7 @@ export async function generateMetadata({ params, searchParams }: Props, parent: 
   const hidden = category ? hiddenByDefault(category) : false;
   const query = queryOf(search);
   const path = `/c/${category ? categorySlug(category) : encodeURIComponent(raw)}`;
-  const noindex = !category || hidden || Boolean(query);
+  const noindex = !category || hidden || Boolean(query) || publicPaginationBlocked(search, "home");
   const readyLocales = noindex ? [] : LOCALES;
   const title = !category ? pageTitle(t("category.missing"))
     : hidden ? pageTitle(t("home.categoryTitle", { category: translatedCategory(category, labels) }))
