@@ -239,6 +239,41 @@ describe("공개 API 읽기 관문", () => {
     setSearchBotResolverForTest({ reverse: async () => ["googlebot.com.evil.example"], lookup: async () => ["203.0.113.5"] });
     expect(await verifiedSearchBot(UA.googlebot, "203.0.113.5")).toBe(false);
   });
+
+  it("GCP VM 역방향 이름(*.bc.googleusercontent.com)은 정방향이 맞아도 확인된 Googlebot 이 아니다", async () => {
+    const ip = "34.64.10.20";
+    const name = "20.10.64.34.bc.googleusercontent.com";
+    setSearchBotResolverForTest({
+      reverse: async (value) => value === ip ? [name] : [],
+      lookup: async (host) => host === name ? [ip] : [],
+    });
+    expect(await verifiedSearchBot(UA.googlebot, ip)).toBe(false);
+    expect(await verifiedSearchBot("Mozilla/5.0 (compatible; Google-InspectionTool/1.0;)", ip)).toBe(false);
+    // 사용자가 시킨 가져오기용 이름(gae.googleusercontent.com)도 Googlebot 이름으로는 받지 않는다
+    setSearchBotResolverForTest({ reverse: async () => ["1-2-3-4.gae.googleusercontent.com"], lookup: async () => [ip] });
+    expect(await verifiedSearchBot(UA.googlebot, ip)).toBe(false);
+
+    // 읽기 한도와 함정 차단도 그대로 받는다
+    setSearchBotResolverForTest({
+      reverse: async (value) => value === ip ? [name] : [],
+      lookup: async (host) => host === name ? [ip] : [],
+    });
+    mocks.rateLimitWindow.mockResolvedValue({ allowed: false, count: 400, retryAfterSeconds: 30 });
+    expect((await antiScrape.guardPublicApiRead(request("/api/x", { ua: UA.googlebot, ip }), "test"))?.status).toBe(429);
+  });
+
+  it("진짜 googlebot.com·google.com 역방향 이름은 정방향이 같은 IP 면 여전히 확인된다", async () => {
+    const hosts: Record<string, string> = {
+      "66.249.66.1": "crawl-66-249-66-1.googlebot.com",
+      "66.249.90.77": "geo-crawl-66-249-90-77.geo.googlebot.com",
+      "66.249.80.5": "rate-limited-proxy-66-249-80-5.google.com",
+    };
+    setSearchBotResolverForTest({
+      reverse: async (value) => hosts[value] ? [hosts[value]] : [],
+      lookup: async (host) => Object.entries(hosts).filter(([, name]) => name === host).map(([value]) => value),
+    });
+    for (const ip of Object.keys(hosts)) expect(await verifiedSearchBot(UA.googlebot, ip), ip).toBe(true);
+  });
 });
 
 describe("공개 제품 JSON API 응답 항목", () => {
