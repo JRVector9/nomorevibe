@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { detailExtras } from "@/lib/domain/products/detail-extras";
+import { detailExtras, type DetailApiResponse } from "@/lib/domain/products/detail-extras";
 import { detailPageData } from "@/lib/domain/products/detail-page-data";
+import { signedGoLink } from "@/lib/domain/products/go-token";
 import { getProductDetail } from "@/lib/domain/products/detail-view";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { guardPublicApiRead } from "@/lib/http/anti-scrape";
@@ -32,5 +33,7 @@ export const GET = withRoute("products.details", async (req: Request, { params }
   ]);
   // 머리·소개·미리보기·운영자 상자(2026-11-15 공개 HTML 이름·요약만) — 상세 서버 HTML 에는 이름·요약만 남는다
   const page = await detailPageData(detail, product);
-  return NextResponse.json({ ...detailExtras(detail, related, locale, new Date()), ...page }, { headers: NO_STORE });
+  // 바깥으로 나가는 /go 주소는 짧은 서명 토큰을 붙여 여기서만 내준다(2026-11-15, go-token.ts) — 공개 HTML 에는 싣지 않는다
+  const go = signedGoLink(detail.product.slug, { locale });
+  return NextResponse.json({ ...detailExtras(detail, related, locale, new Date()), ...page, go } satisfies DetailApiResponse, { headers: NO_STORE });
 });

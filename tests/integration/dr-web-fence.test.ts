@@ -21,6 +21,7 @@ import { claimFetchItem } from "@/lib/crawl/repository";
 import { recordSearch } from "@/lib/domain/products/search-log";
 import { POST as cronPost } from "@/app/api/cron/[job]/route";
 import { GET as goGet } from "@/app/go/[slug]/route";
+import { issueGoToken } from "@/lib/domain/products/go-token";
 import { POST as feedbackWebhook } from "@/app/api/github/webhooks/feedback/route";
 import { POST as userLogout } from "@/app/api/auth/user/logout/route";
 import { requestOperation } from "@/app/(operator)/admin/status/actions";
@@ -104,7 +105,8 @@ async function planFor(side: Side): Promise<PromotionPlan> {
 }
 const cron = (job: string) => cronPost(new Request(`https://nomorevibe.test/api/cron/${job}`, { method: "POST", headers: { authorization: `Bearer ${CRON}` } }),
   { params: Promise.resolve({ job }) });
-const go = (slug: string) => goGet(new Request(`https://nomorevibe.test/go/${slug}`, { headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605.1.15" } }),
+/** 상세 API 가 내준 것처럼 서명 토큰을 붙인다(go-token.ts) — 토큰 없는 /go 는 상세로 돌아간다 */
+const go = (slug: string) => goGet(new Request(`https://nomorevibe.test/go/${slug}?t=${issueGoToken(slug)!.token}`, { headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605.1.15" } }),
   { params: Promise.resolve({ slug }) });
 const search = () => recordSearch({ query: `${prefix} search`, keywords: null, results: 2, filtered: false, startedAt: new Date() });
 

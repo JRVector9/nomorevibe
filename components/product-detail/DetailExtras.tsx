@@ -16,19 +16,30 @@ import { UpdateTimeline } from "./UpdateTimeline";
  */
 type State = { slug: string; data: DetailExtras | null; done: boolean };
 
-const loads = new Map<string, Promise<DetailExtras | null>>();
+/** 받은 값을 이 화면 동안 다시 쓴다 — /go 서명 토큰(go.expiresAt)이 곧 지나면 새로 받는다 */
+const loads = new Map<string, { load: Promise<DetailExtras | null>; staleAt: number }>();
+/** 토큰이 지나기 이만큼 전부터는 담아 둔 값을 쓰지 않는다 */
+const GO_REFRESH_MARGIN_MS = 2 * 60_000;
+
+/** 토큰 붙은 /go 주소 — 비밀이 없어 못 받았으면 토큰 없는 /go(서버가 상세로 돌려보낸다) */
+export function goHref(data: Pick<DetailExtras, "go"> | null | undefined, slug: string): string {
+  return data?.go?.href ?? `/go/${encodeURIComponent(slug)}`;
+}
 
 export function loadDetailExtras(slug: string, locale: string): Promise<DetailExtras | null> {
   const key = `${locale}:${slug}`;
-  let load = loads.get(key);
-  if (!load) {
-    load = fetch(`/api/products/${encodeURIComponent(slug)}/details?locale=${encodeURIComponent(locale)}`, { headers: { accept: "application/json" } })
-      .then(async (response) => response.ok ? JSON.parse(await response.text(), reviveDetailExtras) as DetailExtras : null)
-      .catch(() => null);
-    // 실패는 담아 두지 않는다 — 다음에 이 상세를 열면 다시 받는다
-    load.then((data) => { if (!data) loads.delete(key); });
-    loads.set(key, load);
-  }
+  const cached = loads.get(key);
+  if (cached && Date.now() < cached.staleAt) return cached.load;
+  const load = fetch(`/api/products/${encodeURIComponent(slug)}/details?locale=${encodeURIComponent(locale)}`, { headers: { accept: "application/json" } })
+    .then(async (response) => response.ok ? JSON.parse(await response.text(), reviveDetailExtras) as DetailExtras : null)
+    .catch(() => null);
+  const entry = { load, staleAt: Number.POSITIVE_INFINITY };
+  // 실패는 담아 두지 않는다 — 다음에 이 상세를 열면 다시 받는다
+  load.then((data) => {
+    if (!data) { if (loads.get(key) === entry) loads.delete(key); return; }
+    if (data.go) entry.staleAt = data.go.expiresAt - GO_REFRESH_MARGIN_MS;
+  });
+  loads.set(key, entry);
   return load;
 }
 
@@ -57,7 +68,7 @@ export function DetailFactsSlot({ slug }: { slug: string }) {
 export function DetailInfoSlot({ slug }: { slug: string }) {
   const { data, done } = useDetailExtras(slug);
   if (!done) return <Pending height="h-[220px]" />;
-  return data ? <InfoCard {...data.info} /> : null;
+  return data ? <InfoCard {...data.info} goHref={goHref(data, slug)} /> : null;
 }
 
 /** 언어 구성과 업데이트 목록 — 본문 열에서 소개·README 다음 */
