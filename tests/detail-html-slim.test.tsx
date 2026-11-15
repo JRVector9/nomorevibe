@@ -61,14 +61,16 @@ describe("상세 브라우저 부품에 넘기는 값", () => {
     expect(JSON.stringify(summary)).not.toContain("long summary");
   });
 
-  it("상세 화면은 부가 자료를 API 자리로, 머리·소개·README 발췌는 서버 부품으로 그린다(2026-11-14)", () => {
+  it("상세 화면은 이름·요약만 서버가 그리고, 머리의 나머지·소개·README 발췌·부가 자료는 API 자리로(2026-11-15 공개 HTML 이름·요약만)", () => {
     const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/page.tsx", "utf8");
-    for (const slot of ["DetailFactsSlot", "DetailActivitySlot", "DetailInfoSlot", "DetailRelatedSlot"]) expect(source).toContain(`<${slot} slug={product.slug} />`);
-    for (const part of ["FactsStrip", "InfoCard", "UpdateTimeline", "RelatedRow", "LanguageBar", "clientProduct"]) expect(source).not.toContain(`<${part} `);
-    // 서버 부품(머리·소개·README 발췌)은 원래 제품을 받는다 — 값은 글자로만 실린다
-    expect(source).toContain("<ProductHero product={product}");
-    expect(source).toContain("<IntroSection product={product}");
-    expect(source).toContain("<ReadmeExcerptSection slug={product.slug}");
+    for (const slot of ["DetailFactsSlot", "DetailActivitySlot", "DetailInfoSlot", "DetailRelatedSlot", "DetailIntroSlot", "DetailAsideSlot"]) expect(source).toContain(`<${slot} slug={slug} />`);
+    expect(source).toContain("<DetailPreviewSlot slug={slug} name={teaser.name} />");
+    for (const part of ["FactsStrip", "InfoCard", "UpdateTimeline", "RelatedRow", "LanguageBar", "clientProduct", "IntroSection", "ReadmeExcerptSection",
+      "PreviewFigure", "UnclaimedOwnerContact"]) expect(source).not.toContain(`<${part} `);
+    // 머리는 slug·이름·요약(teaser)만 받는다 — 본문을 위한 상세 조회(getProductDetail)는 서버가 하지 않는다
+    expect(source).toContain("<ProductHero teaser={teaser}");
+    expect(source).not.toContain("product={product}");
+    expect(source).not.toContain("getProductDetail");
   });
 });
 
@@ -119,7 +121,7 @@ describe("닫힌 창의 속은 열 때 그린다", () => {
 
   const pulse: HomePulseView = {
     asOf: "2026-10-10T00:00:00Z", asOfLabel: "10월 10일", methodVersion: "1",
-    born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, activeCount: 0, categories: [], tools: null,
+    born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, activeCount: 0, tools: null,
   };
 
   it("집계 기준 창 — 주소에 metric 이 없으면 본문을 그리지 않고, 있으면 서버도 그린다", () => {
