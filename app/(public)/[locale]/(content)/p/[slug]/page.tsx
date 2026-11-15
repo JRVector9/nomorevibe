@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { DetailEntry } from "@/components/product-detail/DetailEntry";
 import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
 import { DetailActivitySlot, DetailFactsSlot, DetailInfoSlot, DetailRelatedSlot } from "@/components/product-detail/DetailExtras";
-import { DetailAsideSlot, DetailIntroSlot, DetailPreviewSlot, FeedbackSettingsSlot } from "@/components/product-detail/DetailHeroSlots";
+import { BreadcrumbCategorySlot, DetailAsideSlot, DetailIntroSlot, DetailPreviewSlot, FeedbackSettingsSlot } from "@/components/product-detail/DetailHeroSlots";
 import { ProductHero } from "@/components/product-detail/ProductHero";
 import { FeedbackForm } from "@/components/product-detail/FeedbackForm";
 import { FeedbackList } from "@/components/product-detail/FeedbackList";
@@ -138,6 +138,8 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
       <nav aria-label={t("page.breadcrumb")} className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
         <Link prefetch={false} href={localePath(locale, "/")} className="shrink-0 hover:text-fg">{t("page.discover")}</Link>
         <span aria-hidden>›</span>
+        {/* 분야는 API 로 받은 뒤 채운다 — 서버 HTML·JSON-LD 빵부스러기는 홈 › 이름 */}
+        <BreadcrumbCategorySlot slug={slug} />
         <span className="min-w-0 truncate text-fg">{teaser.name}</span>
       </nav>
 

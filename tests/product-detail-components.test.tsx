@@ -21,7 +21,7 @@ vi.mock("@/lib/social/flags", async (original) => ({
 
 import { BuildTools } from "@/components/product-detail/BuildTools";
 import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
-import { DetailAsideSlot, DetailIntroSlot, DetailPreviewSlot } from "@/components/product-detail/DetailHeroSlots";
+import { BreadcrumbCategorySlot, DetailAsideSlot, DetailIntroSlot, DetailPreviewSlot } from "@/components/product-detail/DetailHeroSlots";
 import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
 import { FactsStrip, factRows } from "@/components/product-detail/FactsStrip";
 import { InfoCard } from "@/components/product-detail/InfoCard";
@@ -563,6 +563,17 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("위의 한 줄이 전부입니다");
     // 저장소가 사라졌으면 README 상자가 없다
     expect(await renderIntro({ product: { ...product, repoGone: true }, readmeExcerpt: "The README says more." })).not.toContain("readme-title");
+  });
+
+  it("빵부스러기 분야 칸 — 받은 뒤 main 과 같은 '분야 ›'(최신순 분야 주소), 받는 동안·못 받으면 비운다(서버 HTML 은 홈 › 이름)", async () => {
+    extras.state = { data: null, done: false };
+    expect(renderToStaticMarkup(<BreadcrumbCategorySlot slug={product.slug} />)).toBe("");
+    received(await pageData());
+    const html = renderToStaticMarkup(<BreadcrumbCategorySlot slug={product.slug} />);
+    expect(textOf(html)).toBe("생산성›");
+    expect(html).toMatch(/href="[^"]*productivity[^"]*sort=recent[^"]*"/i);
+    received(null);
+    expect(renderToStaticMarkup(<BreadcrumbCategorySlot slug={product.slug} />)).toBe("");
   });
 
   it("소개 자리는 받는 동안 글자 없는 자리, 받지 못하면 비운다", () => {

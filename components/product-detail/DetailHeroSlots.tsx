@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { ProductIcon } from "@/components/ProductIcon";
 import { FillLine } from "@/components/cards/fill-line";
 import { SourceLine } from "@/components/cards/views";
+import { categoryHref } from "@/components/home/browse-state";
 import { translatedCategory } from "@/components/home/i18n";
 import { FollowButton } from "@/components/me/FollowButton";
 import type { FollowLabels } from "@/components/me/follow-labels";
@@ -115,6 +116,23 @@ function HealthStatus({ health, t, now, locale }: { health: DetailHero["health"]
 }
 
 export type HeroFollowLabels = { product: FollowLabels; maker: FollowLabels } | null;
+
+/**
+ * 빵부스러기의 분야 칸 — 서버 HTML 에는 '홈 › 이름'만 두고, 받은 뒤 main 과 같은 '홈 › 분야 › 이름'으로 채운다(PR #964 검토).
+ * 한 줄 안에서 이름 앞에 끼어들 뿐이라(이름은 줄여 쓴다) 높이는 바뀌지 않는다. 못 받으면 '홈 › 이름' 그대로다
+ */
+export function BreadcrumbCategorySlot({ slug }: { slug: string }) {
+  const { hero } = useHero(slug);
+  const labels = useTranslations("labels");
+  const locale = useLocale();
+  if (!hero) return null;
+  return (
+    <>
+      <Link prefetch={false} href={localePath(locale, categoryHref(hero.category, { sort: "recent" }))} className="shrink-0 hover:text-fg">{translatedCategory(hero.category, labels)}</Link>
+      <span aria-hidden>›</span>
+    </>
+  );
+}
 
 /** 메타 한 줄 — 분야 · ★ · 언어 · GitHub 주인 · 가동 상태 · 운영자 미확인 */
 export function HeroMetaSlot({ slug, followLabels }: { slug: string; followLabels: HeroFollowLabels }) {

@@ -68,6 +68,17 @@ describe("slugs= 카드 채우기", () => {
     expect(full.items[0]).toMatchObject({ slug: "alpha", name: "ALPHA" });
   });
 
+  it("메이커가 밝힌 만든 도구는 서버 카드처럼 채운다(PR #964 검토) — 추정(주인 없는 수집분)은 싣지 않는다", async () => {
+    mocks.listProductRows.mockImplementation(async (options: { slugs: string[] }) => options.slugs.map((slug) => ({
+      ...row(slug), builder: "Claude Code", ...(slug.startsWith("claimed") ? { source: "maker", claimedAt: new Date("2026-11-02T00:00:00Z") } : {}),
+    })));
+    const { items } = await (await GET(request(`slugs=claimed-${counter},crawled-${counter}&locale=ko`))).json();
+    const bySlug = new Map(items.map((item: { slug: string }) => [item.slug, item]));
+    expect(bySlug.get(`claimed-${counter}`)).toMatchObject({ builder: "Claude Code", builderClaim: "reported" });
+    expect(bySlug.get(`crawled-${counter}`)).not.toHaveProperty("builder");
+    expect(bySlug.get(`crawled-${counter}`)).not.toHaveProperty("builderClaim");
+  });
+
   it("최대 60개 — 61개는 400 이고 읽지 않는다. 중복은 하나로, 모양이 틀린 slug 는 읽지 않는다", async () => {
     const many = Array.from({ length: 61 }, (_, index) => `p${index}-${counter}`);
     const refused = await GET(request(`slugs=${many.join(",")}`));
