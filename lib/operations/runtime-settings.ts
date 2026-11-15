@@ -42,7 +42,7 @@ const ROW_ID = 1;
 const STORED_DOCUMENT_MAX_CHARS = 60_000;
 /** 저장이 쓰는 그룹 — devices 는 PR 1b 의 관계형 표(이 문서에 들어가지 않는다). assignments(배정 표 읽기 토글, PR 3b-E)는 이 문서의 열거 칸이다.
  * capacity(결과 미확정 점유 유지 시간, 2026-11-10)는 입장 TX 가 이 행에서 바로 읽는다 — 저장 즉시 다음 입장부터 바뀐다 */
-const EDITABLE_GROUPS: readonly RuntimeSettingGroup[] = ["routes", "translation", "jobs", "budgets", "assignments", "capacity"];
+const EDITABLE_GROUPS: readonly RuntimeSettingGroup[] = ["routes", "translation", "jobs", "budgets", "assignments", "capacity", "publicApi"];
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 /** 기한 사다리의 relayMs: null 은 "중계 층 없음"이라는 값이다 — 지우기가 아니다 */
