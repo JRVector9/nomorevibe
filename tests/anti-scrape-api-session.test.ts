@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ mode: vi.fn(), rate: vi.fn(), cards: vi.fn(), details: vi.fn(), readme: vi.fn() }));
+const mocks = vi.hoisted(() => ({ mode: vi.fn(), rate: vi.fn(), cards: vi.fn(), details: vi.fn(), readme: vi.fn(), write: vi.fn() }));
+// The session POST upserts rate_limits, so it runs inside the DR write gate; unit tests pass through it without a DB.
+vi.mock("@/lib/operations/dr/web-gate", async original => ({ ...await original<typeof import("@/lib/operations/dr/web-gate")>(), runWebWrite: mocks.write }));
 vi.mock("@/lib/anti-scrape/control", () => ({ publicApiMode: mocks.mode }));
 vi.mock("@/lib/rate-limit", async original => ({ ...await original<typeof import("@/lib/rate-limit")>(), rateLimitWindow: mocks.rate }));
 vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage: mocks.cards }));
@@ -12,6 +14,7 @@ import { GET as cardsGet } from "@/app/api/product-cards/route";
 import { GET as detailsGet } from "@/app/api/products/[slug]/details/route";
 import { GET as readmeGet } from "@/app/api/products/[slug]/readme/route";
 import { resolveRuntimeSettings } from "@/lib/operations/runtime-settings-schema";
+import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 const SITE = "1x00000000000000000000AA";
 const SECRET = "1x0000000000000000000000000000000AA";
 const SIGNING = "unit-test-session-signing-key-not-an-operational-key";
@@ -29,6 +32,7 @@ beforeEach(() => {
   mocks.mode.mockReset().mockResolvedValue("enforce");
   mocks.rate.mockReset().mockResolvedValue({ allowed: true, count: 1, retryAfterSeconds: 120 });
   mocks.cards.mockReset().mockResolvedValue({ items: [] }); mocks.details.mockReset(); mocks.readme.mockReset();
+  mocks.write.mockReset().mockImplementation((load: () => Promise<unknown>) => load());
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 describe("서명 세션", () => {
@@ -91,6 +95,17 @@ describe("세션 발급 HTTP", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ success: false })));
     const failed = await POST(sessionPost('{"token":"XXXX.DUMMY.TOKEN.XXXX"}'), ctx);
     expect(failed.status).toBe(401); expect(failed.headers.has("set-cookie")).toBe(false);
+    // POST is a DB write (per-IP issue limit), so it goes through the write gate; GET does not.
+    expect(mocks.write).toHaveBeenCalledTimes(2);
+  });
+  it("fenced DB면 발급 전에 503 — 속도 제한 행도 쓰지 않고 쿠키도 없다", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ success: true, hostname: "localhost" }));
+    vi.stubGlobal("fetch", fetcher);
+    mocks.write.mockRejectedValue(new DrWriterFencedError("site_fenced"));
+    const response = await POST(sessionPost('{"token":"XXXX.DUMMY.TOKEN.XXXX"}'), ctx);
+    expect(response.status).toBe(503); expect(response.headers.get("retry-after")).toBe("60");
+    expect(response.headers.has("set-cookie")).toBe(false);
+    expect(mocks.rate).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
   });
   it("같은 세션 갱신은 id와 한도 유지", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ success: true, hostname: "localhost" })));

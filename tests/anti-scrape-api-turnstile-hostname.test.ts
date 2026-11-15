@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-const mocks = vi.hoisted(() => ({ mode: vi.fn(), rate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ mode: vi.fn(), rate: vi.fn(), write: vi.fn() }));
+// The session POST is a write route (rate_limits upsert); pass through the DR write gate without a DB.
+vi.mock("@/lib/operations/dr/web-gate", async original => ({ ...await original<typeof import("@/lib/operations/dr/web-gate")>(), runWebWrite: mocks.write }));
 vi.mock("@/lib/anti-scrape/control", () => ({ publicApiMode: mocks.mode }));
 vi.mock("@/lib/rate-limit", async original => ({ ...await original<typeof import("@/lib/rate-limit")>(), rateLimitWindow: mocks.rate }));
 import { SESSION_COOKIE } from "@/lib/anti-scrape/session";
@@ -34,6 +36,7 @@ beforeEach(() => {
   vi.stubEnv("TRUSTED_PROXY_HOPS", "1"); vi.stubEnv("TRUST_CF_CONNECTING_IP", "0");
   mocks.mode.mockReset().mockResolvedValue("enforce");
   mocks.rate.mockReset().mockResolvedValue({ allowed: true, count: 1, retryAfterSeconds: 60 });
+  mocks.write.mockReset().mockImplementation((load: () => Promise<unknown>) => load());
   info = vi.spyOn(logger, "info"); warn = vi.spyOn(logger, "warn");
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });

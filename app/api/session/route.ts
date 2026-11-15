@@ -25,6 +25,7 @@ export const GET = withRoute("session.config", async (request: Request) => {
   return NextResponse.json({ enabled: true, siteKey: config.siteKey, mode, expiresAt: session ? session.exp * 1000 : null }, { headers: SESSION_HEADERS });
 });
 
+// A write route: the per-IP issue limit upserts rate_limits, so a fenced DB refuses it before the handler (no dbWrite opt-out).
 export const POST = withRoute("session.issue", async (request: Request) => {
   const refused = await guardPublicApiRead(request, "session");
   if (refused) return refused;
@@ -68,4 +69,4 @@ export const POST = withRoute("session.issue", async (request: Request) => {
   response.cookies.set(SESSION_COOKIE, issued.value, { httpOnly: true, sameSite: "strict", secure: process.env.NODE_ENV === "production",
     path: "/api", maxAge: SESSION_SECONDS });
   return response;
-}, { dbWrite: false });
+});

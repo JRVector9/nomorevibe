@@ -15,6 +15,7 @@
 - [x] (대표 검토 1) Turnstile hostname을 request.url이 아닌 정식 주소(NEXT_PUBLIC_SITE_URL) hostname과 비교. 같은 원인인 세션 발급 Origin 검사도 정식 출처(lib/site.ts siteOrigin)와 비교
 - [x] (대표 검토 2) 기록만 모드의 hostname 불일치를 별도 이벤트로 기록·집계
 - [x] (대표 검토 3) 내부 request.url(http://web:3000) 시험 추가, 옛 코드(fd0fd8ab)에서 실패 확인
+- [x] (CI 43725822753 unit 실패 1건) 세션 POST의 `dbWrite: false` 제거 — 발급 IP 한도가 rate_limits를 upsert하므로 쓰기 관문(DR fence)을 지난다. `tests/dr-web-fence.test.ts` 정책 시험은 그대로
 
 ## 선택 및 경계
 
@@ -41,6 +42,13 @@
   - actual은 hostname 글자만(253자 이하 `[a-z0-9.-]`), 그 밖은 `invalid`. 토큰·키·IP·Cloudflare 응답 나머지는 기록하지 않는다.
 - action 불일치·success false는 모드와 무관하게 거절(변경 없음). Cloudflare 공식 시험 secret은 비운영에서만 hostname/action 생략(변경 없음).
 - 운영 웹 두 앱은 이미 `NEXT_PUBLIC_SITE_URL=https://nomorevibe.com`을 런타임 env로 받는다(docs/operations/2026-10-11-primary-domain-cutover.md). 세션 경로는 force-dynamic이라 런타임 값을 읽는다. 운영 설정 변경 불필요.
+
+## 쓰기 관문 정책 (CI 43725822753 attempt 2 실패 반영)
+
+- 실패: unit 5,245건 중 `tests/dr-web-fence.test.ts` 「only the admin logout opts out of the write gate (dbWrite: false)」 1건. 세션 POST가 `{ dbWrite: false }`로 쓰기 관문을 빠져 있었다.
+- 고침: 세션 POST는 `rateLimitWindow('api-session-issue:<ip>')`로 DB에 쓰므로 일반 쓰기 route처럼 `withRoute`의 `runWebWrite`를 지난다. 정책 시험은 느슨하게 하지 않았다.
+- 동작 영향: 기록만/막기 모드 판정·Origin·본문 상한·Turnstile 검증·쿠키는 그대로. 달라지는 것은 DB가 fenced(DR 승격 전·옛 primary)이거나 fence를 못 읽을 때뿐 — 발급 전에 503(Retry-After 60), 속도 제한 행·siteverify 호출·쿠키 없음. GET(설정 조회)은 SAFE 메서드라 그대로.
+- 시험: 단위 시험은 `runWebWrite`를 통과 spy로 두고(POST가 관문을 지나는지 확인), fenced면 503·쓰기 없음 회귀 1건 추가.
 
 ## 공식 자료
 
