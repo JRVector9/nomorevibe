@@ -20,7 +20,10 @@
 - [x] slugs API 시험(`tests/product-cards-slugs.test.ts`), 새 API 시험들, 기존 화면 시험 갱신
 - [x] 로컬 next build + 격리 시험 DB 화면 확인(Playwright, CLS), 전후 측정
 
+- [x] 통합 시험 기대값 갱신(feed category 없음) — CI 재실행 43727862548(저장소 PUBLIC 복구 뒤)에서 드러난 integration (3) 실패 2건. integration (1)의 상세 공유 그림 실패 1건은 사람 결정(표지 유지, b346bf5d)으로 main 기대값 그대로 맞음
+
 ## 남은 것 / 막힌 것
+- 2026-11-15 14:04~15:05Z CI 는 GitHub Actions 결제 차단(저장소 PRIVATE)으로 작업이 시작되지 않았다. PUBLIC 복구 뒤 재실행으로 진짜 결과를 받았다.
 - PR B(Turnstile 세션 관문, 문서 6장)는 별도 작업.
 - 운영 확인(배포 뒤 curl 패턴 수·Search Console)은 배포 뒤 사람·대표 작업.
 - 홈 첫 화면 아래 '이번 주 새로 나온' 띠가 비면 구획째 사라지며 생기는 밀림(CLS)은 main 에도 있던 동작(이번 범위 밖).
