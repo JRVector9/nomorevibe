@@ -190,14 +190,15 @@ export function DetailIntroSlot({ slug }: { slug: string }) {
   const t = useTranslations("detail");
   const labels = useTranslations("labels");
   // 소개·README 발췌 자리 — 실제 구획(소개 몇 줄 + README 상자)과 비슷한 높이로 잡아, 받기 전 짧은 본문 때문에 바닥글이 화면에 들었다 밀려나지 않게
-  if (!done) return <div aria-busy="true" className="h-[320px] motion-safe:animate-pulse rounded-[12px] bg-bg-soft" />;
+  // 자리와 받은 구획은 다른 열쇠 — 같은 div 를 고쳐 쓰면 브라우저가 그 노드가 옮겨졌다고 보고 밀림(CLS)으로 센다
+  if (!done) return <div key="pending" aria-busy="true" className="h-[320px] motion-safe:animate-pulse rounded-[12px] bg-bg-soft" />;
   const intro = data?.intro;
   if (!intro) return null;
   const { text: description, descriptionTranslation: selected, profile, readmeExcerpt: excerpt, repo } = intro;
   const hasProfile = profile && (profile.problem || profile.targetUsers || profile.privacySummary
     || profile.keyFeatures.length > 0 || profile.useCases.length > 0 || profile.longDescriptionMarkdown);
   return (
-    <div className="flex flex-col gap-9">
+    <div key="intro" className="flex flex-col gap-9">
       <section aria-labelledby="intro-title" className="flex flex-col gap-3">
         <Heading id="intro-title">{t("intro.title")}</Heading>
         {description

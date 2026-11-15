@@ -45,7 +45,7 @@ export function useDetailExtras(slug: string): State {
 
 /** 받는 동안의 자리 — 글자 없이 높이만(공개 화면 대기 문구 없음, aria-busy 로 상태를 알린다) */
 function Pending({ height }: { height: string }) {
-  return <div aria-busy="true" className={`${height} motion-safe:animate-pulse rounded-[12px] bg-bg-soft`} />;
+  return <div key="pending" aria-busy="true" className={`${height} motion-safe:animate-pulse rounded-[12px] bg-bg-soft`} />;
 }
 
 export function DetailFactsSlot({ slug }: { slug: string }) {
