@@ -55,7 +55,7 @@ import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS, visitMetrics, type VisitMetrics } from "./clicks";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
-/** 상세 조회가 함께 읽는 업데이트 — 최신 50건(화면은 앞 세 줄만 그린다). 건수는 따로 센다(visibleUpdateCounts) */
+/** 상세 조회가 함께 읽는 업데이트 — 최신 50건(화면은 앞 세 줄만 그린다). 건수는 같은 조회가 상한 없이 센다(visibleUpdates) */
 const MAX_PUBLIC_UPDATES = 50;
 /**
  * 업데이트 '전체'가 펼치는 목록의 안전 상한(getPublicProductUpdates) — 2026-11-15 운영에서 가장 많은 제품이 357건이었다.
@@ -663,7 +663,13 @@ const visibleUpdateWhere = (slug: string) => and(
 );
 const visibleUpdateOrder = [desc(sql`coalesce(${productUpdates.publishedAt}, ${productUpdates.observedAt})`), desc(productUpdates.id)] as const;
 
-async function visibleUpdates(slug: string): Promise<ProductUpdateView[]> {
+/**
+ * 상세가 싣는 최신 50건과, 상한과 무관한 보이는 업데이트 전체·최근 30일(발행일이 없으면 처음 본 날로) 건수.
+ * 건수는 같은 조회의 창 함수(LIMIT 전에 센다)로 받는다 — 상세 조회에 DB 왕복·연결을 더하지 않는다.
+ */
+async function visibleUpdates(slug: string, now: Date): Promise<{ updates: ProductUpdateView[]; counts: { total: number; recent: number } }> {
+  const since = new Date(now.getTime() - UPDATE_RECENT_DAYS * 86_400_000);
+  const recent = or(gte(productUpdates.publishedAt, since), and(isNull(productUpdates.publishedAt), gte(productUpdates.observedAt, since)));
   const rows = await db.select({
     id: productUpdates.id,
     sourceKind: productUpdates.sourceKind,
@@ -674,25 +680,19 @@ async function visibleUpdates(slug: string): Promise<ProductUpdateView[]> {
     publishedAt: productUpdates.publishedAt,
     observedAt: productUpdates.observedAt,
     makerEditedAt: productUpdates.makerEditedAt,
+    total: sql<number>`(count(*) over ())::int`,
+    recent: sql<number>`(count(*) filter (where ${recent}) over ())::int`,
   }).from(productUpdates)
     .where(visibleUpdateWhere(slug))
     .orderBy(...visibleUpdateOrder)
     .limit(MAX_PUBLIC_UPDATES);
-  return rows.map((row) => ({
-    ...row,
-    sourceLabel: row.sourceKind === "maker" ? "메이커 업데이트" : "자동 감지",
-  }));
-}
-
-/** 보이는 업데이트 전체와 최근 30일(발행일이 없으면 처음 본 날로) 건수 — 50건 상한과 무관하게 센다 */
-async function visibleUpdateCounts(slug: string, now: Date): Promise<{ total: number; recent: number }> {
-  const since = new Date(now.getTime() - UPDATE_RECENT_DAYS * 86_400_000);
-  const recent = or(gte(productUpdates.publishedAt, since), and(isNull(productUpdates.publishedAt), gte(productUpdates.observedAt, since)));
-  const [row] = await db.select({
-    total: sql<number>`count(*)::int`,
-    recent: sql<number>`(count(*) filter (where ${recent}))::int`,
-  }).from(productUpdates).where(visibleUpdateWhere(slug));
-  return { total: Number(row?.total ?? 0), recent: Number(row?.recent ?? 0) };
+  return {
+    updates: rows.map(({ id, sourceKind, canonicalUrl, title, summary, beforeAfter, publishedAt, observedAt, makerEditedAt }) => ({
+      id, sourceKind, canonicalUrl, title, summary, beforeAfter, publishedAt, observedAt, makerEditedAt,
+      sourceLabel: sourceKind === "maker" ? "메이커 업데이트" : "자동 감지",
+    })),
+    counts: { total: Number(rows[0]?.total ?? 0), recent: Number(rows[0]?.recent ?? 0) },
+  };
 }
 
 /** 업데이트 '전체'가 그리는 한 줄 — 날짜·제목·출처(링크)만 */
@@ -740,7 +740,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   const slug = product.slug;
   const now = new Date();
   const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
-  const [rank, visitMap, health, profile, links, sources, media, updates, updateCounts, provenance, settings,
+  const [rank, visitMap, health, profile, links, sources, media, { updates, counts: updateCounts }, provenance, settings,
     risingPage, relatedPage, readmeRow, aiLevel, crawlSettings] = await Promise.all([
     activeRank(slug),
     visitMetrics([slug], { windowHours: METRICS_WINDOW_DAYS * 24, minimumPreviousUniqueVisitors: 5 }),
@@ -749,8 +749,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     visibleLinks(slug),
     evidenceSources(slug),
     visibleMedia(slug),
-    visibleUpdates(slug),
-    visibleUpdateCounts(slug, now),
+    visibleUpdates(slug, now),
     visibleProvenance(slug),
     currentEvidenceSettings(),
     getStarGrowthPage({ limit: 20, now }).catch(() => null),
