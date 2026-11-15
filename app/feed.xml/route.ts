@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { XMLBuilder } from "fast-xml-parser";
 import { pageTitle } from "@/lib/copy/brand";
-import { UNCLAIMED_LABEL } from "@/lib/copy/terms";
+import { teaserSummary } from "@/lib/domain/products/public-teaser";
 import { listRecentlyDiscovered } from "@/lib/domain/products/repository";
 import { toListItem } from "@/lib/domain/products/view";
 import { withRoute } from "@/lib/http/handler";
@@ -14,7 +14,8 @@ import { siteOrigin } from "@/lib/site";
  * 개발자이고, 그들은 아직 RSS를 읽는다.
  *
  * 홈의 발견 보드와 같은 것을 내보낸다 — 검증된 제품과 우리가 대신 올린 제품을 등재 시각순으로.
- * 어느 쪽인지는 항목의 분류(category) 하나로 밝힌다. 피드 리더에는 배지가 없으므로 글자로 적되, 제목에는 붙이지 않는다(SEO-05).
+ * 항목에는 이름·요약·주소(link·guid)·등재 시각만 싣는다 — 공개 출력은 주소·이름·요약까지다(2026-11-15 사람 결정,
+ * docs/tasks/2026-11-15-public-html-name-summary.md 4.3). 분야·검증 상태(category)는 싣지 않는다.
  */
 const FEED_LIMIT = 50;
 
@@ -28,7 +29,7 @@ const FEED_LIMIT = 50;
  */
 const XML_UNSAFE = /[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu;
 
-/** 사람이 쓴 값을 피드에 싣기 전에 거른다 — slug·카테고리는 이미 정해진 글자만 갖는다 */
+/** 사람이 쓴 값을 피드에 싣기 전에 거른다 — slug 는 이미 정해진 글자만 갖는다 */
 function xmlText(value: string): string {
   return value.replace(XML_UNSAFE, "");
 }
@@ -60,13 +61,12 @@ export const GET = withRoute("feed", async (req: Request) => {
         "atom:link": { "@_href": `${origin}/feed.xml`, "@_rel": "self", "@_type": "application/rss+xml" },
         lastBuildDate: (items[0]?.listedAt ?? new Date()).toUTCString(),
         item: items.map((product) => ({
-          // 제목은 이름만 — 상태 꼬리표('— 운영자 미확인')가 피드 리더 제목에 그대로 붙었다(SEO-05). 상태는 분류 하나로 옮긴다
+          // 제목은 이름만 — 상태 꼬리표('— 운영자 미확인')를 붙이지 않는다(SEO-05)
           title: xmlText(product.name),
           link: `${origin}/p/${product.slug}`,
           guid: { "@_isPermaLink": "true", "#text": `${origin}/p/${product.slug}` },
-          // 상세 페이지 설명과 같은 순서 — AI 가 옮긴 한국어 한 줄이 있으면 그것, 없으면 원문(app/p/[slug]/page.tsx)
-          description: xmlText(product.taglineKo?.trim() || product.tagline),
-          category: [product.category, product.status === "verified" ? "✓ 검증됨" : UNCLAIMED_LABEL],
+          // 요약 — 한국어 한 줄이 있으면 그것, 없으면 원문(상세 메타 설명과 같은 값)
+          description: xmlText(teaserSummary(product, "ko").summary),
           pubDate: product.listedAt.toUTCString(),
         })),
       },

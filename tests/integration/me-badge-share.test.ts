@@ -13,6 +13,8 @@ const badge = async (slug: string, query = "") => (await import("@/app/badge/[sl
   new Request(`${ORIGIN}/badge/${slug}${query}`), { params: Promise.resolve({ slug }) });
 const card = async (locale: string, slug: string) => (await import("@/app/(public)/[locale]/(content)/p/[slug]/share-card.png/route")).GET(
   new Request(`${ORIGIN}/${locale}/p/${slug}/share-card.png`), { params: Promise.resolve({ locale, slug }) });
+const ogImage = async (locale: string, slug: string) => (await import("@/app/(public)/[locale]/(content)/p/[slug]/og.jpg/route")).GET(
+  new Request(`${ORIGIN}/${locale}/p/${slug}/og.jpg`), { params: Promise.resolve({ locale, slug }) });
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
@@ -79,13 +81,11 @@ describe("GET /badge/<slug>.svg", () => {
     expect(await shareCardData("claimed-portfolio", "en")).not.toBeNull();
   });
 
-  it("써봤어요를 끄면(PRODUCT_REACTIONS_ENABLED) «tried by» 배지·카드 칩을 내지 않는다", async () => {
+  it("써봤어요를 끄면(PRODUCT_REACTIONS_ENABLED) «tried by» 배지를 내지 않는다", async () => {
     const seeded = await product("tiny-cron", "seeded", { stars: 5 });
     await reactions(seeded.id, 12);
     vi.stubEnv("PRODUCT_REACTIONS_ENABLED", "false");
     expect(await (await badge("tiny-cron.svg", "?style=tried")).text()).toContain(">listed</text>");
-    const { shareCardData } = await import("@/lib/me/share");
-    expect((await shareCardData("tiny-cron", "ko"))!.chips.map((chip) => chip.text)).toEqual(["GitHub ★ 5", "개발 도구"]);
   });
 
   it("?style=tried 는 써본 사람 3명부터 숫자, 그 전에는 기본 배지", async () => {
@@ -126,16 +126,28 @@ describe("GET /p/<slug>/share-card.png", () => {
     expect((await card("fr", "tiny-cron")).status).toBe(404);
   }, 60_000);
 
-  it("카드 글은 그 언어의 한 줄 소개와 사실 칩(스타·써본 사람·분야)", async () => {
+  it("상세 og 그림(og.jpg)은 같은 카드의 1200×630 JPEG, 내려간·검증 전·없는 제품은 404", async () => {
+    await product("tiny-cron", "seeded", { stars: 214 });
+    await product("gone", "banned");
+    await product("phish-wallet", "unverified");
+    const response = await ogImage("en", "tiny-cron");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("cache-tag")).toBe("p-tiny-cron");
+    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString("hex")).toBe("ffd8");
+    for (const slug of ["gone", "phish-wallet", "missing"]) expect((await ogImage("ko", slug)).status, slug).toBe(404);
+  }, 60_000);
+
+  it("카드 글은 이름·그 언어의 한 줄 소개·사이트 표기뿐 — 칩(스타·써본 사람·분야)·날짜 없음(2026-11-15)", async () => {
     const seeded = await product("tiny-cron", "seeded", { stars: 1_563 });
     await db.insert(productKoreanTaglines).values({ productId: seeded.id, sourceTagline: seeded.tagline, taglineKo: "자연어 일정을 cron 식으로" });
     await reactions(seeded.id, 12);
     const { shareCardData } = await import("@/lib/me/share");
-    const ko = await shareCardData("tiny-cron", "ko", new Date("2026-10-20T03:00:00Z"));
-    expect(ko).toMatchObject({ name: "tiny-cron", tagline: "자연어 일정을 cron 식으로", url: "nomorevibe.example/p/tiny-cron", date: "2026-10-20 기준" });
-    expect(ko!.chips.map((chip) => chip.text)).toEqual(["GitHub ★ 1,563", "써본 사람 12", "개발 도구"]);
-    const en = await shareCardData("tiny-cron", "en", new Date("2026-10-20T03:00:00Z"));
-    expect(en).toMatchObject({ tagline: "Turns plain words into cron", date: "as of 2026-10-20" });
+    const ko = await shareCardData("tiny-cron", "ko");
+    expect(ko).toEqual({ name: "tiny-cron", tagline: "자연어 일정을 cron 식으로", brandLine: expect.any(String), url: "nomorevibe.example/p/tiny-cron" });
+    const en = await shareCardData("tiny-cron", "en");
+    expect(en).toMatchObject({ tagline: "Turns plain words into cron" });
+    expect(JSON.stringify([ko, en])).not.toMatch(/1,563|★|써본 사람|개발 도구|기준|as of/);
     expect(await shareCardData("missing", "ko")).toBeNull();
   });
 });
