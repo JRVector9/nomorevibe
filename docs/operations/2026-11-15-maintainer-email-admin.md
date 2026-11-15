@@ -22,7 +22,7 @@
 
 - 공개 화면·공개 API·피드·sitemap·탐색 캐시는 이 표를 읽지 않는다. 탐색 캐시가 주소를 `<redacted@invalid>`로 지우는 동작(`lib/crawl/discovery-contract.ts`)은 그대로다.
 - 읽기 모듈 `lib/domain/makers/maintainer-emails-admin.ts`는 `server-only`다. 표시 부품은 서버 부품이라 관리자 화면 HTML에만 실린다.
-- `tests/maintainer-email-boundary.test.ts`는 이 표나 모듈을 부르는 소스 파일을 정해진 7개로 묶는다. 공개 경로에서 부르기 시작하면 시험이 실패한다.
+- `tests/maintainer-email-boundary.test.ts`는 이 표나 모듈을 부르는 소스 파일을 정해진 6개로 묶는다. 공개 경로에서 부르기 시작하면 시험이 실패한다. 표는 공용 묶음 `lib/db/schema.ts`에 넣지 않고 직접 import 한다(경계를 좁히고 CI 증분 tsc 기록을 지킨다).
 - AI 판정 근거(`repository_ai_levels.evidence`)와 확인 스크립트(`scripts/ai-level-check.ts`)의 내보내기 파일에는 주소가 섞이지 않는다. 주소는 `processBatch`의 `contacts`로 따로 다닌다.
 - Oracle 최소 권한 계정에는 GRANT하지 않는다. 그쪽에서는 읽을 일도, 쓸 일도 없다.
 

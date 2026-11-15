@@ -1,6 +1,7 @@
 import { inArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { agentRepositoryObservations, agentRepositoryScans, repositoryAiLevels, repositoryMaintainerEmails, type RepositoryAiLevel } from '@/lib/db/schema';
+import { agentRepositoryObservations, agentRepositoryScans, repositoryAiLevels, type RepositoryAiLevel } from '@/lib/db/schema';
+import { repositoryMaintainerEmails } from '@/lib/db/maintainer-email-schema';
 import { githubGraphql, githubRequest } from '@/lib/crawl/github';
 import type { RepositoryRef } from '@/lib/crawl/github-repositories';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from '@/lib/domain/evidence/agents/types';

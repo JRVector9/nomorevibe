@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, products, repositoryAiLevels, repositoryMaintainerEmails } from "@/lib/db/schema";
+import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, products, repositoryAiLevels } from "@/lib/db/schema";
+import { repositoryMaintainerEmails } from "@/lib/db/maintainer-email-schema";
 import type { githubGraphql, githubRequest } from "@/lib/crawl/github";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { getRepositoryAiLevel, storedAiLevel } from "@/lib/domain/evidence/ai-level-store";
@@ -21,6 +22,8 @@ beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await resetTables();
   await db.delete(crawlCandidates);
+  // 공용 resetTables(setup.ts)에 넣지 않는다 — 모든 통합 파일이 부르는 파일이라 CI 증분 tsc 가 통째로 다시 검사한다
+  await db.delete(repositoryMaintainerEmails);
 });
 
 const SHA = (n: number) => n.toString(16).padStart(40, "0");

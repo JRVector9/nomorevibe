@@ -10,7 +10,6 @@ const ROOTS = ["app", "components", "lib", "scripts", "proxy.ts", "instrumentati
 const NEEDLES = [/repositoryMaintainerEmails/, /repository_maintainer_emails/, /maintainer-emails-admin/, /makers\/maintainer-emails["']/, /maintainer-email-schema/];
 const ALLOWED = new Set([
   "lib/db/maintainer-email-schema.ts",
-  "lib/db/schema.ts",
   "lib/domain/makers/maintainer-emails.ts",
   "lib/domain/makers/maintainer-emails-admin.ts",
   "lib/jobs/products/ai-level-refresh.ts",
@@ -31,6 +30,10 @@ describe("커밋 작성자 이메일 — 관리자 전용 경계", () => {
     expect(users.filter(path => !ALLOWED.has(path))).toEqual([]);
     // 허용 목록이 실제로 쓰이는지(이름이 바뀌면 경계가 헐거워진다)
     expect([...ALLOWED].filter(path => !users.includes(path))).toEqual([]);
+  });
+
+  it("표는 공용 schema 묶음(lib/db/schema.ts)에 넣지 않는다 — 모든 코드가 부르는 묶음이라 경계가 무너지고, CI 증분 tsc 기록도 깨져 4GB 안에 못 든다", () => {
+    expect(readFileSync("lib/db/schema.ts", "utf8")).not.toMatch(/maintainer-email/);
   });
 
   it("관리자 화면 부품은 브라우저 부품이 아니고, 읽기 모듈은 server-only 다", () => {

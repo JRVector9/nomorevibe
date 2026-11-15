@@ -1,7 +1,7 @@
 import "server-only";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { repositoryMaintainerEmails } from "@/lib/db/schema";
+import { repositoryMaintainerEmails } from "@/lib/db/maintainer-email-schema";
 import { aiLevelRepositoryKey } from "@/lib/domain/evidence/ai-level-store";
 
 /**
