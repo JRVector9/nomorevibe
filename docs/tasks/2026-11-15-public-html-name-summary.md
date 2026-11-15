@@ -104,9 +104,13 @@
    - 서명 키는 env에 두고, 값은 사람이 넣는다.
 3. 이름·요약 밖의 칸을 주는 공개 읽기 API(`/api/product-cards`, `/api/products/[slug]/details`·`/readme`·`/media`·`/links`·`/profile`·`/provenance` 등 공개 읽기)는 이 쿠키가 없거나 만료되었으면 401을 준다. 401을 받은 화면은 1로 돌아가 한 번만 다시 시도한다.
 4. 세션별 한도를 둔다. 예: 10분에 카드 600개·상세 60개. 처음 수치는 배포 뒤 로그를 보고 정한다. 지금의 봇 UA 403·cross-site 403·IP 한도 429는 그대로 둔다.
-5. 사람이 할 일:
-   - Cloudflare에서 Turnstile 위젯을 만든다(호스트 nomorevibe.com, 보이지 않는 형식).
-   - 사이트 키·비밀 키·세션 서명 키를 웹 앱(M3·mini) env에 넣는다.
+5. env 이름(고정): `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `PUBLIC_API_SESSION_SECRET`.
+   - 셋이 모두 있을 때만 관문이 켜진다. 하나라도 없으면 지금과 똑같이 동작한다. 그래서 PR B는 키 없이 먼저 배포할 수 있다.
+   - 사이트 키는 서버가 실행 중에 env에서 읽어 화면에 넘긴다. 웹 이미지는 CI에서 한 번 만들어 두 웹 앱이 함께 쓰므로 `NEXT_PUBLIC_*` 빌드 시 박기로는 값이 들어가지 않는다.
+   - 처음 켜지면 기록만(막을 요청을 세기만 함) 모드다. 막기 모드로 바꾸는 것은 재배포 없이 할 수 있게 한다.
+6. 사람이 할 일: [Cloudflare 등 사람 작업 정리](2026-11-15-cloudflare-person-steps.md)
+   - Cloudflare에서 Turnstile 위젯을 만든다(호스트 nomorevibe.com, Invisible).
+   - 키 두 개와 세션 서명 키를 웹 앱(web-m3·web-mini) env에 넣고 그 앱을 재배포한다.
    - 값은 대화·작업에 넣지 않는다.
 
 한계: 헤드리스 브라우저를 사람 속도로 돌리면 결국 긁힌다. 목표는 대량·고속 수집의 비용을 올리는 것이다. Turnstile 첫 확인에 걸리는 시간은 확인 전이다. 그동안 카드의 이름·요약은 이미 보이고 나머지 칸만 늦게 찬다.
