@@ -3,7 +3,7 @@
 import type { PublicTeaser } from "@/lib/domain/products/public-teaser";
 import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { useCardFill } from "./CardEnrich";
-import { CompactCardMarkup, PopularRowMarkup, ProjectCardMarkup } from "./markup";
+import { useMarkup } from "./markup-loader";
 import { SaveToggle } from "./SaveToggle";
 import { CompactCardTeaser, PopularRowTeaser, ProjectCardTeaser } from "./teaser-markup";
 
@@ -21,22 +21,25 @@ function useCtx() {
 export function TeaserProjectCard({ teaser, fillFrom, priority = false, headingLevel = 3, rank }: Common & { rank?: number }) {
   const ctx = useCtx();
   const fill = useCardFill(teaser.slug, fillFrom);
+  const markup = useMarkup();
   const save = <SaveToggle slug={teaser.slug} name={teaser.name} />;
-  if (fill) return <ProjectCardMarkup product={{ ...fill, slug: teaser.slug, name: teaser.name }} ctx={ctx} save={save} priority={priority} headingLevel={headingLevel} rank={rank} />;
-  return <ProjectCardTeaser teaser={teaser} ctx={ctx} save={save} pending={fill === undefined} headingLevel={headingLevel} rank={rank} />;
+  if (fill && markup) return <markup.ProjectCardMarkup product={{ ...fill, slug: teaser.slug, name: teaser.name }} ctx={ctx} save={save} priority={priority} headingLevel={headingLevel} rank={rank} />;
+  return <ProjectCardTeaser teaser={teaser} ctx={ctx} save={save} pending={fill === undefined || (fill !== null && !markup)} headingLevel={headingLevel} rank={rank} />;
 }
 
 export function TeaserCompactCard({ teaser, fillFrom, priority = false, headingLevel = 3, trailing }: Common & { trailing: "category" | "listed" }) {
   const ctx = useCtx();
   const fill = useCardFill(teaser.slug, fillFrom);
-  if (fill) return <CompactCardMarkup product={{ ...fill, slug: teaser.slug, name: teaser.name }} ctx={ctx} trailing={trailing} priority={priority} headingLevel={headingLevel} />;
-  return <CompactCardTeaser teaser={teaser} ctx={ctx} pending={fill === undefined} headingLevel={headingLevel} />;
+  const markup = useMarkup();
+  if (fill && markup) return <markup.CompactCardMarkup product={{ ...fill, slug: teaser.slug, name: teaser.name }} ctx={ctx} trailing={trailing} priority={priority} headingLevel={headingLevel} />;
+  return <CompactCardTeaser teaser={teaser} ctx={ctx} pending={fill === undefined || (fill !== null && !markup)} headingLevel={headingLevel} />;
 }
 
 export function TeaserPopularRow({ teaser, fillFrom, rank }: Common & { rank: number }) {
   const ctx = useCtx();
   const fill = useCardFill(teaser.slug, fillFrom);
+  const markup = useMarkup();
   const save = <SaveToggle slug={teaser.slug} name={teaser.name} />;
-  if (fill) return <PopularRowMarkup product={{ ...fill, slug: teaser.slug, name: teaser.name }} rank={rank} ctx={ctx} save={save} />;
-  return <PopularRowTeaser teaser={teaser} rank={rank} ctx={ctx} save={save} pending={fill === undefined} />;
+  if (fill && markup) return <markup.PopularRowMarkup product={{ ...fill, slug: teaser.slug, name: teaser.name }} rank={rank} ctx={ctx} save={save} />;
+  return <PopularRowTeaser teaser={teaser} rank={rank} ctx={ctx} save={save} pending={fill === undefined || (fill !== null && !markup)} />;
 }

@@ -77,7 +77,11 @@ export function HeroTaglineNotes({ slug }: { slug: string }) {
   const { hero, done } = useHero(slug);
   const locale = useLocale();
   const labels = useTranslations("labels");
-  if (!done) return <p className="card-intro-source m-0 text-[13px]"><FillLine width="9em" /></p>;
+  // 받기 전 자리 — 흔한 모양(원문 보기 한 줄 32px + 출처 줄)과 같은 높이로 둬 받은 뒤 아래가 밀리지 않게
+  if (!done) return <>
+    <p className="m-0 flex min-h-8 items-center text-[13px]"><FillLine width="4.5em" /></p>
+    <p className="card-intro-source"><FillLine width="9em" /></p>
+  </>;
   if (!hero) return null;
   const translated = locale === "ko" ? Boolean(hero.taglineKo?.trim()) : hero.translation?.translated === true;
   const pending = locale !== "ko" && (hero.translation?.pending ?? Boolean(hero.tagline.trim()));
@@ -120,7 +124,7 @@ export function HeroMetaSlot({ slug, followLabels }: { slug: string; followLabel
   const locale = useLocale();
   const now = useServerNow();
   const line = "flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[14px] text-fg-2 tabular-nums";
-  if (!done) return <p className={line} aria-busy="true"><FillLine width="18em" /></p>;
+  if (!done) return <p className={`${line} min-h-[18px]`} aria-busy="true"><FillLine width="18em" /></p>;
   if (!hero) return null;
   const maker = hero.follow?.maker && followLabels ? { ...followLabels.maker, aria: followLabels.maker.aria.replace("\u0000", hero.follow.maker.login) } : null;
   return (
@@ -144,7 +148,7 @@ export function HeroActionsSlot({ slug, name, followLabels }: { slug: string; na
   const t = useTranslations("detail");
   const locale = useLocale();
   if (!done) return <div className="mt-2 flex flex-wrap items-center gap-2" aria-busy="true">
-    {[136, 96, 72, 72].map((width) => <span key={width} aria-hidden="true" className="inline-block h-11 rounded-full bg-bg-soft" style={{ width }} />)}
+    {[136, 96, 72, 44].map((width, index) => <span key={index} aria-hidden="true" className="inline-block h-11 rounded-full bg-bg-soft" style={{ width }} />)}
   </div>;
   const installable = hero?.accessMode === "installable";
   return (
@@ -185,7 +189,8 @@ export function DetailIntroSlot({ slug }: { slug: string }) {
   const { data, done } = useDetailExtras(slug);
   const t = useTranslations("detail");
   const labels = useTranslations("labels");
-  if (!done) return <div aria-busy="true" className="h-[160px] motion-safe:animate-pulse rounded-[12px] bg-bg-soft" />;
+  // 소개·README 발췌 자리 — 실제 구획(소개 몇 줄 + README 상자)과 비슷한 높이로 잡아, 받기 전 짧은 본문 때문에 바닥글이 화면에 들었다 밀려나지 않게
+  if (!done) return <div aria-busy="true" className="h-[320px] motion-safe:animate-pulse rounded-[12px] bg-bg-soft" />;
   const intro = data?.intro;
   if (!intro) return null;
   const { text: description, descriptionTranslation: selected, profile, readmeExcerpt: excerpt, repo } = intro;

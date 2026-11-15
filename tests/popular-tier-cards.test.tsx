@@ -6,6 +6,12 @@ const { getPopularGroups } = vi.hoisted(() => ({ getPopularGroups: vi.fn() }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups }));
 // 개인 계정 거르기는 앱 라우터가 있어야 그린다 — 이 테스트는 구간 카드만 본다
 vi.mock("@/components/home/PopularFilter", () => ({ PopularFilter: () => null }));
+// 구간 수는 서버 HTML 에 싣지 않고 /api/browse-counts?part=tiers 로 받는다(2026-11-15) — 받은 값을 바꿔 끼운다
+const counts = vi.hoisted(() => ({ totals: { rising: 526, noticed: 331, popular: 293, large: 177 } as Record<string, number> | null, queries: [] as (string | null)[] }));
+vi.mock("@/components/home/browse-counts", async (original) => ({
+  ...await original<Record<string, unknown>>(),
+  useCountsQuery: (query: string | null) => { counts.queries.push(query); return counts.totals ? { totals: counts.totals } : undefined; },
+}));
 
 import { PopularTiers } from "@/components/home/PopularTiers";
 import { STAR_TIERS } from "@/lib/domain/products/stars";

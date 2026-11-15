@@ -2,7 +2,8 @@ import type { ResolvingMetadata } from "next";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadMarkup } from "@/components/cards/markup-loader";
 
 /**
  * 2026-10-08 점검 SEO-04(정식 주소)·A11Y-05(제목 단계)·A11Y-03(문장 안 링크)·UX-06(부제)·PERF-03(목록 첫 줄).
@@ -87,6 +88,9 @@ beforeEach(() => {
   mocks.countProducts.mockResolvedValue(4);
   mocks.getPublicList.mockResolvedValue(["a", "b", "c", "d"].map(product));
 });
+
+// 다 그린 카드 마크업은 첫 로드 JS 밖에서 받는다(markup-loader.ts) — 채운 모양을 보는 시험은 미리 받아 둔다
+beforeAll(async () => { await loadMarkup(); });
 
 describe("정식 주소 (SEO-04)", () => {
   it("보기 조건이 붙은 홈은 홈을 정식 주소로 — 레이아웃의 RSS 알림은 지우지 않는다", async () => {

@@ -8,7 +8,7 @@ import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { useCardList } from "./CardEnrich";
 import { FillLine } from "./fill-line";
-import { CompactCardMarkup, ProjectCardMarkup } from "./markup";
+import { useMarkup } from "./markup-loader";
 import { SaveToggle } from "./SaveToggle";
 
 /**
@@ -33,11 +33,12 @@ export function LazyProjectCards({ fillFrom, count, headingLevel = 3 }: { fillFr
   const t = useTranslations("labels");
   const now = useServerNow();
   const items = useCardList(fillFrom);
-  if (items === undefined) return <SkeletonCards count={count} />;
-  if (!items) return null;
+  const markup = useMarkup();
+  if (items === undefined || (items && !markup)) return <SkeletonCards count={count} />;
+  if (!items || !markup) return null;
   const ctx = { locale, t, now };
   return items.map((product) => (
-    <ProjectCardMarkup key={product.slug} product={product} ctx={ctx} headingLevel={headingLevel}
+    <markup.ProjectCardMarkup key={product.slug} product={product} ctx={ctx} headingLevel={headingLevel}
       save={<SaveToggle slug={product.slug} name={product.name} />} />
   ));
 }
@@ -48,9 +49,10 @@ export function LazyCompactCardsGrid({ fillFrom, count, trailing, headingLevel =
   const t = useTranslations("labels");
   const now = useServerNow();
   const items = useCardList(fillFrom);
-  if (items === undefined) return <SkeletonCards count={count} compact />;
-  if (!items) return null;
-  return items.map((product) => <CompactCardMarkup key={product.slug} product={product} ctx={{ locale, t, now }} trailing={trailing} headingLevel={headingLevel} />);
+  const markup = useMarkup();
+  if (items === undefined || (items && !markup)) return <SkeletonCards count={count} compact />;
+  if (!items || !markup) return null;
+  return items.map((product) => <markup.CompactCardMarkup key={product.slug} product={product} ctx={{ locale, t, now }} trailing={trailing} headingLevel={headingLevel} />);
 }
 
 /**

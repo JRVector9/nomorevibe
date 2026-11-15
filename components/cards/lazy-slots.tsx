@@ -17,7 +17,6 @@ export const LazyRankedPanelSlot = dynamic(() => import("./LazyCards").then((mod
 export const NotFoundRisingSlot = dynamic(() => import("./LazyCards").then((module) => module.NotFoundRising), { ssr: false });
 const LazyCompactCards = dynamic(() => import("./LazyCards").then((module) => module.LazyCompactCards),
   { ssr: false, loading: placeholder(120, "compact-grid") });
-const LazyPopularRows = dynamic(() => import("./LazyCards").then((module) => module.LazyPopularRows), { ssr: false });
 
 /** 화면 가까이 오면 true — 첫 화면 아래 구획은 그때 받는다(IntersectionObserver 가 없으면 바로) */
 export function useNearViewport<T extends Element>(): [React.RefObject<T | null>, boolean] {
@@ -61,8 +60,8 @@ export function LazyCompactRow({ id, title, note, more, list, trailing }: {
 }
 
 /** /popular 뒷줄 자리의 높이 어림 — 목록 한 줄은 커버(176px, 1200×630)와 위아래 여백, 카드는 넓은 화면 세 칸 한 줄 */
-const ROW_HEIGHT = 124;
-const CARD_ROW_HEIGHT = 340;
+const ROW_HEIGHT = 126;
+const CARD_ROW_HEIGHT = 360;
 
 /**
  * /popular 한 쪽의 뒷줄(2026-11-15 공개 HTML 줄이기 2차) — 서버는 앞 POPULAR_SERVER_ROWS 줄만 글자로 그리고,
@@ -75,5 +74,13 @@ export function LazyPopularRest({ fillFrom, skip, view, count, now }: { fillFrom
   const hold = view === "list"
     ? <li ref={ref} aria-hidden="true" aria-busy="true" style={{ minHeight }} />
     : <div ref={ref} aria-hidden="true" aria-busy="true" style={{ minHeight, gridColumn: "1 / -1" }} />;
-  return near ? <LazyPopularRows fillFrom={fillFrom} skip={skip} view={view} now={now} hold={hold} /> : hold;
+  // 줄 그리기 코드를 받는 동안에도 자리를 둔다 — next/dynamic 의 빈 대기 그림이면 자리가 접혔다 다시 펴져 아래가 밀렸다
+  const [Rows, setRows] = useState<typeof import("./LazyCards").LazyPopularRows | null>(null);
+  useEffect(() => {
+    if (!near || Rows) return;
+    let alive = true;
+    void import("./LazyCards").then((module) => { if (alive) setRows(() => module.LazyPopularRows); });
+    return () => { alive = false; };
+  }, [near, Rows]);
+  return near && Rows ? <Rows fillFrom={fillFrom} skip={skip} view={view} now={now} hold={hold} /> : hold;
 }

@@ -1,6 +1,7 @@
 import type { ResolvingMetadata } from "next";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadMarkup } from "@/components/cards/markup-loader";
 import type { PopularCountsResponse } from "@/app/api/browse-counts/route";
 import type { PopularFacets, PopularProduct } from "@/lib/domain/products/popular";
 
@@ -53,6 +54,8 @@ const fillsFor = (rows: PopularProduct[], first = 1) => new Map(rows.map((row, i
 async function render(params: Record<string, string> = {}) {
   return renderToStaticMarkup(await PopularPage({ searchParams: Promise.resolve(params) }));
 }
+
+beforeAll(async () => { await loadMarkup(); });
 
 beforeEach(() => {
   getPopularPage.mockReset().mockImplementation(async (_tier: string, _filters: unknown, _sort: string, at: number) => page({ page: at }));
@@ -166,18 +169,18 @@ describe("/popular 목록 보기 — 발견하기 부품으로(2026-10-11 시안
     // 뒷줄의 이름·주소는 서버 HTML 에 없다 — 받기 전 자리(aria-hidden)만 같은 <ol> 안에
     expect(html).not.toContain("Row 6");
     expect(html).not.toContain("/p/row-7");
-    expect(list).toMatch(/<li aria-hidden="true" aria-busy="true" style="min-height:248px"><\/li>$/);
+    expect(list).toMatch(/<li aria-hidden="true" aria-busy="true" style="min-height:252px"><\/li>$/);
     // 쪽 안내는 그 쪽 전체(1–7위)를 말한다
     expect(html).toContain("1–7위 / 1,234");
 
     const cards = await render({ tier: "rising", ai: "made", view: "cards" });
     expect(cards.match(/class="project-card"/g)).toHaveLength(5);
     expect(cards).not.toContain("Row 6");
-    expect(cards).toContain('<div aria-hidden="true" aria-busy="true" style="min-height:340px;grid-column:1 / -1"></div>');
+    expect(cards).toContain('<div aria-hidden="true" aria-busy="true" style="min-height:360px;grid-column:1 / -1"></div>');
 
     const second = await render({ tier: "rising", ai: "made", page: "2" });
     const frame = second.match(/<ol class="popular-list">([\s\S]*?)<\/ol>/)![1];
-    expect(frame).toBe('<li aria-hidden="true" aria-busy="true" style="min-height:868px"></li>');
+    expect(frame).toBe('<li aria-hidden="true" aria-busy="true" style="min-height:882px"></li>');
     expect(second).not.toMatch(/Row \d/);
     expect(second).not.toContain("/p/row-");
     expect(second).toContain("16–22위 / 1,234");

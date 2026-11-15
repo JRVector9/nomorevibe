@@ -10,7 +10,7 @@ import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { MAX_SLUGS } from "./CardEnrich";
 import { SkeletonCards } from "./LazyRest";
-import { ProjectCardMarkup } from "./markup";
+import { useMarkup } from "./markup-loader";
 import { SaveToggle } from "./SaveToggle";
 
 type Items = ProductCardsResponse["items"];
@@ -57,9 +57,10 @@ export function SavedOnlyGrid({ allHref, cardHeading = 3 }: {
     void loadSaved(slugs, locale).then((items) => { if (alive) setState({ key, items }); });
     return () => { alive = false; };
   }, [key, locale]);
+  const markup = useMarkup();
   const rows = state?.key === key ? state.items : undefined;
   const EmptyHeading = cardHeading === 2 ? "h2" : "h3";
-  if (rows === undefined) return <div className="projects-grid" aria-busy="true"><SkeletonCards count={Math.min(Math.max(saved.size, 3), HOME_FIRST_PAGE)} /></div>;
+  if (rows === undefined || (rows?.length && !markup)) return <div className="projects-grid" aria-busy="true"><SkeletonCards count={Math.min(Math.max(saved.size, 3), HOME_FIRST_PAGE)} /></div>;
   if (!rows || rows.length === 0) {
     return (
       <div className="projects-grid">
@@ -72,6 +73,7 @@ export function SavedOnlyGrid({ allHref, cardHeading = 3 }: {
       </div>
     );
   }
+  if (!markup) return null;
   const visible = rows.slice(0, limit);
   const ctx = { locale, t: labels, now };
   return (
@@ -81,7 +83,7 @@ export function SavedOnlyGrid({ allHref, cardHeading = 3 }: {
         <Link prefetch={false} className="text-button" href={allHref}>{t("saved.full")}</Link>
       </div>
       <div className="projects-grid" id="project-grid" role="tabpanel" aria-label={t("home.projects")}>
-        {visible.map((product) => <ProjectCardMarkup key={product.slug} product={product} ctx={ctx} headingLevel={cardHeading}
+        {visible.map((product) => <markup.ProjectCardMarkup key={product.slug} product={product} ctx={ctx} headingLevel={cardHeading}
           save={<SaveToggle slug={product.slug} name={product.name} />} />)}
       </div>
       {limit < rows.length && (
