@@ -53,6 +53,7 @@ export type RuntimeSettings = Readonly<{
    * 정리 잡(db-retention)이 틱마다 행에서 바로 읽는다(lib/llm/capacity-retention.ts).
    */
   capacity: { unknownHoldSeconds: number; ledgerRetentionDays: number };
+  publicApi: { mode: "observe" | "enforce" };
 }>;
 
 export const RUNTIME_SETTINGS_VERSION = 1 as const;
@@ -65,7 +66,7 @@ export const BUDGET_CALL_MARGIN_MS = 2_000;
 /** 이보다 좁은 여유는 저장은 되지만 경고한다 */
 export const BUDGET_THIN_MARGIN_MS = 15_000;
 
-export const RUNTIME_SETTING_GROUPS = ["routes", "translation", "jobs", "budgets", "assignments", "capacity", "devices"] as const;
+export const RUNTIME_SETTING_GROUPS = ["routes", "translation", "jobs", "budgets", "assignments", "capacity", "publicApi", "devices"] as const;
 export type RuntimeSettingGroup = (typeof RUNTIME_SETTING_GROUPS)[number];
 
 function deepFreeze<T>(value: T): T {
@@ -127,6 +128,7 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
   },
   // 배정 표 읽기(PR 3b-E) — 기본 꺼짐: 3b-B 배포 상태(설정으로 고른다)와 같다
   assignments: { tableReads: "off" },
+  publicApi: { mode: "observe" },
   // 결과 미확정 점유(2026-11-10) — 기본 600초: 가장 긴 호출 상한(product-translate 300초)의 두 배, 45~60초 경로의 열 배. 근거는 lib/llm/capacity-unknown-hold.ts
   capacity: { unknownHoldSeconds: DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS, ledgerRetentionDays: DEFAULT_MODEL_CAPACITY_LEDGER_RETENTION_DAYS },
 });
@@ -201,6 +203,7 @@ const boundsSchema = z.object({
   budgets: z.record(z.string(), jobBudgetSchema),
   assignments: assignmentsSchema,
   capacity: capacitySettingsSchema,
+  publicApi: z.object({ mode: z.enum(["observe", "enforce"]) }).strict(),
 }).strict();
 /** 유효(병합된) 문서를 검사한다: 범위 + 교차 불변식(코드 기본 등록부 기준). 저장 경로는 resolveRuntimeSettings(…, { models }) 로 덮어쓴 등록부까지 본다. */
 export const runtimeSettingsSchema = boundsSchema.superRefine((value, context) => {
@@ -253,7 +256,7 @@ function crossCheckIssues(value: RuntimeSettingsDocument | RuntimeSettings, mode
   const issues: CrossIssue[] = [];
   const known = knownRoutes(models);
   const settings: RuntimeSettings = { routes: value.routes, translation: value.translation, jobs: value.jobs, budgets: value.budgets, assignments: value.assignments,
-    capacity: value.capacity };
+    capacity: value.capacity, publicApi: value.publicApi };
   for (const part of ["limits", "timeouts", "deadlines"] as const)
     for (const route of Object.keys(settings.routes[part])) if (!known.has(route)) issues.push({ message: `unknown_route:${route}`, path: ["routes", part, route] });
   for (const [job, knobs] of Object.entries(settings.jobs)) {
@@ -417,7 +420,14 @@ export function resolveRuntimeSettings(stored: unknown, options: { models?: read
     if (parsed.success) capacity[key as keyof typeof capacitySettingsSchema.shape] = parsed.data; else issues.push(`runtime_settings_invalid:capacity.${key}`);
   }
 
-  const settings: RuntimeSettings = { routes, translation: { product: product as ProductTranslationPolicy }, jobs, budgets, assignments, capacity };
+  const publicApi: RuntimeSettings["publicApi"] = { ...defaults.publicApi };
+  for (const [key, value] of Object.entries(groupOf(doc, "publicApi", issues))) {
+    if (value === null) continue;
+    if (key !== "mode") { issues.push(`unknown_setting:publicApi.${key}`); continue; }
+    if (value === "observe" || value === "enforce") publicApi.mode = value;
+    else issues.push("runtime_settings_invalid:publicApi.mode");
+  }
+  const settings: RuntimeSettings = { routes, translation: { product: product as ProductTranslationPolicy }, jobs, budgets, assignments, capacity, publicApi };
   const bounds = boundsSchema.safeParse({ version: RUNTIME_SETTINGS_VERSION, ...settings });
   if (!bounds.success) for (const issue of bounds.error.issues)
     issues.push(issue.code === "custom" ? issue.message : `runtime_settings_invalid:${issue.path.map(String).join(".")}`);
@@ -482,7 +492,7 @@ const KNOB_LABELS: Record<JobKnobName, string> = { batch: "묶음", batchChars: 
   scanBatch: "틱마다 견줄 제품", dailyCap: "하루 올리기 상한", askBatch: "감사 틱마다 묻기", minSimilarity: "같다고 볼 유사도(%)", yieldHours: "1차 양보 상한(시간)",
   intervalMs: "주기(ms)" };
 export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산",
-  assignments: "모델 배정 읽기", capacity: "모델 장부 점유", devices: "장비 한도" };
+  assignments: "모델 배정 읽기", capacity: "모델 장부 점유", publicApi: "공개 API 관문", devices: "장비 한도" };
 /** 열거 칸의 값 이름 — 폼의 선택지와 감사 줄이 같은 말을 쓴다 */
 export const ASSIGNMENT_TABLE_READS_LABELS: Readonly<Record<AssignmentTableReads, string>> = { off: "끔 — 설정(legacy)으로 고른다", on: "켬 — 배정 표(live 행)로 고른다" };
 
@@ -500,6 +510,7 @@ export const RUNTIME_SETTING_LABELS: Readonly<Record<string, string>> = Object.f
     ...JOB_KNOB_NAMES.map(knob => [`jobs.${job}.${knob}`, `${jobLabel(job)} ${KNOB_LABELS[knob]}`]),
     [`budgets.${job}`, `${jobLabel(job)} 틱 예산(ms)`],
   ]),
+  ["publicApi.mode", "공개 API 관문 모드"],
   ["assignments.tableReads", "배정 표 읽기"],
   ["capacity.unknownHoldSeconds", "결과 미확정 점유 유지(초)"],
   ["capacity.ledgerRetentionDays", "끝난 모델 장부 보관(일)"],

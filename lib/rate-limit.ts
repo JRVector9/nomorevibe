@@ -20,17 +20,18 @@ export async function rateLimit(key: string, limit: number, windowMs: number): P
 export type RateLimitResult = { allowed: boolean; count: number; retryAfterSeconds: number };
 
 /** rateLimit 과 같은 한 문장 — 막혔을 때 Retry-After 로 알려 줄 남은 창 길이(초)를 함께 돌려준다 */
-export async function rateLimitWindow(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
+export async function rateLimitWindow(key: string, limit: number, windowMs: number, cost = 1): Promise<RateLimitResult> {
   const window = sql.raw(`interval '${Math.max(1, Math.round(windowMs / 1000))} seconds'`);
 
+  const increment = Math.max(1, Math.min(600, Math.floor(cost) || 1));
   const [row] = await db
     .insert(rateLimits)
-    .values({ key, count: 1, resetAt: sql`now() + ${window}` })
+    .values({ key, count: increment, resetAt: sql`now() + ${window}` })
     .onConflictDoUpdate({
       target: rateLimits.key,
       set: {
         // 창이 지났으면 1부터 다시 센다
-        count: sql`case when ${rateLimits.resetAt} < now() then 1 else ${rateLimits.count} + 1 end`,
+        count: sql`case when ${rateLimits.resetAt} < now() then ${increment} else ${rateLimits.count} + ${increment} end`,
         resetAt: sql`case when ${rateLimits.resetAt} < now() then now() + ${window} else ${rateLimits.resetAt} end`,
       },
     })

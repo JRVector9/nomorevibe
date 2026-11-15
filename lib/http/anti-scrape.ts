@@ -1,3 +1,4 @@
+import { guardApiSession } from "@/lib/anti-scrape/gate";
 import { onPrimary } from "@/lib/db";
 import { blockRateLimitKey, publicClientIp, rateLimitWindow } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
@@ -33,7 +34,7 @@ export const apiReadKey = (ip: string) => `api-read:${ip}`;
 export const searchKey = (ip: string) => `search:${ip}`;
 export const goKey = (ip: string) => `go:${ip}`;
 
-type GuardRequest = Pick<Request, "headers">;
+type GuardRequest = Pick<Request, "headers"> & Partial<Pick<Request, "url">>;
 
 function refused(): Response {
   return Response.json({
@@ -63,7 +64,9 @@ export async function guardPublicApiRead(request: GuardRequest, route: string): 
     logger.info("anti_scrape.cross_site_refused", { route });
     return refused();
   }
-  return limitByIp(request, route, apiReadKey, API_READ_LIMIT, API_READ_WINDOW_MS);
+  const limited = await limitByIp(request, route, apiReadKey, API_READ_LIMIT, API_READ_WINDOW_MS);
+  if (limited) return limited;
+  return route === "session" ? null : guardApiSession(request, route);
 }
 
 /** 검색 경로 한도 — 화면이라 UA 로 거절하지 않는다(검색·답변 봇은 화면을 본다) */

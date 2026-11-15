@@ -42,6 +42,14 @@ describe("rateLimitWindow / blockRateLimitKey", () => {
     expect(third.retryAfterSeconds).toBeLessThanOrEqual(60);
   });
 
+  it("카드 묶음 비용을 원자적으로 누적하고 창 만료 후 묶음 크기로 시작", async () => {
+    const results = await Promise.all(Array.from({ length: 11 }, () => rateLimitWindow("t:cards", 600, 600_000, 60)));
+    expect(results.filter(result => result.allowed)).toHaveLength(10);
+    expect(Math.max(...results.map(result => result.count))).toBe(660);
+    await db.insert(rateLimits).values({ key: "t:batch-expired", count: 999, resetAt: new Date(Date.now() - 1000) });
+    expect(await rateLimitWindow("t:batch-expired", 600, 600_000, 60)).toMatchObject({ allowed: true, count: 60 });
+  });
+
   it("지난 창은 1 부터 다시 센다", async () => {
     await db.insert(rateLimits).values({ key: "t:expired", count: 99, resetAt: new Date(Date.now() - 1_000) });
     expect(await rateLimitWindow("t:expired", 2, 60_000)).toMatchObject({ allowed: true, count: 1 });
