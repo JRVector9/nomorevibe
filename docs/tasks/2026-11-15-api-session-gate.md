@@ -9,8 +9,9 @@
 - [x] 기존 DB 실시간 설정에 observe/enforce 모드 및 감사 저장 CLI
 - [x] 범위 단위·DB 회귀 및 headless 실제 세션→카드 API 확인
 - [x] 배포 scope·정적 검사·의미 단위 커밋 (push·CI는 PR 상태로 확인)
-- [ ] ready 전환 및 최종 head 필수 check 성공
-- [ ] 최종 보고함 기록
+- [x] ready 전환 및 필수 CI 실제 실행·실패 원인 확인
+- [ ] (막힘·사람) 필수 check 성공 — GitHub Billing & plans 결제/사용 한도 문제로 잡 시작 자체 거절
+- [x] 검증·한계 보고 준비 및 결재함에 CI 복구 요청 (최종 보고는 PR 본문·보고함 참조)
 
 ## 선택 및 경계
 
@@ -44,3 +45,11 @@
 - `npm run deploy -- scope --base 2112866428a851e6a87fff12883c192b943170d4 --sha <정확한 커밋 SHA>`: trusted=true, full, 18앱 선택. 계획/실행 없음. 마이그레이션 0.
 - 화면 컴포넌트·기존 공개 API 응답 본문 변경 0. PR A와 공통 수정 예정 파일에 직접 변경 없음. 공통 관문 호출 및 신규 공개 경로 등록 규약은 위 경계 참조.
 - 운영 키 입력·Cloudflare 위젯 생성·차단 전환·배포·병합은 수행하지 않음. 운영 통과율·지연·발급 한도 수치는 미측정이며 사람 설정/후속 배포 뒤에만 측정 가능.
+
+## 남은 것 / 차단 근거
+
+- PR #965는 ready, OPEN이며 병합·배포하지 않았다.
+- ready 이벤트 CI 실행 [43723835054](https://github.com/JRVector9/nomorevibe/actions/runs/43723835054), 코드 동일 head 3f0582fa4fefb5b9f4aaf11b61955a0bb952fd68: scope·필수 check FAILURE, 실행 step 0. 타입·린트·unit·통합·빌드 SKIPPED. 로컬 통과를 CI 통과로 바꿔 적지 않음.
+- GitHub annotation 원문: “The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings”.
+- 사람 결재함에 Billing & plans 복구 요청을 올렸다. 공개 상태 조회는 PRIVATE였으며 임의 공개 전환·결제·사용 한도 변경·CI 우회는 하지 않았다.
+- 사람이 복구한 뒤 이 PR의 최종 머리 CI를 재실행해 `gh pr view 965 --json headRefOid,statusCheckRollup`에서 필수 check 성공을 확인해야 완료다. 이 문서 추가 뒤의 최종 머리도 별도로 조회해 PR 본문·보고함에 남긴다.
