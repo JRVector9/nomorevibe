@@ -105,8 +105,11 @@ jobs:
       - run: npx next typegen
       - run: npx tsc --noEmit
         # The full schema/type graph exceeds Node 24's default 2 GiB heap on a cache miss.
+        # 2026-11-15: a full check of main needs ~4.8 GB on Node 24 (--extendedDiagnostics), and the newest main
+        # tsbuildinfo cache can lag main by many files, so 4 GiB OOMed on PR #959 while #957 squeaked through.
+        # ubuntu-latest has 16 GB; 6 GiB keeps headroom without weakening the check.
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=6144
       - run: npm run check:i18n
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
