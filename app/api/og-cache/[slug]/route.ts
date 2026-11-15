@@ -3,6 +3,7 @@ import { getOgImage } from "@/lib/domain/products/repository";
 import { VariantCache, variantSize } from "@/lib/domain/products/og-variants";
 import { withRoute } from "@/lib/http/handler";
 import { logger } from "@/lib/observability/logger";
+import { OgImageUnavailableError } from "@/lib/storage/og-store";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -14,7 +15,7 @@ const VARIANT_CACHE = "public, max-age=3600, s-maxage=86400, stale-while-revalid
 const ogTag = (slug: string) => `og-${slug}`;
 
 /**
- * 등록 시 우리 저장소에 복사해둔 OG 이미지를 서빙.
+ * 등록 시 우리 저장소에 복사해둔 OG 이미지를 서빙(버킷 먼저, 없으면 DB — repository.getOgImage).
  * `<slug>`는 SNS 호환 JPEG 미리보기, `<slug>.webp?size=<n>`은 화면용 WebP 사본이다.
  * 어느 주소·쿼리도 원본이나 다중 프레임을 반환하지 않는다. 최대 1200×630, 512KiB.
  */
@@ -36,7 +37,17 @@ export const GET = withRoute("og.serve", async (req: Request, { params }: Params
   };
   const hit = variants.get(key);
   if (hit) return new NextResponse(new Uint8Array(hit), { headers });
-  const cached = await getOgImage(slug);
+  let cached: Awaited<ReturnType<typeof getOgImage>>;
+  try {
+    cached = await getOgImage(slug);
+  } catch (error) {
+    // 버킷이 답하지 않고 DB 에도 없다 — 있는 그림일 수 있어 404 를 엣지에 남기지 않는다
+    if (!(error instanceof OgImageUnavailableError)) throw error;
+    return NextResponse.json({ error: "이미지를 잠시 불러올 수 없습니다" }, {
+      status: 503,
+      headers: { "cache-control": "private, no-store", "Cloudflare-CDN-Cache-Control": "no-store", "retry-after": "30" },
+    });
+  }
   if (!cached) {
     return NextResponse.json({ error: "이미지가 없습니다" }, { status: 404 });
   }

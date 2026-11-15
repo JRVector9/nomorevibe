@@ -1,11 +1,12 @@
-import { and, asc, inArray, isNull, like, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { cdnPurges, operationsObservations } from "@/lib/db/schema";
+import { cdnPurges, operationsObservations, products } from "@/lib/db/schema";
 import { withJobLeaseWrite } from "@/lib/jobs/control";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import {
-  DETAIL_REFRESH_PURGES, HTML_TAG, PURGE_BATCH, purgeByTags, purgeConfig, purgesLists, purgeTags, type PurgeConfig,
+  DETAIL_REFRESH_PURGES, HTML_TAG, OG_DELETE_PURGE, PURGE_BATCH, purgeByTags, purgeConfig, purgesLists, purgeTags, type PurgeConfig,
 } from "@/lib/cdn/purge";
+import { OgStoreError, ogObjectStore, type OgObjectStore } from "@/lib/storage/og-store";
 
 /**
  * 원 서버가 아직 옛 내용을 들고 있으면 지운 자리가 곧 다시 채워진다(진행 중이던 백그라운드 갱신 등).
@@ -73,29 +74,84 @@ async function purgeHtmlAfterWebRelease(ctx: JobContext<CdnPurgeCursor>, config:
   return { ...cursor, html: first || !marked ? { release, purgedAt: at } : { ...marked, confirmedAt: at } };
 }
 
+/** 한 틱에 버킷에서 지우는 그림 수 — 버킷이 답하지 않아도 틱이 길어지지 않게(한 건 기한 5초, 첫 실패에서 멈춘다) */
+export const OG_DELETE_BATCH = 10;
+
+type DueRow = { id: number; slug: string; reason: string; purgedAt: Date | null };
+
+/**
+ * 버킷 그림 지우기 줄(og_delete, lib/cdn/purge.ts) — 아직 첫 지우기 전인 줄을 버킷에서 지우고, 지운 줄만 이번 Cloudflare 요청에 넣는다.
+ * 버킷에서 지우기 전에 태그를 지우면 원 서버가 버킷의 그림을 엣지에 다시 채운다. 실패하면 줄을 그대로 두고(시도 수·마지막 오류) 다음 틱에 다시 한다 —
+ * 이번 틱의 남은 줄은 건드리지 않는다(버킷이 죽었으면 줄마다 5초를 쓰지 않게). 이 프로세스에 버킷 설정이 없으면 지운 척하지 않고 실패로 남긴다.
+ * 줄을 적은 뒤 같은 slug 를 새 제품이 얻었거나(메이커 삭제 뒤 재사용) 그 제품이 다시 공개됐으면(차단 해제) 지금 버킷의 그림은 지울 것이 아니다 —
+ * 버킷은 건드리지 않고 태그만 지운다.
+ */
+async function deleteStoredOgImages(ctx: JobContext<CdnPurgeCursor>, store: OgObjectStore | null): Promise<DueRow[]> {
+  const rows = await db.select({ id: cdnPurges.id, slug: cdnPurges.slug, reason: cdnPurges.reason, purgedAt: cdnPurges.purgedAt })
+    .from(cdnPurges)
+    .where(and(eq(cdnPurges.reason, OG_DELETE_PURGE), isNull(cdnPurges.purgedAt), isNull(cdnPurges.confirmedAt)))
+    .orderBy(asc(cdnPurges.id))
+    .limit(OG_DELETE_BATCH);
+  if (rows.length === 0) return [];
+  const fail = async (ids: number[], error: string) => {
+    await withJobLeaseWrite(ctx.lease, (tx) => tx.update(cdnPurges)
+      .set({ attempts: sql`${cdnPurges.attempts} + 1`, lastError: error })
+      .where(inArray(cdnPurges.id, ids)));
+  };
+  if (!store) {
+    await fail(rows.map((row) => row.id), "og_store_unconfigured");
+    ctx.log("cdn_purge.og_delete_unconfigured", { pending: rows.length });
+    return [];
+  }
+  const kept = new Set((await db.select({ id: cdnPurges.id }).from(cdnPurges)
+    .innerJoin(products, and(eq(products.slug, cdnPurges.slug),
+      sql`(${products.createdAt} > ${cdnPurges.createdAt} or ${products.status} in ('seeded', 'verified'))`))
+    .where(inArray(cdnPurges.id, rows.map((row) => row.id)))).map((row) => row.id));
+  const ready: DueRow[] = [];
+  for (const row of rows) {
+    if (!kept.has(row.id)) {
+      try {
+        await store.delete(row.slug);
+      } catch (error) {
+        const message = error instanceof OgStoreError ? error.message : "og_store_delete_failed";
+        await fail([row.id], message);
+        ctx.log("cdn_purge.og_delete_failed", { slug: row.slug, error: message, pending: rows.length - ready.length });
+        break;
+      }
+    }
+    ready.push(row);
+  }
+  if (kept.size) ctx.log("cdn_purge.og_delete_kept", { slugs: rows.filter((row) => kept.has(row.id)).map((row) => row.slug) });
+  return ready;
+}
+
 /**
  * 내려간 제품을 Cloudflare 에서 지운다 — DB 트리거가 적은 cdn_purges 를 틱마다 한 요청으로 모아 보낸다.
  * 사람이 고친 제품의 상세(edited·status, lib/cdn/detail-purge.ts)도 같은 줄로 지우되, 그런 줄뿐이면 목록은 지우지 않는다.
  * 실패하면 행을 그대로 두고 다음 틱에 다시 보낸다(시도 수·마지막 오류만 남긴다). 설정이 없으면 쌓아만 둔다.
  * 웹 릴리스가 바뀌었으면 먼저 옛 HTML 을 지운다(위). 한 틱의 지우기 요청은 많아야 둘이다(Free: 계정 분당 5회).
+ * 버킷 그림 지우기 줄(og_delete)은 버킷에서 지운 것만 같은 요청에 넣는다(위 deleteStoredOgImages).
  */
 export async function purgeRemovedProducts(
   ctx: JobContext<CdnPurgeCursor>,
-  deps: { config?: PurgeConfig | null; fetch?: typeof fetch } = {},
+  deps: { config?: PurgeConfig | null; fetch?: typeof fetch; store?: OgObjectStore | null } = {},
 ): Promise<JobOutcome<CdnPurgeCursor>> {
   // 커서를 늘 돌려준다 — done 만 돌려주면 러너가 커서를 비워 지운 릴리스를 잊는다(lib/jobs/runner.ts)
   let cursor: CdnPurgeCursor = ctx.cursor ?? {};
   const config = deps.config === undefined ? purgeConfig() : deps.config;
   if (config) cursor = await purgeHtmlAfterWebRelease(ctx, config, deps.fetch, cursor);
 
-  const due = await db.select({ id: cdnPurges.id, slug: cdnPurges.slug, reason: cdnPurges.reason, purgedAt: cdnPurges.purgedAt })
+  const stored = await deleteStoredOgImages(ctx, deps.store === undefined ? ogObjectStore() : deps.store);
+  const due: DueRow[] = [...stored, ...await db.select({ id: cdnPurges.id, slug: cdnPurges.slug, reason: cdnPurges.reason, purgedAt: cdnPurges.purgedAt })
     .from(cdnPurges)
     .where(and(isNull(cdnPurges.confirmedAt), or(
       isNull(cdnPurges.purgedAt),
       sql`${cdnPurges.purgedAt} < now() - ${CONFIRM_AFTER_SECONDS} * interval '1 second'`,
-    )))
+    ),
+    // 버킷에서 아직 못 지운 그림 줄은 위에서만 고른다(지운 것만 태그를 지운다)
+    sql`not (${cdnPurges.reason} = ${OG_DELETE_PURGE} and ${cdnPurges.purgedAt} is null)`))
     .orderBy(PRIORITY, asc(cdnPurges.id))
-    .limit(PURGE_BATCH);
+    .limit(PURGE_BATCH - stored.length)];
   if (due.length === 0) return { done: true, cursor };
 
   if (!config) {
@@ -120,6 +176,6 @@ export async function purgeRemovedProducts(
     if (first.length) await tx.update(cdnPurges).set({ purgedAt: sql`now()`, lastError: null }).where(inArray(cdnPurges.id, first));
     if (again.length) await tx.update(cdnPurges).set({ confirmedAt: sql`now()`, lastError: null }).where(inArray(cdnPurges.id, again));
   });
-  ctx.log("cdn_purge.done", { purged: first.length, confirmed: again.length });
+  ctx.log("cdn_purge.done", { purged: first.length, confirmed: again.length, ...(stored.length ? { ogDeleted: stored.length } : {}) });
   return { done: true, cursor };
 }

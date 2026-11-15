@@ -2,12 +2,14 @@ import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { safeFetch, readBodyCapped, type FetchMode } from "@/lib/net/fetch";
 import * as repo from "./repository";
 import type { JobLease } from "@/lib/jobs/control";
+import { OgStoreError } from "@/lib/storage/og-store";
+import { logger } from "@/lib/observability/logger";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 /**
- * og:image를 우리 저장소(DB)에 복사한다.
+ * og:image를 우리 저장소(버킷, 꺼져 있으면 DB — repository.putOgImage)에 복사한다.
  * 핫링크하지 않는 이유: 상대 서버 장애 시 목록이 깨지고, 이미지가 사후에 바꿔치기될 수 있다.
  * safeFetch를 쓰므로 등록자가 og:image에 내부망 주소를 심어도 차단된다.
  *
@@ -34,6 +36,8 @@ export async function cacheOgImage(imageUrl: string, slug: string, mode: FetchMo
     return `/api/og-cache/${slug}`;
   } catch (error) {
     if (error instanceof HttpOriginPermitError) throw error;
+    // 버킷 실패는 이유만 남긴다(동작·HTTP 상태). 그림 없이 두면 썸네일 잡이 나중에 채운다
+    if (error instanceof OgStoreError) logger.warn("og.cache_store_failed", { slug, error: error.message });
     return null;
   }
 }

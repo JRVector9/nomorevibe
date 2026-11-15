@@ -35,9 +35,17 @@ export const DETAIL_REFRESH_PURGES: ReadonlySet<string> = new Set([DETAIL_EDIT_P
 /** 모든 HTML·RSC 사본의 태그(next.config.ts) — 웹 릴리스가 바뀌면 한 번 지운다(lib/jobs/products/cdn-purge.ts) */
 export const HTML_TAG = "html";
 
-/** 이 줄들을 지우며 목록도 지워야 하는가 — 상세만 새로 받는 줄뿐이면 아니다 */
+/**
+ * 버킷(OG_STORE_*)의 그림을 지울 줄(2026-11-15) — 내려달라는 요청으로 내리거나 메이커가 지운 제품. 같은 트랜잭션에서 DB 사본과 함께 적고,
+ * 발행 워커(cdn-purge)가 버킷에서 지운 뒤에야 og-·p- 태그를 지운다(먼저 지우면 원 서버가 버킷의 그림을 엣지에 다시 채운다).
+ * 버킷이 실패하면 줄이 남아 틱마다 다시 하고, 10분이 지나면 관리자 상태 화면의 「CDN 캐시가 지워지지 않았습니다」에 센다.
+ * 목록에서 빠지는 일이 아니다 — 팔로 알림이 읽지 않고(lib/jobs/me/notifications.ts), 이 줄만으로는 목록(lists)을 지우지 않는다.
+ */
+export const OG_DELETE_PURGE = "og_delete";
+
+/** 이 줄들을 지우며 목록도 지워야 하는가 — 상세만 새로 받는 줄·그림 지우기 줄뿐이면 아니다 */
 export function purgesLists(reasons: readonly string[]): boolean {
-  return reasons.some((reason) => !DETAIL_REFRESH_PURGES.has(reason));
+  return reasons.some((reason) => !DETAIL_REFRESH_PURGES.has(reason) && reason !== OG_DELETE_PURGE);
 }
 
 /**

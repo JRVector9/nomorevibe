@@ -8,6 +8,7 @@ import { type Result, ok, fail } from "./errors";
 import { isUnclaimed } from "./view";
 import { lockProductGeneration } from "./generation";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
+import { queueOgObjectDelete } from "@/lib/cdn/og-object-delete";
 import * as repo from "./repository";
 import { isDismissReason, takedownReasonText, type DismissReason, type TakedownEntry, type TakedownKind, type TakedownSummary } from "./takedown-view";
 
@@ -245,6 +246,8 @@ export async function resolveTakedown(
       const banned = await repo.setStatusWithAudit({ id: product.id, slug, status: "banned", action: "admin.product.ban" }, tx);
       if (!banned) return fail({ kind: "not_found" });
       await tx.delete(ogImages).where(eq(ogImages.slug, slug));
+      // 버킷의 그림도 — 같은 커밋의 줄을 발행 워커가 버킷에서 지운 뒤 Cloudflare 를 지운다(실패하면 남아 다시 한다)
+      await queueOgObjectDelete(tx, slug);
     }
 
     const dismissReason = action === "dismiss" ? resolution.dismissReason ?? null : null;
