@@ -38,8 +38,9 @@ export const saveRuntimeSettingsGroup = webWriteAction(async function saveRuntim
     const result = await saveRuntimeSettings(parsed.patch, admin.login, { expectedRevision, group });
     if (!result.ok) return { issues: result.issues.map(runtimeSettingsIssueMessage) };
     for (const path of AFFECTED_PATHS) revalidatePath(path);
-    // 모델 장부 점유(capacity)는 입장 TX 가 행을 바로 읽는다 — 30초 스냅숏을 기다리지 않는다
-    const when = group === "capacity" ? "다음 모델 입장부터 씁니다" : "각 워커는 30초 안에 다음 틱부터 씁니다";
+    // 모델 장부 점유(capacity)는 입장 TX 가 행을 바로 읽는다 — 30초 스냅숏을 기다리지 않는다. 장부 보관 일수는 정리 잡이 틱마다 행에서 읽는다
+    const when = group !== "capacity" ? "각 워커는 30초 안에 다음 틱부터 씁니다"
+      : parsed.changed.every(path => path === "capacity.ledgerRetentionDays") ? "다음 보관 정리 틱(한 시간 안)부터 씁니다" : "다음 모델 입장부터 씁니다";
     return { ok: true, message: `저장했습니다(판 ${shortRuntimeSettingsVersion(result.version)}, revision ${result.revision}). ${when}.` };
   } catch (error) {
     return { issues: [runtimeSettingsIssueMessage(error instanceof Error ? error.message : "저장하지 못했습니다. 새로고침해 현재 상태를 확인해주세요.")] };
