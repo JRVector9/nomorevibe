@@ -87,6 +87,24 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getSeasonRanking,
 }));
 
+/**
+ * 2026-11-15 공개 HTML 이름·요약만 — 공개 수·분야별 수·결과 수는 화면 JS 가 /api/browse-counts 로, 첫 쪽 뒤 카드는 /api/product-cards?list=home 으로 받는다.
+ * 받은 수를 바꿔 끼우고(기본은 받는 중), 뒷카드 목록 주소 값을 모은다. 그 API 의 읽기는 tests/browse-counts-api.test.ts·tests/product-cards-lists-api.test.ts 가 본다.
+ */
+const remote = vi.hoisted(() => ({
+  counts: undefined as { total: number; counts: Record<string, number>; resultCount: number } | null | undefined,
+  countQueries: [] as (string | null)[],
+  lists: [] as (string | null)[],
+}));
+vi.mock("@/components/home/browse-counts", async (original) => ({
+  ...await original<typeof import("@/components/home/browse-counts")>(),
+  useBrowseCounts: (query: string | null) => { remote.countQueries.push(query); return query === null ? undefined : remote.counts; },
+}));
+vi.mock("@/components/cards/CardEnrich", async (original) => ({
+  ...await original<typeof import("@/components/cards/CardEnrich")>(),
+  useCardList: (source: string | null) => { remote.lists.push(source); return undefined; },
+}));
+
 import HomePage, { HomeContent, generateMetadata, needsUnclaimedFill, searchSuggestions } from "@/app/(public)/[locale]/(content)/page";
 
 const season: SeasonSummary = {
@@ -181,6 +199,9 @@ const renderScreen = render;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  remote.counts = undefined;
+  remote.countQueries.length = 0;
+  remote.lists.length = 0;
   getCrawlSettings.mockResolvedValue({ agentEvidence: { displayObservedFacts: true } });
   getCurrentSeason.mockResolvedValue(season);
   getUnclaimedList.mockResolvedValue([]);
@@ -254,14 +275,19 @@ describe("미클레임 구획을 붙이는 기준", () => {
 
     expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ sort: "recent", aiLevels: [1, 2, 3], repoChecked: undefined }));
     expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], aiLevels: [1, 2, 3], repoChecked: undefined }));
-    expect(categoryCounts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], aiLevels: [1, 2, 3], repoChecked: undefined }));
+    // 분야 알약 수(현재 목록 자격의 분야별 수)는 서버가 세지 않는다 — /api/browse-counts 가 같은 조건으로 센다. 서버는 알약 차례용 전체 수만
+    expect(categoryCounts.mock.calls).toEqual([[{ statuses: ["verified", "seeded"], excludeDown: true }]]);
     expect(getStarGrowthPage).toHaveBeenCalledOnce();
     expect(getSeasonRanking).not.toHaveBeenCalled();
     expect(getCurrentSeason).not.toHaveBeenCalled();
     expect(getUnclaimedList).not.toHaveBeenCalled();
     expect(html).toContain("rising-one");
     expect(html).toContain("ai-one");
-    expect(html).toContain("AI로 제작 25개");
+    // 결과 수는 서버 HTML 에 없다 — 받는 동안 글자 없는 자리
+    expect(html).not.toContain("AI로 제작 25개");
+    expect(new Set(remote.countQueries)).toEqual(new Set([""]));
+    remote.counts = { total: 30, counts: { Dev: 25 }, resultCount: 25 };
+    expect(await render()).toContain("AI로 제작 25개");
     expect(html).toMatch(/aria-selected="true"[^>]*>AI로 제작</);
     expect(html).toContain('href="/?metric=star-growth"');
     expect(html).not.toContain("주인을 기다리는 프로젝트");
@@ -273,6 +299,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
     countProducts.mockResolvedValue(5);
     getPublicList.mockResolvedValue([product("starred-one")]);
 
+    remote.counts = { total: 5, counts: {}, resultCount: 5 };
     const html = await render({ sort: "all-time" });
 
     // 목록은 화면 분량으로 받아 개수까지만 쓴다 — 개수를 기다리지 않고 함께 받는다(app/page.tsx)
@@ -281,6 +308,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
     expect(getAllTimeRanking).not.toHaveBeenCalled();
     expect(html).toContain("starred-one");
     expect(html).toContain("GitHub 스타 많은 순 5개");
+    expect(new Set(remote.countQueries)).toEqual(new Set(["sort=all-time"]));
   });
 
   it("스타가 는 제품이 하나도 없으면 순위가 아니라 스타 확인 이야기를 한다", async () => {
@@ -367,6 +395,7 @@ describe("빈 화면 문구", () => {
     aiLevelCounts.mockRejectedValue(new Error("db"));
     getPublicList.mockResolvedValue([product("listed")]);
     countProducts.mockResolvedValue(1);
+    remote.counts = { total: 1, counts: { Dev: 1 }, resultCount: 1 };
     const html = await render({ sort: "ai" });
     expect(html).toContain("listed");
     expect(html).toContain("AI로 제작 1개");
@@ -574,14 +603,16 @@ describe("끝까지 닿는 목록", () => {
   it("198개를 넘기면 앞을 접고 다음 구간만 받는다", async () => {
     catalogue();
 
+    remote.counts = { total: TOTAL, counts: {}, resultCount: TOTAL };
     const html = await render({ sort: "recent", shown: "207" });
 
     expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ sort: "recent", offset: 9 }));
     expect(html).toContain("앞의 9개는 접었습니다");
     expect(html).toContain('href="/?sort=recent"');
-    expect(html).toContain("p-10 태그라인");
-    expect(html).toContain("p-207 태그라인");
-    expect(html).not.toContain("p-9 태그라인");
+    // 첫 쪽 뒤라 카드는 서버 HTML 에 없다 — 같은 창(10~207번째)을 카드 API 로 받는 빈 틀만
+    expect(html).not.toMatch(/p-\d+/);
+    expect(remote.lists).toContain("sort=recent&list=home&offset=9&limit=198");
+    expect(html.match(/class="skeleton-card"/g)).toHaveLength(198);
     expect(html).toContain("프로젝트 더 보기 (207 / 33,692)");
     expect(html).toContain('href="/?sort=recent&amp;shown=216"');
   });
@@ -589,10 +620,12 @@ describe("끝까지 닿는 목록", () => {
   it("마지막 항목까지 닿고 거기서 더 보기가 사라진다", async () => {
     catalogue();
 
+    remote.counts = { total: TOTAL, counts: {}, resultCount: TOTAL };
     const html = await render({ sort: "recent", shown: String(TOTAL + 50) });
 
     expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ offset: TOTAL - 198 }));
-    expect(html).toContain(`p-${TOTAL} 태그라인`);
+    expect(html).not.toContain(`p-${TOTAL}`);
+    expect(remote.lists).toContain(`sort=recent&list=home&offset=${TOTAL - 198}&limit=198`);
     expect(html).not.toContain("프로젝트 더 보기");
   });
 
@@ -614,16 +647,25 @@ describe("끝까지 닿는 목록", () => {
 
     expect(getUnclaimedList).toHaveBeenCalledWith(198, expect.objectContaining({ offset: 9 }));
     expect(html).toContain("앞의 9개는 접었습니다");
+    expect(remote.lists).toContain("sort=trending&list=home&offset=9&limit=198&section=unclaimed");
   });
 
   it("198개 이하는 예전처럼 앞에서부터 다 그린다", async () => {
     catalogue();
 
+    remote.counts = { total: TOTAL, counts: {}, resultCount: TOTAL };
     const html = await render({ sort: "recent", shown: "18" });
 
     expect(getPublicList).toHaveBeenCalledWith(18, expect.objectContaining({ offset: 0 }));
     expect(html).not.toContain("접었습니다");
+    // 첫 쪽(9장)만 서버 HTML 에 이름·요약으로, 늘린 9장은 카드 API 로
+    expect(html).toContain("p-9 태그라인");
+    expect(html).not.toContain("p-10");
+    expect(remote.lists).toContain("sort=recent&list=home&offset=9&limit=9");
     expect(html).toContain("프로젝트 더 보기 (18 / 33,692)");
+    // 수를 받기 전에는 전체 수 자리만 비운다
+    remote.counts = undefined;
+    expect(await render({ sort: "recent", shown: "18" })).toMatch(/프로젝트 더 보기 \(18 \/ <span class="fill-line"/);
   });
 });
 
@@ -667,11 +709,13 @@ describe("분야 주소·검색 상태 (UX-12·24·35·39·40)", () => {
     countProducts.mockResolvedValue(1);
     categoryCounts.mockResolvedValue({ Dev: 3, Finance: 1, Profile: 9 });
     getPublicList.mockResolvedValue([product("finance-one")]);
+    remote.counts = { total: 13, counts: { Dev: 3, Finance: 1 }, resultCount: 1 };
 
     const html = await renderScreen({ category: "Finance" });
 
     expect(html).toContain('<h1 id="projects-title" class="row-title">금융 프로젝트</h1>');
     expect(html).toContain("금융 1개");
+    expect(new Set(remote.countQueries)).toEqual(new Set(["category=Finance"]));
     expect(html).not.toContain("AI로 만든 것들이");
     expect(html).not.toContain("많이 쓰이는 프로젝트");
     expect(html).not.toContain("무엇으로 만들었나");

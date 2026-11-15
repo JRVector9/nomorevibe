@@ -213,7 +213,24 @@ watchdog config 가 agent-scan 하나만 보았다. agent-scan 자동 복구 두
 - 깨진 릴리스(preflight 가 DB 를 읽기도 전에 죽음)도 `preflight_failed` 라 일시 장애와 구별되지 않는다. 600초 창·최대 5분 간격으로 계속 다시 시도하지만 DB 를 읽기 전에 죽으므로 DB 를 두드리지 않고, gateway `warming_up` 10분 알림으로 드러난다.
 - watchdog 의 함대 재시작 시각(`pipeline_alarm` 10분 유예)에 osaka consumer 의 `warming_up` 도 들어간다 — consumer 가 계속 다시 뜨는 동안 새 `pipeline_alarm` 알림이 최대 10분 늦을 수 있다.
 - DB 근거는 웹 `/api/health` 가 `db: unavailable` 일 때뿐이다. 웹이 모두 `warming_up` 이어서 그 관측이 하나도 없으면 미루지 않고 예전처럼 복구한다(예산 안에서).
-- 실제 드릴(DB 일시 불통 중 consumer 회복, ko 유닛 failed → 자동 복구, 15분 멈춤 할 일·알림)은 설치 뒤 영수증으로 따로 기록한다. 03:11–03:21Z DB 불통의 원인(07:09Z 디스크 장애의 전조였는지)은 별개 조사다.
+- 실제 드릴(DB 일시 불통 중 consumer 회복, ko 유닛 failed → 자동 복구, 15분 멈춤 할 일·알림)은 설치 뒤 영수증으로 따로 기록한다. 03:11–03:21Z DB 불통은 07:09Z 와 같은 DB 볼륨 가득 참이었다(03:10:43 PANIC, 크래시 덤프로 10분 지연) — [2026-11-15 DB 디스크 장애](2026-11-15-db-disk-outage.md).
+
+## DB 서버 디스크 경보 (2026-11-15)
+
+11-15 공유 Postgres 볼륨이 03:10Z·07:09Z 두 번 가득 찼는데 경보가 없었다(원인·조치는 [2026-11-15 DB 디스크 장애](2026-11-15-db-disk-outage.md)).
+Oracle `onetwoday` 의 `nomorevibe-db-disk-alert.timer`(1분)가 `scripts/ops/db_disk_alert.py` 를 돌린다 — watchdog 과 별개 유닛이고 watchdog 상태·Kuma·복구 판단을 건드리지 않는다.
+
+- 읽기: 두 DB 서버(V9-Primary·V9-Replica)의 node_exporter `:9100/metrics`(Tailscale, 100.64/10 만 허용)에서 `/`·`/data/postgres` 의 df 식 사용률.
+- 알림: watchdog 설정의 `incidentNotifications`(같은 Telegram 통로, 비밀을 복사하지 않고 읽기만)로 `NoMoreVibe 장애 알림`.
+  80% 이상이 되면 한 번, 75% 아래로 내려가기 전까지 6시간마다 한 번 더, 75% 아래로 내려가면 `NoMoreVibe 알림 해제` 한 번. 75~80% 사이에서는 새로 울리지 않는다.
+  서버를 10분 읽지 못하면 한 번(「DB 디스크 확인 불가」), 다시 읽히면 한 번. 전송이 실패하면 기록하지 않고 다음 분에 다시 보낸다.
+- 파일: `/opt/nomorevibe-db-disk/{db_disk_alert.py,incident_notifications.py}`(같은 릴리스의 두 파일), 설정 `/etc/nomorevibe-db-disk/config.json`(예시 `scripts/ops/db-disk-alert.config.example.json`, 실제 주소는 서버에만), 상태 `/var/lib/nomorevibe-db-disk/state.json`.
+
+```sh
+ssh onetwoday 'systemctl list-timers nomorevibe-db-disk-alert.timer --no-pager; sudo journalctl -u nomorevibe-db-disk-alert.service -n 3 --no-pager -o cat'
+```
+
+문턱을 바꾸려면 설정의 `alertPercent`·`clearPercent`(clear < alert)를 고친다 — 다음 분부터 적용된다. 끄려면 `sudo systemctl disable --now nomorevibe-db-disk-alert.timer`.
 
 ## 장애별 현재 검증 범위
 
@@ -230,6 +247,7 @@ watchdog config 가 agent-scan 하나만 보았다. agent-scan 자동 복구 두
 | Oracle watchdog 프로세스 종료 | systemd Restart=always·Kuma deadman | 실제SIGKILL→systemd복귀, 양Kuma heartbeat timeoutDOWN→재시작UP 및 OracleTelegram 두API수락 확인 |
 | 한 receiver 실패 | 원래 M3 watcher는 독립 두 Kuma에 동시 전송 | 양pipeline·양heartbeat ACK와 실제두receiver deadman DOWN→UP 확인. mini tailnetHTTPS8443 추가 |
 | Oracle consumer DB 일시 불통·한국어 탐색 멈춤(11-15) | launcher 600초 재시도·75/78 분리, 유닛 시작 한도 없음·78 은 멈춤, gateway 허용 목록(agent-scan·github-ko-discovery)·`warming_up`, watchdog 은 DB 불통 중 native 복구를 미룸, 홈 할 일 15분 멈춤 | 단위 회귀(Python unittest·vitest)만 통과. Oracle 설치(위 순서), DB 일시 불통 중 회복·ko failed 자동 복구·15분 멈춤 할 일 드릴은 남음 |
+| DB 볼륨·루트 디스크 가득 참(11-15) | Oracle 디스크 경보 80%(Telegram), Postgres `temp_file_limit` 5GB, 크래시 덤프 끔 | 단위 회귀(`test_oracle_watchdog_db_disk.py`)·설치 뒤 첫 실행 영수증. 실제 80% 넘김 알림 드릴은 남음 |
 | 전체 호스트/DB 영구 장애 | 기존 standby/재연결 범위, 준비된 DR fence 필요 | 최신 릴리스에서 host 인계·M3/mini 동시 단절·Oracle DB DR/독립 모델·복귀는 완료로 주장하지 않음 |
 
 ## 관찰과 변경
@@ -248,7 +266,7 @@ ssh onetwoday 'sudo ssh -F /dev/null -p 22222 -o BatchMode=yes -o ConnectTimeout
 
 ```sh
 python3 -B -m unittest discover -s tests -p 'test_recovery*.py'
-python3 -B -m unittest discover -s tests -p 'test_oracle_watchdog*.py'
+python3 -B -m unittest discover -s tests -p 'test_oracle_watchdog*.py'   # db_disk_alert 포함
 (umask 022; python3 -B -m unittest tests.test_oracle_activation)   # launcher·유닛 — umask 002 셸에서는 고정 파일 권한 검사가 실패한다
 npx vitest run tests/oracle-consumer-preflight.test.ts tests/console-tasks.test.ts tests/console-home-read.test.ts tests/korean-discovery-activity.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32784/nomorevibe_test npm run test:integration -- tests/integration/text-stage-progress.test.ts tests/integration/review-stage-progress.test.ts

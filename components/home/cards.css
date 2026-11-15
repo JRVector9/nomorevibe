@@ -48,3 +48,9 @@
 /* 급상승은 증가량이 주 지표, 총 스타는 보조 값이다. */
 .star-growth-metric strong { font-weight: 650; }
 .star-growth-metric small { color: var(--text-2); font-weight: 400; }
+
+/* 채우기 전 빈 자리(2026-11-15 공개 HTML 이름·요약만) — 글자 없이 그 줄 높이만 차지한다(teaser-markup.tsx FillLine). 받으면 같은 줄이 그 칸으로 바뀐다 */
+.fill-line { display: inline-block; height: 0.9em; max-width: 100%; vertical-align: middle; border-radius: 6px; background: var(--border); }
+@media (prefers-reduced-motion: no-preference) {
+  [aria-busy="true"] .fill-line { animation: skeleton-pulse 1.6s ease-in-out infinite; }
+}

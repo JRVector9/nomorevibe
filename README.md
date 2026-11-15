@@ -643,7 +643,16 @@ User-Agent는 방문 이벤트에 저장하지 않는다. 서버는 제품별
 외부 이동은 계속되지만 방문 이벤트는 기록하지 않는다.
 
 봇은 세지 않는다. `robots.txt`가 `/go/`를 막고, 그것을 지키지 않는 크롤러와 링크 미리보기는
-User-Agent로 거른다. 어느 쪽이든 **이동 자체는 막지 않는다.**
+User-Agent로 거른다. 어느 쪽이든 서명 토큰이 맞으면 **이동 자체는 막지 않는다.**
+
+**바깥 주소는 서명 토큰이 있어야 준다(2026-11-15).** slug만 알면 `/go/<slug>`로 GitHub·사이트 주소를
+얻을 수 있었으므로, 이제 `/go/<slug>?t=<토큰>`만 바깥으로 보낸다. 토큰은 공개 API 읽기 관문을 거치는
+`/api/products/[slug]/details`가 응답의 `go.href`로 내주고, 상세의 단추·정보 카드가 그 주소를 쓴다(서버 HTML·RSC에는
+없다). 토큰은 `slug + 만료 시각`의 HMAC-SHA256(유효 15분, `lib/domain/products/go-token.ts`의 `GO_TOKEN_TTL_MS`)이고,
+열쇠는 새 env 없이 `VISITOR_HASH_SECRET`에서 용도 라벨 `go-link-v1`로 HKDF 파생한다. 토큰이 없거나 틀리거나
+다른 제품 것이거나 지났으면, 또는 비밀이 없으면 `/p/<slug>`(언어는 `?lang=`이나 같은 사이트 Referer로 유지)로
+302하고 세지 않는다. IP마다 10분 60번(넘치면 429), 모든 응답은 `Cache-Control: private, no-store`다.
+`VISITOR_HASH_SECRET`을 바꾸면 이미 내준 토큰(최대 15분)만 상세로 돌아간다.
 
 공개 지표의 뜻은 다음과 같다.
 

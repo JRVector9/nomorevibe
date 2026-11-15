@@ -10,13 +10,21 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(`metric=${navigation.metric}`),
 }));
+/** 단계별 수는 서버 HTML 에 싣지 않고 창이 열릴 때 /api/browse-counts?part=method 로 받는다(2026-11-15) — 받은 값을 바꿔 끼운다 */
+const counts = vi.hoisted(() => ({ method: undefined as { aiLevels: Record<1 | 2 | 3, number> | null; categories: [] } | null | undefined, enabled: [] as boolean[] }));
+vi.mock("@/components/home/browse-counts", () => ({
+  useMethodCounts: (enabled: boolean) => { counts.enabled.push(enabled); return enabled ? counts.method : undefined; },
+}));
 const { MethodologyDialog } = await import("@/components/home/MethodologyDialog");
 
 const pulse: HomePulseView = {
   asOf: "2026-10-10T00:00:00Z", asOfLabel: "10월 10일", methodVersion: "1",
-  born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, activeCount: 0, categories: [], tools: null,
+  born: { current: 1, previous: 1, change: null }, updates: { projects: 0, releases: 0 }, activeCount: 0, tools: null,
 };
-const render = (aiLevels: Record<1 | 2 | 3, number> | null) => renderToStaticMarkup(createElement(MethodologyDialog, { pulse, aiLevels }));
+const render = (aiLevels: Record<1 | 2 | 3, number> | null) => {
+  counts.method = { aiLevels, categories: [] };
+  return renderToStaticMarkup(createElement(MethodologyDialog, { pulse }));
+};
 
 describe("만든 방식 기준", () => {
   it("세 근거의 이름과 수, ''AI' 표시가 없다고 AI 없이 만든 것은 아니다'를 보이고 단계 번호는 없다", () => {
@@ -33,9 +41,21 @@ describe("만든 방식 기준", () => {
   it("수를 못 읽었으면 기준만, 전체 보기(푸터 링크)에도 들어 있다", () => {
     navigation.metric = "ai";
     expect(render(null)).not.toContain("<th>프로젝트 수</th>");
+    // 받는 중(undefined)·실패(null)도 수 없이 기준만
+    counts.method = undefined;
+    const loading = renderToStaticMarkup(createElement(MethodologyDialog, { pulse }));
+    expect(loading).toContain("만든 방식 — 저장소에 남은 AI 제작 근거로 봅니다.");
+    expect(loading).not.toContain("<th>프로젝트 수</th>");
     navigation.metric = "all";
     const all = render({ 1: 1, 2: 2, 3: 3 });
     expect(all).toContain("만든 방식 — 저장소에 남은 AI 제작 근거로 봅니다.");
     expect(all).toContain(">만든 방식</button>");
+  });
+
+  it("창이 닫혀 있으면 수를 받지 않는다", () => {
+    navigation.metric = "";
+    counts.enabled.length = 0;
+    renderToStaticMarkup(createElement(MethodologyDialog, { pulse }));
+    expect(counts.enabled).toEqual([false]);
   });
 });

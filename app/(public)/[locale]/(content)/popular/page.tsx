@@ -11,7 +11,8 @@ import type { Metadata, ResolvingMetadata } from 'next';
 import { localizedOpenGraph } from '@/lib/i18n/metadata';
 import {canonicalAlternates} from '@/app/(public)/[locale]/(content)/page';
 import {Icon} from '@/components/home/icons';
-import {rankedCard} from '@/components/home/popular-cards';
+import {publicTeaser} from '@/lib/domain/products/public-teaser';
+import {PopularCount,PopularCountText} from '@/components/home/PopularCounts';
 import {RankedCards} from '@/components/home/RankedCards';
 import {pageTitle} from '@/lib/copy/brand';
 import {CATEGORY_LABELS} from '@/lib/domain/products/labels';
@@ -26,7 +27,9 @@ import './popular.css';
 export const dynamic='force-dynamic';
 // 구간·거르기·정렬·보기(?tier= 등)는 같은 화면의 보기다 — 정식 주소는 /popular 하나(SEO-04)
 export async function generateMetadata(props: PageProps<"/[locale]/popular">, parent: ResolvingMetadata): Promise<Metadata> {
- const paginationBlocked = publicPaginationBlocked(await props.searchParams, "page");
+ const search = await props.searchParams;
+ // 2쪽부터는 줄이 서버 HTML 에 없는 빈 틀이라 색인하지 않는다(2026-11-15 공개 HTML 이름·요약만)
+ const paginationBlocked = publicPaginationBlocked(search, "page") || parsePopularParams(search).page > 1;
  const locale = await getRequestLocale();
  const t = await getTranslator(locale, "browse");
  const title = pageTitle(t("popular.title"));
@@ -70,11 +73,19 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const narrowed=state.personal||state.ai||Boolean(state.category);
  const href=(patch:Partial<PopularState>)=>localePath(locale,popularStateHref(state,patch));
  const first=result?(result.page-1)*result.pageSize+1:1;
- // 한 쪽 15줄 가운데 앞줄만 서버가 글자로 그린다 — 뒷줄은 화면 가까이 오면 같은 출처 API 로 받는다(2026-11-15 공개 HTML 줄이기 2차)
+ /*
+  * 첫 쪽은 앞 POPULAR_SERVER_ROWS 줄의 차례·이름·요약만 서버 HTML 에 — 커버·소유자·분야·스타는 이 쪽 목록 API 한 번(from=0)으로 채우고,
+  * 뒷줄은 화면 가까이 오면 같은 응답으로 그린다. 2쪽부터는 줄 없이 빈 틀만(noindex,follow) — 분류·AI 거르기 목록을 쪽마다 넘겨
+  * 소속을 모으지 못하게 한다(2026-11-15 공개 HTML 이름·요약만, 문서 4장 결정 4). 구간·알약·제목의 수도 API(PopularCount)로 받는다.
+  */
  const all=result?.items??[];
- const items=(await localizeProductList(all.slice(0,POPULAR_SERVER_ROWS),locale)).map((item,index)=>rankedCard(item,first+index));
+ const query=popularStateHref(state).split('?')[1]??'';
+ const source=`list=popular-page&${query}&from=0`;
+ const serverRows=result?.page===1?all.slice(0,POPULAR_SERVER_ROWS):[];
+ const items=(await localizeProductList(serverRows,locale)).map((item,index)=>({teaser:publicTeaser(item,locale),rank:first+index}));
  const restCount=all.length-items.length;
- const rest=restCount>0?<LazyPopularRest query={popularStateHref(state).split('?')[1]} view={state.view} count={restCount} now={now.toISOString()}/>:null;
+ const rest=restCount>0?<LazyPopularRest fillFrom={source} skip={items.length} view={state.view} count={restCount} now={now.toISOString()}/>:null;
+ const split=(text:string)=>text.split('\u0000') as [string,string];
 
  return <main className="wrap popular-page">
   {!result && <RenderReadRecovery key={now.toISOString()} />}
@@ -87,31 +98,31 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
    <nav className="tabs popular-tier-tabs" aria-label={t("popular.tiers")} data-track-filter="tier">
     {STAR_TIERS.map((tier,index)=>{const active=tier.key===state.tier;
      return <Link prefetch={false} key={tier.key} href={href({tier:tier.key})} className={`tab${active?' active':''}`} aria-current={active?'page':undefined}>
-      {t(`tier.${tier.key}`)}{result&&<> <span className="tab-count">{count(result.totals[index])}</span></>}
+      {t(`tier.${tier.key}`)}{result&&<PopularCount query={query} pick={`tier:${index}`} className="tab-count"/>}
      </Link>;})}
    </nav>
    <nav className="chips chips-ai" aria-label={t("nav.filters")} data-track-filter="">
     <Link prefetch={false} href={href({ai:!state.ai})} className={`chip${state.ai?' chip-dark':''}`} aria-current={state.ai?'true':undefined}>
-     {labels("ai.made")}{facets&&<> <span className="chip-count">{count(facets.ai)}</span></>}
+     {labels("ai.made")}{facets&&<PopularCount query={query} pick="ai" className="chip-count"/>}
     </Link>
     <Link prefetch={false} href={href({personal:!state.personal})} className={`chip${state.personal?' chip-dark':''}`} aria-current={state.personal?'true':undefined}>
-     {t("popular.personal")}{facets&&<> <span className="chip-count">{count(facets.personal)}</span></>}
+     {t("popular.personal")}{facets&&<PopularCount query={query} pick="personal" className="chip-count"/>}
     </Link>
    </nav>
    <nav className="chips chips-filter popular-categories" aria-label={t("filter.category")} data-track-filter="category">
     <Link prefetch={false} href={href({category:null})} className={`chip${state.category?'':' chip-dark'}`} aria-current={state.category?undefined:'true'}>
-     {t("filter.all")}{facets&&<> <span className="chip-count">{count(facets.all)}</span></>}
+     {t("filter.all")}{facets&&<PopularCount query={query} pick="all" className="chip-count"/>}
     </Link>
-    {facets?.categories.filter(c=>c.category in CATEGORY_LABELS).map(({category,count:categoryCount})=>{const active=state.category===category;
+    {facets?.categories.filter(c=>c.category in CATEGORY_LABELS).map(({category})=>{const active=state.category===category;
      return <Link prefetch={false} key={category} href={href({category:active?null:category as PopularState['category']})} className={`chip${active?' chip-dark':''}`} aria-current={active?'true':undefined}>
-      {translatedCategory(category,labels)} <span className="chip-count">{count(categoryCount)}</span>
+      {translatedCategory(category,labels)}<PopularCount query={query} pick={`cat:${category}`} className="chip-count"/>
      </Link>;})}
    </nav>
   </div>
   {!result?<div className="popular-empty" role="status">{t("error.load")}</div>:<section aria-labelledby="popular-list-title">
    <div className="popular-summary">
     <div>
-     <h2 id="popular-list-title">{t("popular.range", { range:t(`tierRange.${selected.key}`),category:state.category?translatedCategory(state.category,labels):t("popular.allCategories"),count:count(result.total) })}</h2>
+     <h2 id="popular-list-title"><PopularCountText query={query} pick="total" parts={split(t("popular.range", { range:t(`tierRange.${selected.key}`),category:state.category?translatedCategory(state.category,labels):t("popular.allCategories"),count:'\u0000' }))}/></h2>
      <p>{t("popular.metricHint")} · {t(state.sort==='rising'?"popular.daily":"popular.stars")}</p>
     </div>
     <div className="popular-controls" data-track-filter="reset">
@@ -128,11 +139,11 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
      {narrowed&&<Link prefetch={false} href={href({personal:false,ai:false,category:null})} className="clear-filters show">{t("filter.reset")}</Link>}
     </div>
    </div>
-   {items.length===0?<p className="popular-empty">{t("popular.filteredEmpty")}</p>
-    :state.view==='cards'?<RankedCards items={items} now={now} locale={locale} t={labels} rest={rest}/>:<PopularList items={items} now={now} locale={locale} t={labels} rest={rest}/>}
+   {all.length===0?<p className="popular-empty">{t("popular.filteredEmpty")}</p>
+    :state.view==='cards'?<RankedCards items={items} fillFrom={source} rest={rest}/>:<PopularList items={items} fillFrom={source} rest={rest}/>}
    {result.total>0&&<nav className="popular-pagination" aria-label={t("nav.pages")}>
     {result.page>1?<Link prefetch={false} href={href({page:result.page-1})}>‹ {t("nav.previous")}</Link>:<span aria-disabled="true">‹ {t("nav.previous")}</span>}
-    <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+all.length-1),total:count(result.total) })}</span>
+    <span aria-live="polite"><PopularCountText query={query} pick="total" parts={split(t("popular.position", { first:count(first),last:count(first+all.length-1),total:'\u0000' }))}/></span>
     {result.page<result.pages?<Link prefetch={false} href={href({page:result.page+1})}>{t("nav.next")} ›</Link>:<span aria-disabled="true">{t("nav.next")} ›</span>}
    </nav>}
   </section>}

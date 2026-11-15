@@ -174,6 +174,24 @@ describe("부가 자료 API", () => {
     expect(body.timeline.recent).toBe(80);
     expect(Object.keys(body.related.items[0]).sort()).toEqual(["accessMode", "aiLevel", "category", "listedAt", "name", "ogImage", "slug", "stars", "starsAt",
       "starsPrevious", "starsPreviousAt", "tagline", "taglineKo", "taglineSource"]);
+    // 2026-11-15 공개 HTML 이름·요약만 — 서버 HTML 에서 뺀 머리·소개·미리보기·운영자 상자도 같은 응답에(부품이 읽는 칸만)
+    expect(Object.keys(body).sort()).toEqual(["aside", "facts", "go", "hero", "info", "intro", "media", "related", "timeline"]);
+    expect(body.hero).toMatchObject({ category: "Dev", stars: 197, owner: { login: "ggml-org" }, unclaimed: true, follow: null });
+    expect(body.hero.health.checkedAt).toBeInstanceOf(Date);
+    expect(body.intro).toMatchObject({ text: "Long description", readmeExcerpt: "excerpt", repo: "https://github.com/ggml-org/ggml" });
+    // 내부 id 는 로그인 운영자 확인이 꺼져 있으면 담지 않는다
+    expect(body.aside.ownerContact).toEqual({ installable: false, authEnabled: false, githubEnabled: false });
+  });
+
+  it("바깥으로 나가는 /go 주소는 서명 토큰과 함께 여기서만(2026-11-15) — 비밀이 없으면 null", async () => {
+    vi.stubEnv("VISITOR_HASH_SECRET", "payload-api-visitor-secret-0123456789ab");
+    // 언어(?lang=)는 tests/go-redirect-token.test.ts 가 본다 — 기본 언어는 접두가 없어 lang 도 없다
+    const signed = JSON.parse(await (await detailsRoute.GET(request("/api/products/ggml/details?locale=ko"), params("ggml"))).text());
+    expect(signed.go.href).toMatch(/^\/go\/ggml\?t=[0-9a-z]+\.[A-Za-z0-9_-]{22}$/);
+    expect(signed.go.expiresAt).toBeGreaterThan(Date.now());
+    vi.stubEnv("VISITOR_HASH_SECRET", "");
+    const unsigned = JSON.parse(await (await detailsRoute.GET(request("/api/products/ggml/details?locale=ko"), params("ggml"))).text());
+    expect(unsigned.go).toBeNull();
   });
 
   it("모르는 언어는 기본 언어, 없는 제품은 404", async () => {

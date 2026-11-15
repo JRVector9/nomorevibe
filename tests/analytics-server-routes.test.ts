@@ -13,6 +13,7 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined })
 
 const { GET: go } = await import("@/app/go/[slug]/route");
 const { GET: installScript } = await import("@/app/install.sh/route");
+const { issueGoToken } = await import("@/lib/domain/products/go-token");
 
 const CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36";
 const GA_COOKIE = "_ga=GA1.1.1234567890.1760000000";
@@ -23,8 +24,12 @@ const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Respon
   init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
 }));
 
-const visit = (headers: Record<string, string>, query = "") =>
-  go(new Request(`https://nomorevibe.test/go/app${query}`, { headers }), { params: Promise.resolve({ slug: "app" }) });
+/** 보호 API 가 내준 것처럼 서명 토큰(go-token.ts)을 붙여 부른다 — 토큰 없는 /go 는 tests/go-redirect-token.test.ts 가 본다 */
+const visit = (headers: Record<string, string>, query = "") => {
+  const token = `t=${issueGoToken("app")!.token}`;
+  const search = query ? `${query}&${token}` : `?${token}`;
+  return go(new Request(`https://nomorevibe.test/go/app${search}`, { headers }), { params: Promise.resolve({ slug: "app" }) });
+};
 const sentEvents = () => fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).events[0]);
 
 beforeEach(() => {
@@ -35,6 +40,7 @@ beforeEach(() => {
   vi.stubEnv("GA_MEASUREMENT_ID", "G-TEST123");
   vi.stubEnv("GA_API_SECRET", "test-api-secret_ABC");
   vi.stubEnv("LOG_LEVEL", "error");
+  vi.stubEnv("VISITOR_HASH_SECRET", "analytics-go-visitor-secret-0123456789");
 });
 afterEach(() => {
   vi.unstubAllGlobals();

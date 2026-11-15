@@ -3,9 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ og: vi.fn() }));
 vi.mock("@/lib/domain/products/repository", () => ({ getOgImage: mocks.og }));
+vi.mock("@/lib/domain/products/detail-view", () => ({ getProductIdentity: async (slug: string) => ({ slug }) }));
+vi.mock("@/lib/domain/products/public-reads", () => ({ publicRead: (_kind: string, _key: unknown[], load: () => Promise<unknown>) => load() }));
+// 표지는 보호 주소(<slug>.<열쇠>)로만 나간다 — lib/domain/products/cover-url.ts. 열쇠는 이 시험 비밀에서 만든다
+process.env.VISITOR_HASH_SECRET = "test-visitor-hash-secret-0123456789abcdef";
 
 import { GET } from "@/app/api/og-cache/[slug]/route";
 import { OG_DELETE_PURGE, purgesLists } from "@/lib/cdn/purge";
+import { coverKey } from "@/lib/domain/products/cover-url";
 import {
   createOgObjectStore, OG_STORE_MAX_BYTES, OgImageUnavailableError, ogObjectKey, ogStoreConfig, ogStoreMissingKeys, OgStoreError,
 } from "@/lib/storage/og-store";
@@ -152,7 +157,8 @@ describe("지우기 줄", () => {
 });
 
 describe("공개 경로", () => {
-  const call = (slug: string) => GET(new Request(`https://nomorevibe.test/api/og-cache/${slug}`), { params: Promise.resolve({ slug }) });
+  const call = (slug: string) => GET(new Request(`https://nomorevibe.test/api/og-cache/${slug}.${coverKey(slug)}`),
+    { params: Promise.resolve({ slug: `${slug}.${coverKey(slug)}` }) });
 
   it("버킷이 답하지 않고 DB 에도 없으면 503 — 엣지·브라우저가 담아 두지 않는다", async () => {
     mocks.og.mockRejectedValueOnce(new OgImageUnavailableError());

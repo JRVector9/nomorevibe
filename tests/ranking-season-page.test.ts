@@ -103,9 +103,11 @@ describe("ranking season page", () => {
     const html = renderToStaticMarkup(createElement(() => page));
 
     expect(html).toContain("고유 유입자");
-    expect(html).toContain("유효 방문 42");
     expect(html).toContain("24h 고유 유입자 변동률");
-    expect(html).toContain("+50%");
+    // 점수·변동은 서버 HTML 에 없다 — 표가 /api/rankings/[key] 로 받아 채운다(2026-11-15 공개 HTML 이름·요약만)
+    expect(html).not.toContain("유효 방문 42");
+    expect(html).not.toContain("+50%");
+    expect(html).toContain('aria-busy="true"');
   });
 
   it("titles the page from the season key and keeps a ranked season indexable", async () => {

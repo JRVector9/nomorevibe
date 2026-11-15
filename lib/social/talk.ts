@@ -1,4 +1,5 @@
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { db } from "@/lib/db";
 import {
   products, productStarObservations, socialPosts, socialTalkDecisions,
@@ -128,7 +129,7 @@ function product(row: Row): TalkProduct {
   return {
     id: row.productId as number, slug: row.slug as string, name: displayProjectName(row.name as string, repoUrl), translationName: row.name as string,
     tagline: row.tagline as string, taglineKo: row.taglineKo as string | null, taglineSource: row.taglineSource as TaglineSource,
-    category: row.category as string, repoUrl, ogImage: row.ogImage as string | null, stars: row.stars as number | null,
+    category: row.category as string, repoUrl, ogImage: protectedCoverUrl(row.ogImage as string | null), stars: row.stars as number | null,
     aiLevel: row.aiLevel as number | null, accessMode: row.accessMode as "website" | "installable",
   };
 }

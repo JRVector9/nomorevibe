@@ -110,9 +110,8 @@ describe("공유 카드 — 밖으로 글꼴을 받으러 가지 않는다", () 
       }
       return real(input, init);
     }));
-    const png = await shareCardPng({ name: "🚀 Rocket", tagline: "Tiếng Việt ภาษาไทย 漢字 かな 한글 ✨", brandLine: "AI로 만든 서비스",
-      chips: [{ text: "GitHub ★ 12" }, { text: "Hacker News 🔥 30", hn: true }], url: "nomorevibe.example/p/rocket", date: "2026-10-20 기준" }, "en");
-    const bytes = Buffer.from(png);
+    const data = { name: "🚀 Rocket", tagline: "Tiếng Việt ภาษาไทย 漢字 かな 한글 ✨", brandLine: "AI로 만든 서비스", url: "nomorevibe.example/p/rocket" };
+    const bytes = Buffer.from(await shareCardPng(data, "en"));
     expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
     expect(bytes.readUInt32BE(16)).toBe(1200);
     expect(outbound).toEqual([]);

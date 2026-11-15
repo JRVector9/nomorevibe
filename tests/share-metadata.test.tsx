@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_SHARE_IMAGE, SITE_DESCRIPTION, SITE_SHARE, productShareImage, shareMetadata } from "@/lib/copy/share";
+import { DEFAULT_SHARE_IMAGE, SITE_DESCRIPTION, SITE_SHARE, productShareCard, shareMetadata } from "@/lib/copy/share";
 import { generateMetadata } from "@/app/(public)/[locale]/layout";
 import LaunchPage from "@/app/(public)/[locale]/(content)/launch/page";
 
@@ -11,16 +11,10 @@ const rootMetadata = await generateMetadata({ params: Promise.resolve({ locale: 
 
 /** 공유 미리보기(2026-10-08 점검 SEO-01·UX-07)와 약속 문구(UX-05) */
 describe("공유 미리보기", () => {
-  it("제품 그림은 그 사이트의 대표 이미지나 큰 README 그림일 때만, 아이콘·바깥 주소·없음은 기본 그림", () => {
-    expect(productShareImage(null)).toBe(DEFAULT_SHARE_IMAGE);
-    expect(productShareImage("https://evil.example/og.png")).toBe(DEFAULT_SHARE_IMAGE);
-    expect(productShareImage("/api/og-cache/lcu?thumbnail=og&w=1200&h=630")).toEqual({ url: "/api/og-cache/lcu?thumbnail=og&w=1200&h=630", width: 1200, height: 630 });
-    // 예전 주소(꼬리표 없음)는 대표 이미지로 저장된 것이다
-    expect(productShareImage("/api/og-cache/old")).toMatchObject({ url: "/api/og-cache/old" });
-    expect(productShareImage("/api/og-cache/a?thumbnail=repository_image&w=1200&h=600")).toMatchObject({ url: "/api/og-cache/a?thumbnail=repository_image&w=1200&h=600" });
-    expect(productShareImage("/api/og-cache/b?thumbnail=repository_image&w=200&h=200")).toBe(DEFAULT_SHARE_IMAGE);
-    expect(productShareImage("/api/og-cache/c?thumbnail=site_icon&w=64&h=64")).toBe(DEFAULT_SHARE_IMAGE);
-    expect(productShareImage("/api/og-cache/d?thumbnail=github_avatar&w=460&h=460")).toBe(DEFAULT_SHARE_IMAGE);
+  it("제품 상세의 공유 그림은 이름·요약만 그린 공유 카드(언어별 주소, 1200×630) — 표지(og-cache) 주소가 아니다", () => {
+    expect(productShareCard("ko", "lcu", "LCU")).toEqual({ url: "/p/lcu/share-card.png", width: 1200, height: 630, alt: "LCU" });
+    expect(productShareCard("en", "lcu", "LCU").url).toBe("/en/p/lcu/share-card.png");
+    expect(productShareCard("ja", "lcu", "LCU").url).not.toContain("og-cache");
   });
 
   it("화면 공유 메타는 사이트 이름·한국어·큰 카드에 제목·설명·그림을 함께 싣는다", () => {

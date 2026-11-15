@@ -13,6 +13,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({ headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) }));
 
 const { GET: goGet } = await import("@/app/go/[slug]/route");
+const { issueGoToken } = await import("@/lib/domain/products/go-token");
 
 const CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36";
 const savedVisitorHashSecret = process.env.VISITOR_HASH_SECRET;
@@ -22,7 +23,8 @@ const slowCollect = vi.fn((_url: string, init?: RequestInit) => new Promise<Resp
   init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
 }));
 
-const go = (slug: string, cookie?: string) => goGet(new Request(`https://nomorevibe.test/go/${slug}?via=card`, {
+/** 상세 API 가 내준 것처럼 서명 토큰을 붙인다(go-token.ts) */
+const go = (slug: string, cookie?: string) => goGet(new Request(`https://nomorevibe.test/go/${slug}?via=card&t=${issueGoToken(slug)!.token}`, {
   headers: { "user-agent": CHROME, ...(cookie ? { cookie } : {}) },
 }), { params: Promise.resolve({ slug }) });
 const clicks = async () => (await db.select({ n: sql<number>`count(*)::int` }).from(clickEvents))[0].n;

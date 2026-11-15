@@ -75,7 +75,7 @@ describe("sitemap", () => {
 });
 
 describe("feed.xml", () => {
-  it("검증된 제품과 발견한 제품을 함께 싣고 어느 쪽인지는 제목이 아니라 분류에 적는다(SEO-05)", async () => {
+  it("검증된 제품과 발견한 제품을 함께 싣고, 제목은 이름만·분류(분야·검증 상태)는 싣지 않는다(SEO-05, 2026-11-15 이름·요약만)", async () => {
     await product({ slug: "mine", status: "verified", name: "Mine" });
     await product({ slug: "found", status: "seeded", name: "Found" });
 
@@ -85,12 +85,12 @@ describe("feed.xml", () => {
     expect(res.headers.get("content-type")).toContain("application/rss+xml");
     // 목록 화면과 같은 태그 — 내림·감사 보류의 목록 지우기(lists)가 피드 사본도 지운다
     expect(res.headers.get("cache-tag")).toBe("html,lists");
-    type Item = { title: string; link: string; description: string; category: string[] };
+    type Item = { title: string; link: string; description: string; category?: string[] };
     const raw = parsed.rss.channel.item as Item | Item[];
     const items = Array.isArray(raw) ? raw : [raw];
     expect(items.map((i) => i.title).sort()).toEqual(["Found", "Mine"]);
-    expect(items.find((i) => i.title === "Mine")?.category).toContain("✓ 검증됨");
-    expect(items.find((i) => i.title === "Found")?.category).toContain("운영자 미확인");
+    // 공개 출력은 주소·이름·요약까지 — 분야·검증 상태 분류는 없다
+    for (const item of items) expect(item).not.toHaveProperty("category");
     // origin은 NEXT_PUBLIC_SITE_URL이 무엇이냐에 달렸다 — 경로만 본다
     expect(items.map((i) => new URL(i.link).pathname).sort()).toEqual(["/p/found", "/p/mine"]);
     // 태그라인의 <b>와 &는 글자로 남아야 한다 — 이스케이프가 깨지면 피드 전체가 안 읽힌다
@@ -172,8 +172,6 @@ describe("feed.xml", () => {
       <link>${origin}/p/golden</link>
       <guid isPermaLink="true">${origin}/p/golden</guid>
       <description>한 줄 소개</description>
-      <category>Dev</category>
-      <category>✓ 검증됨</category>
       <pubDate>Fri, 02 Jan 2026 03:04:05 GMT</pubDate>
     </item>
   </channel>

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { detailExtras } from "@/lib/domain/products/detail-extras";
+import { detailExtras, type DetailApiResponse } from "@/lib/domain/products/detail-extras";
+import { detailPageData } from "@/lib/domain/products/detail-page-data";
+import { signedGoLink } from "@/lib/domain/products/go-token";
 import { getProductDetail } from "@/lib/domain/products/detail-view";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { guardPublicApiRead } from "@/lib/http/anti-scrape";
@@ -13,7 +15,7 @@ type Params = { params: Promise<{ slug: string }> };
 const NO_STORE = { "Cache-Control": "private, no-store", "Cloudflare-CDN-Cache-Control": "no-store" } as const;
 
 /**
- * 상세의 부가 자료(사실 칸·정보 카드·언어·업데이트·같은 분야 목록) — 서버 HTML 에서 빼고 브라우저가 이 같은 출처 API 로 불러온다
+ * 상세의 부가 자료(사실 칸·정보 카드·언어·업데이트·같은 분야 목록, 2026-11-15 부터 머리·소개·미리보기·운영자 상자까지) — 서버 HTML 에서 빼고 브라우저가 이 같은 출처 API 로 불러온다
  * (2026-11-14 공개 HTML 줄이기). 공개 API 읽기 관문을 그대로 거치고, 상세 화면과 같은 짧은 읽기 캐시(publicRead "detail")를 쓴다.
  * ?locale= 은 같은 분야 카드의 소개 언어다(모르는 값이면 기본 언어).
  */
@@ -25,6 +27,13 @@ export const GET = withRoute("products.details", async (req: Request, { params }
   const locale = requested && isLocale(requested) ? requested : DEFAULT_LOCALE;
   const detail = await publicRead("detail", ["detail", slug], () => getProductDetail(slug));
   if (!detail) return errorResponse({ kind: "not_found" });
-  const related = await localizeProductList(detail.related, locale);
-  return NextResponse.json(detailExtras(detail, related, locale, new Date()), { headers: NO_STORE });
+  const [related, [product]] = await Promise.all([
+    localizeProductList(detail.related, locale),
+    localizeProductList([detail.product], locale, ["tagline", "description"]),
+  ]);
+  // 머리·소개·미리보기·운영자 상자(2026-11-15 공개 HTML 이름·요약만) — 상세 서버 HTML 에는 이름·요약만 남는다
+  const page = await detailPageData(detail, product);
+  // 바깥으로 나가는 /go 주소는 짧은 서명 토큰을 붙여 여기서만 내준다(2026-11-15, go-token.ts) — 공개 HTML 에는 싣지 않는다
+  const go = signedGoLink(detail.product.slug, { locale });
+  return NextResponse.json({ ...detailExtras(detail, related, locale, new Date()), ...page, go } satisfies DetailApiResponse, { headers: NO_STORE });
 });
