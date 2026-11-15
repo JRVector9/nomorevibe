@@ -1,0 +1,18 @@
+[Unit]
+Description=NoMoreVibe DB host disk alert (node_exporter → Telegram, see db_disk_alert.py)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /opt/nomorevibe-db-disk/db_disk_alert.py --config /etc/nomorevibe-db-disk/config.json
+TimeoutStartSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nomorevibe-db-disk
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=64M
+CPUQuota=10%
