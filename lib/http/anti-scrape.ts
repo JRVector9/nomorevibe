@@ -50,7 +50,9 @@ export function tooManyReads(retryAfterSeconds: number): Response {
  * 공개 API 읽기 관문. 받으면 null, 아니면 그대로 돌려줄 응답.
  * DB 가 잠시 안 되면 막지 않는다 — 읽기 한도는 부가물이고 화면이 먼저다.
  */
-export async function guardPublicApiRead(request: GuardRequest, route: string): Promise<Response | null> {
+export async function guardPublicApiRead(
+  request: GuardRequest, route: string, onSessionRequired?: () => Promise<Response>,
+): Promise<Response | null> {
   const userAgent = request.headers.get("user-agent");
   if (refusedApiAgent(userAgent)) {
     logger.info("anti_scrape.agent_refused", { route, agent: agentKind(userAgent) });
@@ -62,7 +64,7 @@ export async function guardPublicApiRead(request: GuardRequest, route: string): 
   }
   const limited = await limitByIp(request, route, apiReadKey, API_READ_LIMIT, API_READ_WINDOW_MS);
   if (limited) return limited;
-  return route === "session" ? null : guardApiSession(request, route);
+  return route === "session" ? null : guardApiSession(request, route, onSessionRequired);
 }
 
 /** 검색 경로 한도 — 화면이라 UA 로 거절하지 않는다(검색·답변 봇은 화면을 본다) */
