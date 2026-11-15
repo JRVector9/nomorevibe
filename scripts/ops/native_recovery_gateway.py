@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Forced command for one failed native consumer; never restarts a live unit.
+"""Forced command for failed native consumers; never restarts a live unit.
 
 Run with python3 -I from a root-owned installation. Recovery changes no unit,
 release, environment, model or database policy. systemd has no atomic state CAS:
-operators must disarm recoverEnabled before deliberately stopping this unit.
+operators must disarm recoverEnabled before deliberately stopping a unit.
+
+Which consumer units it observes and may recover is the config's `consumers`
+list, a subset of the fixed ALLOWED_CONSUMERS (2026-11-15: github-ko-discovery
+stayed dead 7.5 hours unwatched because only agent-scan was listed). A config
+without `consumers` is the original single agent-scan installation, unchanged.
+Each consumer keeps its own recovery budget (attempts[<consumer>]).
 """
 import argparse
 import fcntl
@@ -18,11 +24,40 @@ import stat
 import time
 
 
-UNIT = 'nomorevibe-core-consumer@agent-scan.service'
+# The only consumer units this gateway can ever touch. A config may list fewer, never others.
+ALLOWED_CONSUMERS = ('agent-scan', 'github-ko-discovery')
+# The original single-unit installation (a config without `consumers`).
 KEY = 'agent-scan'
+UNIT = 'nomorevibe-core-consumer@agent-scan.service'
+# systemd's restart wait between automatic restarts (Restart=on-failure with backoff): the unit is coming back by itself.
+AUTO_RESTART_STATES = ('auto-restart', 'auto-restart-queued')
 PROPERTIES = ('Id', 'Names', 'LoadState', 'UnitFileState', 'ActiveState', 'SubState', 'MainPID',
               'StateChangeTimestampMonotonic', 'FragmentPath', 'DropInPaths', 'NeedDaemonReload',
               'Transient', 'User', 'Group', 'ExecStart', 'ControlGroup', 'KillMode', 'Restart', 'Result', 'Slice')
+
+
+def unit_name(key):
+    if key not in ALLOWED_CONSUMERS:
+        raise ValueError('consumer_denied')
+    return 'nomorevibe-core-consumer@' + key + '.service'
+
+
+def consumers(config):
+    """The consumer keys this config observes, in report order. Legacy single-unit config: agent-scan only."""
+    return list(config['consumers']) if 'consumers' in config else [KEY]
+
+
+def control_group(config, key):
+    if key not in consumers(config):
+        raise ValueError('consumer_denied')
+    # New configs hold the template '<slice path>/nomorevibe-core-consumer@%i.service'; the legacy one is agent-scan's own.
+    return config['controlGroup'].replace('%i', key) if 'consumers' in config else config['controlGroup']
+
+
+def exec_start(config, key):
+    if key not in consumers(config):
+        raise ValueError('consumer_denied')
+    return config['execStart'].replace('%i', key) if 'consumers' in config else config['execStart']
 
 
 def trusted_path(value, *, directory=False, private=False):
@@ -60,16 +95,21 @@ def read_config(value):
     path = trusted_path(value, private=True)
     config = json.loads(path.read_text())
     fields = {'state', 'unitFile', 'unitSha256', 'controlGroup', 'user', 'group', 'execStart', 'recoverEnabled'}
-    if not isinstance(config, dict) or set(config) != fields:
+    if not isinstance(config, dict) or set(config) not in (fields, fields | {'consumers'}):
         raise ValueError('invalid_configuration')
+    # Legacy: agent-scan's own group/command. With `consumers`: one '%i' template filled per listed consumer.
+    instance = re.escape('%i') if 'consumers' in config else 'agent-scan'
     if (type(config['recoverEnabled']) is not bool or config['user'] != 'nomorevibe-core' or
             config['group'] != 'nomorevibe-core' or not isinstance(config['unitSha256'], str) or
             not re.fullmatch('[a-f0-9]{64}', config['unitSha256']) or
             not isinstance(config['controlGroup'], str) or
-            not re.fullmatch(r'/[a-z0-9_.@/-]+/' + re.escape(UNIT), config['controlGroup']) or
+            not re.fullmatch(r'/[a-z0-9_.@/-]+/nomorevibe-core-consumer@' + instance + r'\.service', config['controlGroup']) or
             '..' in Path(config['controlGroup']).parts or
             not isinstance(config['execStart'], str) or
-            not re.fullmatch(r'/usr/bin/python3 /[a-zA-Z0-9_./-]+/deploy/oracle/launch\.py --consumer=agent-scan', config['execStart'])):
+            not re.fullmatch(r'/usr/bin/python3 /[a-zA-Z0-9_./-]+/deploy/oracle/launch\.py --consumer=' + instance, config['execStart']) or
+            'consumers' in config and (not isinstance(config['consumers'], list) or not config['consumers'] or
+                                       any(not isinstance(key, str) or key not in ALLOWED_CONSUMERS for key in config['consumers']) or
+                                       len(set(config['consumers'])) != len(config['consumers']))):
         raise ValueError('invalid_configuration')
     unit = trusted_path(config['unitFile'])
     if unit.name != 'nomorevibe-core-consumer@.service':
@@ -90,7 +130,7 @@ def read_config(value):
 def cgroup_empty(group, *, root=Path('/sys/fs/cgroup')):
     """cgroup.events populated is recursive; an empty cgroup.procs is not."""
     if (not isinstance(group, str) or not group.startswith('/') or '..' in Path(group).parts or
-            not group.endswith('/' + UNIT)):
+            not any(group.endswith('/' + unit_name(key)) for key in ALLOWED_CONSUMERS)):
         raise ValueError('invalid_cgroup')
     trusted_path(root, directory=True)
     trusted_path(root / 'cgroup.controllers')  # A missing v2 mount is not an absent unit.
@@ -110,42 +150,64 @@ def cgroup_empty(group, *, root=Path('/sys/fs/cgroup')):
     return values[0][1] == '0'
 
 
-def properties(config, run):
-    output = run(['/usr/bin/systemctl', 'show', '--no-pager', '--property=' + ','.join(PROPERTIES), UNIT])
+def process_argv(pid, *, proc=Path('/proc')):
+    """The main process's argv (bounded). It tells the launcher's gate from the consumer it exec'd."""
+    with (proc / str(pid) / 'cmdline').open('rb') as source:
+        raw = source.read(4097)
+    if len(raw) > 4096 or not raw:
+        raise ValueError('invalid_cmdline')
+    return raw.rstrip(b'\0').decode('utf-8').split('\0')
+
+
+def consumer_phase(argv, config, key):
+    """'running' once launch.py exec'd the consumer's supervisor, 'gate' while launch.py still checks (or waits for the
+    database, up to its retry window), None for anything else."""
+    launcher = exec_start(config, key).split(' ')
+    if argv == launcher:
+        return 'gate'
+    if (len(argv) >= 4 and argv[0].endswith('/runtime/bin/node') and 'scripts/worker-supervisor.ts' in argv and
+            argv[-1] == '--consumer=' + key):
+        return 'running'
+    return None
+
+
+def properties(config, run, key=KEY):
+    name, group, command = unit_name(key), control_group(config, key), exec_start(config, key)
+    output = run(['/usr/bin/systemctl', 'show', '--no-pager', '--property=' + ','.join(PROPERTIES), name])
     values = {}
     for line in output.splitlines():
-        key, separator, value = line.partition('=')
-        if not separator or key not in PROPERTIES or key in values:
+        field, separator, value = line.partition('=')
+        if not separator or field not in PROPERTIES or field in values:
             raise ValueError('invalid_unit_report')
-        values[key] = value
+        values[field] = value
     if set(values) != set(PROPERTIES):
         raise ValueError('incomplete_unit_report')
-    unit = trusted_path(config['unitFile'])
-    with unit.open('rb') as source:
+    unit_file = trusted_path(config['unitFile'])
+    with unit_file.open('rb') as source:
         raw = source.read(262145)
-    executable = config['execStart'].split(' ', 1)[0]
-    prefix = '{ path=' + executable + ' ; argv[]=' + config['execStart'] + ' ; ignore_errors=no ;'
+    executable = command.split(' ', 1)[0]
+    prefix = '{ path=' + executable + ' ; argv[]=' + command + ' ; ignore_errors=no ;'
     if (len(raw) > 262144 or hashlib.sha256(raw).hexdigest() != config['unitSha256'] or
-            values['Id'] != UNIT or values['Names'] != UNIT or values['LoadState'] != 'loaded' or
-            values['UnitFileState'] != 'enabled' or values['FragmentPath'] != str(unit) or
+            values['Id'] != name or values['Names'] != name or values['LoadState'] != 'loaded' or
+            values['UnitFileState'] != 'enabled' or values['FragmentPath'] != str(unit_file) or
             values['DropInPaths'] or values['NeedDaemonReload'] != 'no' or values['Transient'] != 'no' or
             values['User'] != config['user'] or values['Group'] != config['group'] or
             not values['ExecStart'].startswith(prefix) or values['ExecStart'].count('{') != 1 or
             values['ExecStart'].count('}') != 1 or not values['ExecStart'].endswith(' }') or
-            values['Slice'] != Path(config['controlGroup']).parent.name or
-            not (values['ControlGroup'] == config['controlGroup'] or
+            values['Slice'] != Path(group).parent.name or
+            not (values['ControlGroup'] == group or
                  values['ControlGroup'] == '' and values['MainPID'] == '0' and
-                 values['ActiveState'] in ('failed', 'inactive')) or
+                 values['ActiveState'] in ('failed', 'inactive', 'activating')) or
             values['KillMode'] not in ('mixed', 'control-group') or values['Restart'] != 'on-failure'):
         raise ValueError('unit_identity_changed')
     return values
 
 
-def observe(config, *, run=command, uptime=None, empty_fn=cgroup_empty):
-    row = {'key': KEY, 'version': None, 'replicas': 1, 'settled': False,
+def observe(config, key=KEY, *, run=command, uptime=None, empty_fn=cgroup_empty, argv_fn=process_argv):
+    row = {'key': key, 'version': None, 'replicas': 1, 'settled': False,
            'ok': False, 'recoverable': False, 'reason': 'native_unit_unknown'}
     try:
-        values = properties(config, run)
+        values = properties(config, run, key)
         version = values['StateChangeTimestampMonotonic']
         pid = values['MainPID']
         if not re.fullmatch('[0-9]{1,16}', version) or not 0 < int(version) < 10 ** 16 or not pid.isdecimal():
@@ -157,13 +219,23 @@ def observe(config, *, run=command, uptime=None, empty_fn=cgroup_empty):
         row.update(version=int(version), settled=age >= 180)
         active = values['ActiveState']
         if active == 'active' and values['SubState'] == 'running' and int(pid) > 0:
-            row.update(ok=True, reason='ok')
+            # Running means the consumer itself. While launch.py still checks or waits for the database (its retry window,
+            # up to 10 minutes) the consumer is not working yet: report it like a restarting app (warming_up), not ok.
+            phase = consumer_phase(argv_fn(int(pid)), config, key)
+            if phase == 'running':
+                row.update(ok=True, reason='ok')
+            elif phase == 'gate':
+                row['reason'] = 'warming_up'
+        elif active == 'activating' and values['SubState'] in AUTO_RESTART_STATES and int(pid) == 0:
+            # Waiting for systemd's next automatic restart (exit 75 or a crash): not failed, not working. An uninterrupted
+            # warming_up longer than 10 minutes is notified by the watchdog (crash loop / database still away).
+            row['reason'] = 'warming_up'
         elif active == 'inactive' and int(pid) == 0:
             row['reason'] = 'native_unit_inactive'
         elif active == 'failed':
             row['reason'] = 'native_unit_failed'
             if int(pid) == 0 and row['settled']:
-                row['recoverable'] = empty_fn(config['controlGroup']) is True and config['recoverEnabled'] is True
+                row['recoverable'] = empty_fn(control_group(config, key)) is True and config['recoverEnabled'] is True
         return row
     except Exception:
         row.update(ok=False, recoverable=False, reason='native_unit_unknown')
@@ -171,33 +243,35 @@ def observe(config, *, run=command, uptime=None, empty_fn=cgroup_empty):
 
 
 def probe(config):
-    return {'services': [observe(config)]}
+    return {'services': [observe(config, key) for key in consumers(config)]}
 
 
-def start_unit(config, version, *, run=command, observe_fn=observe, empty_fn=cgroup_empty):
-    if config.get('recoverEnabled') is not True:
+def start_unit(config, version, key=KEY, *, run=command, observe_fn=observe, empty_fn=cgroup_empty):
+    if config.get('recoverEnabled') is not True or key not in consumers(config):
         return {'result': 'refused'}
     if '_configPath' in config and read_config(config['_configPath']) != config:
         return {'result': 'refused'}
-    row = observe_fn(config)
+    row = observe_fn(config, key)
     if row.get('version') != version or row.get('recoverable') is not True or row.get('settled') is not True:
         return {'result': 'refused'}
-    # There is no restart/stop/kill operation, nor any variable unit argument.
-    run(['/usr/bin/systemctl', 'reset-failed', UNIT])
+    unit = unit_name(key)
+    # There is no restart/stop/kill operation; the only unit argument is an allow-listed, configured consumer.
+    run(['/usr/bin/systemctl', 'reset-failed', unit])
     # reset-failed clears the failed state. Recheck identity and recursive
     # emptiness before admission; fail job mode never replaces an operator job.
-    values = properties(config, run)
+    values = properties(config, run, key)
     if (values['ActiveState'] != 'inactive' or values['SubState'] != 'dead' or values['MainPID'] != '0' or
-            empty_fn(config['controlGroup']) is not True):
+            empty_fn(control_group(config, key)) is not True):
         return {'result': 'refused'}
     if '_configPath' in config and read_config(config['_configPath']) != config:
         return {'result': 'refused'}
-    run(['/usr/bin/systemctl', 'start', '--job-mode=fail', UNIT])
+    run(['/usr/bin/systemctl', 'start', '--job-mode=fail', unit])
     return {'result': 'requested'}
 
 
 def recover(config, key, version, *, now=None, probe_fn=probe, start_fn=start_unit):
-    if key != KEY or type(version) is not int or not 0 < version < 10 ** 16 or config.get('recoverEnabled') is not True:
+    if (key not in ALLOWED_CONSUMERS or key not in consumers(config) or type(version) is not int or
+            not 0 < version < 10 ** 16 or config.get('recoverEnabled') is not True):
         return {'result': 'refused'}
     path = Path(config['state'])
     trusted_path(path.parent, directory=True, private=True)
@@ -218,22 +292,23 @@ def recover(config, key, version, *, now=None, probe_fn=probe, start_fn=start_un
                 state = {'attempts': {}}
             if not isinstance(state, dict) or set(state) != {'attempts'} or not isinstance(state['attempts'], dict):
                 return {'result': 'limited'}
-            attempts = state['attempts'].get(KEY, [])
+            # Budget per consumer: one unit's recoveries never use up another's.
+            attempts = state['attempts'].get(key, [])
             if not isinstance(attempts, list) or any(type(at) not in (int, float) or not math.isfinite(at) or at < 0 or at > now for at in attempts):
                 return {'result': 'limited'}
             attempts = [at for at in attempts if now - at < 86400]
             if len(attempts) >= 2 or attempts and now - max(attempts) < 900:
                 return {'result': 'limited'}
-            row = next((row for row in probe_fn(config)['services'] if row.get('key') == KEY), {})
+            row = next((row for row in probe_fn(config)['services'] if row.get('key') == key), {})
             if row.get('version') != version or row.get('recoverable') is not True or row.get('settled') is not True:
                 return {'result': 'refused'}
-            state['attempts'][KEY] = attempts + [now]
+            state['attempts'][key] = attempts + [now]
             # Reserve before reset-failed too: unknown SSH/command outcomes consume the budget.
             temporary = path.with_suffix('.tmp')
             if temporary.exists() or temporary.is_symlink():
                 trusted_path(temporary, private=True)
             load_shared().save(path, state)
-            return start_fn(config, version)
+            return start_fn(config, version, key)
         except Exception:
             return {'result': 'unknown'}
 
@@ -241,10 +316,12 @@ def recover(config, key, version, *, now=None, probe_fn=probe, start_fn=start_un
 def parse_command(value):
     if value == 'probe':
         return ('probe',)
-    match = re.fullmatch(r'recover agent-scan ([0-9]{1,16})', value)
-    if not match or not 0 < int(match[1]) < 10 ** 16:
+    keys = '|'.join(re.escape(key) for key in ALLOWED_CONSUMERS)
+    match = re.fullmatch(r'recover (' + keys + r') ([0-9]{1,16})', value)
+    if not match or not 0 < int(match[2]) < 10 ** 16:
         raise ValueError('command_denied')
-    return ('recover', KEY, int(match[1]))
+    # Whether this installation lists the consumer is decided by recover() against the config (refused otherwise).
+    return ('recover', match[1], int(match[2]))
 
 
 def main():
