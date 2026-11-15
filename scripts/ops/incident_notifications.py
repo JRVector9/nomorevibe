@@ -40,7 +40,7 @@ SERVICE_TEXT = {
     'probe_unknown': '감시가 이 호스트의 상태를 읽지 못함 — 호스트·게이트웨이 확인',
     'replica_intent_changed': '서비스 복제본 수 설정이 바뀜',
     'replicas_missing': '컨테이너가 떠 있지 않음',
-    'warming_up': '10분 넘게 재시작을 되풀이함 — 크래시 루프 의심',
+    'warming_up': '10분 넘게 다시 뜨는 중 — 재시작 되풀이(크래시 루프) 또는 Oracle 일꾼의 DB 기다림',
     'database_unavailable': 'DB 에 연결하지 못함',
     'web_page_failed': '웹 페이지 응답 실패',
     'web_not_ready': '웹이 준비 상태가 아님',

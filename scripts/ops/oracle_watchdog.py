@@ -38,6 +38,15 @@ REASONS = {'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warmi
 # 알림 유예 자체(20분 상한)는 incident_notifications.drain_hold 가 정한다. 복구 판단·Kuma DOWN 은 바뀌지 않는다.
 DRAIN_CONTINUITY_SECONDS = 600
 DRAIN_CARRY_SECONDS = 150
+# 2026-11-15: both native recoveries of the day (03:21Z, 07:19Z) ran while the shared DB was still down, failed in the
+# consumer's preflight and spent the 24-hour budget (2) before the DB came back at ~10:15Z; nothing retried after that.
+# A recovery that needs the DB now waits while the fleet shows the DB is down — any row of this cycle reporting
+# database_unavailable (the M3/mini web /api/health probe) — and for DATABASE_SETTLE_SECONDS after the last such row
+# (web probes flip between database_unavailable, web_not_ready and warming_up during an outage). Waiting reserves no
+# attempt; the next cycle without that evidence recovers as before, under the same per-target 15-minute/2-per-day
+# budget. No DB evidence (host unreadable) is not "DB down": recovery then proceeds as before.
+DATABASE_DEPENDENT_RECOVERY = frozenset({'native_unit_failed'})
+DATABASE_SETTLE_SECONDS = 180
 
 
 def observe_drain(previous, mode, now):
@@ -55,6 +64,28 @@ def observe_drain(previous, mode, now):
         return window, False  # 명시적 OPEN·disabled: 유예 없음. 창은 이어지는 DRAIN 이 다시 시작하지 않게 남긴다.
     start = max(0, now - mode['ageSeconds'])
     return {'since': min(window['since'], start) if window else start, 'seen': now}, True
+
+
+def database_unavailable_seen(reports):
+    return any(isinstance(row, dict) and row.get('reason') == 'database_unavailable'
+               for report in reports.values() if isinstance(report, dict)
+               for row in report.get('services', []) if isinstance(report.get('services'), list))
+
+
+def database_hold(state, reports, now):
+    """True while the fleet shows the shared DB down, or saw it down less than DATABASE_SETTLE_SECONDS ago."""
+    if database_unavailable_seen(reports):
+        state['database'] = {'unavailableAt': now}
+        return True
+    previous = state.get('database')
+    seen = previous.get('unavailableAt') if isinstance(previous, dict) else None
+    if not (type(seen) in (int, float) and math.isfinite(seen) and 0 <= seen <= now):
+        state.pop('database', None)
+        return False
+    if now - seen >= DATABASE_SETTLE_SECONDS:
+        state.pop('database', None)
+        return False
+    return True
 
 
 def validate_report(report):
@@ -129,6 +160,7 @@ def cycle(config, state, reports, *, now=None, recover=None):
     now = time.time() if now is None else now
     events = []
     alarm = False
+    database_down = database_hold(state, reports, now)
     for host in config['hosts']:
         report = reports.get(host)
         if report is None:
@@ -252,6 +284,11 @@ def cycle(config, state, reports, *, now=None, recover=None):
             if bad >= 2:
                 alarm = True
             if (config.get('recover') is True and actionable >= 3 and row['recoverable'] and row['version'] is not None and
+                    len(attempts) < 2 and (not attempts or now - max(attempts) >= 900) and
+                    database_down and row['reason'] in DATABASE_DEPENDENT_RECOVERY):
+                # Not now: it would fail in the consumer's DB preflight and spend the budget. No attempt is reserved.
+                events.append({'target': key, 'recovery': 'deferred', 'cause': 'database_unavailable'})
+            elif (config.get('recover') is True and actionable >= 3 and row['recoverable'] and row['version'] is not None and
                     len(attempts) < 2 and (not attempts or now - max(attempts) >= 900)):
                 target['attempts'].append(now)
                 save(config['state'], state)

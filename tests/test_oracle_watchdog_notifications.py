@@ -93,7 +93,27 @@ class NotificationTests(unittest.TestCase):
         self.cycle(1600)
         self.cycle(1660)
         self.assertEqual(len(self.messages), 1)
-        self.assertTrue(self.messages[0].startswith('NoMoreVibe 장애 알림\n- m3/web warming_up — 10분 넘게 재시작을 되풀이함'))
+        self.assertTrue(self.messages[0].startswith('NoMoreVibe 장애 알림\n- m3/web warming_up — 10분 넘게 다시 뜨는 중 — 재시작 되풀이(크래시 루프)'))
+
+    def test_korean_discovery_consumer_is_alerted_like_agent_scan_once_listed(self):
+        # 2026-11-15: github-ko-discovery was failed 03:16-10:53Z with no alert because osaka listed only agent-scan.
+        self.config['hosts']['osaka'] = {'services': ['agent-scan', 'github-ko-discovery']}
+        native = [self.row('agent-scan'), self.row('github-ko-discovery', 'native_unit_failed')]
+        self.reports['osaka'] = {'services': native}
+        self.cycle(1000)
+        self.cycle(1030)
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn('osaka/github-ko-discovery native_unit_failed — 호스트 서비스 실패', self.messages[0])
+        # A consumer waiting for the DB (launcher gate / restart wait) is warming_up: notified once the uninterrupted
+        # fault (here since the failure at 1000) passes 10 minutes.
+        self.messages.clear()
+        native[1] = self.row('github-ko-discovery', 'warming_up')
+        for now in range(1060, 1600, 30):
+            self.cycle(now)
+        self.assertEqual(self.messages, [])
+        self.cycle(1600)
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn('osaka/github-ko-discovery warming_up — 10분 넘게 다시 뜨는 중', self.messages[0])
 
     def test_pipeline_alarm_right_after_monitor_restart_waits_but_plain_alarm_alerts(self):
         # 감시가 다시 뜬 직후의 파이프라인 경보(멈춘 잡 재개 전)는 10분 안에 풀리면 알리지 않는다
