@@ -1,4 +1,3 @@
-import {localizeProductList} from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
@@ -9,8 +8,6 @@ import {publicRead} from '@/lib/domain/products/public-reads';
 import {popularHref} from '@/lib/domain/products/stars';
 import {PopularFilter} from './PopularFilter';
 import {PopularTierCards} from './PopularTierCards';
-import {rankedCard} from './popular-cards';
-import {RankedCards} from './RankedCards';
 import {logger} from '@/lib/observability/logger';
 
 /**
@@ -19,25 +16,19 @@ import {logger} from '@/lib/observability/logger';
  */
 export async function PopularTiers({personal=false}:{personal?:boolean}){
  const locale=await getRequestLocale();
- const [t,labels]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels")]);
+ const t=await getTranslator(locale,"browse");
  let groups;
  try{groups=await publicRead("list", ["popular-groups", personal], () => getPopularGroups(personal));}catch(error){
   logger.warn('home.popular_unavailable',{error});
   return <section className="popular-section" id="popular"><h2>{t("popular.title")}</h2><p role="status">{t("error.load")}</p></section>;
  }
- const now=new Date();
- // 카드 판은 여기서 글자로 그린다 — 탭 부품(브라우저)에는 구간 이름·수·주소와 그린 판만 넘어간다
- // 첫 구간만 그린다 — 나머지 구간은 숨은 판이라 서버 HTML 에 싣지 않고 탭을 처음 고를 때 받는다(첫 화면 분량만)
- const tiers=await Promise.all(groups.map(async (group,groupIndex)=>{
-  const base={key:group.key,label:t(`tier.${group.key}`),range:t(`tierRange.${group.key}`),total:group.total,href:localePath(locale,popularHref(group.key,personal))};
-  if(groupIndex>0) return {...base,panel:null,lazy:{personal}};
-  const items=(await localizeProductList(group.items,locale)).map((item,index)=>rankedCard(item,index+1));
-  return {...base,panel:items.length?<RankedCards items={items} now={now} locale={locale} t={labels}/>:null};
- }));
+ // 탭 부품(브라우저)에는 구간 이름·수·주소만 넘어간다. 카드는 서버 HTML 에 싣지 않는다 — 이 구획은 홈 목록 아래(첫 화면 밖)라
+ // 첫 구간도 화면 가까이 오면, 다른 구간은 탭을 처음 고를 때 같은 출처 API 로 받는다(2026-11-15 공개 HTML 줄이기 2차)
+ const tiers=groups.map(group=>({key:group.key,label:t(`tier.${group.key}`),range:t(`tierRange.${group.key}`),total:group.total,href:localePath(locale,popularHref(group.key,personal))}));
  return <section className="popular-section" id="popular" aria-labelledby="popular-title">
   <div className="row-head"><div><h2 id="popular-title" className="row-title">{t("popular.title")}</h2>
    <p className="row-note">{t("popular.homeNote")} · <Link prefetch={false} href={localePath(locale,"/?metric=popular#popular")} scroll={false}>{t("nav.methodology")}</Link></p></div>
    <div><Suspense><PopularFilter personal={personal}/></Suspense></div></div>
-  <PopularTierCards groups={tiers}/>
+  <PopularTierCards groups={tiers} personal={personal}/>
  </section>;
 }

@@ -93,6 +93,25 @@ describe("/popular 목록 보기 — 발견하기 부품으로(2026-10-11 시안
     expect(html).toContain('<span class="project-rank"><span aria-hidden="true">16</span><span class="sr-only">16위</span></span>');
   });
 
+  it("한 쪽에서 앞 5줄만 서버 HTML 에 글자로 — 뒷줄은 같은 목록 안 빈 자리, 화면 가까이 오면 API 로 받는다(2026-11-15 공개 HTML 줄이기 2차)", async () => {
+    getPopularPage.mockResolvedValue(page({ items: Array.from({ length: 7 }, (_, index) => product({ slug: `row-${index + 1}`, name: `Row ${index + 1}` })) }));
+    const html = await render({ tier: "rising", ai: "made", page: "2" });
+    const list = html.match(/<ol class="popular-list">([\s\S]*?)<\/ol>/)![1];
+    expect(list.match(/<li class="popular-row">/g)).toHaveLength(5);
+    expect(list).toContain("Row 5");
+    // 뒷줄의 이름·주소는 서버 HTML 에 없다 — 받기 전 자리(aria-hidden)만 같은 <ol> 안에
+    expect(html).not.toContain("Row 6");
+    expect(html).not.toContain("/p/row-7");
+    expect(list).toMatch(/<li aria-hidden="true" aria-busy="true" style="min-height:248px"><\/li>$/);
+    // 쪽 안내는 그 쪽 전체(16–22위)를 말한다
+    expect(html).toContain("16–22위 / 1,234");
+
+    const cards = await render({ tier: "rising", ai: "made", page: "2", view: "cards" });
+    expect(cards.match(/class="project-card"/g)).toHaveLength(5);
+    expect(cards).not.toContain("Row 6");
+    expect(cards).toContain('<div aria-hidden="true" aria-busy="true" style="min-height:340px;grid-column:1 / -1"></div>');
+  });
+
   it("구간 탭은 발견하기 탭 모양에 수를 달고, 지금 거르기를 지킨 채 첫 쪽으로 간다", async () => {
     const html = await render({ tier: "rising", ai: "made", page: "2" });
     const tabs = html.match(/<nav class="tabs popular-tier-tabs"[\s\S]*?<\/nav>/)![0];

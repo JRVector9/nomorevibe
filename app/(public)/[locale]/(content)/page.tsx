@@ -760,7 +760,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           <ActiveList active={pulse.active} projects={pulse.updates.projects} i18n={i18n} />
         </div>
       )}
-      {!scoped && <NewsList news={news} now={now} />}
+      {!scoped && <NewsList news={news} now={now} locale={locale} t={t} />}
       {!query && <LaunchBand />}
 
       <Suspense>

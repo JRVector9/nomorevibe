@@ -72,7 +72,7 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
                 </div>
               </div>
               <ProductTagline className="talk-lead-tagline" tagline={featured.product.tagline} taglineKo={featured.product.taglineKo}
-                translation={featured.product.translation} source={featured.product.taglineSource} showSource={false} />
+                translation={featured.product.translation} showSource={false} />
               <TalkChips posts={featured.posts} t={t} locale={locale} />
               {featured.starGrowth && (
                 <div className="talk-lead-chart">

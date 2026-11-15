@@ -1,26 +1,29 @@
 import { NextResponse } from "next/server";
 import { cardItem, type CardItem } from "@/components/cards/card-item";
-import { getPopularGroups } from "@/lib/domain/products/popular";
+import { getPopularGroups, getPopularPage } from "@/lib/domain/products/popular";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
-import { STAR_TIERS } from "@/lib/domain/products/stars";
+import { POPULAR_SERVER_ROWS, STAR_TIERS, parsePopularParams } from "@/lib/domain/products/stars";
 import { completedWindows } from "@/lib/domain/products/home-pulse";
 import { getNewThisWeek, NEW_THIS_WEEK_MIN_STARS } from "@/lib/domain/products/view";
 import { guardPublicApiRead } from "@/lib/http/anti-scrape";
 import { withRoute } from "@/lib/http/handler";
 import { DEFAULT_LOCALE, isLocale } from "@/lib/i18n/locales";
 import { localizeProductList } from "@/lib/i18n/products";
+import { publicPaginationBlocked } from "@/lib/web/public-pagination";
 
 const NO_STORE = { "Cache-Control": "private, no-store", "Cloudflare-CDN-Cache-Control": "no-store" } as const;
 
 /** 브라우저가 열 때 받는 카드 목록 — 홈 '많이 쓰이는' 다른 구간, 없는 주소의 '지금 뜨는' */
-export type ProductCardsResponse = { items: (CardItem & { rank?: number })[] };
+export type ProductCardsResponse = { items: (CardItem & { rank?: number; ownerType?: "User" | "Organization" | null })[] };
 
 /**
  * 첫 화면에 보이지 않는 카드(2026-11-14 공개 HTML 줄이기) — 서버 HTML·RSC 데이터에 싣지 않고 누르거나 열 때 이 같은 출처 API 로 받는다.
  *  - list=popular&tier=<구간>&personal=1 : 홈 '많이 쓰이는 프로젝트'의 다른 구간 상위 3(홈 구간과 같은 읽기·같은 열쇠)
  *  - list=rising : 없는 주소 화면의 '지금 뜨는' 다섯(없는 주소 화면은 모든 공개 화면의 RSC 데이터에 404 경계로 실린다)
  *  - list=new : 홈 '이번 주 새로 나온' 다섯(첫 화면 아래 — 홈과 같은 읽기·같은 열쇠)
+ *  - list=popular-page&</popular 의 tier·personal·ai·category·sort·page> : /popular 한 쪽에서 서버 HTML 에 싣지 않은 뒷줄
+ *    (POPULAR_SERVER_ROWS 다음부터, 2026-11-15 공개 HTML 줄이기 2차) — /popular 와 같은 읽기·같은 열쇠, 같은 쪽 제한
  * 공개 API 읽기 관문을 그대로 거친다. 카드가 그리는 칸만 돌려준다(card-item.ts).
  */
 export const GET = withRoute("products.cards", async (req: Request) => {
@@ -37,6 +40,17 @@ export const GET = withRoute("products.cards", async (req: Request) => {
     const groups = await publicRead("list", ["popular-groups", personal], () => getPopularGroups(personal));
     const items = await localizeProductList(groups.find((group) => group.key === tier.key)?.items ?? [], locale);
     return NextResponse.json({ items: items.map((item, index) => ({ ...cardItem(item, locale), rank: index + 1 })) } satisfies ProductCardsResponse, { headers: NO_STORE });
+  }
+  if (list === "popular-page") {
+    const query = Object.fromEntries(params.entries());
+    if (publicPaginationBlocked(query, "page")) return NextResponse.json({ error: "page_out_of_range" }, { status: 400, headers: NO_STORE });
+    const state = parsePopularParams(query);
+    const filters = { personal: state.personal, ai: state.ai, category: state.category };
+    const result = await publicRead("list", ["popular-page", state.tier, filters, state.sort, state.page],
+      () => getPopularPage(state.tier, filters, state.sort, state.page));
+    const first = (result.page - 1) * result.pageSize + 1 + POPULAR_SERVER_ROWS;
+    const items = await localizeProductList(result.items.slice(POPULAR_SERVER_ROWS), locale);
+    return NextResponse.json({ items: items.map((item, index) => ({ ...cardItem(item, locale), ownerType: item.ownerType ?? null, rank: first + index })) } satisfies ProductCardsResponse, { headers: NO_STORE });
   }
   if (list === "rising") {
     const page = await getStarGrowthPage({ limit: 5 });

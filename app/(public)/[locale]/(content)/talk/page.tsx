@@ -106,7 +106,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
               <Link prefetch={false} href={href(lead.product.slug)}>{lead.product.name}</Link>
             </h2>
             <ProductTagline className="talk-lead-tagline" tagline={lead.product.tagline} taglineKo={lead.product.taglineKo}
-              translation={lead.product.translation} source={lead.product.taglineSource} showSource={false} />
+              translation={lead.product.translation} showSource={false} />
             <PostLines entry={lead} t={t} locale={locale} now={now} />
             <div className="talk-actions">
               <Link prefetch={false} className="solid" href={href(lead.product.slug)}>{t("talk.details")}</Link>
@@ -138,7 +138,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
                   <Link prefetch={false} href={href(entry.product.slug)}>{entry.product.name}</Link>
                 </div>
                 <ProductTagline className="talk-entry-tagline" tagline={entry.product.tagline} taglineKo={entry.product.taglineKo}
-                  translation={entry.product.translation} source={entry.product.taglineSource} showSource={false} />
+                  translation={entry.product.translation} showSource={false} />
                 <PostLines entry={entry} t={t} locale={locale} now={now} />
               </div>
               <div className="talk-stat">

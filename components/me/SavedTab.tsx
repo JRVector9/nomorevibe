@@ -42,7 +42,7 @@ function SavedRow({ item, onRemove, children }: { item: SavedItem; onRemove: () 
       <span className="me-srow-icon" aria-hidden="true"><ProductIcon name={item.name} ogImage={icon} size={44} category={item.category} loading="lazy" /></span>
       <div className="me-srow-body">
         <h3 className="me-srow-name"><Link prefetch={false} href={localePath(locale, `/p/${item.slug}`)} className="card-link">{item.name}</Link></h3>
-        <ProductTagline translation={item.translation} tagline={item.tagline} taglineKo={item.taglineKo} source={item.taglineSource} className="me-srow-tagline" showSource={false} />
+        <ProductTagline translation={item.translation} tagline={item.tagline} taglineKo={item.taglineKo} className="me-srow-tagline" showSource={false} />
         {children}
       </div>
       <button type="button" className="cover-saved active" aria-pressed="true" aria-label={t("card.unsave", { name: item.name })} onClick={onRemove}>
