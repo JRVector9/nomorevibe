@@ -10,7 +10,7 @@ import { safeExternalUrl } from "./format";
 /**
  * 업데이트 — 출처를 섞어 처음에는 최신 세 줄(날짜 · 제목 · 출처)만 표시한다.
  * 세 줄과 건수(전체·최근 30일)는 서버가 정해 넘긴다(client-data.ts timelineSummary) — 나머지 업데이트는 처음 HTML·부가 자료에 싣지 않는다.
- * 세 건보다 많으면 '전체'를 눌러 같은 출처 API(/api/products/[slug]/updates)로 모두 받아 펼치고, '접기'로 세 줄로 돌아간다
+ * 세 건보다 많으면 '전체'를 눌러 같은 출처 API(/api/products/[slug]/timeline)로 모두 받아 펼치고, '접기'로 세 줄로 돌아간다
  * (2026-11-15 사람 결정: 많아도 다 보인다). 한 번 받은 목록은 접었다 다시 펴도 다시 받지 않는다.
  * 줄마다 위쪽 선 하나 — 선은 줄이 있는 만큼만 긋고 마지막 줄 아래에는 긋지 않는다(빈 띠를 두 선이 감싸 빈 칸처럼 보였다).
  * now 는 서버가 읽은 시각이다 — 날짜의 '올해'를 서버·브라우저가 같게 낸다.
@@ -49,7 +49,7 @@ const loads = new Map<string, Promise<TimelineUpdate[] | null>>();
 export function loadAllUpdates(slug: string): Promise<TimelineUpdate[] | null> {
   let load = loads.get(slug);
   if (!load) {
-    load = fetch(`/api/products/${encodeURIComponent(slug)}/updates`, { headers: { accept: "application/json" } })
+    load = fetch(`/api/products/${encodeURIComponent(slug)}/timeline`, { headers: { accept: "application/json" } })
       .then(async (response) => response.ok ? (JSON.parse(await response.text(), reviveDetailExtras) as TimelineAllResponse).rows : null)
       .catch(() => null);
     load.then((all) => { if (!all) loads.delete(slug); });

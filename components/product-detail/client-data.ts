@@ -29,13 +29,13 @@ export function detailFreshness(freshness: FreshnessView[]): DetailFreshness[] {
   return freshness.map(({ provider, lastSuccessAt }) => ({ provider, lastSuccessAt }));
 }
 
-/** 업데이트 목록은 처음에 최신 세 줄만 그린다 — 나머지는 '전체'를 누르면 같은 출처 API(/api/products/[slug]/updates)로 받는다 */
+/** 업데이트 목록은 처음에 최신 세 줄만 그린다 — 나머지는 '전체'를 누르면 같은 출처 API(/api/products/[slug]/timeline)로 받는다 */
 export const TIMELINE_LIMIT = 3;
 const DAY = 86_400_000;
 
 export type TimelineUpdate = Pick<ProductUpdateView, "id" | "sourceKind" | "canonicalUrl" | "title" | "publishedAt" | "observedAt">;
 export type TimelineSummary = { rows: TimelineUpdate[]; total: number; recent: number };
-/** '전체'가 받는 값(/api/products/[slug]/updates) — 보이는 업데이트 모두, 최신순 */
+/** '전체'가 받는 값(/api/products/[slug]/timeline) — 보이는 업데이트 모두, 최신순 */
 export type TimelineAllResponse = { rows: TimelineUpdate[] };
 
 /** 한 줄이 그리는 칸만 — 요약·전후 값·메이커 수정 시각은 브라우저로 보내지 않는다 */

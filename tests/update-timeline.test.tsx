@@ -120,7 +120,7 @@ describe("업데이트 '전체'·'접기'", () => {
     const [rows] = await Promise.all([loadAllUpdates("many-updates"), loadAllUpdates("many-updates")]);
     state = timelineReducer(state, { type: "loaded", rows });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]).toEqual(["/api/products/many-updates/updates", { headers: { accept: "application/json" } }]);
+    expect(fetchMock.mock.calls[0]).toEqual(["/api/products/many-updates/timeline", { headers: { accept: "application/json" } }]);
     // 시각은 Date 로 되살린다 — 서버에서 그린 세 줄과 같은 모양
     expect(rows?.[0].publishedAt).toBeInstanceOf(Date);
 

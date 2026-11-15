@@ -37,7 +37,7 @@ vi.mock("@/lib/domain/products/view", async (original) => ({
 
 const readmeRoute = await import("@/app/api/products/[slug]/readme/route");
 const detailsRoute = await import("@/app/api/products/[slug]/details/route");
-const updatesRoute = await import("@/app/api/products/[slug]/updates/route");
+const timelineRoute = await import("@/app/api/products/[slug]/timeline/route");
 const cardsModule = await import("@/app/api/product-cards/route");
 /** 경로 매개변수가 없는 route — withRoute 의 둘째 인자는 빈 params */
 const cardsRoute = { GET: (req: Request) => cardsModule.GET(req, { params: Promise.resolve({}) } as never) };
@@ -111,7 +111,7 @@ beforeEach(() => {
 const routes = [
   ["readme", (req: Request) => readmeRoute.GET(req, params("ggml"))],
   ["details", (req: Request) => detailsRoute.GET(req, params("ggml"))],
-  ["updates", (req: Request) => updatesRoute.GET(req, params("ggml"))],
+  ["timeline", (req: Request) => timelineRoute.GET(req, params("ggml"))],
   ["cards", (req: Request) => cardsRoute.GET(new Request(req.url.replace(/\/api\/products\/ggml\/cards.*/, "/api/product-cards?list=rising"), { headers: req.headers }))],
 ] as const;
 
@@ -183,9 +183,9 @@ describe("부가 자료 API", () => {
   });
 });
 
-describe("업데이트 전체 API(/api/products/[slug]/updates GET)", () => {
+describe("업데이트 전체 API(/api/products/[slug]/timeline)", () => {
   it("보이는 업데이트를 모두, 받은 순서 그대로 — 줄이 그리는 칸(날짜·제목·출처 링크)만", async () => {
-    const response = await updatesRoute.GET(request("/api/products/ggml/updates"), params("ggml"));
+    const response = await timelineRoute.GET(request("/api/products/ggml/timeline"), params("ggml"));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
@@ -203,7 +203,7 @@ describe("업데이트 전체 API(/api/products/[slug]/updates GET)", () => {
 
   it("없거나 내린 제품은 404 — 상세와 같은 판정(getPublicProductUpdates 가 null)", async () => {
     mocks.getPublicProductUpdates.mockResolvedValueOnce(null);
-    expect((await updatesRoute.GET(request("/api/products/missing/updates"), params("missing"))).status).toBe(404);
+    expect((await timelineRoute.GET(request("/api/products/missing/timeline"), params("missing"))).status).toBe(404);
   });
 });
 
