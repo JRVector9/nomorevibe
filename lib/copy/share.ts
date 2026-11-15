@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
+import type { Locale } from "@/lib/i18n/locales";
+import { localePath } from "@/lib/i18n/routing";
 import { BRAND, SITE_TAGLINE } from "./brand";
 
 /**
@@ -24,14 +25,11 @@ export const SITE_SHARE: Pick<Metadata, "openGraph" | "twitter"> = {
 };
 
 /**
- * 제품 상세의 공유 그림 — 우리가 받아 둔 그 사이트의 대표 이미지(og)나 큰 README 그림일 때만 쓴다.
- * 아이콘·작은 그림(사이트 아이콘·GitHub 프로필·정사각 로고)은 미리보기 카드에서 뭉개지므로 사이트 기본 그림을 쓴다.
+ * 제품 상세의 공유 그림 — 이름·요약·사이트 표기만 그린 공유 카드(`/p/<slug>/share-card.png`, 언어별 주소, 1200×630).
+ * 2026-11-15 사람 결정: 공개 HTML·메타에는 제품 표지 주소(/api/og-cache/…)를 싣지 않는다. 카드는 상세가 열리는 제품이면 나온다(lib/me/share.ts).
  */
-export function productShareImage(ogImage: string | null | undefined): { url: string; width?: number; height?: number; alt?: string } {
-  if (!ogImage?.startsWith("/api/og-cache/")) return DEFAULT_SHARE_IMAGE;
-  const presentation = thumbnailPresentation(ogImage);
-  const wide = presentation.kind === "og" || (presentation.kind === "repository_image" && !presentation.identity);
-  return wide ? { url: ogImage, width: presentation.width, height: presentation.height } : DEFAULT_SHARE_IMAGE;
+export function productShareCard(locale: Locale, slug: string, name: string): { url: string; width: number; height: number; alt: string } {
+  return { url: localePath(locale, `/p/${slug}/share-card.png`), width: 1200, height: 630, alt: name };
 }
 
 /** 화면 하나의 공유 메타 — openGraph 는 얕게 병합되므로 사이트 기본값(siteName·locale)을 함께 넣는다 */

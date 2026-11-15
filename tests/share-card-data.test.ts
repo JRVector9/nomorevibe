@@ -51,10 +51,19 @@ describe("shareCardData — 이름·요약·사이트 표기만", () => {
     expect(JSON.stringify(en)).not.toMatch(SENTINELS);
   });
 
-  it("목록 밖(검증 전·내림·감사 보류) 제품은 null", async () => {
-    for (const extra of [{ status: "unverified" }, { status: "banned" }, { auditHoldAt: new Date() }]) {
+  it("상세가 열리는 제품이면 카드도 나온다(검증 전·감사 보류·수집 개인 프로필 포함) — 상세의 og:image 가 이 카드다", async () => {
+    for (const extra of [{ status: "unverified" }, { auditHoldAt: new Date() }, { category: "Profile", source: "crawler", claimedAt: null }]) {
       mocks.identity.mockResolvedValue(product(extra));
-      expect(await shareCardData("tiny-cron", "ko")).toBeNull();
+      const card = await shareCardData("tiny-cron", "ko");
+      expect(card).toMatchObject({ name: "tiny-cron", tagline: "자연어 일정을 cron 식으로" });
+      expect(JSON.stringify(card)).not.toMatch(SENTINELS);
     }
+  });
+
+  it("상세가 열리지 않는 제품(없음·내림)은 null — 경로는 404", async () => {
+    mocks.identity.mockResolvedValue(null);
+    expect(await shareCardData("tiny-cron", "ko")).toBeNull();
+    mocks.identity.mockResolvedValue(product({ status: "banned" }));
+    expect(await shareCardData("tiny-cron", "ko")).toBeNull();
   });
 });

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * /api/products/[slug]/details 의 hero·intro·media·aside 로 화면 JS 가 채운다(DetailHeroSlots). 여기서는 실제 값 만들기(detailPageData)로
  * 그 응답을 만들어 받은 것처럼 바꿔 끼우고(useDetailExtras) 자리를 그린다. 기본은 받는 중.
  */
+process.env.VISITOR_HASH_SECRET ??= "test-visitor-hash-secret-0123456789abcdef";
 const extras = vi.hoisted(() => ({ state: { data: null as unknown, done: false } }));
 vi.mock("@/components/product-detail/DetailExtras", async (original) => ({
   ...await original<typeof import("@/components/product-detail/DetailExtras")>(),
@@ -375,9 +376,9 @@ describe("evidence product detail components", () => {
   });
 
   it("shows only an internal icon copy, never an external image URL", async () => {
-    // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts)
+    // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts) — 상세 API 가 준 보호 주소(<slug>.<열쇠>, cover-url.ts)로
     expect(await renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp?thumbnail=site_icon&w=64&h=64" } }))
-      .toContain('src="/api/og-cache/simple-hwp.webp?thumbnail=site_icon&amp;w=64&amp;h=64&amp;size=192"');
+      .toMatch(/src="\/api\/og-cache\/simple-hwp\.[0-9a-f]{32}\.webp\?thumbnail=site_icon&amp;w=64&amp;h=64&amp;size=192"/);
     // 대표 이미지(OG 배너)는 정사각 아이콘 자리에 잘라 넣지 않는다 — 모노그램이 대신한다(UX-32)
     expect(await renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).not.toContain("<img");
     expect(await renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");

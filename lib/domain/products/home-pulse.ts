@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { db, onReplica } from "@/lib/db";
 import {
   agentRepositoryObservations,
@@ -222,7 +223,7 @@ export async function loadHomePulse(now: Date): Promise<HomePulse> {
       category: row.category,
       releases: Number(row.releases),
       stars: row.stars === null ? null : Number(row.stars),
-      ogImage: row.og_image ?? null,
+      ogImage: protectedCoverUrl(row.og_image),
     })),
     categories: CATEGORIES
       .map((key) => ({ key, total: Number(byCategory.get(key)?.total ?? 0), born: Number(byCategory.get(key)?.born ?? 0) }))

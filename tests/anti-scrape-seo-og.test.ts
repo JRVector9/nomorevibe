@@ -4,12 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ og: vi.fn() }));
 vi.mock("@/lib/domain/products/repository", () => ({ getOgImage: mocks.og }));
+vi.mock("@/lib/domain/products/detail-view", () => ({ getProductIdentity: async (slug: string) => ({ slug }) }));
+vi.mock("@/lib/domain/products/public-reads", () => ({ publicRead: (_kind: string, _key: unknown[], load: () => Promise<unknown>) => load() }));
+// 표지는 보호 주소(<slug>.<열쇠>)로만 나간다 — lib/domain/products/cover-url.ts. 열쇠는 이 시험 비밀에서 만든다
+process.env.VISITOR_HASH_SECRET = "test-visitor-hash-secret-0123456789abcdef";
 import { GET } from "@/app/api/og-cache/[slug]/route";
+import { coverKey } from "@/lib/domain/products/cover-url";
 
 let sequence = 0;
 const call = (suffix = "", query = "", slug = `seo-${++sequence}`) => GET(
-  new Request(`https://nomorevibe.test/api/og-cache/${slug}${suffix}${query}`),
-  { params: Promise.resolve({ slug: `${slug}${suffix}` }) },
+  new Request(`https://nomorevibe.test/api/og-cache/${slug}.${coverKey(slug)}${suffix}${query}`),
+  { params: Promise.resolve({ slug: `${slug}.${coverKey(slug)}${suffix}` }) },
 );
 const image = (width: number, height: number) => sharp({ create: { width, height, channels: 3, background: "#ce4721" } }).png({ compressionLevel: 0 }).toBuffer();
 beforeEach(() => vi.clearAllMocks());
@@ -43,7 +48,7 @@ describe("anti-scrape SEO OG response", () => {
     const second = await call(suffix, "?size=999999&raw=1&original=1", slug);
     expect(Buffer.from(await second.arrayBuffer())).toEqual(body);
     expect(mocks.og).toHaveBeenCalledTimes(1);
-    expect(second.headers.get("cache-tag")).toBe(`og-${slug}`);
+    expect(second.headers.get("cache-tag")).toBe(`og-${slug},p-${slug}`);
   });
   it.each(["", ".webp"])("never falls back to original bytes after decoder failure for %s", async suffix => {
     const source = Buffer.from("private-original-not-an-image");

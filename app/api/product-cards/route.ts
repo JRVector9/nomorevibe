@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cardItem, type CardItem } from "@/components/cards/card-item";
 import { HOME_MAX_SHOWN } from "@/components/home/browse-state";
 import { homeListFromParams, readHomeList, readUnclaimedList } from "@/components/home/home-list";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { getPopularGroups, getPopularPage } from "@/lib/domain/products/popular";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
@@ -33,8 +34,9 @@ export const NEW_PAGE_SIZE = 15;
 export const RISING_PAGE_SIZE = 15;
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: NO_STORE });
+/** 표지는 보호 주소로만(lib/domain/products/cover-url.ts) — 목록 읽기(toListItem)를 거치지 않는 /popular 줄도 여기서 바꾼다 */
 const cards = async <T extends Parameters<typeof cardItem>[0] & ProductListItemLike>(rows: T[], locale: Locale) =>
-  (await localizeProductList(rows, locale)).map((item) => cardItem(item, locale));
+  (await localizeProductList(rows, locale)).map((item) => ({ ...cardItem(item, locale), ogImage: protectedCoverUrl(item.ogImage) }));
 type ProductListItemLike = { name: string; tagline: string; id?: number };
 
 function offsetParam(value: string | null, max: number): number | null {

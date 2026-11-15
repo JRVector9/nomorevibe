@@ -18,6 +18,7 @@ vi.mock("@/lib/domain/products/health", async (original) => ({ ...await original
 vi.mock("@/lib/domain/products/activity", async (original) => ({ ...await original<Record<string, unknown>>(), withProductActivity: async <T>(items: T[]) => items }));
 vi.mock("@/lib/db", async (original) => ({ ...await original<Record<string, unknown>>(), onReplica: async (load: () => Promise<unknown>) => load() }));
 
+process.env.VISITOR_HASH_SECRET = "test-visitor-hash-secret-0123456789abcdef";
 const cardsModule = await import("@/app/api/product-cards/route");
 const GET = (req: Request) => cardsModule.GET(req, { params: Promise.resolve({}) } as never);
 
@@ -28,7 +29,7 @@ const request = (query: string, ua = BROWSER) => new Request(`https://nomorevibe
 /** listProductRows 행 — 공개 목록 조건을 통과한 것만 DB 가 돌려준다 */
 const row = (slug: string) => ({
   id: slug.length * 1000, slug, name: slug.toUpperCase(), status: "seeded", tagline: `${slug} tagline`, taglineSource: "ai_readme", taglineKo: `${slug} 소개`,
-  category: "Dev", accessMode: "website", aiLevel: 2, source: "crawler", claimedAt: null, builder: null, stack: [], ogImage: "/api/og-cache/x.png",
+  category: "Dev", accessMode: "website", aiLevel: 2, source: "crawler", claimedAt: null, builder: null, stack: [], ogImage: `/api/og-cache/${slug}?thumbnail=og&w=1200&h=630`,
   makerName: "maker", repoUrl: `https://github.com/owner-${slug}/repo`, repoRenamedTo: null, repoGone: false,
   stars: 120, starsAt: new Date("2026-11-14T00:00:00Z"), starsPrevious: 100, starsPreviousAt: new Date("2026-11-13T00:00:00Z"),
   verifiedAt: null, createdAt: new Date("2026-11-01T00:00:00Z"),
@@ -63,7 +64,10 @@ describe("slugs= 카드 채우기", () => {
     const text = await (await GET(request(`slugs=alpha,x${counter}&locale=ko`))).text();
     for (const key of ['"name":', '"repoUrl":', '"makerName":', '"status":', '"unclaimed":', '"builderClaim":', '"stack":', '"id":']) expect(text).not.toContain(key);
     const [item] = JSON.parse(text).items;
-    expect(item).toMatchObject({ slug: "alpha", category: "Dev", ogImage: "/api/og-cache/x.png", aiLevel: 2, stars: 120, owner: { login: "owner-alpha" } });
+    expect(item).toMatchObject({ slug: "alpha", category: "Dev", aiLevel: 2, stars: 120, owner: { login: "owner-alpha" } });
+    // 표지는 slug 만으로는 만들 수 없는 보호 주소(<slug>.<열쇠>)로만 — slug 주소는 응답에 없다(cover-url.ts)
+    expect(item.ogImage).toMatch(/^\/api\/og-cache\/alpha\.[0-9a-f]{32}\?thumbnail=og&w=1200&h=630$/);
+    expect(text).not.toContain('"/api/og-cache/alpha?');
     const full = await (await GET(request(`slugs=alpha,y${counter}&full=1&locale=ko`))).json();
     expect(full.items[0]).toMatchObject({ slug: "alpha", name: "ALPHA" });
   });
