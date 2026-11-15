@@ -14,7 +14,13 @@
 - [x] /talk·홈 화제·/rankings/[key]·상세 화제 띠: 이름·요약만, 나머지 API(`/api/talk-board`·`/api/products/[slug]/talk`·`/api/rankings/[key]`)
 - [x] 상세: h1 이름·요약·빵부스러기 홈›이름·JSON-LD만. 머리 나머지·소개·README 발췌·미리보기·운영자 상자는 `/api/products/[slug]/details`의 `hero·intro·media·aside`. 내부 id 는 로그인 기능이 켜졌을 때 API 응답 안에서만
 - [x] /p/[slug]/github: 저장소 이름은 로그인한 사람에게만
-- [x] 상세 og:image·twitter:image 는 **지금처럼 제품 표지**(productShareImage, 표지 없거나 아이콘이면 사이트 기본 그림) — 2026-11-15 사람 결정으로 이름·요약 카드(og.jpg) 안을 되돌림. og.jpg 경로는 지움. share-card.png(메이커 공유 카드)는 칩 없음 유지
+- [x] ~~상세 og:image 는 제품 표지(b346bf5d)~~ → 2026-11-15 16:3xZ 사람 결정("/go랑 표지그림 추천 방향으로 진행하자")으로 대체:
+  상세 og:image·twitter:image·JSON-LD image 는 공유 카드 `/p/<slug>/share-card.png`(언어별 주소, 이름·요약·nomorevibe 주소만). `productShareImage` 는 지움, og.jpg·shareCardJpeg 는 되살리지 않음
+- [x] 공유 카드 조건 = 상세가 열리는 제품(banned·없음만 404). 검증 전·감사 보류·수집 개인 프로필도 카드가 나온다(상세 HTML 과 같은 이름·요약뿐). «소개됨» 배지는 지금처럼 공개 목록 제품만
+- [x] 서버 HTML(본문·RSC·메타·JSON-LD)에 `/api/og-cache/` 주소 0개 — 허용 목록 시험에 확인 추가
+- [x] 표지 주소 보호(`lib/domain/products/cover-url.ts`): 보호 API(카드·상세·내 화면·화제)는 `/api/og-cache/<slug>.<열쇠>[.webp]` 만 준다.
+  열쇠 = HMAC-SHA256(VISITOR_HASH_SECRET 에서 라벨 `nomorevibe/og-cover-key/v1` 로 파생한 키, slug) 앞 128비트. 새 env 없음
+- [x] 옛 `/api/og-cache/<slug>[.webp]` 는 표지 대신 `/p/<slug>/share-card.png` 로 302(예전 SNS 주소 보존). 틀린 열쇠·내린 제품은 404. Cloudflare 캐시 헤더 그대로, 태그 `og-<slug>,p-<slug>`
 - [x] JSON-LD WebPage+CreativeWork+BreadcrumbList 홈›이름, feed category 제거
 - [x] 허용 목록 시험(`tests/public-html-payload.test.tsx`, 표식 값) — main 에서 19개 중 17개 실패 확인
 - [x] slugs API 시험(`tests/product-cards-slugs.test.ts`), 새 API 시험들, 기존 화면 시험 갱신

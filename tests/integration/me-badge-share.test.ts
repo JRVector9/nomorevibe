@@ -57,23 +57,24 @@ describe("GET /badge/<slug>.svg", () => {
     for (const slug of ["gone.svg", "missing.svg", "Tiny-Cron.svg"]) expect((await badge(slug)).status, slug).toBe(404);
   });
 
-  it("검증 전(unverified) 등록은 배지도 공유 카드도 404 — 누구나 아무 주소로 등록하므로 «listed» 를 내주면 피싱에 쓰인다", async () => {
+  it("검증 전(unverified) 등록은 «listed» 배지가 404 — 누구나 아무 주소로 등록하므로 내주면 피싱에 쓰인다. 공유 카드(이름·요약)는 상세처럼 나온다", async () => {
     await product("phish-wallet", "unverified", { name: "MetaMask Wallet", url: "https://phish.example" });
     for (const query of ["", "?style=tried", "?lang=ko"]) expect((await badge("phish-wallet.svg", query)).status, query).toBe(404);
-    expect((await card("ko", "phish-wallet")).status).toBe(404);
-    expect((await card("en", "phish-wallet")).status).toBe(404);
+    // 공유 카드는 상세의 og:image 다(2026-11-15 사람 결정) — 상세가 열리는 제품이면 나온다. 상세 HTML 과 같은 이름·요약뿐이고 «listed»·✓ 표기는 없다
+    expect((await card("ko", "phish-wallet")).status).toBe(200);
     const { shareCardData } = await import("@/lib/me/share");
-    expect(await shareCardData("phish-wallet", "ko")).toBeNull();
-  });
+    const data = await shareCardData("phish-wallet", "ko");
+    expect(data).toMatchObject({ name: "MetaMask Wallet", url: "nomorevibe.example/p/phish-wallet" });
+    expect(JSON.stringify(data)).not.toContain("phish.example");
+  }, 60_000);
 
-  it("주인 없는 수집 개인 프로필은 목록에 없어 배지·공유 카드가 404 — 본인이 클레임했거나 등록한 프로필은 내준다", async () => {
+  it("주인 없는 수집 개인 프로필은 목록에 없어 배지가 404(공유 카드는 상세처럼 나온다) — 본인이 클레임했거나 등록한 프로필은 배지도 내준다", async () => {
     await product("someone-portfolio", "seeded", { category: "Profile", source: "crawler" });
     await product("claimed-portfolio", "seeded", { category: "Profile", source: "crawler", claimedAt: new Date() });
     await product("registered-portfolio", "verified", { category: "Profile", source: "skill" });
     for (const query of ["", "?style=tried", "?lang=ko"]) expect((await badge("someone-portfolio.svg", query)).status, query).toBe(404);
-    expect((await card("ko", "someone-portfolio")).status).toBe(404);
     const { shareCardData } = await import("@/lib/me/share");
-    expect(await shareCardData("someone-portfolio", "en")).toBeNull();
+    expect(await shareCardData("someone-portfolio", "en")).toMatchObject({ name: "someone-portfolio" });
     expect((await badge("claimed-portfolio.svg")).status).toBe(200);
     expect((await badge("registered-portfolio.svg")).status).toBe(200);
     expect(await shareCardData("claimed-portfolio", "en")).not.toBeNull();

@@ -358,21 +358,31 @@ describe("상세 — h1 이름·요약·빵부스러기 홈›이름·JSON-LD(�
     const script = page.text.find((text) => text.includes('"@context"'))!;
     const [webPage, breadcrumb] = JSON.parse(script);
     expect(webPage["@type"]).toBe("WebPage");
-    expect(webPage.mainEntity).toEqual({ "@type": "CreativeWork", name: "ggml", description: "머신러닝용 텐서 라이브러리" });
+    expect(webPage.mainEntity).toEqual({ "@type": "CreativeWork", name: "ggml", description: "머신러닝용 텐서 라이브러리",
+      image: expect.stringMatching(/\/p\/ggml\/share-card\.png$/) });
     expect(breadcrumb.itemListElement.map((item: { name: string }) => item.name)).toEqual(["발견하기", "ggml"]);
     expect(leaked(script)).toEqual([]);
   });
 
-  it("generateMetadata: 제목=이름, 설명=요약, og:image·twitter:image 만 제품 표지(사람 결정 예외) — 그 밖에 표식 0개", async () => {
+  it("generateMetadata: 제목=이름, 설명=요약, og:image·twitter:image 는 이름·요약 공유 카드(share-card.png) — 표지·og-cache 0개", async () => {
     const metadata = await productMetadata({ params: Promise.resolve({ slug: "ggml" }) });
-    const cover = SENTINEL_PRODUCT.ogImage;
     const text = JSON.stringify(metadata);
-    // 공유 미리보기 그림은 지금처럼 표지를 쓴다(2026-11-15 사람 결정) — 표지 주소는 og·twitter 그림 두 곳에만, 나머지 칸은 0개
-    expect(text.split(cover).length - 1).toBe(2);
-    expect(metadata.openGraph?.images).toEqual([expect.objectContaining({ url: cover, alt: "ggml" })]);
-    expect(metadata.twitter?.images).toEqual([cover]);
-    expect(leaked(text.split(cover).join(""))).toEqual([]);
+    expect(metadata.openGraph?.images).toEqual([{ url: "/p/ggml/share-card.png", width: 1200, height: 630, alt: "ggml" }]);
+    expect(metadata.twitter?.images).toEqual(["/p/ggml/share-card.png"]);
+    expect(text).not.toContain("og-cache");
+    expect(text).not.toContain("sentinel-og");
+    expect(leaked(text)).toEqual([]);
     expect(metadata.description).toBe("머신러닝용 텐서 라이브러리");
+  });
+
+  it("서버 HTML(본문·RSC·JSON-LD·메타) 어디에도 /api/og-cache/ 주소가 0개 — JSON-LD image 도 공유 카드", async () => {
+    const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
+    const metadata = JSON.stringify(await productMetadata({ params: Promise.resolve({ slug: "ggml" }) }));
+    const all = [page.html, page.json, metadata].join("\n");
+    expect(all.match(/\/api\/og-cache\//g) ?? []).toHaveLength(0);
+    const script = page.text.find((text) => text.includes('"@context"'))!;
+    const [webPage] = JSON.parse(script);
+    expect(webPage.mainEntity.image).toMatch(/\/p\/ggml\/share-card\.png$/);
   });
 });
 

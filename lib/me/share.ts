@@ -43,10 +43,14 @@ export type ShareCardData = { name: string; tagline: string; brandLine: string; 
 /**
  * 공유 카드(SNS 설계 T13·M5) 글 — 이름·요약(그 언어의 한 줄)·사이트 표기뿐이다.
  * 공개 주소로 나가는 그림이라 스타·HN 점수·써본 사람·분야 칩과 그 날짜는 싣지 않는다(2026-11-15 사람 결정, 공개 출력은 주소·이름·요약).
+ *
+ * 이 카드는 상세의 공유 미리보기 그림(og:image·twitter:image·JSON-LD image)이기도 하다(2026-11-15 사람 결정). 그래서 상세가 열리는
+ * 제품(내려간 banned 가 아닌 것 — 검증 전·감사 보류·수집 개인 프로필 포함)이면 카드도 나온다. 상세 HTML 이 이미 같은 이름·요약을 싣으므로
+ * 더 드러나는 값은 없다. «소개됨» 배지(app/badge)는 지금처럼 공개 목록에 오른 제품만(publicProductIdentity).
  */
 export async function shareCardData(slug: string, locale: Locale): Promise<ShareCardData | null> {
-  const product = await publicProductIdentity(slug);
-  if (!product) return null;
+  const product = await publicRead("detail", ["identity", slug], () => getProductIdentity(slug));
+  if (!product || product.status === "banned") return null;
   const [common, translations] = await Promise.all([
     getTranslator(locale, "common"),
     readTranslationsForProducts([product], locale).catch((error) => { logger.warn("me.share_card_translation_unavailable", { error }); return []; }),

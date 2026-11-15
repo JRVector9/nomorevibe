@@ -1,4 +1,5 @@
 import "server-only";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { makerFollowKey } from "@/components/me/FollowSlot";
 import { savableProduct } from "@/components/product-detail/savable";
 import { safeExternalUrl } from "@/components/product-detail/format";
@@ -90,7 +91,7 @@ export async function detailPageData(detail: ProductDetailView, product: PublicP
 
   return {
     hero: {
-      url: product.url, accessMode: product.accessMode, category: product.category, ogImage: product.ogImage, repoUrl: product.repoUrl,
+      url: product.url, accessMode: product.accessMode, category: product.category, ogImage: protectedCoverUrl(product.ogImage), repoUrl: product.repoUrl,
       repoGone: Boolean(product.repoGone), stars: product.stars ?? null, unclaimed: detail.unclaimed,
       tagline: product.tagline, taglineKo: product.taglineKo, taglineSource: product.taglineSource, translation: product.translation,
       risingRank: detail.risingRank, talkRank: talk?.qualifies ? talk.rank : null, health: detail.health,
@@ -115,7 +116,7 @@ export async function detailPageData(detail: ProductDetailView, product: PublicP
       repoGone: Boolean(product.repoGone),
     },
     media: {
-      ogImage: product.ogImage,
+      ogImage: protectedCoverUrl(product.ogImage),
       items: detail.media.map(({ src, width, height, altText, sourceMissing, lastSuccessAt }) => ({ src, width, height, altText, sourceMissing, lastSuccessAt })),
     },
     aside: {

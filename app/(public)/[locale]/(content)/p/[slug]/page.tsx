@@ -12,7 +12,7 @@ import { FeedbackList } from "@/components/product-detail/FeedbackList";
 import { TryPanel } from "@/components/feedback/TryPanel";
 import { followLabels as followLabels_ } from "@/components/me/follow-labels";
 import { productReactionsEnabled } from "@/lib/domain/reactions/flags";
-import { DEFAULT_SHARE_IMAGE, productShareImage, shareMetadata } from "@/lib/copy/share";
+import { productShareCard, shareMetadata } from "@/lib/copy/share";
 import { pageTitle } from "@/lib/copy/brand";
 import { getProductIdentity } from "@/lib/domain/products/detail-view";
 import { productIndexable } from "@/lib/domain/products/indexing";
@@ -54,23 +54,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const source = productTranslationSource(product);
   const baseIndexable = productIndexable(product);
   const contentEligible = product.translationEligible !== false;
-  const [translations, readiness, common] = await Promise.all([
+  const [translations, readiness] = await Promise.all([
     readTranslationsForProducts([product], locale).catch((error) => {
       logger.warn("i18n.product_metadata_translation_unavailable", { error }); return [];
     }),
     baseIndexable && contentEligible ? onReplica(() => readProductTranslationReadiness([source])).catch((error) => {
       logger.warn("i18n.product_metadata_readiness_unavailable", { error }); return [];
     }) : [],
-    getTranslator(locale, "common"),
   ]);
   const description = locale === "ko" ? product.taglineKo?.trim() || product.tagline
     : selectProductTranslation(source, locale, "tagline", translations.find((row) => row.field === "tagline")).text;
   const title = pageTitle(product.name);
-  // 공유 미리보기 그림은 지금처럼 제품 표지(받아 둔 og 그림)를 쓴다 — 2026-11-15 사람 결정(공개 HTML 이름·요약만의 예외).
-  // 표지가 없거나 아이콘·작은 그림이면 사이트 기본 그림이다(productShareImage)
-  const image = productShareImage(product.ogImage);
-  const share = shareMetadata({ title, description, image: { ...image,
-    alt: image.url === DEFAULT_SHARE_IMAGE.url ? `nomorevibe — ${common("site.tagline")}` : product.name } });
+  // 공유 미리보기 그림은 이름·요약만 그린 공유 카드(/p/<slug>/share-card.png, 언어별 주소) — 2026-11-15 사람 결정.
+  // 제품 표지(og-cache)는 서버 HTML·메타에 싣지 않는다(표지는 보호 API 가 추측할 수 없는 주소로만 준다, cover-url.ts)
+  const share = shareMetadata({ title, description, image: productShareCard(locale, slug, product.name) });
   const localized = productLocaleMetadata(locale, `/p/${slug}`, source, readiness, baseIndexable, contentEligible);
   return {
     ...share, ...localized, title, description,
@@ -128,6 +125,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
   } : null;
   const jsonLd = productJsonLd({
     origin: siteOrigin(), slug, name: teaser.name, description: teaser.summary, inLanguage: locale,
+    shareCardImage: `${siteOrigin()}${productShareCard(locale, slug, teaser.name).url}`,
     pagePath: localePath(locale, `/p/${slug}`), homePath: localePath(locale, "/"), homeName: t("page.discover"),
   });
 

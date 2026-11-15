@@ -11,16 +11,19 @@ export const OG_VARIANT_SIZES = [64, 96, 192, 320, 640, 960, 1200] as const;
 export type OgVariantSize = typeof OG_VARIANT_SIZES[number];
 const PREFIX = "/api/og-cache/";
 
-/** `/api/og-cache/<slug>?…` → `/api/og-cache/<slug>.webp?…&size=<n>`. 우리 사본이 아니면 그대로 */
+/**
+ * `/api/og-cache/<slug>.<열쇠>?…` → `/api/og-cache/<slug>.<열쇠>.webp?…&size=<n>`(보호 주소, lib/domain/products/cover-url.ts).
+ * 옛 `/api/og-cache/<slug>` 도 같은 모양으로 바꾼다. 우리 사본이 아니면 그대로
+ */
 export function ogVariantSrc(src: string | null | undefined, size: OgVariantSize): string | null {
   if (!src) return null;
   if (!src.startsWith(PREFIX)) return src;
   const [path, query = ""] = src.split("?", 2);
-  const slug = path.slice(PREFIX.length);
-  if (!/^[a-z0-9-]+$/.test(slug)) return src;
+  const name = path.slice(PREFIX.length);
+  if (!/^[a-z0-9-]+(\.[0-9a-f]{32})?$/.test(name)) return src;
   const params = new URLSearchParams(query);
   params.set("size", String(size));
-  return `${PREFIX}${slug}.webp?${params}`;
+  return `${PREFIX}${name}.webp?${params}`;
 }
 
 /**

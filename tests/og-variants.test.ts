@@ -3,13 +3,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ og: vi.fn() }));
 vi.mock("@/lib/domain/products/repository", () => ({ getOgImage: mocks.og }));
+vi.mock("@/lib/domain/products/detail-view", () => ({ getProductIdentity: async (slug: string) => ({ slug }) }));
+vi.mock("@/lib/domain/products/public-reads", () => ({ publicRead: (_kind: string, _key: unknown[], load: () => Promise<unknown>) => load() }));
+// 표지는 보호 주소(<slug>.<열쇠>)로만 나간다 — lib/domain/products/cover-url.ts. 열쇠는 이 시험 비밀에서 만든다
+process.env.VISITOR_HASH_SECRET = "test-visitor-hash-secret-0123456789abcdef";
 
 import { GET } from "@/app/api/og-cache/[slug]/route";
 import { ogVariantSrc, VariantCache, variantSize } from "@/lib/domain/products/og-variants";
+import { coverKey } from "@/lib/domain/products/cover-url";
 
+/** `/api/og-cache/<slug>[.webp]` 을 보호 주소 `/api/og-cache/<slug>.<열쇠>[.webp]` 로 불러 본다 */
 const call = (path: string) => {
   const url = new URL(path, "https://nomorevibe.test");
-  const slug = decodeURIComponent(url.pathname.split("/").at(-1)!);
+  const raw = decodeURIComponent(url.pathname.split("/").at(-1)!);
+  const webp = raw.endsWith(".webp");
+  const name = webp ? raw.slice(0, -5) : raw;
+  const key = coverKey(name);
+  const slug = key ? `${name}.${key}${webp ? ".webp" : ""}` : raw;
   return GET(new Request(url), { params: Promise.resolve({ slug }) });
 };
 const png = (width: number, height: number) => sharp({ create: { width, height, channels: 3, background: { r: 200, g: 80, b: 40 } } })
@@ -23,6 +33,10 @@ describe("화면용 썸네일 주소", () => {
     expect(ogVariantSrc("https://cdn.example/x.png", 640)).toBe("https://cdn.example/x.png");
     expect(ogVariantSrc("/api/og-cache/../etc", 640)).toBe("/api/og-cache/../etc");
     expect(ogVariantSrc(null, 640)).toBeNull();
+    // 보호 주소(<slug>.<열쇠>)도 같은 모양으로
+    const key = "0123456789abcdef0123456789abcdef";
+    expect(ogVariantSrc(`/api/og-cache/easyread.${key}?v=2`, 320)).toBe(`/api/og-cache/easyread.${key}.webp?v=2&size=320`);
+    expect(ogVariantSrc("/api/og-cache/easyread.nothex", 320)).toBe("/api/og-cache/easyread.nothex");
   });
 
   it("크기는 정해 둔 것만 — 모르면 640", () => {
@@ -62,7 +76,7 @@ describe("썸네일 경로", () => {
     expect(response.headers.get("content-type")).toBe("image/webp");
     expect(response.headers.get("cache-control")).toContain("s-maxage=86400");
     // 제품이 내려가면 크기별 사본을 태그 하나로 지운다
-    expect(response.headers.get("cache-tag")).toBe("og-big-shot");
+    expect(response.headers.get("cache-tag")).toBe("og-big-shot,p-big-shot");
     const body = Buffer.from(await response.arrayBuffer());
     expect(body.length).toBeLessThan(original.length / 10);
     expect((await sharp(body).metadata()).width).toBe(640);
@@ -79,7 +93,7 @@ describe("썸네일 경로", () => {
     const legacy = await call("/api/og-cache/tiny-icon");
     expect(legacy.headers.get("content-type")).toBe("image/jpeg");
     expect(legacy.headers.get("cache-control")).toContain("s-maxage=86400");
-    expect(legacy.headers.get("cache-tag")).toBe("og-tiny-icon");
+    expect(legacy.headers.get("cache-tag")).toBe("og-tiny-icon,p-tiny-icon");
     expect(await sharp(Buffer.from(await legacy.arrayBuffer())).metadata()).toMatchObject({ format: "jpeg", width: 96, height: 96 });
   });
 
