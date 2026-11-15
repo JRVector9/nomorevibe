@@ -86,6 +86,18 @@ it('closes the workload on a profile drift, unsafe authority, unbounded timeouts
   expect(waiting.checks.consumer).toEqual({ status: 'unknown', reason: 'control_row_missing' });
   expect(waiting.workload).toEqual({ ready: false, reason: 'consumer_unknown' });
 });
+it.each([['readOnly'], ['replica']] as const)('reports a %s primary as database_read_only (unknown, retried by the launcher), never rejected', async key => {
+  session[key] = true;
+  const report = await inspectOracleConsumer(spec);
+  expect(report.checks.database).toEqual({ status: 'unknown', reason: 'database_read_only' });
+  expect(report.workload).toEqual({ ready: false, reason: 'database_read_only' });
+  // 이 시험 호스트의 runtime(아키텍처) 판정 말고는 rejected 가 없다 — launcher 는 rejected 가 없을 때만 이 사유로 기다린다
+  expect(Object.entries(report.checks).filter(([name, check]) => name !== 'runtime' && check.status === 'rejected')).toEqual([]);
+  expect(io.readiness).not.toHaveBeenCalled();
+  // 권한 이상(다른 세션 계정)은 읽기 전용이어도 여전히 rejected 다
+  session.sessionPrincipal = 'nomorevibe';
+  expect((await inspectOracleConsumer(spec)).checks.database).toEqual({ status: 'rejected', reason: 'database_authority_rejected' });
+});
 it('refuses a replay scope and unregistered consumers before database work', async () => {
   io.replay.mockReturnValue({});
   expect((await inspectOracleConsumer(spec)).workload.reason).toBe('replay_unsupported');
