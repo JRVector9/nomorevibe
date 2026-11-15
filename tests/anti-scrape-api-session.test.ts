@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ mode: vi.fn(), rate: vi.fn(), cards: vi.fn(), details: vi.fn(), readme: vi.fn(), write: vi.fn() }));
+const mocks = vi.hoisted(() => ({ mode: vi.fn(), rate: vi.fn(), cards: vi.fn(), details: vi.fn(), readme: vi.fn(), timeline: vi.fn(), write: vi.fn() }));
 // The session POST upserts rate_limits, so it runs inside the DR write gate; unit tests pass through it without a DB.
 vi.mock("@/lib/operations/dr/web-gate", async original => ({ ...await original<typeof import("@/lib/operations/dr/web-gate")>(), runWebWrite: mocks.write }));
 vi.mock("@/lib/anti-scrape/control", () => ({ publicApiMode: mocks.mode }));
 vi.mock("@/lib/rate-limit", async original => ({ ...await original<typeof import("@/lib/rate-limit")>(), rateLimitWindow: mocks.rate }));
 vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage: mocks.cards }));
-vi.mock("@/lib/domain/products/detail-view", () => ({ getProductDetail: mocks.details, getProductIdentity: mocks.readme }));
+vi.mock("@/lib/domain/products/detail-view", () => ({ getProductDetail: mocks.details, getProductIdentity: mocks.readme, getPublicProductUpdates: mocks.timeline }));
 import { issueSession, readSession, SESSION_COOKIE, sessionConfig, sessionIpHash } from "@/lib/anti-scrape/session";
 import { verifyTurnstile } from "@/lib/anti-scrape/turnstile";
 import { guardPublicApiRead } from "@/lib/http/anti-scrape";
@@ -13,6 +13,8 @@ import { GET, POST } from "@/app/api/session/route";
 import { GET as cardsGet } from "@/app/api/product-cards/route";
 import { GET as detailsGet } from "@/app/api/products/[slug]/details/route";
 import { GET as readmeGet } from "@/app/api/products/[slug]/readme/route";
+import { GET as timelineGet } from "@/app/api/products/[slug]/timeline/route";
+import { logger } from "@/lib/observability/logger";
 import { resolveRuntimeSettings } from "@/lib/operations/runtime-settings-schema";
 import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 const SITE = "1x00000000000000000000AA";
@@ -31,7 +33,7 @@ beforeEach(() => {
   vi.stubEnv("TRUSTED_PROXY_HOPS", "1"); vi.stubEnv("TRUST_CF_CONNECTING_IP", "0");
   mocks.mode.mockReset().mockResolvedValue("enforce");
   mocks.rate.mockReset().mockResolvedValue({ allowed: true, count: 1, retryAfterSeconds: 120 });
-  mocks.cards.mockReset().mockResolvedValue({ items: [] }); mocks.details.mockReset(); mocks.readme.mockReset();
+  mocks.cards.mockReset().mockResolvedValue({ items: [] }); mocks.details.mockReset(); mocks.readme.mockReset(); mocks.timeline.mockReset().mockResolvedValue([]);
   mocks.write.mockReset().mockImplementation((load: () => Promise<unknown>) => load());
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
@@ -173,5 +175,61 @@ describe("API 앞단 및 기존 차단 순서", () => {
     mocks.mode.mockResolvedValue("enforce");
     mocks.rate.mockImplementation(async (key: string) => { if (key.startsWith("api-session:")) throw new Error("db"); return { allowed: true }; });
     expect((await guardPublicApiRead(request(undefined, issueSession(request(), SIGNING).value), "products.cards"))?.status).toBe(503);
+  });
+});
+
+describe("타임라인 실제 읽기 관문", () => {
+  const path = "/api/products/test/timeline";
+  it("enforce에서 세션 없으면 본문 조회 전에 401", async () => {
+    const response = await timelineGet(request(path), ctx);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "api_session_required" });
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(mocks.timeline).not.toHaveBeenCalled();
+  });
+  it("observe에서 세션 없으면 누락을 기록하고 200", async () => {
+    mocks.mode.mockResolvedValue("observe");
+    const log = vi.spyOn(logger, "info");
+    try {
+      const response = await timelineGet(request(path), ctx);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ rows: [] });
+      expect(mocks.timeline).toHaveBeenCalledWith("test");
+      expect(log).toHaveBeenCalledWith("anti_scrape.session_required", { route: "products.timeline", mode: "observe" });
+      expect(mocks.rate).toHaveBeenCalledTimes(1); // IP only; no session to charge.
+    } finally { log.mockRestore(); }
+  });
+  it("유효 세션은 200이며 상세 읽기 한도에 1회 누적", async () => {
+    const valid = issueSession(request(path), SIGNING);
+    const response = await timelineGet(request(path, valid.value), ctx);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ rows: [] });
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.timeline).toHaveBeenCalledWith("test");
+    expect(mocks.rate).toHaveBeenCalledWith(`api-session:detail:${valid.session.id}`, 60, 600_000, 1);
+  });
+  it("봇·cross-site 403과 IP 429가 세션·본문 조회보다 먼저", async () => {
+    const refusedHeaders: Record<string, string>[] = [{ "user-agent": "curl/8" }, { "sec-fetch-site": "cross-site" }];
+    for (const headers of refusedHeaders) {
+      expect((await timelineGet(request(path, undefined, { headers }), ctx)).status).toBe(403);
+    }
+    expect(mocks.rate).not.toHaveBeenCalled();
+    mocks.rate.mockResolvedValue({ allowed: false, count: 301, retryAfterSeconds: 42 });
+    const limited = await timelineGet(request(path), ctx);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("42");
+    expect(mocks.mode).not.toHaveBeenCalled();
+    expect(mocks.timeline).not.toHaveBeenCalled();
+  });
+  it.each([["enforce", 429], ["observe", 200]] as const)("%s에서 세션 한도 초과는 %i", async (mode, status) => {
+    mocks.mode.mockResolvedValue(mode);
+    mocks.rate.mockImplementation(async (key: string) => ({ allowed: !key.startsWith("api-session:"), count: 61, retryAfterSeconds: 123 }));
+    const response = await timelineGet(request(path, issueSession(request(path), SIGNING).value), ctx);
+    expect(response.status).toBe(status);
+    if (mode === "enforce") {
+      expect(await response.json()).toEqual({ error: "api_session_limited" });
+      expect(response.headers.get("retry-after")).toBe("123");
+      expect(mocks.timeline).not.toHaveBeenCalled();
+    } else expect(mocks.timeline).toHaveBeenCalledWith("test");
   });
 });

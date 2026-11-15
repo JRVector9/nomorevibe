@@ -5,6 +5,23 @@ const ORIGIN = "https://nomorevibe.test";
 const enabled = (mode = "enforce", expiresAt: number | null = null) => Response.json({ enabled: true, siteKey: "1x00000000000000000000AA", mode, expiresAt });
 
 describe("브라우저 공개 API 세션", () => {
+  it("타임라인 GET·HEAD는 세션 읽기 목록에 있고 쓰기·다른 경로는 제외", () => {
+    for (const method of ["GET", "HEAD"]) expect(isSessionRead("/api/products/a/timeline", method)).toBe(true);
+    for (const method of ["POST", "PUT", "DELETE"]) expect(isSessionRead("/api/products/a/timeline", method)).toBe(false);
+    expect(isSessionRead("/api/products/a/timeline/extra", "GET")).toBe(false);
+  });
+  it("타임라인 읽기 전에 브라우저가 세션을 발급", async () => {
+    const calls: string[] = [];
+    const raw = vi.fn<typeof fetch>(async (input, init) => {
+      calls.push(String(input) + (init?.method ?? "GET"));
+      if (String(input).endsWith("/api/session")) return init?.method === "POST" ? Response.json({ expiresAt: Date.now() + 1800_000 }) : enabled();
+      return Response.json({ rows: [] });
+    });
+    const solve = vi.fn().mockResolvedValue("XXXX.DUMMY.TOKEN.XXXX");
+    expect((await createSessionFetch(raw, ORIGIN, solve)("/api/products/a/timeline")).status).toBe(200);
+    expect(calls).toEqual([`${ORIGIN}/api/sessionGET`, `${ORIGIN}/api/sessionPOST`, "/api/products/a/timelineGET"]);
+    expect(solve).toHaveBeenCalledTimes(1);
+  });
   it("첫 병렬 API는 config·Turnstile·발급을 한 번만 실행하고 기존 입력을 보존", async () => {
     const calls: string[] = [];
     const raw = vi.fn<typeof fetch>(async (input, init) => {

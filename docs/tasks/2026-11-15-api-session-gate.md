@@ -10,7 +10,7 @@
 - [x] 범위 단위·DB 회귀 및 headless 실제 세션→카드 API 확인
 - [x] 배포 scope·정적 검사·의미 단위 커밋 (push·CI는 PR 상태로 확인)
 - [x] ready 전환 및 필수 CI 실제 실행·실패 원인 확인
-- [ ] (막힘·사람) 필수 check 성공 — GitHub Billing & plans 결제/사용 한도 문제로 잡 시작 자체 거절
+- [x] 기존 머리 065a1f44 필수 check SUCCESS — CI 43733556340(이전 결제 차단 해소 확인)
 - [x] 검증·한계 보고 준비 및 결재함에 CI 복구 요청 (최종 보고는 PR 본문·보고함 참조)
 - [x] (대표 검토 1) Turnstile hostname을 request.url이 아닌 정식 주소(NEXT_PUBLIC_SITE_URL) hostname과 비교. 같은 원인인 세션 발급 Origin 검사도 정식 출처(lib/site.ts siteOrigin)와 비교
 - [x] (대표 검토 2) 기록만 모드의 hostname 불일치를 별도 이벤트로 기록·집계
@@ -68,7 +68,7 @@
 - 화면 컴포넌트·기존 공개 API 응답 본문 변경 0. PR A와 공통 수정 예정 파일에 직접 변경 없음. 공통 관문 호출 및 신규 공개 경로 등록 규약은 위 경계 참조.
 - 운영 키 입력·Cloudflare 위젯 생성·차단 전환·배포·병합은 수행하지 않음. 운영 통과율·지연·발급 한도 수치는 미측정이며 사람 설정/후속 배포 뒤에만 측정 가능.
 
-## 남은 것 / 차단 근거
+## 이전 차단 이력 (현재 상태는 후속 작업 참조)
 
 - 2026-11-15 대표 지시: 저장소가 PRIVATE로 바뀌어 GitHub Actions가 결제 차단으로 시작조차 못 한다. CI 재실행·결제/한도 결재 요청을 하지 않고, 로컬 검사 결과를 PR 본문 「로컬 검사 결과」에 남긴다.
 
@@ -77,3 +77,17 @@
 - GitHub annotation 원문: “The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings”.
 - 사람 결재함에 Billing & plans 복구 요청을 올렸다. 공개 상태 조회는 PRIVATE였으며 임의 공개 전환·결제·사용 한도 변경·CI 우회는 하지 않았다.
 - 사람이 복구한 뒤 이 PR의 최종 머리 CI를 재실행해 `gh pr view 965 --json headRefOid,statusCheckRollup`에서 필수 check 성공을 확인해야 완료다. 이 문서 추가 뒤의 최종 머리도 별도로 조회해 PR 본문·보고함에 남긴다.
+
+
+## 후속 작업 — 타임라인 세션 읽기 (2026-11-15)
+
+- [x] PR #965 OPEN, head 065a1f44729f350737aff71fd04a10cf5192813a, base main, 기존 필수 check SUCCESS 확인. 같은 PR 유지.
+- [x] `git fetch origin main feat/api-session-gate-20261115` 뒤 `git merge --no-edit origin/main`: Already up to date. main 8f7687d5(#966 포함)은 기존 merge 065a1f44의 부모라 추가 merge 커밋·충돌 없음.
+- [x] `paths.ts`의 GET·HEAD 세션 읽기 목록에 `/api/products/[slug]/timeline` 추가. 쓰기 메서드는 제외.
+- [x] 라우트 기존 연결 확인: timeline GET → guardPublicApiRead → UA·cross-site·IP 한도 → guardApiSession → observe/enforce 및 상세 세션 한도. 본문 publicRead보다 먼저 실행되므로 라우트 수정 불필요.
+- [x] 목록·브라우저 사전 발급 2건, 실제 타임라인 401·observe 기록 후200·유효 세션200·봇/IP 차단·세션 한도 모드별 결과 6건 추가.
+- [x] 회귀 유효성: 경로 등록 전 새 시험 2실패/71통과(목록·브라우저 사전 발급 실패), 실제 라우트 관문 시험은 이미 통과.
+- [x] 로컬: `npx next typegen` → `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p .` exit0. 새 헤더 배열 타입 오류 1건 수정 후 재실행 통과. `npx vitest run tests/anti-scrape-api` 4파일73/73(착수65/65 → 73/73). 변경 TS 3파일 ESLint·diff --check exit0. 전체 unit은 CI에 맡김.
+- 커밋·push 뒤 바뀌는 최종 머리와 CI 결과·남은 차단은 [PR #965 검증 칸](https://github.com/JRVector9/nomorevibe/pull/965)과 보고함에서 관리한다. CI는 `gh pr view 965 --json statusCheckRollup`(GraphQL)만 조회한다. 이 문서의 이전 결제 차단은 역사 기록이며 이번 최종 결과로 해석하지 않는다.
+- 선택: 다른 작업 공간에서 사용 중인 기존 로컬 브랜치를 보존하기 위해 이 격리 공간은 `pr965-timeline-118c537d`로 작업하고 push 목적지는 기존 `feat/api-session-gate-20261115`만 명시한다. 기록 재작성 없음.
+- UI 변경 없음. 브라우저 화면 검수 대상 없음. 병합·배포·운영 설정 변경 금지 유지.
