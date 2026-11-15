@@ -322,16 +322,15 @@ describe("상세 — README 발췌만 서버 HTML 글자로, 전문·부가 자�
     expect(excerpt.length).toBeLessThanOrEqual(320);
   });
 
-  it("설치형 제품의 설치 안내: 복사할 글은 서버가 만들고 저장소 주소를 repoUrl 칸으로 넘기지 않는다(2026-11-15 2차)", async () => {
+  it("설치형 제품의 설치 안내: 설치 주소(url)와 slug 만 넘기고 제품 행 칸(repoUrl)은 넘기지 않는다(2026-11-15 2차)", async () => {
     const installable = { ...detailProduct, accessMode: "installable", url: "https://github.com/ggml-org/ggml" } as PublicProduct;
     mocks.getProductIdentity.mockResolvedValue(installable);
     mocks.getProductDetail.mockResolvedValue({ ...detailView, product: installable });
     const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
     expect(page.boundaries).toContain("InstallPrompt");
     expect(forbiddenKeys(page.json)).toEqual([]);
-    const props = page.clientJson.map((json) => JSON.parse(json) as Record<string, unknown>).find((value) => typeof value.prompt === "string")!;
-    expect(props.prompt).toContain("https://github.com/ggml-org/ggml");
-    expect(Object.keys(props).sort()).toEqual(["prompt", "slug"]);
+    const props = page.clientJson[page.boundaries.indexOf("InstallPrompt")];
+    expect(JSON.parse(props)).toEqual({ url: "https://github.com/ggml-org/ggml", slug: "ggml" });
   });
 
   it("제목·한 줄 소개·분야·최소 JSON-LD 는 서버 HTML 에 남고, 브라우저 부품 속성에는 금지 칸·제품 행이 없다", async () => {

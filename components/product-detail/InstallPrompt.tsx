@@ -2,14 +2,16 @@
 
 import { useTranslations } from "@/lib/i18n/context";
 import { useId, useState } from "react";
+import { installationPrompt } from "@/lib/domain/products/access";
 import { trackAttrs } from "@/lib/analytics/attrs";
 
 /**
- * 설치 안내 복사 — 복사할 글(prompt)은 서버가 만든다(installPromptText). 저장소 주소를 따로 속성으로 받지 않아
- * 브라우저 부품 속성에 repoUrl 칸이 실리지 않는다(2026-11-15 공개 HTML 줄이기 2차). 주소는 복사할 글 안에만 있다.
+ * 설치 안내 복사 — 받는 값은 복사할 글에 넣을 설치 주소(url)와 slug 뿐이다. 제품 행 칸(repoUrl)을 그대로 넘기지 않는다
+ * (2026-11-15 공개 HTML 줄이기 2차). 복사할 글 전체(약 1.3KB)를 서버에서 만들어 넘기면 RSC 가 그만큼 커져 글은 여기서 만든다.
  */
-export function InstallPrompt({ prompt, slug }: { prompt: string | null; slug?: string }) {
+export function InstallPrompt({ url, slug }: { url: string; slug?: string }) {
   const t = useTranslations("detail");
+  const prompt = installationPrompt(url) ? t("install.prompt", { url }) : null;
   const id = useId();
   const [copied, setCopied] = useState(false);
   const [manual, setManual] = useState(false);

@@ -13,15 +13,9 @@ import type { DetailClientProduct } from "./client-data";
 import { repositoryOperator } from "@/lib/domain/products/github-owner";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
 import { InstallPrompt } from "./InstallPrompt";
-import { installationPrompt } from "@/lib/domain/products/access";
 import { SaveButton } from "./SaveButton";
 import { savableProduct } from "./savable";
 import { ShareButton } from "./ShareButton";
-
-/** 설치 안내로 복사할 글 — 설치형으로 읽히는 주소일 때만(installationPrompt) */
-export function installPromptText(url: string, t: Translator<"detail">): string | null {
-  return installationPrompt(url) ? t("install.prompt", { url }) : null;
-}
 
 /** 홈 '지금 뜨는'과 같은 순위 — 20위 안일 때만 배지 */
 const RISING_BADGE_MAX = 20;
@@ -125,7 +119,7 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
             ) : installable ? (
               <>
                 <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="repo" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.openRepo")}</a>
-                <InstallPrompt prompt={installPromptText(product.repoUrl ?? product.url, t)} slug={product.slug} />
+                <InstallPrompt url={product.repoUrl ?? product.url} slug={product.slug} />
               </>
             ) : (
               <>
