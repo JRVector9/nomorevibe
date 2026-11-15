@@ -65,7 +65,9 @@ describe("Turnstile 서버 검증", () => {
     expect(await verifyTurnstile("token", SECRET, request(), fetcher)).toBe(false);
     expect(await verifyTurnstile("x".repeat(2049), SECRET, request(), fetcher)).toBe(false);
   });
-  it("실제 배포 경계는 hostname·action 일치를 요구하며 production 시험 키는 거절", async () => {
+  it("실제 배포 경계는 정식 주소 hostname·action 일치를 요구하며 production 시험 키는 거절", async () => {
+    // Canonical hostname comes from NEXT_PUBLIC_SITE_URL (tests/anti-scrape-api-turnstile-hostname.test.ts covers proxy hosts).
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://nomorevibe.test");
     // Mock-only placeholder, never sent to Cloudflare.
     const fetcher = vi.fn().mockResolvedValue(Response.json({ success: true, hostname: "wrong.test", action: "api-session" }));
     expect(await verifyTurnstile("token", "mock-only-secret", request(), fetcher)).toBe(false);

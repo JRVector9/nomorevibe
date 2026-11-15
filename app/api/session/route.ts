@@ -6,8 +6,13 @@ import { publicClientIp, rateLimitWindow } from "@/lib/rate-limit";
 import { publicApiMode } from "@/lib/anti-scrape/control";
 import { issueSession, readSession, sessionConfig, SESSION_COOKIE, SESSION_HEADERS, SESSION_SECONDS } from "@/lib/anti-scrape/session";
 import { verifyTurnstile } from "@/lib/anti-scrape/turnstile";
+import { siteOrigin } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
+
+function canonicalOrigin(request: Request): string | null {
+  try { return new URL(siteOrigin(request)).origin; } catch { return null; }
+}
 
 /** Uncached runtime sitekey, separate from cached HTML and the CI-built shared web image. */
 export const GET = withRoute("session.config", async (request: Request) => {
@@ -23,7 +28,9 @@ export const GET = withRoute("session.config", async (request: Request) => {
 export const POST = withRoute("session.issue", async (request: Request) => {
   const refused = await guardPublicApiRead(request, "session");
   if (refused) return refused;
-  if (request.headers.get("origin") !== new URL(request.url).origin) {
+  // Behind Cloudflare→Traefik request.url carries the internal bind host, so compare with the canonical site origin.
+  const expectedOrigin = canonicalOrigin(request);
+  if (!expectedOrigin || request.headers.get("origin") !== expectedOrigin) {
     return NextResponse.json({ error: "invalid_origin" }, { status: 403, headers: SESSION_HEADERS });
   }
   const config = sessionConfig();
@@ -51,7 +58,8 @@ export const POST = withRoute("session.issue", async (request: Request) => {
     }
     token = JSON.parse(Buffer.concat(chunks).toString("utf8")).token;
   } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400, headers: SESSION_HEADERS }); }
-  if (!await verifyTurnstile(token, config.turnstileSecret, request)) {
+  // The mode is read only when Cloudflare's hostname differs from (or lacks) the canonical one: observe counts it, enforce refuses.
+  if (!await verifyTurnstile(token, config.turnstileSecret, request, fetch, publicApiMode)) {
     return NextResponse.json({ error: "turnstile_failed" }, { status: 401, headers: SESSION_HEADERS });
   }
   // A valid existing session retains its id/quota; only expired or absent sessions start a new window.

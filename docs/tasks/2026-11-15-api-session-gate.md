@@ -12,6 +12,9 @@
 - [x] ready 전환 및 필수 CI 실제 실행·실패 원인 확인
 - [ ] (막힘·사람) 필수 check 성공 — GitHub Billing & plans 결제/사용 한도 문제로 잡 시작 자체 거절
 - [x] 검증·한계 보고 준비 및 결재함에 CI 복구 요청 (최종 보고는 PR 본문·보고함 참조)
+- [x] (대표 검토 1) Turnstile hostname을 request.url이 아닌 정식 주소(NEXT_PUBLIC_SITE_URL) hostname과 비교. 같은 원인인 세션 발급 Origin 검사도 정식 출처(lib/site.ts siteOrigin)와 비교
+- [x] (대표 검토 2) 기록만 모드의 hostname 불일치를 별도 이벤트로 기록·집계
+- [x] (대표 검토 3) 내부 request.url(http://web:3000) 시험 추가, 옛 코드(fd0fd8ab)에서 실패 확인
 
 ## 선택 및 경계
 
@@ -27,6 +30,17 @@
 ## 배포 전 사람 몫
 
 [PR #963 사람 안내](https://github.com/JRVector9/nomorevibe/blob/c050dac5d6122534b13513665ee9651ad864cbb4/docs/tasks/2026-11-15-cloudflare-person-steps.md) 3·6장: Invisible 위젯(nomorevibe.com, pre-clearance No) 생성, 웹 두 앱에 고정 env 3개(동일 세션 서명 키)를 입력하고 바로 재배포. 값은 대화·커밋·보고에 쓰지 않는다. 1~2일 로그 관측 뒤 차단 전환은 별도 사람 승인.
+
+## 정식 주소 hostname 비교 (대표 검토 반영)
+
+- 원인: Next 16 standalone은 request.url을 `<bind host>:<port>`(예: `http://web:3000`)로 다시 만든다(`node_modules/next/dist/server/lib/router-utils/resolve-routes.js` initUrl, trustHostHeader 꺼짐). Cloudflare→Traefik 뒤에서는 siteverify hostname(nomorevibe.com)과 절대 같지 않아 막기 모드에서 모든 세션이 거절된다. 세션 발급의 `Origin === new URL(request.url).origin` 검사도 같은 이유로 운영에서 항상 403이었다.
+- 고침: `canonicalSiteHostname()`은 NEXT_PUBLIC_SITE_URL만 읽는다(요청으로 대신하지 않음). Origin 검사는 저장소의 정식 출처 함수 `siteOrigin()`과 비교한다(설정 없을 때 요청 출처로 폴백하는 저장소 관례, 로컬 개발용).
+- 불일치·미설정 처리: 모드(runtime_settings publicApi.mode)는 hostname이 정식과 다를 때만 읽는다. 기록만이면 통과+기록, 막기·모드 미상·모드 읽기 실패면 거절+기록(더 엄격한 쪽).
+  - `anti_scrape.turnstile_hostname_mismatch` (info) `{ mode, outcome: allowed|refused, expected, actual }`
+  - `anti_scrape.turnstile_hostname_unconfigured` (warn) `{ mode, outcome, actual }` — NEXT_PUBLIC_SITE_URL 없음/잘못됨
+  - actual은 hostname 글자만(253자 이하 `[a-z0-9.-]`), 그 밖은 `invalid`. 토큰·키·IP·Cloudflare 응답 나머지는 기록하지 않는다.
+- action 불일치·success false는 모드와 무관하게 거절(변경 없음). Cloudflare 공식 시험 secret은 비운영에서만 hostname/action 생략(변경 없음).
+- 운영 웹 두 앱은 이미 `NEXT_PUBLIC_SITE_URL=https://nomorevibe.com`을 런타임 env로 받는다(docs/operations/2026-10-11-primary-domain-cutover.md). 세션 경로는 force-dynamic이라 런타임 값을 읽는다. 운영 설정 변경 불필요.
 
 ## 공식 자료
 
@@ -47,6 +61,8 @@
 - 운영 키 입력·Cloudflare 위젯 생성·차단 전환·배포·병합은 수행하지 않음. 운영 통과율·지연·발급 한도 수치는 미측정이며 사람 설정/후속 배포 뒤에만 측정 가능.
 
 ## 남은 것 / 차단 근거
+
+- 2026-11-15 대표 지시: 저장소가 PRIVATE로 바뀌어 GitHub Actions가 결제 차단으로 시작조차 못 한다. CI 재실행·결제/한도 결재 요청을 하지 않고, 로컬 검사 결과를 PR 본문 「로컬 검사 결과」에 남긴다.
 
 - PR #965는 ready, OPEN이며 병합·배포하지 않았다.
 - ready 이벤트 CI 실행 [43723835054](https://github.com/JRVector9/nomorevibe/actions/runs/43723835054), 코드 동일 head 3f0582fa4fefb5b9f4aaf11b61955a0bb952fd68: scope·필수 check FAILURE, 실행 step 0. 타입·린트·unit·통합·빌드 SKIPPED. 로컬 통과를 CI 통과로 바꿔 적지 않음.
