@@ -1,10 +1,14 @@
 # Template. The launcher exits78 unless release/runtime/TZ/budget/OCI identity/consumer preflight are all verified.
+# 2026-11-15: a 10-minute DB outage left both consumers `failed` for hours (3 restarts in 300s, then start-limit).
+# Exit 78 (release/identity/privilege/contract rejection) is never restarted. Exit 75 (the launcher's own 10-minute
+# retry of a DB/IMDS that did not answer ran out) and a crashed worker restart without a start limit, with a delay
+# that grows from 15s to 5min. systemd >= 254 (osaka-smoke: 255) for RestartSteps/RestartMaxDelaySec.
+# The native recovery gateway pins this file's sha256 (config unitSha256): update both together.
 [Unit]
 Description=NoMoreVibe Oracle consumer %i
 Wants=network-online.target
 After=network-online.target
-StartLimitIntervalSec=300
-StartLimitBurst=3
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -28,7 +32,10 @@ PrivateTmp=yes
 KillMode=mixed
 TimeoutStopSec=60s
 Restart=on-failure
+RestartPreventExitStatus=78
 RestartSec=15s
+RestartSteps=5
+RestartMaxDelaySec=5min
 
 [Install]
 WantedBy=multi-user.target

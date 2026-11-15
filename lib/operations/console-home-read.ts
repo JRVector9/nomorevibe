@@ -21,6 +21,7 @@ import type { Conveyor } from "./conveyor-model";
 import type { StageJobState } from "./stage-panel-model";
 import type { ConsoleConnection, ConsoleDevice, ConsoleJob, ConsoleLedgerRow, ConsolePoolMember, ConsoleRank, ConsoleTaskInputs } from "./console-tasks";
 import { sharedInbox } from "./inbox";
+import { loadKoreanDiscoveryActivity, type KoreanDiscoveryActivity } from "./korean-discovery-activity";
 import { sharedLoader } from "./shared-cache";
 import { sharedHumanQueueOverview } from "./shared-reads";
 
@@ -41,6 +42,8 @@ type Capacity = { admission: ConsoleTaskInputs["admission"]; devices: ConsoleDev
 const capacityCache = sharedLoader<Capacity>({ namespace: "admin:console:capacity", ttlMs: 15_000, staleMs: 120_000, store: sharedStore });
 // v2: 장비마다 한도와 경로별 점유(routes)를 함께 싣는다(단계 패널 「그 칸을 쓰는 다른 단계」)
 const auditCache = sharedLoader<NonNullable<ConsoleTaskInputs["audit"]>>({ namespace: "admin:console:audit-backlog-v2", ttlMs: 60_000, staleMs: 600_000, store: sharedStore });
+// 한국어 탐색 멈춤(15분 문턱) — 1분 담고 5분까지 지난 값을 준다(알림 잡 5분 주기와 같은 폭)
+const koreanCache = sharedLoader<KoreanDiscoveryActivity>({ namespace: "admin:console:korean-discovery-activity", ttlMs: 60_000, staleMs: 300_000, store: sharedStore });
 
 const quiet = (event: string) => (error: unknown) => {
   logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
@@ -109,7 +112,7 @@ export type ConsoleHomeRead = {
 
 export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
   const checkedAt = new Date();
-  const [conveyor, progress, ledger, capacity, audit, jobRows, versions, connections, ranks, executions, inbox, agreed, watch, kept] = await Promise.all([
+  const [conveyor, progress, ledger, capacity, audit, jobRows, versions, connections, ranks, executions, inbox, agreed, watch, kept, korean] = await Promise.all([
     readConveyor(fresh).catch(quiet("console.conveyor_unavailable")),
     readConsoleProgress(fresh).catch(quiet("console.progress_unavailable")),
     ledgerCache("v2", loadLedger24h, fresh).catch(quiet("console.ledger_unavailable")),
@@ -129,6 +132,8 @@ export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
     // 못 읽으면 null — 할 일은 「셀 수 없음 · 바꾼 뒤 처리량」으로 적는다(0건이 아니다)
     changeWatchTasks(fresh),
     readConsoleKept(checkedAt).catch(quiet("console.kept_unavailable")),
+    // 못 읽으면 null — 할 일은 「셀 수 없음 · 한국어 탐색」(멈춤이 아니다)
+    koreanCache("v1", loadKoreanDiscoveryActivity, fresh).catch(quiet("console.korean_discovery_unavailable")),
   ]);
   const now = checkedAt.getTime();
   const jobs: ConsoleJob[] | null = jobRows?.map(job => ({ name: job.name, paused: isPausedJob(job, now), lastRunAt: job.lastRunAt?.toISOString() ?? null,
@@ -155,6 +160,7 @@ export async function readConsoleHome(fresh = false): Promise<ConsoleHomeRead> {
       ledger,
       changeWatch: watch,
       kept,
+      koreanDiscovery: korean,
     },
     // 제어 판(작업 로그 id)을 못 읽으면 그 자리 조작을 내지 않는다 — 단추는 작업 상세로 보낸다
     jobControls: !versions ? {} : Object.fromEntries((jobs ?? []).filter(job => job.paused)

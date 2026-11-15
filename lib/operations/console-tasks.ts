@@ -2,6 +2,7 @@ import { HUMAN_BACKLOG_LIMIT } from "@/lib/crawl/human-queue";
 import { HUMAN_BATCH_THRESHOLD_ANCHOR } from "@/lib/crawl/human-batch-model";
 import { AI_TASKS, aiTaskAccepts, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import type { ChangeWatchTask } from "./change-watch";
+import type { KoreanDiscoveryActivity } from "./korean-discovery-activity";
 import type { Conveyor } from "./conveyor-model";
 import { SAMPLE_COMPARE_SUPPORTED } from "./model-sample-compare";
 import { stagePanel, stagePanelHref, stagePanelKeyOfTask } from "./stage-panel-catalog";
@@ -33,6 +34,12 @@ export const CONSOLE_TASK_LIMITS = Object.freeze({
   admissionPausedMs: 30 * MINUTE,
   /** 멈춤: 내림 요청 약속 시간 — takedownSummary 의 overdue 가 이 기준(24시간)으로 센다. 화면 글자에만 쓴다 */
   takedownHours: 24,
+  /**
+   * 멈춤: 한국어 탐색이 켜져 있는데 Oracle consumer 의 일(검색 페이지 적재·언어 확인 기록)이 이만큼(15분) 없음.
+   * 평소(11-13~15 실측) 언어 확인이 시간당 약 800건(5건씩 20여 초마다), frontier 적재가 시간당 535~664건이라 15분에 0건은 고장이다.
+   * 알림 잡(5분 주기)까지 더해 멈춘 뒤 15~20분 안에 알린다 — 11-15 에는 7.5시간 동안 아무도 몰랐다
+   */
+  koreanStallMs: 15 * MINUTE,
   /** 평소와 다름: 보류 사유 하나가 24시간에 이만큼(50건)보다 많이 늘고 */
   holdSurge: 50,
   /** 평소와 다름: 그 사유 누적의 이 비율(절반) 이상이 24시간 안의 것 */
@@ -77,7 +84,7 @@ export const CONSOLE_GROUPS: readonly { key: ConsoleGroupKey; label: string; not
 ]);
 
 export type ConsoleRuleKey =
-  | "stage-stalled" | "job-paused" | "admission-paused" | "takedown-overdue"
+  | "stage-stalled" | "job-paused" | "admission-paused" | "takedown-overdue" | "korean-discovery-stalled"
   | "hold-surge" | "change-drop"
   | "backlog-eta" | "human-or-audit"
   | "no-result" | "unused-or-duplicate" | "key-expiry";
@@ -208,6 +215,11 @@ export type ConsoleTaskInputs = {
   changeWatch?: readonly ChangeWatchTask[] | null;
   /** 그대로 둔 할 일(console-task-keep.ts readConsoleKept). 넣지 않으면 없음, null 이면 읽지 못함(모든 할 일을 보인다) */
   kept?: readonly ConsoleKept[] | null;
+  /**
+   * 한국어 탐색(Oracle github-ko-discovery consumer)의 마지막 일(korean-discovery-activity.ts). 넣지 않으면(undefined) 이 규칙을 보지 않고,
+   * null 이면 「셀 수 없음」이다
+   */
+  koreanDiscovery?: KoreanDiscoveryActivity | null;
   /** 시험용 — 기본은 AI_TASKS */
   tasks?: readonly AiTaskDef[];
 };
@@ -490,6 +502,25 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     fact: `요청 ${formatCount(inputs.takedown.count)}건 · ${limits.takedownHours}시간 넘은 것 ${formatCount(inputs.takedown.overdue)}건`, why: null,
     actions: [link("요청 열기", "/admin/requests?tab=correction&kind=takedown")],
   });
+
+  // ── 멈춤 5: 한국어 탐색이 켜져 있는데 15분 넘게 일(검색 페이지 적재·언어 확인)이 없음. 한글 검색어는 Oracle consumer 만 검색한다(11-13 뒤)
+  if (inputs.koreanDiscovery === null) unknown("stop", "한국어 탐색");
+  else if (inputs.koreanDiscovery) {
+    const ko = inputs.koreanDiscovery, at = Date.parse(ko.at);
+    const work = ko.workAt ? Date.parse(ko.workAt) : NaN, beat = ko.heartbeatAt ? Date.parse(ko.heartbeatAt) : NaN;
+    if (!Number.isFinite(at)) unknown("stop", "한국어 탐색");
+    else if (ko.enabled && ko.collectionEnabled && !(Number.isFinite(work) && at - work < limits.koreanStallMs)) add("stop", {
+      id: "stop:korean-discovery", rule: "korean-discovery-stalled",
+      title: Number.isFinite(work) ? `한국어 탐색이 ${formatDuration((at - work) / MINUTE)}째 멈춰 있습니다` : "한국어 탐색 진행 기록이 없습니다",
+      fact: [Number.isFinite(work) ? `마지막 진행 ${formatKst(work)}` : "진행 기록 없음",
+        !Number.isFinite(beat) ? "Oracle 일꾼 신호 없음" : at - beat <= 90_000 ? "Oracle 일꾼 신호 있음"
+          : `Oracle 일꾼 신호 ${formatDuration((at - beat) / MINUTE)} 전`,
+        `언어 확인 대기 ${formatCount(ko.pending)}건${ko.pendingTruncated ? " 이상" : ""}`].join(" · "),
+      why: `켜져 있는데 검색·언어 확인이 ${Math.round(limits.koreanStallMs / MINUTE)}분 넘게 없습니다(평소 언어 확인 시간당 약 800건). `
+        + "Oracle osaka 의 nomorevibe-core-consumer@github-ko-discovery 유닛을 확인하세요.",
+      actions: [link("한국어 탐색 상태", "/admin/status")],
+    });
+  }
 
   // ── 평소와 다름 1: 보류 사유 하나가 24시간에 50건 넘게 늘고, 그 사유의 절반 이상이 새것
   if (!inputs.conveyor) unknown("odd", "보류 사유");

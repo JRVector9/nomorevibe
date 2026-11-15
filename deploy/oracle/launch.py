@@ -12,6 +12,14 @@ after start; this gate never writes DB state.
 The same release, runtime, budget and identity checks apply, plus TZ=UTC. Its preflight is the consumer preflight
 (identity, exact DB profile, timeouts, UTC timezone and the consumer's own readiness); it never requires batch
 versioned mode or a canary, because consumers share queues with M3/mini without stopping them.
+
+A consumer separates "could not ask" from "was told no" (2026-11-15: a 10-minute DB outage left both Oracle consumers
+`failed` for hours). When the only open result is transient (TRANSIENT_REASONS: the local metadata service or the shared
+DB did not answer, or the DB is read-only), the whole gate is re-run in this process with backoff for up to
+RETRY_WINDOW_SECONDS; nothing is skipped and nothing starts until every check is verified again. If the window ends while
+still transient, it exits EX_TEMPFAIL (75) so systemd restarts it with its own growing delay. Every other result
+(release, runtime, budget, identity or privilege mismatch, a rejected or malformed report) still exits 78 at once, which
+the consumer unit never restarts (RestartPreventExitStatus=78). Roles keep exit 78 for every result.
 """
 import argparse
 import json
@@ -21,6 +29,7 @@ import platform
 import pwd
 import subprocess
 import sys
+import time
 
 
 ROLES = ('crawler', 'reviewer', 'publisher', 'text', 'maintenance', 'translation',
@@ -33,6 +42,17 @@ MODEL_ROLES = ('translation', 'reviewer', 'publisher', 'text')
 # ORACLE_CONSUMER_READINESS; otherwise the preflight or supervisor refuses it. An unlisted name never starts.
 CONSUMERS = {'agent-scan': 'crawler', 'uptime': 'maintenance', 'github-ko-discovery': 'crawler', 'capacity-supervisor': 'maintenance'}
 FAILURE = {'code': 'oracle_runtime_preflight_unavailable'}
+# Consumer only: still transient when the retry window ended. systemd restarts it (EX_TEMPFAIL); 78 is never restarted.
+TRANSIENT_FAILURE = {'code': 'oracle_runtime_preflight_retry_exhausted'}
+EX_CONFIG, EX_TEMPFAIL = 78, 75
+# Results that say nothing was verified or rejected: IMDS did not answer, the preflight could not run or crashed before it
+# reported (the DB connection was lost), it reported nothing (its DB read threw), or the DB answered read-only (a failover
+# or a full disk). Everything else is a release/configuration/contract result and stops.
+TRANSIENT_REASONS = frozenset({'oci_metadata_unavailable', 'preflight_unavailable', 'preflight_failed', 'database_read_only'})
+# Measured 2026-11-15: a gate takes 15-30 s, DB outages lasted 10 min (03:11-03:21Z) and 3 h (07:09-10:15Z). One read-only
+# preflight transaction per attempt, at most every 2 minutes, then systemd's own backoff (RestartMaxDelaySec) between runs.
+RETRY_DELAYS_SECONDS = (15, 30, 60, 120)
+RETRY_WINDOW_SECONDS = 600
 BASE = Path('/opt/nomorevibe-core')
 APPROVED_IDENTITY = Path('/etc/nomorevibe-core/oracle-identity.json')
 CGROUP_ROOT = Path('/sys/fs/cgroup')
@@ -140,7 +160,12 @@ def check_identity(approved_path, fetch, owner_uid):
     _require(approved_path.is_file() and not approved_path.is_symlink() and _owned(approved_path, owner_uid),
              'identity', 'approved_identity_unavailable')
     try:
-        return oci_identity.validate_identity(load_json(approved_path.read_bytes()), oci_identity.observed_identity(fetch()))
+        metadata = fetch()
+    except (ValueError, OSError):
+        # IMDS did not answer (unreachable, timeout, non-200): nothing was compared. A consumer asks again.
+        raise Unverified('identity', 'oci_metadata_unavailable') from None
+    try:
+        return oci_identity.validate_identity(load_json(approved_path.read_bytes()), oci_identity.observed_identity(metadata))
     except ValueError:
         raise Unverified('identity', 'oci_identity_unverified') from None
 
@@ -157,7 +182,15 @@ def check_preflight(role, env, release, release_sha, runner, consumer=None):
     argv = [str(release / 'runtime/bin/node'), '--import', 'tsx', 'scripts/worker-oracle-preflight.ts', target]
     try:
         code, output = runner(argv, release, env)
-        _require(code == 78 and len(output) <= MAX_PREFLIGHT_BYTES, 'preflight', 'preflight_failed')
+    except (subprocess.TimeoutExpired, OSError):
+        raise Unverified('preflight', 'preflight_unavailable') from None
+    # The preflight always answers 78 with its report. Any other exit is a crash before it could report (11-15: the
+    # pooled DB connection was lost mid-read), and 78 with nothing on stdout is its own fixed failure path (the DB read
+    # threw). Neither verified or rejected anything. A non-empty answer that does not parse is a contract mismatch.
+    _require(code == 78, 'preflight', 'preflight_failed')
+    _require(type(output) is bytes and output.strip() != b'', 'preflight', 'preflight_unavailable')
+    try:
+        _require(len(output) <= MAX_PREFLIGHT_BYTES, 'preflight', 'preflight_report_mismatch')
         report = load_json(output)
         checks, workload = report['checks'], report['workload']
         if consumer is None:
@@ -169,11 +202,15 @@ def check_preflight(role, env, release, release_sha, runner, consumer=None):
                   and report['instanceId'] == env.get('SERVICE_INSTANCE_ID') and report['releaseSha'] == release_sha
                   and report['ready'] is False and report['activationAllowed'] is False
                   and type(checks) is dict and set(checks) == set(keys))
-    except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError):
-        raise Unverified('preflight', 'preflight_unavailable') from None
+    except (ValueError, KeyError, TypeError):
+        raise Unverified('preflight', 'preflight_report_mismatch') from None
     _require(shaped, 'preflight', 'preflight_report_mismatch')
     _require(all(type(value) is dict and value.get('status') != 'rejected' for value in checks.values()),
              'preflight', 'preflight_rejected')
+    # A read-only or recovering primary (failover, full disk) is not a privilege answer; only the consumer preflight
+    # reports it, as database unknown/database_read_only with nothing rejected.
+    _require(not (consumer is not None and checks['database'].get('status') == 'unknown'
+                  and checks['database'].get('reason') == 'database_read_only'), 'preflight', 'database_read_only')
     if consumer is not None:
         for name in CONSUMER_NOT_APPLICABLE:
             _require(checks[name].get('status') == 'not_applicable', 'preflight', f'{name}_unexpected')
@@ -210,6 +247,27 @@ def consumer_gate(consumer, env, **fixtures):
     """Same fixed order as gate(); keyword arguments exist for local fixtures only."""
     _require(consumer in CONSUMERS, 'consumer', 'consumer_invalid')
     return _gate(CONSUMERS[consumer], consumer, env, **fixtures)
+
+
+def consumer_gate_with_retry(consumer, env, *, sleep=time.sleep, clock=time.monotonic, log=None, **fixtures):
+    """consumer_gate(), re-run from the first check after a transient result until RETRY_WINDOW_SECONDS has passed.
+
+    Any non-transient result is raised at once. When the window ends while still transient, the last transient result is
+    raised; main() turns it into EX_TEMPFAIL. sleep/clock/log exist for local fixtures only."""
+    log = log or (lambda value: print(json.dumps(value), flush=True))
+    started, attempt = clock(), 0
+    while True:
+        try:
+            return consumer_gate(consumer, env, **fixtures)
+        except Unverified as error:
+            if error.reason not in TRANSIENT_REASONS:
+                raise
+            delay = RETRY_DELAYS_SECONDS[min(attempt, len(RETRY_DELAYS_SECONDS) - 1)]
+            if clock() - started + delay > RETRY_WINDOW_SECONDS:
+                raise
+            attempt += 1
+            log({'check': error.check, 'reason': error.reason, 'transient': True, 'attempt': attempt, 'retryInSeconds': delay})
+            sleep(delay)
 
 
 def _gate(role, consumer, env, *, base=BASE, launcher=__file__, owner_uid=0, platform_info=None, user=None,
@@ -249,11 +307,13 @@ def main():
     args = parser.parse_args()
     env = dict(os.environ)
     try:
-        (node, argv), release = consumer_gate(args.consumer, env) if args.consumer is not None else gate(args.role, env)
+        (node, argv), release = (consumer_gate_with_retry(args.consumer, env) if args.consumer is not None
+                                 else gate(args.role, env))
     except Unverified as error:
-        print(json.dumps({'check': error.check, 'reason': error.reason}))
-        print(json.dumps(FAILURE), file=sys.stderr)
-        return 78
+        transient = args.consumer is not None and error.reason in TRANSIENT_REASONS
+        print(json.dumps({'check': error.check, 'reason': error.reason, **({'transient': True} if transient else {})}))
+        print(json.dumps(TRANSIENT_FAILURE if transient else FAILURE), file=sys.stderr)
+        return EX_TEMPFAIL if transient else EX_CONFIG
     except Exception as error:
         # Import/IO faults are never readiness; only a fixed diagnostic is printed.
         print(json.dumps({'check': 'launcher', 'reason': type(error).__name__}))

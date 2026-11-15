@@ -167,9 +167,15 @@ export async function inspectOracleConsumer(spec: OracleConsumerSpec): Promise<O
     report.checks.database = oracleConsumerPrivilegeMismatches(spec.db, session.principal, session.privileges).length
       ? { ...unknown('approved_privilege_profile_unavailable'), hash: privilegeHash }
       : { status: 'verified', reason: 'approved_privilege_profile_matches', hash: privilegeHash };
-    if (session.unsafe || session.readOnly || session.replica || session.principal !== session.sessionPrincipal) {
+    if (session.unsafe || session.principal !== session.sessionPrincipal) {
       report.checks.database = { status: 'rejected', reason: 'database_authority_rejected' };
       report.workload.reason = 'database_rejected'; return report;
+    }
+    // 읽기 전용·복구 중인 주 DB(장애 조치·디스크 가득 — 2026-11-15 07:09Z 25006)는 권한의 답이 아니라 아직 못 물어본 것이다.
+    // rejected 로 두면 launcher 가 78 로 멈추고 유닛이 다시 켜지지 않는다. unknown/database_read_only 는 launcher 가 기다렸다 다시 묻는다
+    if (session.readOnly || session.replica) {
+      report.checks.database = unknown('database_read_only');
+      report.workload.reason = 'database_read_only'; return report;
     }
     report.checks.timeouts = oracleTimeoutsCheck(env.DB_POOLER_MODE === 'pgbouncer', session.roleSettings, session);
     if (report.checks.timeouts.status === 'rejected') { report.workload.reason = 'timeouts_rejected'; return report; }

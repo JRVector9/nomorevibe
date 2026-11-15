@@ -1,4 +1,4 @@
-"""Single-unit Linux recovery boundary; no operational mutations."""
+"""Allow-listed native consumer recovery boundary; no operational mutations."""
 import hashlib
 import importlib.util
 import json
@@ -13,6 +13,15 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'scripts/ops/native_recovery_gateway.py'
 UNIT = 'nomorevibe-core-consumer@agent-scan.service'
+KO = 'github-ko-discovery'
+KO_UNIT = 'nomorevibe-core-consumer@github-ko-discovery.service'
+LAUNCHER = '/usr/bin/python3 /opt/nomorevibe-core/current/deploy/oracle/launch.py --consumer='
+NODE = '/opt/nomorevibe-core/releases/' + 'a' * 40 + '/runtime/bin/node'
+
+
+def consumer_argv(key):
+    """/proc/<pid>/cmdline of the consumer launch.py exec'd (osaka-smoke 2026-11-15 shape)."""
+    return [NODE, '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=crawler', '--consumer=' + key]
 
 
 def load(name, path):
@@ -52,11 +61,12 @@ class NativeGatewayTests(unittest.TestCase):
                            'ControlGroup': self.config['controlGroup'], 'KillMode': 'mixed',
                            'Restart': 'on-failure', 'Result': 'exit-code', 'Slice': 'nomorevibe-core.slice'}
         self.calls = []
+        self.unit = UNIT
 
     def run_command(self, argv):
         self.calls.append(argv)
         self.assertEqual(argv[0], '/usr/bin/systemctl')
-        self.assertEqual(argv[-1], UNIT)
+        self.assertEqual(argv[-1], self.unit)
         if argv[1] == 'show':
             return '\n'.join(key + '=' + value for key, value in self.properties.items()) + '\n'
         self.assertIn(argv[1], ('reset-failed', 'start'))
@@ -65,13 +75,14 @@ class NativeGatewayTests(unittest.TestCase):
                                    StateChangeTimestampMonotonic='400000001')
         return ''
 
-    def observe(self):
-        return self.g.observe(self.config, run=self.run_command, uptime=400, empty_fn=lambda _: True)
+    def observe(self, key='agent-scan', argv=None):
+        return self.g.observe(self.config, key, run=self.run_command, uptime=400, empty_fn=lambda _: True,
+                              argv_fn=lambda pid: consumer_argv(key) if argv is None else argv)
 
     def recover(self):
         return self.g.recover(self.config, 'agent-scan', 100000000, now=1000,
                               probe_fn=lambda _: {'services': [self.observe()]},
-                              start_fn=lambda cfg, version: self.calls.append(['start-fixture', version]) or {'result': 'requested'})
+                              start_fn=lambda cfg, version, key: self.calls.append(['start-fixture', version, key]) or {'result': 'requested'})
 
     def test_failed_empty_unit_has_exact_seven_field_report(self):
         self.assertEqual(self.observe(), {'key': 'agent-scan', 'version': 100000000, 'replicas': 1,
@@ -96,7 +107,8 @@ class NativeGatewayTests(unittest.TestCase):
             self.properties['StateChangeTimestampMonotonic'] = stamp
             self.assertFalse(self.observe()['recoverable'])
         self.properties['StateChangeTimestampMonotonic'] = '100000000'
-        self.assertFalse(self.g.observe(self.config, run=self.run_command, uptime=400, empty_fn=lambda _: False)['recoverable'])
+        self.assertFalse(self.g.observe(self.config, run=self.run_command, uptime=400, empty_fn=lambda _: False,
+                                        argv_fn=lambda _: consumer_argv('agent-scan'))['recoverable'])
 
     def test_identity_drift_reload_and_dropin_fail_closed(self):
         for key, value in [('Id', 'other.service'), ('Names', UNIT + ' alias.service'),
@@ -125,6 +137,13 @@ class NativeGatewayTests(unittest.TestCase):
     def test_private_probe_errors_are_muted(self):
         def fail(_):
             raise ValueError('private-password-and-model-token')
+        self.properties.update(ActiveState='active', SubState='running', MainPID='123')
+        for kwargs in [{'run': fail, 'empty_fn': lambda _: True, 'argv_fn': lambda _: consumer_argv('agent-scan')},
+                       {'run': self.run_command, 'empty_fn': lambda _: True, 'argv_fn': fail}]:
+            row = self.g.observe(self.config, uptime=400, **kwargs)
+            self.assertEqual(row['reason'], 'native_unit_unknown')
+            self.assertNotIn('private', json.dumps(row))
+        self.properties.update(ActiveState='failed', SubState='failed', MainPID='0')
         for kwargs in [{'run': fail, 'empty_fn': lambda _: True}, {'run': self.run_command, 'empty_fn': fail}]:
             row = self.g.observe(self.config, uptime=400, **kwargs)
             self.assertEqual(row['reason'], 'native_unit_unknown')
@@ -134,6 +153,7 @@ class NativeGatewayTests(unittest.TestCase):
     def test_reservation_and_cooldown_survive_restart(self):
         self.assertEqual(self.recover(), {'result': 'requested'})
         self.assertEqual(json.loads(Path(self.config['state']).read_text()), {'attempts': {'agent-scan': [1000]}})
+        self.assertIn(['start-fixture', 100000000, 'agent-scan'], self.calls)
         self.assertEqual(Path(self.config['state']).stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.recover(), {'result': 'limited'})
         self.assertEqual(sum(call[0] == 'start-fixture' for call in self.calls), 1)
@@ -177,7 +197,7 @@ class NativeGatewayTests(unittest.TestCase):
         changed = {**self.config, 'recoverEnabled': False}
         path.write_text(json.dumps(changed))
         self.assertEqual(self.g.start_unit(loaded, 100000000, run=self.run_command,
-                                         observe_fn=lambda _: self.observe()), {'result': 'refused'})
+                                         observe_fn=lambda *_: self.observe()), {'result': 'refused'})
         self.assertFalse(self.calls)
         for key, value in [('unitSha256', 'private-token'), ('user', 'root'), ('group', 'root'),
                            ('execStart', '/bin/sh -c private-token'), ('recoverEnabled', 'true'),
@@ -189,13 +209,13 @@ class NativeGatewayTests(unittest.TestCase):
 
     def test_start_rechecks_then_only_resets_and_starts_fixed_unit(self):
         self.assertEqual(self.g.start_unit(self.config, 100000000, run=self.run_command,
-                                         observe_fn=lambda _: self.observe(), empty_fn=lambda _: True), {'result': 'requested'})
+                                         observe_fn=lambda *_: self.observe(), empty_fn=lambda _: True), {'result': 'requested'})
         self.assertEqual([call for call in self.calls if call[1] != 'show'],
                          [['/usr/bin/systemctl', 'reset-failed', UNIT], ['/usr/bin/systemctl', 'start', '--job-mode=fail', UNIT]])
         self.calls.clear()
         self.properties['ActiveState'] = 'inactive'
         self.assertEqual(self.g.start_unit(self.config, 100000000, run=self.run_command,
-                                         observe_fn=lambda _: self.observe()), {'result': 'refused'})
+                                         observe_fn=lambda *_: self.observe()), {'result': 'refused'})
         self.assertFalse(any(call[1] in ('reset-failed', 'start') for call in self.calls))
 
     def test_post_reset_new_process_or_nonempty_cgroup_refuses_start(self):
@@ -211,17 +231,139 @@ class NativeGatewayTests(unittest.TestCase):
                                                ControlGroup=self.config['controlGroup'])
                     return result
                 result = self.g.start_unit(self.config, 100000000, run=run,
-                                           observe_fn=lambda _: self.observe(), empty_fn=lambda _: False)
+                                           observe_fn=lambda *_: self.observe(), empty_fn=lambda _: False)
                 self.assertEqual(result, {'result': 'refused'})
                 self.assertFalse(any(call[1] == 'start' for call in self.calls))
 
     def test_fixed_command_parser(self):
         self.assertEqual(self.g.parse_command('probe'), ('probe',))
         self.assertEqual(self.g.parse_command('recover agent-scan 100000000'), ('recover', 'agent-scan', 100000000))
+        self.assertEqual(self.g.parse_command('recover github-ko-discovery 100000000'), ('recover', KO, 100000000))
         for value in ['recover text 10', 'recover agent-scan 0', 'recover agent-scan -1', 'recover agent-scan 10;id',
-                      'probe extra', 'systemctl restart ' + UNIT, 'recover agent-scan 99999999999999999']:
+                      'probe extra', 'systemctl restart ' + UNIT, 'recover agent-scan 99999999999999999',
+                      'recover uptime 10', 'recover github-ko-discovery-x 10', 'recover github-ko 10']:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.g.parse_command(value)
+
+    # ── 2026-11-15: running is the consumer itself; the launcher's gate and systemd's restart wait are warming_up ──
+
+    def test_launcher_gate_and_restart_wait_are_warming_up_never_ok_or_recoverable(self):
+        self.properties.update(ActiveState='active', SubState='running', MainPID='123')
+        self.assertEqual((self.observe()['reason'], self.observe()['ok']), ('ok', True))
+        gate = self.observe(argv=(LAUNCHER + 'agent-scan').split(' '))
+        self.assertEqual((gate['reason'], gate['ok'], gate['recoverable']), ('warming_up', False, False))
+        # Another consumer's process or an unknown command line in this unit is not evidence of anything.
+        for argv in [consumer_argv(KO), (LAUNCHER + KO).split(' '), ['/bin/sh', '-c', 'x'], [NODE, 'scripts/worker.ts']]:
+            with self.subTest(argv=argv):
+                self.assertEqual(self.observe(argv=argv)['reason'], 'native_unit_unknown')
+        for sub in ['auto-restart', 'auto-restart-queued']:
+            with self.subTest(sub=sub):
+                self.properties.update(ActiveState='activating', SubState=sub, MainPID='0', ControlGroup='')
+                row = self.observe()
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']), ('warming_up', False, False))
+        self.properties.update(ActiveState='activating', SubState='auto-restart', MainPID='123')
+        self.assertEqual(self.observe()['reason'], 'native_unit_unknown')
+
+    def test_process_argv_reads_the_bounded_nul_separated_cmdline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            (proc / '42').mkdir()
+            (proc / '42' / 'cmdline').write_bytes(b'\0'.join(part.encode() for part in consumer_argv(KO)) + b'\0')
+            self.assertEqual(self.g.process_argv(42, proc=proc), consumer_argv(KO))
+            (proc / '42' / 'cmdline').write_bytes(b'x' * 4097)
+            with self.assertRaises(ValueError):
+                self.g.process_argv(42, proc=proc)
+            (proc / '42' / 'cmdline').write_bytes(b'')
+            with self.assertRaises(ValueError):
+                self.g.process_argv(42, proc=proc)
+
+
+class NativeGatewayConsumersTests(unittest.TestCase):
+    """2026-11-15: github-ko-discovery is probed, budgeted and recovered like agent-scan once the config lists it."""
+    setUp, run_command = NativeGatewayTests.setUp, NativeGatewayTests.run_command
+
+    def use_consumers(self, keys=('agent-scan', KO)):
+        self.config.update(consumers=list(keys),
+                           controlGroup='/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-consumer@%i.service',
+                           execStart=LAUNCHER + '%i')
+
+    def show_for(self, key):
+        unit = self.g.unit_name(key)
+        self.unit = unit
+        self.properties.update(Id=unit, Names=unit,
+                               ControlGroup='/nomorevibe.slice/nomorevibe-core.slice/' + unit,
+                               ExecStart='{ path=/usr/bin/python3 ; argv[]=' + LAUNCHER + key + ' ; ignore_errors=no ; pid=1 ; code=exited ; status=78 }')
+
+    def observe(self, key):
+        self.show_for(key)
+        return self.g.observe(self.config, key, run=self.run_command, uptime=400, empty_fn=lambda _: True,
+                              argv_fn=lambda _: consumer_argv(key))
+
+    def test_legacy_config_reports_only_agent_scan_exactly_as_before(self):
+        self.assertEqual(self.g.consumers(self.config), ['agent-scan'])
+        with patch.object(self.g, 'observe', side_effect=lambda config, key: {'key': key}):
+            self.assertEqual(self.g.probe(self.config), {'services': [{'key': 'agent-scan'}]})
+        self.assertEqual(self.g.recover(self.config, KO, 100000000, now=1000), {'result': 'refused'})
+        self.assertFalse(Path(self.config['state']).exists())
+
+    def test_listed_consumers_each_get_their_own_row_unit_group_and_command(self):
+        self.use_consumers()
+        with patch.object(self.g, 'observe', side_effect=lambda config, key: {'key': key}):
+            self.assertEqual(self.g.probe(self.config), {'services': [{'key': 'agent-scan'}, {'key': KO}]})
+        row = self.observe(KO)
+        self.assertEqual(row, {'key': KO, 'version': 100000000, 'replicas': 1, 'settled': True, 'ok': False,
+                               'recoverable': True, 'reason': 'native_unit_failed'})
+        self.assertEqual(self.calls[-1][-1], KO_UNIT)
+        # agent-scan's identity (unit name, group, command) does not satisfy the ko unit.
+        self.properties.update(Id=UNIT, Names=UNIT)
+        self.assertEqual(self.g.observe(self.config, KO, run=lambda argv: '\n'.join(k + '=' + v for k, v in self.properties.items()),
+                                        uptime=400, empty_fn=lambda _: True)['reason'], 'native_unit_unknown')
+
+    def test_ko_recovery_resets_and_starts_only_the_ko_unit_with_its_own_budget(self):
+        self.use_consumers()
+        Path(self.config['state']).write_text(json.dumps({'attempts': {'agent-scan': [900, 950]}}))
+        result = self.g.recover(self.config, KO, 100000000, now=1000, probe_fn=lambda _: {'services': [self.observe(KO)]},
+                                start_fn=lambda cfg, version, key: self.calls.append(['start-fixture', key]) or {'result': 'requested'})
+        self.assertEqual(result, {'result': 'requested'})
+        self.assertEqual(json.loads(Path(self.config['state']).read_text())['attempts'], {'agent-scan': [900, 950], KO: [1000]})
+        self.assertEqual(self.g.recover(self.config, 'agent-scan', 100000000, now=1000), {'result': 'limited'})
+        self.calls.clear()
+        self.show_for(KO)
+        self.assertEqual(self.g.start_unit(self.config, 100000000, KO, run=self.run_command,
+                                           observe_fn=lambda config, key: self.observe(key), empty_fn=lambda _: True), {'result': 'requested'})
+        self.assertEqual([call for call in self.calls if call[1] != 'show'],
+                         [['/usr/bin/systemctl', 'reset-failed', KO_UNIT], ['/usr/bin/systemctl', 'start', '--job-mode=fail', KO_UNIT]])
+
+    def test_unlisted_or_unknown_consumers_are_refused_without_reservation(self):
+        self.use_consumers(('agent-scan',))
+        self.assertEqual(self.g.recover(self.config, KO, 100000000, now=1000), {'result': 'refused'})
+        self.assertEqual(self.g.recover(self.config, 'uptime', 100000000, now=1000), {'result': 'refused'})
+        self.assertEqual(self.g.start_unit(self.config, 100000000, KO, run=self.run_command), {'result': 'refused'})
+        self.assertFalse(Path(self.config['state']).exists())
+        self.assertEqual(self.calls, [])
+        with self.assertRaises(ValueError):
+            self.g.unit_name('uptime')
+
+    def test_consumer_config_schema(self):
+        path = self.directory / 'config.json'
+        self.use_consumers()
+        path.write_text(json.dumps(self.config))
+        self.assertEqual(self.g.read_config(path)['consumers'], ['agent-scan', KO])
+        good = dict(self.config)
+        for key, value in [('consumers', []), ('consumers', ['uptime']), ('consumers', [KO, KO]), ('consumers', 'agent-scan'),
+                           ('consumers', [KO, 'agent-scan', 'capacity-supervisor']),
+                           ('controlGroup', '/nomorevibe.slice/nomorevibe-core.slice/' + UNIT),
+                           ('controlGroup', '/nomorevibe.slice/../nomorevibe-core-consumer@%i.service'),
+                           ('execStart', LAUNCHER + 'agent-scan'), ('execStart', LAUNCHER + '%i;id')]:
+            with self.subTest(key=key, value=value):
+                path.write_text(json.dumps({**good, key: value}))
+                with self.assertRaises(ValueError):
+                    self.g.read_config(path)
+        # A legacy config cannot carry the template.
+        legacy = {k: v for k, v in good.items() if k != 'consumers'}
+        path.write_text(json.dumps(legacy))
+        with self.assertRaises(ValueError):
+            self.g.read_config(path)
 
 
 class NativeCgroupTests(unittest.TestCase):
@@ -237,6 +379,12 @@ class NativeCgroupTests(unittest.TestCase):
         patcher = patch.object(self.g, 'trusted_path', side_effect=lambda value, **_: Path(value))
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_only_allow_listed_consumer_groups_are_inspected(self):
+        self.assertTrue(self.g.cgroup_empty('/nomorevibe.slice/' + KO_UNIT, root=self.root))
+        for group in ['/nomorevibe.slice/nomorevibe-core-consumer@uptime.service', '/nomorevibe.slice/ssh.service']:
+            with self.subTest(group=group), self.assertRaises(ValueError):
+                self.g.cgroup_empty(group, root=self.root)
 
     def test_recursive_populated_zero_or_exact_group_absence_only(self):
         self.assertTrue(self.g.cgroup_empty(self.group, root=self.root))
