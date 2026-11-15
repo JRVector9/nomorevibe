@@ -1275,6 +1275,13 @@
       "when": 1794528000001,
       "tag": "0185_discovery_admission_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1794700800000,
+      "tag": "0186_repository_maintainer_emails",
+      "breakpoints": true
     }
   ]
 }

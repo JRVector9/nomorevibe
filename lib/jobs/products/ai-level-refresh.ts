@@ -1,6 +1,6 @@
 import { inArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { agentRepositoryObservations, agentRepositoryScans, repositoryAiLevels, type RepositoryAiLevel } from '@/lib/db/schema';
+import { agentRepositoryObservations, agentRepositoryScans, repositoryAiLevels, repositoryMaintainerEmails, type RepositoryAiLevel } from '@/lib/db/schema';
 import { githubGraphql, githubRequest } from '@/lib/crawl/github';
 import type { RepositoryRef } from '@/lib/crawl/github-repositories';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from '@/lib/domain/evidence/agents/types';
@@ -14,6 +14,7 @@ import {
   AI_LEVEL_BATCH, aiLevelBatchQuery, aiLevelDetailQuery, parseAiLevelBatch, parseAiLevelDetail,
   type AiLevelDetail, type AiLevelDetailRequest, type RepositoryAiScan,
 } from '@/lib/domain/evidence/ai-level-query';
+import { maintainerEmails, type MaintainerEmail } from '@/lib/domain/makers/maintainer-emails';
 import { assertJobLease } from '@/lib/jobs/control';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 
@@ -284,20 +285,26 @@ async function loadDetails(tick: Tick, requests: AiLevelDetailRequest[]): Promis
 }
 
 /** 묶음 하나 — 첫 질의가 통째로 실패하면 마감까지 하나씩 다시 묻는다(큰 저장소 하나가 GitHub 10초 상한을 넘겨 묶음을 막는다). 마감 뒤의 저장소는 적지 않는다(다음 틱) */
-export async function processBatch(tick: Tick, batch: string[]): Promise<{ judged: Judged[]; failed: Failed[]; remaining: number | null; rateLimitedUntil?: string }> {
+/**
+ * contacts: 받은 저장소의 사람 커밋 작성자 주소(관리자 전용, maintainer-emails.ts) — 판정(Judged)과 따로 둔다.
+ * 판정은 확인 스크립트(scripts/ai-level-check.ts)가 파일로 내보내므로 주소가 그 파일에 섞이지 않게 한다. 포크는 원본의 커밋을 물려받아 넣지 않는다
+ */
+export type BatchResult = { judged: Judged[]; failed: Failed[]; contacts: Map<string, MaintainerEmail[]>; remaining: number | null; rateLimitedUntil?: string };
+export async function processBatch(tick: Tick, batch: string[]): Promise<BatchResult> {
   const refs: RepositoryRef[] = batch.map((key) => { const [owner, name] = key.split('/'); return { owner, name }; });
   const answer = await tick.graphql<Record<string, unknown>>(aiLevelBatchQuery(refs), { timeoutMs: 10_000 });
   if (!answer.ok && answer.error.kind === 'rate_limited') {
-    return { judged: [], failed: [], remaining: 0, rateLimitedUntil: new Date(answer.error.resetAt?.getTime() ?? Date.now() + 15 * 60_000).toISOString() };
+    return { judged: [], failed: [], contacts: new Map(), remaining: 0, rateLimitedUntil: new Date(answer.error.resetAt?.getTime() ?? Date.now() + 15 * 60_000).toISOString() };
   }
   if (!answer.ok || !answer.data) {
-    if (batch.length === 1) return { judged: [], failed: [{ key: batch[0], error: 'unknown', retryMs: errorRetryMs() }], remaining: null };
-    const parts = { judged: [] as Judged[], failed: [] as Failed[], remaining: null as number | null };
+    if (batch.length === 1) return { judged: [], failed: [{ key: batch[0], error: 'unknown', retryMs: errorRetryMs() }], contacts: new Map(), remaining: null };
+    const parts = { judged: [] as Judged[], failed: [] as Failed[], contacts: new Map<string, MaintainerEmail[]>(), remaining: null as number | null };
     for (const key of batch) {
       if (Date.now() > tick.startUntil) break;
       const one = await processBatch(tick, [key]);
       if (one.rateLimitedUntil) return { ...parts, remaining: 0, rateLimitedUntil: one.rateLimitedUntil };
       parts.judged.push(...one.judged); parts.failed.push(...one.failed); parts.remaining = one.remaining ?? parts.remaining;
+      for (const [key, emails] of one.contacts) parts.contacts.set(key, emails);
     }
     return parts;
   }
@@ -326,7 +333,12 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<{ judge
 
   const judged: Judged[] = [];
   const failed: Failed[] = [];
+  const contacts = new Map<string, MaintainerEmail[]>();
   for (const [index, item] of answers.entries()) {
+    if (item.kind === 'found' && !item.scan.isFork) {
+      const emails = maintainerEmails(item.scan.commits);
+      if (emails.length) contacts.set(batch[index], emails);
+    }
     const key = batch[index];
     const plan = plans[index];
     if (item.kind === 'not_found') {
@@ -343,7 +355,7 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<{ judge
   }
   const limit = answer.data.rateLimit;
   const remaining = limit && typeof limit === 'object' && typeof (limit as { remaining?: unknown }).remaining === 'number' ? (limit as { remaining: number }).remaining : null;
-  return { judged, failed, remaining };
+  return { judged, failed, contacts, remaining };
 }
 
 /**
@@ -389,7 +401,7 @@ export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, depende
   for (let start = 0; start < keys.length; start += AI_LEVEL_BATCH) {
     if (!ctx.hasBudget() || Date.now() > tick.startUntil) break;
     const result = await processBatch(tick, keys.slice(start, start + AI_LEVEL_BATCH));
-    await record(ctx, result.judged, result.failed);
+    await record(ctx, result.judged, result.failed, result.contacts);
     checked += result.judged.length + result.failed.length;
     if (result.rateLimitedUntil) {
       ctx.log('ai_level.rate_limited', { retryAfter: result.rateLimitedUntil });
@@ -413,8 +425,8 @@ export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, depende
  * 채 옛 근거가 '이미 확인한 것'으로 다음 판정에 이어지지 않게. 처음 보는 저장소면 단계 없이 오류만 적은 행을 만든다
  * (ai-level-store.ts 는 이런 행을 '검사 전'으로 읽는다) — 같은 저장소가 매 틱 앞을 막지 않게 한다.
  */
-async function record(ctx: JobContext<AiLevelCursor>, judged: Judged[], failed: Failed[]) {
-  if (!judged.length && !failed.length) return;
+async function record(ctx: JobContext<AiLevelCursor>, judged: Judged[], failed: Failed[], contacts: Map<string, MaintainerEmail[]> = new Map()) {
+  if (!judged.length && !failed.length && !contacts.size) return;
   const now = new Date();
   await db.transaction(async (tx) => {
     if (ctx.lease) await assertJobLease(tx, ctx.lease);
@@ -436,6 +448,25 @@ async function record(ctx: JobContext<AiLevelCursor>, judged: Judged[], failed: 
       await tx.insert(repositoryAiLevels).values(values).onConflictDoUpdate({ target: repositoryAiLevels.repositoryKey, set: values });
       await tx.execute(sql`UPDATE products SET ai_level = ${item.level}
         WHERE ${PRODUCT_IDENTITY} = ${`https://github.com/${item.key}`} AND ai_level IS DISTINCT FROM ${item.level}`);
+    }
+    // 커밋 작성자 주소(관리자 전용) — 이번 창에서 본 주소는 시각·커밋 수를 고치고, 창 밖으로 밀려난 지난 주소는 그대로 둔다(예전 관리자도 연락 대상이다).
+    // 곁가지 기록이라 저장점 안에서 쓴다 — 실패해도(0186 전 등) 단계 판정은 그대로 적는다. 주소는 로그에 남기지 않는다
+    if (contacts.size) {
+      try {
+        await tx.transaction(async (savepoint) => {
+          for (const [key, emails] of contacts) {
+            await savepoint.insert(repositoryMaintainerEmails).values(emails.map((item) => ({ repositoryKey: key, email: item.email, authorName: item.name,
+              authorLogin: item.login, commitCount: item.commits, firstSeenAt: now, lastSeenAt: now })))
+              .onConflictDoUpdate({ target: [repositoryMaintainerEmails.repositoryKey, repositoryMaintainerEmails.email], set: {
+                authorName: sql`coalesce(excluded.author_name, ${repositoryMaintainerEmails.authorName})`,
+                authorLogin: sql`coalesce(excluded.author_login, ${repositoryMaintainerEmails.authorLogin})`,
+                commitCount: sql`excluded.commit_count`, lastSeenAt: now } });
+          }
+        });
+      } catch (error) {
+        const failure = error as { code?: unknown; cause?: { code?: unknown } } | null;
+        ctx.log('ai_level.maintainer_emails_failed', { repositories: contacts.size, code: String(failure?.code ?? failure?.cause?.code ?? 'unknown') });
+      }
     }
   });
 }

@@ -2,14 +2,18 @@ import { createHash } from "node:crypto";
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, products, repositoryAiLevels } from "@/lib/db/schema";
+import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, products, repositoryAiLevels, repositoryMaintainerEmails } from "@/lib/db/schema";
 import type { githubGraphql, githubRequest } from "@/lib/crawl/github";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { getRepositoryAiLevel, storedAiLevel } from "@/lib/domain/evidence/ai-level-store";
+import { maintainerEmailsForRepoUrl } from "@/lib/domain/makers/maintainer-emails-admin";
 import { update } from "@/lib/domain/products/repository";
 import { dueRepositories, refreshAiLevelsJob, type AiLevelCursor } from "@/lib/jobs/products/ai-level-refresh";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ensureSchema, resetTables } from "./setup";
+
+// 관리자 전용 읽기 모듈(maintainer-emails-admin.ts)은 server-only 다 — Next 밖에서는 빈 모듈로
+vi.mock("server-only", () => ({}));
 
 /** AI 제작 근거 단계 잡(ai-level-refresh) — 차례, 단계마다의 판정, 제품에 옮겨 적기, 실패를 가두기(GitHub 은 가짜) */
 
@@ -33,6 +37,7 @@ type Fixture = {
   restCommits?: Record<string, { message: string; authorName?: string; authorEmail?: string; authorLogin?: string | null }>;
   missing?: boolean;
   fail?: boolean;
+  isFork?: boolean;
 };
 
 function fakeGithub(fixtures: Record<string, Fixture>) {
@@ -64,7 +69,7 @@ function fakeGithub(fixtures: Record<string, Fixture>) {
         data[alias] = node;
       } else {
         data[alias] = {
-          isFork: false,
+          isFork: fixture.isFork ?? false,
           defaultBranchRef: { name: "main", target: { oid: SHA(999), history: { nodes: (fixture.commits ?? []).map((commit) => ({
             oid: commit.sha, message: commit.message, parents: { totalCount: 1 },
             author: { name: commit.authorName ?? "Kim", email: commit.authorEmail ?? "kim@example.com", user: commit.authorLogin === null ? null : { login: commit.authorLogin ?? "kim" } },
@@ -306,4 +311,64 @@ it("GitHub 한도에 걸리면 아무것도 적지 않고 풀릴 때까지 쉰�
   // 쉬는 동안은 부르지도 않는다
   await refreshAiLevelsJob(context(outcome.cursor!), { graphql });
   expect(graphql).toHaveBeenCalledTimes(1);
+});
+
+it("커밋 작성자 이메일: 사람 주소만 관리자 전용 표에 남기고, 다시 볼 때 시각·커밋 수만 고친다 — 포크·판정 내보내기에는 없다", async () => {
+  const base = { message: "fix: x" };
+  const fixtures: Record<string, Fixture> = {
+    "acme/owned": { commits: [
+      { sha: SHA(1), ...base, authorName: "Kim", authorEmail: "Kim@Acme.dev", authorLogin: "kim" },
+      { sha: SHA(2), ...base, authorName: "Kim", authorEmail: "kim@acme.dev", authorLogin: "kim" },
+      { sha: SHA(3), ...base, authorName: "Lee", authorEmail: "1+lee@users.noreply.github.com", authorLogin: "lee" },
+      { sha: SHA(4), ...base, authorName: "Cursor Agent", authorEmail: "cursoragent@cursor.com", authorLogin: "cursoragent" },
+      { sha: SHA(5), ...base, authorName: "dependabot[bot]", authorEmail: "49699333+dependabot[bot]@users.noreply.github.com", authorLogin: null },
+    ] },
+    "acme/forked": { isFork: true, commits: [{ sha: SHA(6), ...base, authorName: "Up", authorEmail: "up@stream.dev", authorLogin: "up" }] },
+  };
+  await product("https://github.com/acme/owned");
+  await product("https://github.com/acme/forked");
+  await refreshAiLevelsJob(context(), fakeGithub(fixtures));
+  const first = await db.select().from(repositoryMaintainerEmails);
+  expect(first.map(({ repositoryKey, email, authorName, authorLogin, commitCount }) => ({ repositoryKey, email, authorName, authorLogin, commitCount })))
+    .toEqual([{ repositoryKey: "acme/owned", email: "kim@acme.dev", authorName: "Kim", authorLogin: "kim", commitCount: 2 }]);
+
+  // 관리자 화면이 읽는 모양 — 저장소 주소를 어떻게 적어도 같은 키
+  const view = await maintainerEmailsForRepoUrl("https://github.com/Acme/Owned/");
+  expect(view).toMatchObject({ repositoryKey: "acme/owned", rows: [{ email: "kim@acme.dev", name: "Kim", login: "kim", commits: 1 + 1 }] });
+  expect(await maintainerEmailsForRepoUrl("https://gitlab.com/acme/owned")).toEqual({ repositoryKey: null, rows: [] });
+
+  // 다시 볼 때: 이번 창에 없는 예전 주소는 남기고, 이번에 본 주소는 커밋 수·마지막 확인을 고친다(처음 확인은 그대로)
+  await db.update(repositoryAiLevels).set({ nextCheckAt: new Date(Date.now() - 60_000) });
+  await db.insert(repositoryMaintainerEmails).values({ repositoryKey: "acme/owned", email: "old@acme.dev", commitCount: 4,
+    firstSeenAt: new Date("2026-01-01T00:00:00Z"), lastSeenAt: new Date("2026-01-01T00:00:00Z") });
+  fixtures["acme/owned"].commits = [{ sha: SHA(7), ...base, authorName: "", authorEmail: "kim@acme.dev", authorLogin: null }];
+  await refreshAiLevelsJob(context(), fakeGithub(fixtures));
+  const after = await db.select().from(repositoryMaintainerEmails).orderBy(repositoryMaintainerEmails.email);
+  expect(after.map(({ email, authorName, authorLogin, commitCount }) => ({ email, authorName, authorLogin, commitCount }))).toEqual([
+    { email: "kim@acme.dev", authorName: "Kim", authorLogin: "kim", commitCount: 1 },
+    { email: "old@acme.dev", authorName: null, authorLogin: null, commitCount: 4 },
+  ]);
+  const kim = after.find((item) => item.email === "kim@acme.dev")!;
+  expect(kim.firstSeenAt.getTime()).toBe(first[0].firstSeenAt.getTime());
+  expect(kim.lastSeenAt.getTime()).toBeGreaterThan(first[0].lastSeenAt.getTime());
+  // 판정(repository_ai_levels.evidence)에는 주소가 섞이지 않는다
+  const levels = await db.select({ evidence: repositoryAiLevels.evidence }).from(repositoryAiLevels);
+  expect(JSON.stringify(levels)).not.toMatch(/@acme\.dev|@stream\.dev/);
+});
+
+it("커밋 작성자 이메일 기록이 실패해도(표가 없어도) 단계 판정은 적는다 — 로그에는 주소 없이 개수·코드만", async () => {
+  const product1 = await product("https://github.com/acme/no-table");
+  const fixtures: Record<string, Fixture> = { "acme/no-table": { commits: [{ sha: SHA(1), message: "fix", authorName: "Kim", authorEmail: "kim@acme.dev" }],
+    root: [{ name: ".windsurfrules", type: "blob" }] } };
+  await db.execute(sql`ALTER TABLE repository_maintainer_emails RENAME TO repository_maintainer_emails_hidden`);
+  const ctx = context();
+  try {
+    await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  } finally {
+    await db.execute(sql`ALTER TABLE repository_maintainer_emails_hidden RENAME TO repository_maintainer_emails`);
+  }
+  expect(await levelOf(product1.id)).toBe(3);
+  expect(ctx.log).toHaveBeenCalledWith("ai_level.maintainer_emails_failed", { repositories: 1, code: "42P01" });
+  expect(JSON.stringify(vi.mocked(ctx.log).mock.calls)).not.toContain("kim@acme.dev");
+  expect(await db.select().from(repositoryMaintainerEmails)).toEqual([]);
 });
