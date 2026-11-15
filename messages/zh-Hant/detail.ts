@@ -239,6 +239,8 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "updates.maker": "製作者更新",
   "updates.automatic": "自動偵測",
   "updates.all": "檢視全部 {count} 筆 ›",
+  "updates.showAll": "全部",
+  "updates.loadFailed": "無法載入更多更新，請重試。",
   "star.unavailable": "無法確認 GitHub 星號狀態。請稍後重試。",
   "star.uncertain": "無法確認變更結果。請直接在 GitHub 檢查星號狀態。重新查詢不會解除此次變更鎖定。",
   "star.rateLimited": "GitHub 星號請求受到限制。請稍後重試。",

@@ -29,23 +29,30 @@ export function detailFreshness(freshness: FreshnessView[]): DetailFreshness[] {
   return freshness.map(({ provider, lastSuccessAt }) => ({ provider, lastSuccessAt }));
 }
 
-/** 업데이트 목록은 최신 세 줄만 그린다 — 나머지는 건수로만 쓴다 */
+/** 업데이트 목록은 처음에 최신 세 줄만 그린다 — 나머지는 '전체'를 누르면 같은 출처 API(/api/products/[slug]/updates)로 받는다 */
 export const TIMELINE_LIMIT = 3;
 const DAY = 86_400_000;
 
 export type TimelineUpdate = Pick<ProductUpdateView, "id" | "sourceKind" | "canonicalUrl" | "title" | "publishedAt" | "observedAt">;
 export type TimelineSummary = { rows: TimelineUpdate[]; total: number; recent: number };
+/** '전체'가 받는 값(/api/products/[slug]/updates) — 보이는 업데이트 모두, 최신순 */
+export type TimelineAllResponse = { rows: TimelineUpdate[] };
+
+/** 한 줄이 그리는 칸만 — 요약·전후 값·메이커 수정 시각은 브라우저로 보내지 않는다 */
+export function timelineUpdate({ id, sourceKind, canonicalUrl, title, publishedAt, observedAt }: TimelineUpdate): TimelineUpdate {
+  return { id, sourceKind, canonicalUrl, title, publishedAt, observedAt };
+}
 
 /**
  * 최신순으로 정렬된 업데이트(상세 조회)에서 그릴 세 줄과 두 수 — 전체 건수, 최근 30일 건수(발행일이 없으면 처음 본 날로 센다).
- * now 는 화면이 날짜를 그리는 서버 시각과 같아야 30일 셈이 화면의 날짜와 맞는다.
+ * counts 는 상세 조회가 DB 에서 센 값이다(updates 는 최신 50건까지라 그보다 많은 제품의 수가 50에서 멈췄다).
+ * 없으면 받은 줄로 센다. now 는 화면이 날짜를 그리는 서버 시각과 같아야 30일 셈이 화면의 날짜와 맞는다.
  */
-export function timelineSummary(updates: ProductUpdateView[], now: Date): TimelineSummary {
+export function timelineSummary(updates: TimelineUpdate[], now: Date, counts?: { total: number; recent: number }): TimelineSummary {
   const since = now.getTime() - 30 * DAY;
   return {
-    rows: updates.slice(0, TIMELINE_LIMIT).map(({ id, sourceKind, canonicalUrl, title, publishedAt, observedAt }) =>
-      ({ id, sourceKind, canonicalUrl, title, publishedAt, observedAt })),
-    total: updates.length,
-    recent: updates.filter((update) => (update.publishedAt ?? update.observedAt).getTime() >= since).length,
+    rows: updates.slice(0, TIMELINE_LIMIT).map(timelineUpdate),
+    total: counts?.total ?? updates.length,
+    recent: counts?.recent ?? updates.filter((update) => (update.publishedAt ?? update.observedAt).getTime() >= since).length,
   };
 }

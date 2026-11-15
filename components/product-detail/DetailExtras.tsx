@@ -68,7 +68,7 @@ export function DetailActivitySlot({ slug }: { slug: string }) {
   if (!data) return null;
   return <>
     <LanguageBar repository={data.facts.repository} />
-    <UpdateTimeline summary={data.timeline} now={now} />
+    <UpdateTimeline key={slug} slug={slug} summary={data.timeline} now={now} />
   </>;
 }
 
