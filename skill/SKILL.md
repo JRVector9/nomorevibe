@@ -19,6 +19,7 @@ API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{
 - 모든 API 호출은 `curl -s -A 'nomorevibe-skill/1'`로 하고, 응답 JSON의 `error` 필드를 사용자에게 그대로 전달한다.
   공개 읽기 API는 이름 없는 curl 같은 수집 도구 요청을 403(`automated_client_refused`)으로 거절하므로 `-A` 값을 빼지 않는다.
   아래 예시의 `curl -s`도 모두 같은 `-A` 값을 붙여 실행한다. 공개 읽기가 429(`rate_limited`)면 `Retry-After` 초만큼 기다린다
+  막기 모드에서 401(`api_session_required`)이 오면 `/skill.md`의 최신판으로 설치된 스킬을 바꾼 뒤 다시 실행한다.
 - 변경 명령은 `.nomorevibe.json`의 `api`를 유효한 http(s) **origin**으로 정규화한 뒤, 수정 키를
   `credentials[origin][slug]`에서만 찾는다. 즉 수정 키는 **API origin과 slug의 조합**에 결박한다.
   인증 요청 목적지는 일치한 credential의 origin만 사용하며 프로젝트 파일에 적힌 임의 URL로 수정 키를
@@ -53,6 +54,8 @@ API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{
     **현재 저장된 리소스를 GET**한다. GET이 실패하면 PUT하지 않는다. 이 네 PUT은 전체 교체이므로
     서버 응답을 기준값으로 삼아 새 제안을 병합하고, 사용자가 명시적으로 지워 달라고 하지 않은 기존
     필드와 항목은 그대로 보존한다. 응답의 `ETag`도 해당 제안과 함께 메모리에만 보관한다.
+    조회 경로: `GET /api/products/<slug>/profile`, `GET /api/products/<slug>/links`,
+    `GET /api/products/<slug>/media`, `GET /api/products/<slug>/provenance`.
 3. 보낼 **제안 payload**를 필드별로 보여주고 각 값의 근거를 `메이커 제공·미검증`으로 표시한다.
    현재값과 비교해 추가·변경·유지·**삭제될 항목**을 모두 구분한다. 삭제될 항목이 하나라도 있으면
    별도로 강조한다.
@@ -224,8 +227,13 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
 
 등록할 때 409에 `status: "seeded"`가 왔거나, 사용자가 "내 제품이 이미 올라와 있다"고 할 때.
 
-1. **확인**: `curl -s -A 'nomorevibe-skill/1' <API>/api/products/<slug>` — 응답에 `claimable: true`와 `verify`가 있으면
-   아직 주인이 없는 제품이다. 사용자에게 현재 등록된 이름·소개를 보여주고 본인 제품이 맞는지 묻는다.
+1. **확인**: `GET /api/products/<slug>`를
+   `curl -s -A 'nomorevibe-skill/1' --get --data-urlencode 'url=<내 저장소나 사이트 주소>' <API>/api/products/<slug>`로 호출한다.
+   막기 모드에서도 세션 없이 slug·name·tagline·category·status와, 주인 없는 제품의 claimable·verify를 받는다.
+   저장된 사이트·저장소 주소는 돌려주지 않고 `matches: true|false`로 정규화한 주소가 같은지만 알려준다.
+   `matches: false`면 중단하고 slug와 입력 주소를 확인한다. true는 주소 일치 확인일 뿐 소유 증명은 아니다.
+   `claimable: true`와 `verify`가 있으면 아직 주인이 없는 제품이다.
+   사용자에게 현재 등록된 이름·소개를 보여주고 본인 제품이 맞는지 묻는다.
 2. **소유 증명**: `verify.file` 정보로 검증 파일을 만든다 (등록 8번과 같은 방식). 재배포를 안내한다.
 3. **가져오기**: `curl -s -X POST <API>/api/products/<slug>/verify`
    - 성공 응답에 `claimed: true`와 `edit_token`이 온다. **이 응답에만 나오는 값이다.**

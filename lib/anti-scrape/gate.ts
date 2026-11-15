@@ -6,7 +6,9 @@ import { readSession, sessionConfig, SESSION_HEADERS, type SessionRequest } from
 
 const WINDOW = 10 * 60_000;
 /** All callers already passed the UA, cross-site and IP gates. Search-bot exemptions do not bypass sessions. */
-export async function guardApiSession(request: SessionRequest, route: string): Promise<Response | null> {
+export async function guardApiSession(
+  request: SessionRequest, route: string, onSessionRequired?: () => Promise<Response>,
+): Promise<Response | null> {
   const config = sessionConfig();
   if (!config) return null;
   let mode;
@@ -15,7 +17,11 @@ export async function guardApiSession(request: SessionRequest, route: string): P
   const session = readSession(request, config.signingSecret);
   if (!session) {
     logger.info("anti_scrape.session_required", { route, mode });
-    return mode === "observe" ? null : Response.json({ error: "api_session_required" }, { status: 401, headers: SESSION_HEADERS });
+    if (mode === "observe") return null;
+    // A caller may serve a restricted claim-check response instead. This does not bypass
+    // the preceding UA/IP gates, control failures, or a valid session's read limit.
+    return onSessionRequired ? onSessionRequired()
+      : Response.json({ error: "api_session_required" }, { status: 401, headers: SESSION_HEADERS });
   }
   const cards = route === "products.cards" || route === "products.summaries";
   // Reserve the largest possible response for unknown list sizes; slugs= batches pay for each distinct slug (at most 60).
