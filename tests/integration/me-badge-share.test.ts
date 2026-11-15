@@ -13,8 +13,6 @@ const badge = async (slug: string, query = "") => (await import("@/app/badge/[sl
   new Request(`${ORIGIN}/badge/${slug}${query}`), { params: Promise.resolve({ slug }) });
 const card = async (locale: string, slug: string) => (await import("@/app/(public)/[locale]/(content)/p/[slug]/share-card.png/route")).GET(
   new Request(`${ORIGIN}/${locale}/p/${slug}/share-card.png`), { params: Promise.resolve({ locale, slug }) });
-const ogImage = async (locale: string, slug: string) => (await import("@/app/(public)/[locale]/(content)/p/[slug]/og.jpg/route")).GET(
-  new Request(`${ORIGIN}/${locale}/p/${slug}/og.jpg`), { params: Promise.resolve({ locale, slug }) });
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
@@ -124,18 +122,6 @@ describe("GET /p/<slug>/share-card.png", () => {
     expect((await card("ko", "gone")).status).toBe(404);
     expect((await card("ko", "missing")).status).toBe(404);
     expect((await card("fr", "tiny-cron")).status).toBe(404);
-  }, 60_000);
-
-  it("상세 og 그림(og.jpg)은 같은 카드의 1200×630 JPEG, 내려간·검증 전·없는 제품은 404", async () => {
-    await product("tiny-cron", "seeded", { stars: 214 });
-    await product("gone", "banned");
-    await product("phish-wallet", "unverified");
-    const response = await ogImage("en", "tiny-cron");
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("image/jpeg");
-    expect(response.headers.get("cache-tag")).toBe("p-tiny-cron");
-    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString("hex")).toBe("ffd8");
-    for (const slug of ["gone", "phish-wallet", "missing"]) expect((await ogImage("ko", slug)).status, slug).toBe(404);
   }, 60_000);
 
   it("카드 글은 이름·그 언어의 한 줄 소개·사이트 표기뿐 — 칩(스타·써본 사람·분야)·날짜 없음(2026-11-15)", async () => {

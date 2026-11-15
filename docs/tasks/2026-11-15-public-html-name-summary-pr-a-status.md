@@ -14,7 +14,7 @@
 - [x] /talk·홈 화제·/rankings/[key]·상세 화제 띠: 이름·요약만, 나머지 API(`/api/talk-board`·`/api/products/[slug]/talk`·`/api/rankings/[key]`)
 - [x] 상세: h1 이름·요약·빵부스러기 홈›이름·JSON-LD만. 머리 나머지·소개·README 발췌·미리보기·운영자 상자는 `/api/products/[slug]/details`의 `hero·intro·media·aside`. 내부 id 는 로그인 기능이 켜졌을 때 API 응답 안에서만
 - [x] /p/[slug]/github: 저장소 이름은 로그인한 사람에게만
-- [x] og:image `/p/<slug>/og.jpg`(칩 없는 1200×630 JPEG, 태그 p-<slug>), share-card.png 도 칩 없음
+- [x] 상세 og:image·twitter:image 는 **지금처럼 제품 표지**(productShareImage, 표지 없거나 아이콘이면 사이트 기본 그림) — 2026-11-15 사람 결정으로 이름·요약 카드(og.jpg) 안을 되돌림. og.jpg 경로는 지움. share-card.png(메이커 공유 카드)는 칩 없음 유지
 - [x] JSON-LD WebPage+CreativeWork+BreadcrumbList 홈›이름, feed category 제거
 - [x] 허용 목록 시험(`tests/public-html-payload.test.tsx`, 표식 값) — main 에서 19개 중 17개 실패 확인
 - [x] slugs API 시험(`tests/product-cards-slugs.test.ts`), 새 API 시험들, 기존 화면 시험 갱신

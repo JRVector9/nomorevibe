@@ -363,12 +363,16 @@ describe("상세 — h1 이름·요약·빵부스러기 홈›이름·JSON-LD(�
     expect(leaked(script)).toEqual([]);
   });
 
-  it("generateMetadata: 제목=이름, 설명=요약, og:image 는 /p/<slug>/og.jpg — 표식 0개", async () => {
+  it("generateMetadata: 제목=이름, 설명=요약, og:image·twitter:image 만 제품 표지(사람 결정 예외) — 그 밖에 표식 0개", async () => {
     const metadata = await productMetadata({ params: Promise.resolve({ slug: "ggml" }) });
+    const cover = SENTINEL_PRODUCT.ogImage;
     const text = JSON.stringify(metadata);
-    expect(leaked(text)).toEqual([]);
+    // 공유 미리보기 그림은 지금처럼 표지를 쓴다(2026-11-15 사람 결정) — 표지 주소는 og·twitter 그림 두 곳에만, 나머지 칸은 0개
+    expect(text.split(cover).length - 1).toBe(2);
+    expect(metadata.openGraph?.images).toEqual([expect.objectContaining({ url: cover, alt: "ggml" })]);
+    expect(metadata.twitter?.images).toEqual([cover]);
+    expect(leaked(text.split(cover).join(""))).toEqual([]);
     expect(metadata.description).toBe("머신러닝용 텐서 라이브러리");
-    expect(text).toContain("/p/ggml/og.jpg");
   });
 });
 

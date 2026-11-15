@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { badgeTextWidth, escapeXml, formatBadgeCount, listedBadgeSvg, triedBadgeSvg, verifiedBadgeSvg } from "@/lib/domain/products/badge";
-import { cardFontOrder, cardScripts, clampCardText, drawableText, fontCoverage, shareCardJpeg, shareCardPng } from "@/lib/me/share-card";
+import { cardFontOrder, cardScripts, clampCardText, drawableText, fontCoverage, shareCardPng } from "@/lib/me/share-card";
 import nextConfig from "@/next.config";
 
 describe("README 배지", () => {
@@ -65,9 +65,8 @@ describe("공유 카드 글꼴", () => {
     expect(readFileSync(path.join(dir, "OFL.txt"), "utf8")).toContain("SIL Open Font License, Version 1.1");
   });
 
-  it("standalone 빌드에 글꼴 폴더가 실린다 — 공유 카드와 상세 og 그림", () => {
+  it("standalone 빌드에 글꼴 폴더가 실린다", () => {
     expect(nextConfig.outputFileTracingIncludes?.["/\\[locale\\]/p/\\[slug\\]/share-card.png"]).toEqual(["./assets/fonts/*.woff"]);
-    expect(nextConfig.outputFileTracingIncludes?.["/\\[locale\\]/p/\\[slug\\]/og.jpg"]).toEqual(["./assets/fonts/*.woff"]);
   });
 });
 
@@ -115,9 +114,6 @@ describe("공유 카드 — 밖으로 글꼴을 받으러 가지 않는다", () 
     const bytes = Buffer.from(await shareCardPng(data, "en"));
     expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
     expect(bytes.readUInt32BE(16)).toBe(1200);
-    // 상세 og 그림은 같은 카드의 JPEG
-    const jpeg = await shareCardJpeg(data, "en");
-    expect(jpeg.subarray(0, 3).toString("hex")).toBe("ffd8ff");
     expect(outbound).toEqual([]);
   }, 60_000);
 });

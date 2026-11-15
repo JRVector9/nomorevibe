@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_SHARE_IMAGE, SITE_DESCRIPTION, SITE_SHARE, productOgImage, productShareImage, shareMetadata } from "@/lib/copy/share";
+import { DEFAULT_SHARE_IMAGE, SITE_DESCRIPTION, SITE_SHARE, productShareImage, shareMetadata } from "@/lib/copy/share";
 import { generateMetadata } from "@/app/(public)/[locale]/layout";
 import LaunchPage from "@/app/(public)/[locale]/(content)/launch/page";
 
@@ -11,12 +11,6 @@ const rootMetadata = await generateMetadata({ params: Promise.resolve({ locale: 
 
 /** 공유 미리보기(2026-10-08 점검 SEO-01·UX-07)와 약속 문구(UX-05) */
 describe("공유 미리보기", () => {
-  it("상세 og 그림은 우리가 그린 이름·요약 카드(og.jpg) — 한국어는 앞붙이기 없이, 다른 언어는 언어 경로", () => {
-    expect(productOgImage("tiny-cron", "ko", "tiny-cron")).toEqual({ url: "/p/tiny-cron/og.jpg", width: 1200, height: 630, alt: "tiny-cron" });
-    expect(productOgImage("tiny-cron", "en", "Tiny")).toMatchObject({ url: "/en/p/tiny-cron/og.jpg", alt: "Tiny" });
-    expect(productOgImage("tiny-cron", "zh-Hant", "Tiny").url).toBe("/zh-Hans/p/tiny-cron/og.jpg");
-  });
-
   it("제품 그림은 그 사이트의 대표 이미지나 큰 README 그림일 때만, 아이콘·바깥 주소·없음은 기본 그림", () => {
     expect(productShareImage(null)).toBe(DEFAULT_SHARE_IMAGE);
     expect(productShareImage("https://evil.example/og.png")).toBe(DEFAULT_SHARE_IMAGE);

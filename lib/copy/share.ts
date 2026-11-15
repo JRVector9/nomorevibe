@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
-import type { Locale } from "@/lib/i18n/locales";
-import { localePath } from "@/lib/i18n/routing";
 import { BRAND, SITE_TAGLINE } from "./brand";
 
 /**
@@ -34,14 +32,6 @@ export function productShareImage(ogImage: string | null | undefined): { url: st
   const presentation = thumbnailPresentation(ogImage);
   const wide = presentation.kind === "og" || (presentation.kind === "repository_image" && !presentation.identity);
   return wide ? { url: ogImage, width: presentation.width, height: presentation.height } : DEFAULT_SHARE_IMAGE;
-}
-
-/**
- * 제품 상세의 og:image·twitter:image — 우리가 그린 이름·요약 카드(1200×630 JPEG, app/(public)/[locale]/(content)/p/[slug]/og.jpg).
- * 공개 출력은 주소·이름·요약까지라(2026-11-15 사람 결정) 받아 둔 제품 그림(og-cache)은 쓰지 않는다. 한국어는 앞붙이기 없는 주소다
- */
-export function productOgImage(slug: string, locale: Locale, name: string): { url: string; width: number; height: number; alt: string } {
-  return { url: localePath(locale, `/p/${encodeURIComponent(slug)}/og.jpg`), width: 1200, height: 630, alt: name };
 }
 
 /** 화면 하나의 공유 메타 — openGraph 는 얕게 병합되므로 사이트 기본값(siteName·locale)을 함께 넣는다 */

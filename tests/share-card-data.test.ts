@@ -1,8 +1,8 @@
-import sharp from "sharp";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * 상세 og 그림(/p/<slug>/og.jpg)과 공유 카드 글(shareCardData) — 이름·요약·사이트 표기만, 칩(스타·HN·써본 사람·분야)·날짜 없음
+ * 공유 카드 글(shareCardData, /p/<slug>/share-card.png) — 이름·요약·사이트 표기만, 칩(스타·HN·써본 사람·분야)·날짜 없음.
+ * 상세 페이지의 공유 미리보기(og:image)는 이 카드가 아니라 지금처럼 제품 표지다(2026-11-15 사람 결정)
  * (2026-11-15 사람 결정, docs/tasks/2026-11-15-public-html-name-summary.md 4.3). DB 는 가짜로 바꾼다.
  */
 const mocks = vi.hoisted(() => ({ identity: vi.fn(), translations: vi.fn() }));
@@ -13,11 +13,9 @@ vi.mock("@/lib/i18n/products", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/i18n/products")>()), readTranslationsForProducts: mocks.translations,
 }));
 
-const { GET } = await import("@/app/(public)/[locale]/(content)/p/[slug]/og.jpg/route");
 const { shareCardData } = await import("@/lib/me/share");
 
 const ORIGIN = "https://nomorevibe.example";
-const call = (locale: string, slug: string) => GET(new Request(`${ORIGIN}/${locale}/p/${slug}/og.jpg`), { params: Promise.resolve({ locale, slug }) });
 
 /** 숨길 칸마다 표식 값 — 카드 글 어디에도 나오면 안 된다 */
 const product = (extra: Record<string, unknown> = {}) => ({
@@ -58,32 +56,5 @@ describe("shareCardData — 이름·요약·사이트 표기만", () => {
       mocks.identity.mockResolvedValue(product(extra));
       expect(await shareCardData("tiny-cron", "ko")).toBeNull();
     }
-  });
-});
-
-describe("GET /p/<slug>/og.jpg", () => {
-  it("1200×630 JPEG, 공유 카드와 같은 캐시·p-<slug> 태그", async () => {
-    mocks.identity.mockResolvedValue(product());
-    const response = await call("ko", "tiny-cron");
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("image/jpeg");
-    expect(response.headers.get("cache-tag")).toBe("p-tiny-cron");
-    expect(response.headers.get("cache-control")).toBe("public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400");
-    const body = Buffer.from(await response.arrayBuffer());
-    expect(body.subarray(0, 2).toString("hex")).toBe("ffd8");
-    expect(await sharp(body).metadata()).toMatchObject({ format: "jpeg", width: 1200, height: 630 });
-  }, 60_000);
-
-  it("없는·목록 밖 제품과 모르는 언어는 404 — 주소 모양일 때만 p-<slug> 태그", async () => {
-    mocks.identity.mockResolvedValue(null);
-    const missing = await call("en", "missing");
-    expect(missing.status).toBe(404);
-    expect(missing.headers.get("cache-tag")).toBe("p-missing");
-    expect(missing.headers.get("cache-control")).toBe("public, max-age=300");
-    expect((await call("ko", "Bad_Slug!")).headers.get("cache-tag")).toBeNull();
-    mocks.identity.mockResolvedValue(product({ status: "unverified" }));
-    expect((await call("ko", "tiny-cron")).status).toBe(404);
-    mocks.identity.mockResolvedValue(product());
-    expect((await call("fr", "tiny-cron")).status).toBe(404);
   });
 });

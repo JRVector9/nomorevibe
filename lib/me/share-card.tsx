@@ -10,7 +10,6 @@ import type { ShareCardData } from "./share";
 /**
  * 공유 카드 그림(SNS 설계 T13·M5) — 1200×630, 어두운 잉크 카드. next/og ImageResponse(Satori)로 그린다.
  * 이름·요약·브랜드 줄·사이트 표기만 그린다 — 칩(스타·HN·써본 사람·분야)과 날짜는 없다(2026-11-15 사람 결정, 공개 출력은 주소·이름·요약).
- * 공유 카드(share-card.png)는 PNG, 상세 og:image(og.jpg)는 같은 그림을 JPEG 로 바꾼 것이다.
  * 글꼴: 저장소에 둔 Noto Sans KR·SC·TC 부분집합(assets/fonts, WOFF, SIL OFL 1.1 — 만든 방법은 scripts/fonts/subset-share-card-fonts.py).
  * lib 밖에 두는 것은 글꼴을 쓰지 않는 워커 이미지·Oracle 릴리스(lib 를 통째로 복사한다)를 키우지 않으려는 것이다.
  * KR 은 한글 완성형·라틴·기호, SC 는 간체 GB2312(가나 포함), TC 는 번체 Big5 상용자를 담는다.
@@ -209,11 +208,4 @@ export async function shareCardPng(data: ShareCardData, locale: Locale): Promise
   );
   const satoriFonts = fonts.length ? fonts.map((item) => ({ name: `Card ${item.script}`, data: item.data, weight: item.weight, style: "normal" as const })) : undefined;
   return new ImageResponse(element, { width: 1200, height: 630, fonts: satoriFonts }).arrayBuffer();
-}
-
-/** 상세 og:image(og.jpg) — 같은 카드를 JPEG 로(미리보기 봇이 받는 크기를 줄인다). 흰 바탕 합성은 필요 없다(카드는 불투명) */
-export async function shareCardJpeg(data: ShareCardData, locale: Locale): Promise<Buffer> {
-  const png = await shareCardPng(data, locale);
-  const { default: sharp } = await import("sharp");
-  return sharp(Buffer.from(png)).jpeg({ quality: 85 }).toBuffer();
 }

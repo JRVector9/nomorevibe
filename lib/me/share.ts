@@ -41,7 +41,7 @@ export async function productTriedCount(productId: number): Promise<number> {
 export type ShareCardData = { name: string; tagline: string; brandLine: string; url: string };
 
 /**
- * 공유 카드(SNS 설계 T13·M5)·상세 og 그림 글 — 이름·요약(그 언어의 한 줄)·사이트 표기뿐이다.
+ * 공유 카드(SNS 설계 T13·M5) 글 — 이름·요약(그 언어의 한 줄)·사이트 표기뿐이다.
  * 공개 주소로 나가는 그림이라 스타·HN 점수·써본 사람·분야 칩과 그 날짜는 싣지 않는다(2026-11-15 사람 결정, 공개 출력은 주소·이름·요약).
  */
 export async function shareCardData(slug: string, locale: Locale): Promise<ShareCardData | null> {
