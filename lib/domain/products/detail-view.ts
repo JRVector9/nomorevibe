@@ -3,7 +3,7 @@ import type { StarObservation } from './star-change';
 import "server-only";
 
 import { cache } from "react";
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -55,7 +55,14 @@ import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS, visitMetrics, type VisitMetrics } from "./clicks";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
+/** 상세 조회가 함께 읽는 업데이트 — 최신 50건(화면은 앞 세 줄만 그린다). 건수는 같은 조회가 상한 없이 센다(visibleUpdates) */
 const MAX_PUBLIC_UPDATES = 50;
+/**
+ * 업데이트 '전체'가 펼치는 목록의 안전 상한(getPublicProductUpdates) — 2026-11-15 운영에서 가장 많은 제품이 357건이었다.
+ * 보이는 업데이트는 모두 보인다는 사람 결정(2026-11-15)을 지키면서, 한 응답이 끝없이 커지지 않게만 막는다.
+ */
+export const MAX_TIMELINE_UPDATES = 1_000;
+const UPDATE_RECENT_DAYS = 30;
 
 export type DetailVisitMetrics = VisitMetrics & { periodDays: typeof METRICS_WINDOW_DAYS };
 
@@ -208,6 +215,8 @@ export type ProductDetailView = {
   license: LicensePresentation;
   media: ProductMediaView[];
   updates: ProductUpdateView[];
+  /** 보이는 업데이트 전체 건수와 최근 30일 건수 — updates(최신 50건)보다 많을 수 있다 */
+  updateCounts: { total: number; recent: number };
   agents: AgentView[];
   observedAgentFacts: ObservedAgentFactView[];
   skills: SkillView[];
@@ -646,7 +655,21 @@ async function visibleMedia(slug: string): Promise<ProductMediaView[]> {
   }));
 }
 
-async function visibleUpdates(slug: string): Promise<ProductUpdateView[]> {
+/** 공개 업데이트의 조건과 순서 — 상세의 세 줄·건수·'전체' 목록이 같은 규칙을 쓴다 */
+const visibleUpdateWhere = (slug: string) => and(
+  eq(productUpdates.slug, slug),
+  eq(productUpdates.visible, true),
+  isNull(productUpdates.makerDeletedAt),
+);
+const visibleUpdateOrder = [desc(sql`coalesce(${productUpdates.publishedAt}, ${productUpdates.observedAt})`), desc(productUpdates.id)] as const;
+
+/**
+ * 상세가 싣는 최신 50건과, 상한과 무관한 보이는 업데이트 전체·최근 30일(발행일이 없으면 처음 본 날로) 건수.
+ * 건수는 같은 조회의 창 함수(LIMIT 전에 센다)로 받는다 — 상세 조회에 DB 왕복·연결을 더하지 않는다.
+ */
+async function visibleUpdates(slug: string, now: Date): Promise<{ updates: ProductUpdateView[]; counts: { total: number; recent: number } }> {
+  const since = new Date(now.getTime() - UPDATE_RECENT_DAYS * 86_400_000);
+  const recent = or(gte(productUpdates.publishedAt, since), and(isNull(productUpdates.publishedAt), gte(productUpdates.observedAt, since)));
   const rows = await db.select({
     id: productUpdates.id,
     sourceKind: productUpdates.sourceKind,
@@ -657,18 +680,42 @@ async function visibleUpdates(slug: string): Promise<ProductUpdateView[]> {
     publishedAt: productUpdates.publishedAt,
     observedAt: productUpdates.observedAt,
     makerEditedAt: productUpdates.makerEditedAt,
+    total: sql<number>`(count(*) over ())::int`,
+    recent: sql<number>`(count(*) filter (where ${recent}) over ())::int`,
   }).from(productUpdates)
-    .where(and(
-      eq(productUpdates.slug, slug),
-      eq(productUpdates.visible, true),
-      isNull(productUpdates.makerDeletedAt),
-    ))
-    .orderBy(desc(sql`coalesce(${productUpdates.publishedAt}, ${productUpdates.observedAt})`), desc(productUpdates.id))
+    .where(visibleUpdateWhere(slug))
+    .orderBy(...visibleUpdateOrder)
     .limit(MAX_PUBLIC_UPDATES);
-  return rows.map((row) => ({
-    ...row,
-    sourceLabel: row.sourceKind === "maker" ? "메이커 업데이트" : "자동 감지",
-  }));
+  return {
+    updates: rows.map(({ id, sourceKind, canonicalUrl, title, summary, beforeAfter, publishedAt, observedAt, makerEditedAt }) => ({
+      id, sourceKind, canonicalUrl, title, summary, beforeAfter, publishedAt, observedAt, makerEditedAt,
+      sourceLabel: sourceKind === "maker" ? "메이커 업데이트" : "자동 감지",
+    })),
+    counts: { total: Number(rows[0]?.total ?? 0), recent: Number(rows[0]?.recent ?? 0) },
+  };
+}
+
+/** 업데이트 '전체'가 그리는 한 줄 — 날짜·제목·출처(링크)만 */
+export type PublicTimelineUpdate = Pick<ProductUpdateView, "id" | "sourceKind" | "canonicalUrl" | "title" | "publishedAt" | "observedAt">;
+
+/**
+ * 상세 업데이트 '전체'(2026-11-15 사람 결정: 많아도 다 보인다) — 상세와 같은 조건(보임·메이커가 지우지 않음)과 순서로,
+ * 공개 제품(내린 제품 제외)의 보이는 업데이트를 모두. 없는 제품이면 null.
+ */
+export async function getPublicProductUpdates(slugInput: string): Promise<PublicTimelineUpdate[] | null> {
+  const product = await getProductIdentity(slugInput);
+  if (!product || product.status === "banned") return null;
+  return db.select({
+    id: productUpdates.id,
+    sourceKind: productUpdates.sourceKind,
+    canonicalUrl: productUpdates.canonicalUrl,
+    title: productUpdates.title,
+    publishedAt: productUpdates.publishedAt,
+    observedAt: productUpdates.observedAt,
+  }).from(productUpdates)
+    .where(visibleUpdateWhere(product.slug))
+    .orderBy(...visibleUpdateOrder)
+    .limit(MAX_TIMELINE_UPDATES);
 }
 
 function withEvidenceLabels<T extends { evidenceLevel: EvidenceLevel }>(rows: T[]): Array<T & { evidenceLabel: string }> {
@@ -693,7 +740,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   const slug = product.slug;
   const now = new Date();
   const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
-  const [rank, visitMap, health, profile, links, sources, media, updates, provenance, settings,
+  const [rank, visitMap, health, profile, links, sources, media, { updates, counts: updateCounts }, provenance, settings,
     risingPage, relatedPage, readmeRow, aiLevel, crawlSettings] = await Promise.all([
     activeRank(slug),
     visitMetrics([slug], { windowHours: METRICS_WINDOW_DAYS * 24, minimumPreviousUniqueVisitors: 5 }),
@@ -702,7 +749,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     visibleLinks(slug),
     evidenceSources(slug),
     visibleMedia(slug),
-    visibleUpdates(slug),
+    visibleUpdates(slug, now),
     visibleProvenance(slug),
     currentEvidenceSettings(),
     getStarGrowthPage({ limit: 20, now }).catch(() => null),
@@ -774,6 +821,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     license: presentLicense(profile?.makerLicense ?? null, facts?.license, repositorySource?.provider ?? null),
     media,
     updates,
+    updateCounts,
     agents: withEvidenceLabels(provenance.agents),
     observedAgentFacts,
     skills: withEvidenceLabels(provenance.skills),
