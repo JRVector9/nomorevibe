@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { reviveDetailExtras, type DetailExtras } from "@/lib/domain/products/detail-extras";
+import { reviveDetailExtras, type DetailApiResponse as DetailExtras } from "@/lib/domain/products/detail-extras";
 import { useLocale, useServerNow } from "@/lib/i18n/context";
 import { FactsStrip } from "./FactsStrip";
 import { InfoCard } from "./InfoCard";
@@ -32,7 +32,7 @@ export function loadDetailExtras(slug: string, locale: string): Promise<DetailEx
   return load;
 }
 
-function useDetailExtras(slug: string): State {
+export function useDetailExtras(slug: string): State {
   const locale = useLocale();
   const [state, setState] = useState<State>({ slug, data: null, done: false });
   useEffect(() => {

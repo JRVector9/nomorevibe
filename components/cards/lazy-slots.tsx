@@ -69,11 +69,11 @@ const CARD_ROW_HEIGHT = 340;
  * 이 자리가 화면 가까이 오면 같은 출처 API(/api/product-cards?list=popular-page)로 나머지 줄을 받아 같은 목록 안에 그린다.
  * 목록 보기는 <ol> 안의 <li>, 카드 보기는 격자 안의 칸이라 받기 전 자리도 그 모양(aria-hidden)이다. 쪽 넘기기 링크는 서버 HTML 에 그대로 있다.
  */
-export function LazyPopularRest({ query, view, count, now }: { query: string; view: "list" | "cards"; count: number; now: string }) {
+export function LazyPopularRest({ source, skip, view, count, now }: { source: string; skip: number; view: "list" | "cards"; count: number; now: string }) {
   const [ref, near] = useNearViewport<HTMLLIElement & HTMLDivElement>();
   const minHeight = view === "list" ? count * ROW_HEIGHT : Math.ceil(count / 3) * CARD_ROW_HEIGHT;
   const hold = view === "list"
     ? <li ref={ref} aria-hidden="true" aria-busy="true" style={{ minHeight }} />
     : <div ref={ref} aria-hidden="true" aria-busy="true" style={{ minHeight, gridColumn: "1 / -1" }} />;
-  return near ? <LazyPopularRows query={query} view={view} now={now} hold={hold} /> : hold;
+  return near ? <LazyPopularRows source={source} skip={skip} view={view} now={now} hold={hold} /> : hold;
 }

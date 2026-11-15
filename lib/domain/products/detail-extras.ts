@@ -3,6 +3,7 @@ import type { ProductListItem } from "./view";
 import { compactCardItem, type CompactCardItem } from "@/components/home/compact-item";
 import { detailFreshness, timelineSummary, type DetailFreshness, type TimelineSummary } from "@/components/product-detail/client-data";
 import type { Locale } from "@/lib/i18n/locales";
+import type { DetailPageData } from "./detail-page-data";
 
 /**
  * 상세의 부가 자료(2026-11-14 공개 HTML 줄이기) — 사실 칸(지표)·정보 카드·언어·업데이트·같은 분야 목록.
@@ -30,6 +31,9 @@ export type DetailExtras = {
   timeline: TimelineSummary;
   related: { category: string; items: CompactCardItem[]; total: number | null; basis: ProductDetailView["relatedBasis"] };
 };
+
+/** 상세 API 응답 — 부가 자료와 머리·소개·미리보기·운영자 상자(detail-page-data.ts) */
+export type DetailApiResponse = DetailExtras & DetailPageData;
 
 export function detailExtras(detail: ProductDetailView, related: ProductListItem[], locale: Locale, now: Date): DetailExtras {
   const product = detail.product;

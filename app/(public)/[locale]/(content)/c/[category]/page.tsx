@@ -7,7 +7,7 @@ import { LOCALES } from "@/lib/i18n/locales";
 import { localizedOpenGraph } from "@/lib/i18n/metadata";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { canonicalAlternates, HomeScreen, type HomeParams } from "@/app/(public)/[locale]/(content)/page";
+import { canonicalAlternates, HomeScreen, pastFirstPage, type HomeParams } from "@/app/(public)/[locale]/(content)/page";
 import { browseTitle, categoryRedirect, categorySlug, parseCategory } from "@/components/home/browse-state";
 import { pageTitle } from "@/lib/copy/brand";
 import { translatedCategory } from "@/components/home/i18n";
@@ -45,7 +45,7 @@ export async function generateMetadata({ params, searchParams }: Props, parent: 
   const hidden = category ? hiddenByDefault(category) : false;
   const query = queryOf(search);
   const path = `/c/${category ? categorySlug(category) : encodeURIComponent(raw)}`;
-  const noindex = !category || hidden || Boolean(query) || publicPaginationBlocked(search, "home");
+  const noindex = !category || hidden || Boolean(query) || publicPaginationBlocked(search, "home") || pastFirstPage(search);
   const readyLocales = noindex ? [] : LOCALES;
   const title = !category ? pageTitle(t("category.missing"))
     : hidden ? pageTitle(t("home.categoryTitle", { category: translatedCategory(category, labels) }))

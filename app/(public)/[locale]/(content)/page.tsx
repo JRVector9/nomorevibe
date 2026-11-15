@@ -12,11 +12,11 @@ import Link from "next/link";
 import { BrowseFilters } from "@/components/BrowseFilters";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 import {
-  aiLevelTotals,
   type HomeSort,
   browseTitle,
   categoryHref,
   categoryRedirect,
+  browseCountsQuery,
   chipCategories,
   HOME_FIRST_PAGE,
   HOME_MAX_SHOWN,
@@ -27,8 +27,12 @@ import {
   shownWindow,
 } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";
-import { CompactCardMarkup, CompactRowMarkup } from "@/components/cards/markup";
+import { CompactRowMarkup } from "@/components/cards/markup";
 import { LazyCompactRow } from "@/components/cards/lazy-slots";
+import { LazyCompactCardsGrid } from "@/components/cards/LazyRest";
+import { TeaserCompactCard } from "@/components/cards/TeaserCards";
+import { homeListOptions, readHomeList, readUnclaimedList } from "@/components/home/home-list";
+import { publicTeaser } from "@/lib/domain/products/public-teaser";
 import "@/components/home/cards.css";
 import { starGrowthNote, starGrowthView } from "@/components/home/star-growth-copy";
 import { IntroLine } from "@/components/home/IntroLine";
@@ -39,12 +43,10 @@ import { PopularTiers } from "@/components/home/PopularTiers";
 import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
-import { aiLevelCounts, categoryCounts, countProducts } from "@/lib/domain/products/repository";
+import { categoryCounts, countProducts } from "@/lib/domain/products/repository";
 import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/admin-models-search";
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
-import type { SearchQuery } from "@/lib/domain/products/search";
-import type { Category } from "@/lib/domain/products/schema";
 import { translatedCategory } from "@/components/home/i18n";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { bundledOrDictionary, getTranslator } from "@/lib/i18n/dictionary";
@@ -56,9 +58,7 @@ import { formatNumber, formatDate, formatDateTime } from "@/lib/i18n/format";
 import {
   getNewThisWeek,
   countNewThisWeek,
-  getPublicList,
   getPublicListBySlugs,
-  getUnclaimedList,
   NEW_THIS_WEEK_MIN_STARS,
   type ProductListItem,
 } from "@/lib/domain/products/view";
@@ -72,7 +72,6 @@ import {
 } from "@/lib/domain/products/home-pulse";
 import {
   getCurrentSeason,
-  getSeasonRanking,
   type RankingListItem,
   type SeasonSummary,
 } from "@/lib/domain/ranking/view";
@@ -80,7 +79,7 @@ import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import { logger } from "@/lib/observability/logger";
 import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { agentClientLabel } from "@/lib/domain/evidence/agents/view";
-import { AI_FILTER_LEVELS, parseAiFilter, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
+import { AI_FILTER_LEVELS, parseAiFilter } from "@/lib/domain/evidence/ai-level-labels";
 import { siteOrigin } from "@/lib/site";
 import { TalkHero } from "@/components/social/TalkHero";
 import { loadHomeTalk } from "@/lib/social/home-talk";
@@ -88,8 +87,6 @@ import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 
 export const dynamic = "force-dynamic";
 
-// Saved IDs are filtered in the browser; preserve the existing candidate pool.
-const SAVED_INITIAL_CANDIDATES = 100;
 /** 목록이 화면 첫 그림일 때 먼저 받을 커버 수 — 넓은 화면 한 줄(세 칸) */
 const FEED_PRIORITY_TILES = 3;
 
@@ -110,34 +107,8 @@ type Props = {
   }>;
 };
 
-/** 최근 등록순 목록('최근 등록'·'저장소 있음')은 저장소 확인을 마친 제품만 — 한 곳에서 정해 목록과 개수가 같은 조건을 쓴다(repoCheckedForNewest) */
-const newestOnly = (sort: HomeSort) => sort === "recent" || sort === "open" ? true : undefined;
-
 function firstValue(value: SearchValue): string | undefined {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function listFor(
-  sort: HomeSort,
-  active: SeasonSummary | null,
-  category: Category | undefined,
-  query: SearchQuery | undefined,
-  builder: string | undefined,
-  observedTool: string | undefined,
-  aiLevels: readonly AiLevel[] | undefined,
-  limit: number,
-  offset = 0,
-): Promise<ProductListItem[] | RankingListItem[]> {
-  const options = { category, query, builder, observedTool, aiLevels };
-  if (sort === "open") {
-    return getPublicList(limit, { ...options, sort: "recent", hasRepository: true, repoChecked: newestOnly(sort), offset });
-  }
-  if (sort === "trending" && active) {
-    return getSeasonRanking({ ...options, limit, seasonKey: active.key, order: "trending" })
-      .then((result) => result.items);
-  }
-  if (sort === "all-time") return getPublicList(limit, { ...options, sort: "stars", offset });
-  return getPublicList(limit, { ...options, sort: sort === "relevance" ? "relevance" : "recent", repoChecked: newestOnly(sort), offset });
 }
 
 /**
@@ -292,6 +263,15 @@ export function canonicalAlternates(path: string, locale: Locale = "ko", readyLo
   return { ...localizedAlternates(locale, path, readyLocales), types: { "application/rss+xml": `${siteOrigin()}/feed.xml` } };
 }
 
+/**
+ * 첫 쪽 뒤(더 보기 ?shown=, 새로 나온 ?new=1&page=2…)는 카드가 서버 HTML 에 없는 빈 틀이라 색인하지 않고 링크만 따라가게 한다
+ * (2026-11-15 공개 HTML 이름·요약만, 문서 4장 결정 4). 분야 화면(/c/[category])도 이것을 쓴다.
+ */
+export function pastFirstPage(params: HomeParams): boolean {
+  if (firstValue(params.new) === "1") return Number(firstValue(params.page) ?? "1") > 1;
+  return parseShown(firstValue(params.shown)) > HOME_FIRST_PAGE;
+}
+
 /** Search stays noindex; view parameters share the unfiltered language canonical. */
 export async function generateMetadata({ searchParams }: Props, parent: ResolvingMetadata): Promise<Metadata> {
   const locale = await getRequestLocale();
@@ -303,7 +283,7 @@ export async function generateMetadata({ searchParams }: Props, parent: Resolvin
   const title = newOnly ? pageTitle(t("new.title")) : browseTitle({ query }, locale, t);
   return {
     title,
-    ...(query || publicPaginationBlocked(params, "home") ? { robots: { index: false, follow: true } } : {}),
+    ...(query || publicPaginationBlocked(params, "home") || pastFirstPage(params) ? { robots: { index: false, follow: true } } : {}),
     alternates: canonicalAlternates("/", locale, readyLocales),
     openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale, readyLocales), title, url: localePath(locale, "/") },
   };
@@ -356,10 +336,9 @@ export async function HomeScreen({ params, titleAction }: { params: HomeParams; 
 /** 신규 모두 보기는 일반 최신순·필터와 독립된 목록이다. 기간은 매 요청 서버에서 정한다. */
 async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
   const locale = await getRequestLocale();
-  const [t, labels, dictionary] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels"), bundledOrDictionary(locale, "browse")]);
+  const [t, dictionary] = await Promise.all([getTranslator(locale, "browse"), bundledOrDictionary(locale, "browse")]);
   const count = (n: number) => formatNumber(n, locale);
   const now = new Date();
-  const cards = { locale, t: labels, now };
   const { weekStart, asOf } = completedWindows(now);
   const pageSize = 15;
   const value = firstValue(pageParam);
@@ -397,7 +376,10 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
         </div>
         {failed ? <p>{t("error.list")} {t("error.retry")}</p>
           : items.length === 0 ? <p>{t("new.empty", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}</p>
-            : <div className="compact-grid">{items.map((product, index) => <CompactCardMarkup key={product.slug} product={product} ctx={cards} trailing="listed" priority={index < 3} headingLevel={2} />)}</div>}
+            // 첫 쪽만 이름·요약을 서버 HTML 에 — 2쪽부터는 빈 틀을 두고 같은 목록 API(list=new-page)로 받는다(2026-11-15)
+            : <div className="compact-grid">{page === 1
+              ? items.map((product, index) => <TeaserCompactCard key={product.slug} teaser={publicTeaser(product, locale)} trailing="listed" priority={index < 3} headingLevel={2} />)
+              : <LazyCompactCardsGrid source={`list=new-page&page=${page}`} count={items.length} trailing="listed" headingLevel={2} />}</div>}
         {!failed && pages > 1 && <nav className="row-head" aria-label={t("new.pages")}>
           {page > 1 && <Link prefetch={false} href={href(page - 1)}>{t("nav.previous")}</Link>}
           <span>{count(page)} / {count(pages)}</span>
@@ -467,9 +449,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   let list: ProductListItem[] | RankingListItem[] = [];
   let unclaimed: ProductListItem[] = [];
   let counts: Record<string, number> = {};
-  let facetCounts: Record<string, number> = {};
   let pulse = emptyHomePulse(now);
-  let total = 0;
   let resultCount = 0;
   let unclaimedTotal = 0;
   let dbDown = false;
@@ -508,8 +488,6 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   const searchLoad = resolveSearchQuery(query, { waitForTranslation: requestedSort !== "relevance" });
   const countsLoad = publicRead("count", ["categories"], () => categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }));
   const verifiedLoad = requestedSort === "trending" ? publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true })) : Promise.resolve(0);
-  // 집계 기준 창의 AI 단계별 수 — 못 세도 목록은 선다.
-  const aiCountsLoad = publicRead("count", ["ai-levels"], () => aiLevelCounts()).catch(() => null);
   // SNS 화제 대표 구획(C안) — 거르기 없는 홈에서만. 실패하면 구획만 빠진다
   const talkLoad = filtered ? Promise.resolve(null) : loadHomeTalk(now, locale).catch((error: unknown) => {
     logger.warn("home.talk_unavailable", { error });
@@ -530,29 +508,15 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
     const search = await searchLoad;
     translatedQuery = search.translated;
     if (query && search.translationPending) after(() => warmQueryTranslation(query));
-    const options = { category, query: search.queries, builder, observedTool, aiLevels, excludeDown: true };
-    const listOptions = {
-      ...options,
-      hasRepository: effectiveSort === "open" ? true : undefined,
-      repoChecked: newestOnly(effectiveSort),
-    };
+    const listFilters = { category, query: search.queries, builder, observedTool, aiLevels };
+    const { options, listOptions } = homeListOptions(effectiveSort, listFilters);
     const verifiedTotal = await verifiedLoad;
     const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
     rankingReady = !needsUnclaimedFill(verifiedTotal, minimumProducts);
     const publicCatalogue = effectiveSort !== "trending";
-    // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
-    const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
-    // 분야 선택만 풀고 현재 탭의 AI 자격은 유지하여 목록과 분야 수의 조건을 맞춘다.
-    const rankedSlugs = !publicCatalogue && active
-      ? (await publicRead("list", ["home-facet-rankings", effectiveSort, active.key, verifiedTotal],
-        () => listFor(effectiveSort, active, undefined, undefined, undefined, undefined, undefined, verifiedTotal)))
-        .map((product) => product.slug)
-      : undefined;
-    const facetOptions = { ...listOptions, category: undefined,
-      ...(rankedSlugs ? { statuses: ["verified"] as const, slugs: rankedSlugs } : { statuses: ["verified", "seeded"] as const }) };
-    const facetLoad = publicRead("count", ["browse-categories-v2", effectiveSort, active?.key, facetOptions],
-      () => categoryCounts({ ...facetOptions, statuses: [...facetOptions.statuses] }));
-    facetLoad.catch(() => {});
+    // 저장 목록 보기(?saved=1)는 서버가 후보를 그리지 않는다 — 브라우저가 저장한 slug 로 받는다(SavedOnlyGrid)
+    const requestedLimit = shown;
+    // 분야 알약의 수(현재 목록 자격의 분야별 수)는 서버 HTML 에 싣지 않는다 — 거르기 줄이 /api/browse-counts 로 받는다(2026-11-15)
     /**
      * 관련도순 검색은 낱말 검색과 의미 검색을 섞고 앞 30개를 재정렬한다(lib/domain/products/relevance.ts).
      * 순위와 전체 수를 30초 동안 웹 여러 대가 함께 쓴다 — "더 보기"가 같은 순위를 이어 받는다.
@@ -570,21 +534,18 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           const ranked = await relevanceLoad;
           return getPublicListBySlugs(await relevanceWindow(ranked, ranked.plan, filters, offset, limit));
         })
-        : publicRead("list", ["home-fixed-tabs-v2", effectiveSort, active?.key ?? null, listOptions, limit, offset],
-          () => listFor(effectiveSort, active, category, search.queries, builder, observedTool, aiLevels, limit, offset));
-    const spanOf = (count: number) => savedOnly ? { start: 0, count: Math.min(requestedLimit, count) } : shownWindow(shown, count);
+        : readHomeList(effectiveSort, active, listFilters, limit, offset);
+    const spanOf = (count: number) => shownWindow(shown, count);
     const matchingLoad = relevanceLoad ? relevanceLoad.then((ranked) => ranked.total)
       : publicRead("count", ["matching", listOptions], () => countProducts({ statuses: ["verified", "seeded"], ...listOptions }));
     // 창이 앞을 접을 수 있으면(HOME_MAX_SHOWN 초과) 어디서부터 받을지가 개수에 달려 있어 기다린다
     const windowed = publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
     const earlyList = windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
     earlyList?.catch(() => {});
-    const [loadedCounts, matchingTotal, loadedFacetCounts] = await Promise.all([countsLoad, matchingLoad, facetLoad]);
-    facetCounts = loadedFacetCounts;
+    const [loadedCounts, matchingTotal] = await Promise.all([countsLoad, matchingLoad]);
     // 0건이라 번역을 기다려 다시 찾았으면 그 번역을 밝힌다
     if (relevanceLoad) translatedQuery = (await relevanceLoad).translated;
     counts = loadedCounts;
-    total = Object.values(counts).reduce((sum, count) => sum + count, 0);
     // Public lists load only what is visible. Rankings retain their separate eligibility.
     const span = publicCatalogue ? spanOf(matchingTotal) : { start: 0, count: verifiedTotal };
     listStart = span.start;
@@ -595,7 +556,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
       unclaimedTotal = await publicRead("count", ["unclaimed", options], () => countProducts({ statuses: ["seeded"], ...options }));
       const unclaimedSpan = spanOf(unclaimedTotal);
       unclaimedStart = unclaimedSpan.start;
-      unclaimed = await publicRead("list", ["unclaimed", options, unclaimedSpan], () => getUnclaimedList(unclaimedSpan.count, { ...options, offset: unclaimedSpan.start }));
+      unclaimed = await readUnclaimedList(effectiveSort, listFilters, unclaimedSpan);
     }
   } catch (error) {
     logger.error("home.list_failed", { error });
@@ -623,7 +584,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   const asideFailure = [pulseResult, newsResult]
     .find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
-  const [stripData, aiCounts, talk] = await Promise.all([stripLoad, aiCountsLoad, talkLoad]);
+  const [stripData, talk] = await Promise.all([stripLoad, talkLoad]);
   const [localizedList, localizedUnclaimed, localizedStrip] = await Promise.all([
     localizeProductList(list,locale), localizeProductList(unclaimed,locale),
     localizeProductList(stripData?.items ?? [],locale),
@@ -636,7 +597,24 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   // 서버가 그리는 구획의 언어·번역기 — 카드·필터·집계 구획은 글자로만 실리고 값은 브라우저로 넘어가지 않는다
   const i18n = { locale, t, labels };
   const cards = { locale, t: labels, now };
-  const savedCandidates = savedOnly ? [...list, ...unclaimed] : list;
+  /**
+   * 서버 HTML 의 카드는 첫 쪽(HOME_FIRST_PAGE)의 이름·요약만 — 더 보기(?shown=)로 늘린 뒤 카드는 같은 목록 API(list=home)로 받는다
+   * (2026-11-15 공개 HTML 이름·요약만, 문서 4장 결정 4). 검색 결과는 질의마다 결과라 늘린 카드도 서버가 이름·요약으로 그린다.
+   */
+  const restQuery = browseCountsQuery(state);
+  const gridCards = (rows: (ProductListItem | RankingListItem)[], start: number, section: "main" | "unclaimed") => {
+    const server = query ? rows.length : Math.max(0, Math.min(rows.length, HOME_FIRST_PAGE - start));
+    const restCount = rows.length - server;
+    const params = new URLSearchParams(restQuery);
+    params.set("list", "home");
+    params.set("offset", String(start + server));
+    params.set("limit", String(restCount));
+    if (section === "unclaimed") params.set("section", "unclaimed");
+    return {
+      teasers: rows.slice(0, server).map((row) => publicTeaser(row, locale)),
+      rest: restCount > 0 ? { source: params.toString(), count: restCount } : null,
+    };
+  };
   // 0건 안내(EmptyReason 의 걸러서 0건)가 뜨는 때 — 아래 '주인을 기다리는' 목록이 붙으면 없다고 말하지 않는다
   const empty = !dbDown && !savedOnly && list.length === 0 && unclaimed.length === 0;
   // 검색어로 0건이면 찾아볼 말을 준다 — 검색 기록에서 여러 번 찾은 말, 모자라면 정해 둔 말(UX-24)
@@ -657,7 +635,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   return (
     <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap">
       {dbDown && <RenderReadRecovery key={now.toISOString()} />}
-      {!scoped && <IntroLine pulse={{ born: pulse.born, updates: pulse.updates }} total={total} state={state} />}
+      {!scoped && <IntroLine pulse={{ born: pulse.born, updates: pulse.updates }} state={state} />}
       {!filtered && talk && <TalkHero lead={talk.lead} rest={talk.rest} sources={talk.sources} preview={talk.preview} t={t} locale={locale} />}
       {!filtered && (
         <CompactRowMarkup ctx={cards} id="rising" priority title={t("growth.title")} note={<>{starGrowthNote(strip?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></>}
@@ -669,7 +647,10 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
                 ? t("growth.empty")
                 : t("growth.delayed")}</p> : undefined}
           more={{ href: strip ? `/rising?${new URLSearchParams({ cycle: strip.snapshot.asOf })}` : "/rising", label: t("nav.all") }}
-          items={strip?.items ?? []} trailing="category" />
+          cards={(strip?.items ?? []).map((item, index) => (
+            // 8시간 증가는 slug 로 다시 셀 수 없어 띠 목록 API(list=rising)로 채운다 — 같은 읽기·같은 열쇠
+            <TeaserCompactCard key={item.slug} teaser={publicTeaser(item, locale)} source="list=rising" trailing="category" priority={index < 3} />
+          ))} trailing="category" />
       )}
 
       <section id="projects" aria-labelledby="projects-title" className="feed">
@@ -688,13 +669,14 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
         {/* 검색 결과가 그려지면 search 한 번 — 검색어 정리(소문자·64자·이메일/숫자 지움)는 분석 런타임이 한다 */}
         {query && !dbDown && <TrackOnMount name="search" params={{ search_term: query, result_count: resultCount, surface: "search" }} />}
         {/* 분야 알약은 차례만 넘긴다 — 수는 알약에 보이는 경우(검색·도구·빌더 거르기가 아닐 때)에만 */}
+        {/* 공개 수·분야별 수·결과 수는 서버 HTML 에 싣지 않는다 — 거르기 줄이 /api/browse-counts 로 받는다. 검색 결과 수만 서버가 준다 */}
         <BrowseFilters
           state={state}
-          counts={query || builder || observedTool ? {} : facetCounts}
+          counts={{}}
           categoryOrder={chipCategories(counts)}
           countsKnown={!dbDown}
-          total={total}
-          resultCount={resultCount}
+          resultCount={query ? resultCount : undefined}
+          remoteCounts={!query}
           approximate={approximate}
         />
 
@@ -707,13 +689,12 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           </div>
         ) : savedOnly || list.length > 0 ? (
           <ProjectGrid
-            now={now}
             locale={locale}
             t={t}
-            labels={labels}
             key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${observedTool ?? ""}-${ai ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
             totalCount={resultCount}
-            products={savedCandidates}
+            searchTotal={query ? resultCount : undefined}
+            {...gridCards(list, listStart, "main")}
             browseState={state}
             initialOnlySaved={savedOnly}
             start={listStart}
@@ -738,7 +719,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           <section className="unclaimed-block" data-track-list="unclaimed">
             <h2>{t("home.unclaimed")}</h2>
             <div className="mt-3">
-              <ProjectGrid now={now} locale={locale} t={t} labels={labels} products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />
+              <ProjectGrid locale={locale} t={t} {...gridCards(unclaimed, unclaimedStart, "unclaimed")} browseState={state} totalCount={unclaimedTotal} searchTotal={unclaimedTotal} start={unclaimedStart} />
             </div>
           </section>
         )}
@@ -757,14 +738,14 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
       {!scoped && (
         <div className="two-col">
           <ToolsBoard tools={pulse.tools} state={state} />
-          <ActiveList active={pulse.active} projects={pulse.updates.projects} i18n={i18n} />
+          <ActiveList rows={pulse.active.map(({ slug, name }) => ({ slug, name }))} projects={pulse.updates.projects} i18n={i18n} />
         </div>
       )}
       {!scoped && <NewsList news={news} now={now} locale={locale} t={t} />}
       {!query && <LaunchBand />}
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse, now, locale)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={filtered ? undefined : starGrowthView(strip?.snapshot ?? null)} />
+        <MethodologyDialog pulse={serializePulse(pulse, now, locale)} starGrowth={filtered ? undefined : starGrowthView(strip?.snapshot ?? null)} />
       </Suspense>
     </main></BrowseMessages>
   );

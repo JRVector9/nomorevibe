@@ -15,6 +15,8 @@ import { Icon } from "@/components/home/icons";
 import { RankedCards } from "@/components/home/RankedCards";
 import { PopularList } from "@/app/(public)/[locale]/(content)/popular/PopularList";
 import { StarGrowthSummary } from "@/components/home/StarGrowthSummary";
+import { LazyPopularRest } from "@/components/cards/lazy-slots";
+import { publicTeaser } from "@/lib/domain/products/public-teaser";
 import { starGrowthNote, starGrowthView } from "@/components/home/star-growth-copy";
 import { getStarGrowthPage, type StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { pageTitle } from "@/lib/copy/brand";
@@ -23,7 +25,10 @@ import "@/app/(public)/[locale]/(content)/popular/popular.css";
 
 export const dynamic = "force-dynamic";
 export async function generateMetadata(props: PageProps<"/[locale]/rising">, parent: ResolvingMetadata): Promise<Metadata> {
-  const paginationBlocked = publicPaginationBlocked(await props.searchParams, "page");
+  const search = await props.searchParams;
+  // 2쪽부터는 줄이 서버 HTML 에 없는 빈 틀이라 색인하지 않는다(2026-11-15 공개 HTML 이름·요약만)
+  const page = firstValue(search.page);
+  const paginationBlocked = publicPaginationBlocked(search, "page") || (page !== undefined && page !== "1");
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "browse");
   const title = pageTitle(t("growth.title"));
@@ -43,7 +48,7 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   const params = await searchParams;
   if (publicPaginationBlocked(params, "page")) return PaginationNotice({ path: localePath(locale, "/rising"), params, locale });
   // 한국어 목록 사전은 JS 조각(BrowseMessages)으로 — 급상승 요약(브라우저 부품)만 읽는다
-  const [t,labels,dictionary] = await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels"),bundledOrDictionary(locale,"browse")]);
+  const [t,dictionary] = await Promise.all([getTranslator(locale,"browse"),bundledOrDictionary(locale,"browse")]);
   const count = (n: number) => formatNumber(n,locale);
   const view = firstValue(params.view) === "cards" ? "cards" : "list";
   const now = new Date();
@@ -55,7 +60,14 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   }
   const href = (page: number, nextView = view) => localePath(locale, `/rising?${new URLSearchParams({ cycle: result!.snapshot.asOf, page: String(page), view: nextView })}`);
   const first = result ? (result.page - 1) * result.pageSize + 1 : 1;
-  const items = (await localizeProductList(result?.items ?? [],locale)).map((product, index) => ({ ...product, rank: first + index }));
+  /*
+   * 첫 쪽만 차례·이름·요약을 서버 HTML 에 — 8시간 증가·커버·분야는 이 쪽 목록 API(list=rising-page) 한 번으로 채운다.
+   * 2쪽부터는 줄 없이 빈 틀을 두고 같은 API 로 그린다(2026-11-15 공개 HTML 이름·요약만, 문서 4장 결정 4).
+   */
+  const all = result?.items ?? [];
+  const source = result ? `list=rising-page&${new URLSearchParams({ page: String(result.page), cycle: result.snapshot.asOf })}` : "";
+  const items = result?.page === 1 ? (await localizeProductList(all, locale)).map((product, index) => ({ teaser: publicTeaser(product, locale), rank: first + index })) : [];
+  const rest = all.length > items.length ? <LazyPopularRest source={source} skip={0} view={view} count={all.length} now={now.toISOString()} /> : null;
   return (
     <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap popular-page">
       {!result && <RenderReadRecovery key={now.toISOString()} />}
@@ -82,10 +94,10 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
           <StarGrowthSummary snapshot={starGrowthView(result?.snapshot ?? null)} now={now} />
         </div> : <>
           <p className="row-note">{t("growth.cycle", { asOf:formatDateTime(result.snapshot.asOf,now,locale),next:formatDateTime(result.snapshot.nextCycle,now,locale) })}</p>
-          {view === "cards" ? <RankedCards items={items} now={now} locale={locale} t={labels} /> : <PopularList items={items} now={now} locale={locale} t={labels} />}
+          {view === "cards" ? <RankedCards items={items} source={source} rest={rest} /> : <PopularList items={items} source={source} rest={rest} />}
           <nav className="popular-pagination" aria-label={t("nav.pages")}>
             {result.page > 1 ? <Link prefetch={false} href={href(result.page - 1)}>‹ {t("nav.previous")}</Link> : <span aria-disabled="true">‹ {t("nav.previous")}</span>}
-            <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+items.length-1),total:count(result.total) })}</span>
+            <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+all.length-1),total:count(result.total) })}</span>
             {result.page < result.pages ? <Link prefetch={false} href={href(result.page + 1)}>{t("nav.next")} ›</Link> : <span aria-disabled="true">{t("nav.next")} ›</span>}
           </nav>
         </>}

@@ -7,6 +7,8 @@ import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 
 import type { HomePulse } from "@/lib/domain/products/home-pulse";
+import { FillLine } from "@/components/cards/fill-line";
+import { browseCountsQuery, useBrowseCounts } from "./browse-counts";
 
 /**
  * 히어로 대신 한 줄 — 타이틀과 숫자. 숫자를 누르면 집계 기준이 열린다.
@@ -18,11 +20,15 @@ import type { HomePulse } from "@/lib/domain/products/home-pulse";
  * 찾아 모은 것이고, 'AI'는 저장소에 남은 AI 코딩 도구 흔적에서, ✓는 메이커가 도메인 소유권을 확인한 곳에만 붙는다.
  * 자세한 수집·근거·내려달라는 요청은 게재 기준(/policy)이 맡는다.
  */
-/** pulse 는 이 줄이 그리는 두 수만 받는다 — 집계 전체(분야·활발한 목록)를 브라우저 부품 속성으로 싣지 않는다(2026-11-14) */
-export function IntroLine({ pulse, total, state }: { pulse: Pick<HomePulse, "born" | "updates">; total: number; state: BrowseState }) {
+/**
+ * pulse 는 이 줄이 그리는 두 수만 받는다 — 집계 전체(분야·활발한 목록)를 브라우저 부품 속성으로 싣지 않는다(2026-11-14).
+ * 공개 수는 서버 HTML 에 싣지 않고 거르기 줄과 같은 API(/api/browse-counts)로 받는다(2026-11-15 공개 HTML 이름·요약만) — 받는 동안 글자 없는 자리.
+ */
+export function IntroLine({ pulse, state }: { pulse: Pick<HomePulse, "born" | "updates">; state: BrowseState }) {
   const locale = useLocale();
   const t = useTranslations("browse");
   const count = (n: number) => formatNumber(n, locale);
+  const counts = useBrowseCounts(browseCountsQuery(state));
   return (
     <section className="intro-line" aria-label={t("intro.label")}>
       <div className="intro-head">
@@ -33,7 +39,7 @@ export function IntroLine({ pulse, total, state }: { pulse: Pick<HomePulse, "bor
         </p>
       </div>
       <p className="intro-stats">
-        {t("intro.public")} <b>{count(total)}</b>
+        {t("intro.public")} <b>{counts ? count(counts.total) : <FillLine width="3.2em" />}</b>
         {" · "}<Link prefetch={false} href={metricHref(state, "born", locale)}>{t("intro.new")} <b>{count(pulse.born.current)}</b></Link>
         {" · "}<Link prefetch={false} href={metricHref(state, "updates", locale)}>{t("intro.updates")} <b>{count(pulse.updates.projects)}</b></Link>
         {" · "}{t("intro.week")}

@@ -13,6 +13,7 @@ import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import type { HomePulseView } from "@/components/home/types";
 import type { StarGrowthSnapshotView } from "@/components/home/star-growth-copy";
 import { StarGrowthSummary, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { useMethodCounts } from "./browse-counts";
 
 /**
  * 계산식·세부 조건은 '자세히' 안에 접는다(UX-37) — 본문은 지표마다 쉬운 문장 하나로 읽힌다.
@@ -35,10 +36,12 @@ function Formula({ children }: { children: React.ReactNode }) {
 /** 대화창이 열리는 화면 — 홈과 분야 화면(/c/…)이 같은 목록을 쓴다 */
 const isBrowsePath = (pathname: string) => stripLocale(pathname) === "/" || stripLocale(pathname).startsWith("/c/");
 
-export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
+/**
+ * AI 제작 근거 단계마다의 전체 공개 수와 분야별 공개 수는 서버 HTML 에 싣지 않는다(2026-11-15 공개 HTML 이름·요약만) —
+ * 창이 처음 열릴 때 /api/browse-counts?part=method 로 받는다. 못 읽었으면 수 없이 기준만.
+ */
+export function MethodologyDialog({ pulse, starGrowth }: {
   pulse: HomePulseView;
-  /** AI 제작 근거 단계마다의 전체 공개 수(탐색 칩은 현재 정렬 자격 안에서 별도 집계) — 못 읽었으면 null(수 없이 기준만) */
-  aiLevels?: Record<AiLevel, number> | null;
   starGrowth?: StarGrowthSnapshotView | null;
 }) {
   const locale = useLocale();
@@ -58,6 +61,8 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
    */
   const [shown, setShown] = useState(open);
   if (open && !shown) setShown(true);
+  const method = useMethodCounts(shown);
+  const aiLevels: Record<AiLevel, number> | null = method?.aiLevels ?? null;
 
   useEffect(() => {
     const node = dialog.current;
@@ -109,7 +114,7 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
   );
 
   // 기본 목록에서 빼는 분야(개인 프로필, 계약 C3)는 분야 순위에도 싣지 않는다
-  const categories = pulse.categories.filter((item) => !hiddenByDefault(item.key));
+  const categories = (method?.categories ?? []).filter((item) => !hiddenByDefault(item.key));
 
   const projects = (n: number) => t("count.projects", { count: count(n) });
   const title = (level: AiLevel) => t(({ 1: "method.aiLevel1", 2: "method.aiLevel2", 3: "method.aiLevel3" } as const)[level]);

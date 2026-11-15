@@ -27,11 +27,18 @@ export async function FollowSlot({ target, targetKey, name, variant }: { target:
  * 그 단추는 서버가 받지 않으므로(follow_not_found) 둘이 같아질 때까지 그리지 않는다
  */
 async function MakerFollowSlot({ productId, repoUrl, login }: { productId: number; repoUrl: string | null; login: string }) {
+  const key = await makerFollowKey(productId, repoUrl, login);
+  if (!key) return null;
+  return <FollowSlot target="maker" targetKey={key} name={login} variant="inline" />;
+}
+
+/** 메이커 팔로 열쇠 — 지금 주인(login)과 같을 때만(상세 API 가 단추 값으로 쓴다, 2026-11-15) */
+export async function makerFollowKey(productId: number, repoUrl: string | null, login: string): Promise<string | null> {
+  if (!makerKey(login)) return null;
   const [row] = await publicRead("detail", ["maker-follow", productId], () =>
     db.select({ repoUrl: products.repoUrl, repoRenamedTo: products.repoRenamedTo }).from(products).where(eq(products.id, productId)));
   const key = makerKeyOf(row?.repoUrl ?? repoUrl, row?.repoRenamedTo ?? null);
-  if (!key || key !== makerKey(login)) return null;
-  return <FollowSlot target="maker" targetKey={key} name={login} variant="inline" />;
+  return key && key === makerKey(login) ? key : null;
 }
 
 /** 상세 머리의 두 자리 — 단추 줄의 프로젝트 팔로, 메타 줄 GitHub 주인 옆의 메이커 팔로. 주인은 머리가 보여 주는 계정과 같다 */
