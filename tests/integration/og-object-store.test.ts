@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { ensureSchema, resetTables } from "./setup";
 
 const { db } = await import("@/lib/db");
-const { cdnPurges, jobs, ogImages, products, productThumbnailState, takedownRequests } = await import("@/lib/db/schema");
+const { cdnPurges, jobs, ogImages, operationsObservations, products, productThumbnailState, takedownRequests } = await import("@/lib/db/schema");
 const repo = await import("@/lib/domain/products/repository");
 const { requestTakedown, resolveTakedown } = await import("@/lib/domain/products/takedown");
 const { purgeRemovedProducts } = await import("@/lib/jobs/products/cdn-purge");
@@ -69,6 +69,8 @@ beforeEach(async () => {
   await db.delete(takedownRequests);
   await db.delete(jobs).where(eq(jobs.name, "og-store-test"));
   await resetTables();
+  // 웹 생존 관측이 남아 있으면 cdn-purge 가 옛 HTML 지우기를 먼저 보낸다(cdn-purge.test.ts 와 같이 비운다)
+  await db.delete(operationsObservations).where(sql`${operationsObservations.key} like 'service:app:%'`);
   ctx.log.mockClear();
 });
 afterAll(() => setOgObjectStoreForTests(undefined));
@@ -228,7 +230,17 @@ describe("내리기", () => {
     fake.objects.set("reuse", { data: Buffer.from("new product"), contentType: "image/png" });
     await purgeRemovedProducts(ctx, { config, fetch: cloudflare([]), store: fake.store });
     expect(fake.objects.has("reuse")).toBe(true);
-    expect(ctx.log).toHaveBeenCalledWith("cdn_purge.og_delete_reused", { slugs: ["reuse"] });
+    expect(ctx.log).toHaveBeenCalledWith("cdn_purge.og_delete_kept", { slugs: ["reuse"] });
+  });
+
+  it("내린 뒤 버킷에서 지우기 전에 차단을 풀었으면 지금 그림은 지우지 않는다", async () => {
+    const fake = fakeStore();
+    await takenDown(fake);
+    const taken = (await repo.findBySlug("taken"))!;
+    expect(await repo.setStatusWithAudit({ id: taken.id, slug: "taken", status: "seeded", action: "admin.product.unban" })).toBe(true);
+    await purgeRemovedProducts(ctx, { config, fetch: cloudflare([]), store: fake.store });
+    expect(fake.objects.has("taken")).toBe(true);
+    expect(fake.events).not.toContain("store:delete:taken");
   });
 });
 

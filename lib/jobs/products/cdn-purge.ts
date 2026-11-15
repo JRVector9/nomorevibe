@@ -83,7 +83,8 @@ type DueRow = { id: number; slug: string; reason: string; purgedAt: Date | null 
  * 버킷 그림 지우기 줄(og_delete, lib/cdn/purge.ts) — 아직 첫 지우기 전인 줄을 버킷에서 지우고, 지운 줄만 이번 Cloudflare 요청에 넣는다.
  * 버킷에서 지우기 전에 태그를 지우면 원 서버가 버킷의 그림을 엣지에 다시 채운다. 실패하면 줄을 그대로 두고(시도 수·마지막 오류) 다음 틱에 다시 한다 —
  * 이번 틱의 남은 줄은 건드리지 않는다(버킷이 죽었으면 줄마다 5초를 쓰지 않게). 이 프로세스에 버킷 설정이 없으면 지운 척하지 않고 실패로 남긴다.
- * 줄을 적은 뒤 같은 slug 를 새 제품이 얻었으면(메이커 삭제 뒤 재사용) 그 그림은 새 제품의 것이다 — 버킷은 건드리지 않고 태그만 지운다.
+ * 줄을 적은 뒤 같은 slug 를 새 제품이 얻었거나(메이커 삭제 뒤 재사용) 그 제품이 다시 공개됐으면(차단 해제) 지금 버킷의 그림은 지울 것이 아니다 —
+ * 버킷은 건드리지 않고 태그만 지운다.
  */
 async function deleteStoredOgImages(ctx: JobContext<CdnPurgeCursor>, store: OgObjectStore | null): Promise<DueRow[]> {
   const rows = await db.select({ id: cdnPurges.id, slug: cdnPurges.slug, reason: cdnPurges.reason, purgedAt: cdnPurges.purgedAt })
@@ -102,12 +103,13 @@ async function deleteStoredOgImages(ctx: JobContext<CdnPurgeCursor>, store: OgOb
     ctx.log("cdn_purge.og_delete_unconfigured", { pending: rows.length });
     return [];
   }
-  const reused = new Set((await db.select({ id: cdnPurges.id }).from(cdnPurges)
-    .innerJoin(products, and(eq(products.slug, cdnPurges.slug), sql`${products.createdAt} > ${cdnPurges.createdAt}`))
+  const kept = new Set((await db.select({ id: cdnPurges.id }).from(cdnPurges)
+    .innerJoin(products, and(eq(products.slug, cdnPurges.slug),
+      sql`(${products.createdAt} > ${cdnPurges.createdAt} or ${products.status} in ('seeded', 'verified'))`))
     .where(inArray(cdnPurges.id, rows.map((row) => row.id)))).map((row) => row.id));
   const ready: DueRow[] = [];
   for (const row of rows) {
-    if (!reused.has(row.id)) {
+    if (!kept.has(row.id)) {
       try {
         await store.delete(row.slug);
       } catch (error) {
@@ -119,7 +121,7 @@ async function deleteStoredOgImages(ctx: JobContext<CdnPurgeCursor>, store: OgOb
     }
     ready.push(row);
   }
-  if (reused.size) ctx.log("cdn_purge.og_delete_reused", { slugs: rows.filter((row) => reused.has(row.id)).map((row) => row.slug) });
+  if (kept.size) ctx.log("cdn_purge.og_delete_kept", { slugs: rows.filter((row) => kept.has(row.id)).map((row) => row.slug) });
   return ready;
 }
 

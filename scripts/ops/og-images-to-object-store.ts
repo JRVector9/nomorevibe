@@ -4,7 +4,7 @@
  * DB 주소는 stdin 으로만 받는다(인자·환경변수·출력에 남기지 않는다). 버킷 자격은 OG_STORE_* 환경변수(lib/storage/og-store.ts).
  * DB 세션은 늘 읽기 전용이다(default_transaction_read_only) — DB 행을 지우지 않는다. 비우고 공간을 돌려받는 일은 따로 승인받는다.
  *
- *   <url> | node --import tsx scripts/ops/og-images-to-object-store.ts --dry-run          # 행 수·바이트만(버킷 자격 없어도 된다)
+ *   <url> | node --import tsx scripts/ops/og-images-to-object-store.ts --dry-run [--read-sample N]  # 행 수·바이트(+ N 행 바이트 읽기 속도). 버킷 자격 없어도 된다
  *   <url> | node --import tsx scripts/ops/og-images-to-object-store.ts [--limit N] [--from-slug S] [--batch 200] [--concurrency 4] [--sleep-ms 500]
  *   <url> | node --import tsx scripts/ops/og-images-to-object-store.ts --verify [--sample 100 | --from-slug S --limit N]
  *
@@ -19,7 +19,8 @@ import postgres from "postgres";
 import { createOgObjectStore, ogStoreConfig, ogStoreMissingKeys, OgStoreError, OG_STORE_MAX_BYTES, type OgObjectStore } from "@/lib/storage/og-store";
 
 type Mode = "dry-run" | "copy" | "verify";
-type Options = { mode: Mode; limit: number | null; fromSlug: string; batch: number; concurrency: number; sleepMs: number; sample: number };
+type Options = { mode: Mode; limit: number | null; fromSlug: string; batch: number; concurrency: number; sleepMs: number; sample: number;
+  readSample: number };
 type Row = { slug: string; content_type: string; data: Buffer };
 
 const SLUG = /^[a-z0-9-]{1,80}$/;
@@ -31,7 +32,7 @@ function usage(message: string): never {
 }
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = { mode: "copy", limit: null, fromSlug: "", batch: 200, concurrency: 4, sleepMs: 500, sample: 100 };
+  const options: Options = { mode: "copy", limit: null, fromSlug: "", batch: 200, concurrency: 4, sleepMs: 500, sample: 100, readSample: 0 };
   const integer = (value: string | undefined, name: string, min: number, max: number) => {
     const number = Number(value);
     if (!value || !Number.isInteger(number) || number < min || number > max) usage(`${name} must be an integer in [${min}, ${max}]`);
@@ -50,6 +51,7 @@ function parseOptions(argv: string[]): Options {
     else if (arg === "--concurrency") options.concurrency = integer(argv[++i], "--concurrency", 1, 4);
     else if (arg === "--sleep-ms") options.sleepMs = integer(argv[++i], "--sleep-ms", 0, 60_000);
     else if (arg === "--sample") options.sample = integer(argv[++i], "--sample", 1, 10_000);
+    else if (arg === "--read-sample") options.readSample = integer(argv[++i], "--read-sample", 1, 5_000);
     else usage(`unknown argument ${arg}`);
   }
   return options;
@@ -117,11 +119,27 @@ async function dryRun(sql: postgres.Sql, options: Options) {
     }
     cursor = page[page.length - 1].slug;
   }
+  // 바이트 읽기 속도 — 옮기기 시간 어림용(읽기만, 버킷에 보내지 않는다). --from-slug 다음부터 --batch 묶음으로 N 행
+  let readSample: Record<string, number> | null = null;
+  if (options.readSample) {
+    const readStarted = Date.now();
+    let readCursor = options.fromSlug, readRows = 0, readBytes = 0;
+    while (readRows < options.readSample && !stopping) {
+      const page = await sql<Row[]>`select slug, content_type, data from og_images where slug > ${readCursor} order by slug
+        limit ${Math.min(options.batch, options.readSample - readRows)}`;
+      if (page.length === 0) break;
+      readRows += page.length;
+      readBytes += page.reduce((n, row) => n + row.data.length, 0);
+      readCursor = page[page.length - 1].slug;
+    }
+    const readMs = Date.now() - readStarted;
+    readSample = { rows: readRows, bytes: readBytes, elapsedMs: readMs, bytesPerSecond: readMs ? Math.round(readBytes / (readMs / 1000)) : 0 };
+  }
   const [table] = await sql<{ total: string; relation: string }[]>`
     select pg_total_relation_size('og_images')::bigint as total, pg_relation_size('og_images')::bigint as relation`;
   print("dry_run", { rows, bytes, maxBytes, avgBytes: rows ? Math.round(bytes / rows) : 0, invalidSlug, tooLargeOrEmpty: tooLarge, byType,
     tableTotalBytes: Number(table.total), tableHeapBytes: Number(table.relation), lastSlug: cursor, elapsedMs: Date.now() - started,
-    batches: Math.ceil(rows / options.batch) });
+    batches: Math.ceil(rows / options.batch), readSample });
 }
 
 async function copy(sql: postgres.Sql, store: OgObjectStore, options: Options): Promise<number> {
@@ -193,6 +211,7 @@ async function copy(sql: postgres.Sql, store: OgObjectStore, options: Options): 
       break;
     }
     if (rows.length < remaining) break;
+    if (options.limit !== null && total.rows >= options.limit) break;
     if (options.sleepMs) await sleep(options.sleepMs);
   }
   const elapsedMs = Date.now() - started;
@@ -233,7 +252,8 @@ async function verify(sql: postgres.Sql, store: OgObjectStore, options: Options)
   });
   print("verify", { mode: ranged ? "range" : "random", sampled: slugs.length, ...count, lastError,
     lastSlug: ranged ? slugs.at(-1)?.slug ?? null : null, elapsedMs: Date.now() - started });
-  return count.mismatch + count.failed;
+  // 옮긴 뒤 확인이라 버킷에 없는 것도 실패로 센다(종료 코드 3)
+  return count.mismatch + count.failed + count.missingInStore;
 }
 
 async function main() {
