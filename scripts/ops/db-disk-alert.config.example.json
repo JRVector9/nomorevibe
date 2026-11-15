@@ -1,0 +1,13 @@
+{
+  "hosts": {
+    "V9-Primary": "http://100.64.0.11:9100/metrics",
+    "V9-Replica": "http://100.64.0.12:9100/metrics"
+  },
+  "mounts": ["/", "/data/postgres"],
+  "alertPercent": 80,
+  "clearPercent": 75,
+  "repeatSeconds": 21600,
+  "unreadableSeconds": 600,
+  "destinationFrom": "/etc/nomorevibe-watchdog/config.json",
+  "state": "/var/lib/nomorevibe-db-disk/state.json"
+}
