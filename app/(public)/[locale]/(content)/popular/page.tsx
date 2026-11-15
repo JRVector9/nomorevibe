@@ -18,7 +18,8 @@ import {CATEGORY_LABELS} from '@/lib/domain/products/labels';
 import {translatedCategory} from '@/components/home/i18n';
 import {getPopularFacets,getPopularPage,type PopularFacets} from '@/lib/domain/products/popular';
 import {publicRead} from '@/lib/domain/products/public-reads';
-import {STAR_TIERS,parsePopularParams,popularStateHref,type PopularState} from '@/lib/domain/products/stars';
+import {POPULAR_SERVER_ROWS,STAR_TIERS,parsePopularParams,popularStateHref,type PopularState} from '@/lib/domain/products/stars';
+import {LazyPopularRest} from '@/components/cards/lazy-slots';
 import {logger} from '@/lib/observability/logger';
 import {PopularList} from './PopularList';
 import './popular.css';
@@ -69,7 +70,11 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const narrowed=state.personal||state.ai||Boolean(state.category);
  const href=(patch:Partial<PopularState>)=>localePath(locale,popularStateHref(state,patch));
  const first=result?(result.page-1)*result.pageSize+1:1;
- const items=(await localizeProductList(result?.items??[],locale)).map((item,index)=>rankedCard(item,first+index));
+ // 한 쪽 15줄 가운데 앞줄만 서버가 글자로 그린다 — 뒷줄은 화면 가까이 오면 같은 출처 API 로 받는다(2026-11-15 공개 HTML 줄이기 2차)
+ const all=result?.items??[];
+ const items=(await localizeProductList(all.slice(0,POPULAR_SERVER_ROWS),locale)).map((item,index)=>rankedCard(item,first+index));
+ const restCount=all.length-items.length;
+ const rest=restCount>0?<LazyPopularRest query={popularStateHref(state).split('?')[1]} view={state.view} count={restCount} now={now.toISOString()}/>:null;
 
  return <main className="wrap popular-page">
   {!result && <RenderReadRecovery key={now.toISOString()} />}
@@ -124,10 +129,10 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
     </div>
    </div>
    {items.length===0?<p className="popular-empty">{t("popular.filteredEmpty")}</p>
-    :state.view==='cards'?<RankedCards items={items} now={now} locale={locale} t={labels}/>:<PopularList items={items} now={now} locale={locale} t={labels}/>}
+    :state.view==='cards'?<RankedCards items={items} now={now} locale={locale} t={labels} rest={rest}/>:<PopularList items={items} now={now} locale={locale} t={labels} rest={rest}/>}
    {result.total>0&&<nav className="popular-pagination" aria-label={t("nav.pages")}>
     {result.page>1?<Link prefetch={false} href={href({page:result.page-1})}>‹ {t("nav.previous")}</Link>:<span aria-disabled="true">‹ {t("nav.previous")}</span>}
-    <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+items.length-1),total:count(result.total) })}</span>
+    <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+all.length-1),total:count(result.total) })}</span>
     {result.page<result.pages?<Link prefetch={false} href={href({page:result.page+1})}>{t("nav.next")} ›</Link>:<span aria-disabled="true">{t("nav.next")} ›</span>}
    </nav>}
   </section>}

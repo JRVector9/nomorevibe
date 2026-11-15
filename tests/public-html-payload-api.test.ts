@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getProductDetail: vi.fn(),
   getReadmeContent: vi.fn(),
   getPopularGroups: vi.fn(),
+  getPopularPage: vi.fn(),
   getStarGrowthPage: vi.fn(),
   getNewThisWeek: vi.fn(),
 }));
@@ -25,7 +26,7 @@ vi.mock("@/lib/domain/products/detail-view", async (original) => ({
   getProductDetail: mocks.getProductDetail,
 }));
 vi.mock("@/lib/domain/products/readme-content", () => ({ getReadmeContent: mocks.getReadmeContent }));
-vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: mocks.getPopularGroups }));
+vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: mocks.getPopularGroups, getPopularPage: mocks.getPopularPage }));
 vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage: mocks.getStarGrowthPage }));
 vi.mock("@/lib/domain/products/view", async (original) => ({
   ...await original<typeof import("@/lib/domain/products/view")>(),
@@ -85,6 +86,10 @@ beforeEach(() => {
   mocks.getProductIdentity.mockReset().mockResolvedValue(product);
   mocks.getProductDetail.mockReset().mockResolvedValue(detail);
   mocks.getPopularGroups.mockReset().mockResolvedValue([{ key: "rising", total: 1, items: [] }, { key: "noticed", total: 1, items: [{ ...related, stars: 6_000, ownerType: "User" }] }]);
+  mocks.getPopularPage.mockReset().mockImplementation(async (_tier: string, _filters: unknown, _sort: string, page = 1) => ({
+    items: Array.from({ length: 7 }, (_, index) => ({ ...related, slug: `row-${index + 1}`, name: `Row ${index + 1}`, stars: 4_000, ownerType: "Organization" })),
+    total: 37, totals: [37, 0, 0, 0], page, pages: 3, pageSize: 15,
+  }));
   mocks.getStarGrowthPage.mockReset().mockResolvedValue({ items: [related] });
   mocks.getNewThisWeek.mockReset().mockResolvedValue([related]);
   mocks.getReadmeContent.mockReset().mockResolvedValue({ state: "available", markdown: "# ggml\n\nTensor library body.\n",
@@ -177,5 +182,24 @@ describe("첫 화면 밖 카드 API(/api/product-cards)", () => {
   it("모르는 목록·구간은 400", async () => {
     expect((await cardsRoute.GET(request("/api/product-cards?list=all"))).status).toBe(400);
     expect((await cardsRoute.GET(request("/api/product-cards?list=popular&tier=huge"))).status).toBe(400);
+  });
+
+  it("list=popular-page: /popular 한 쪽에서 서버가 그리지 않은 뒷줄만, 쪽 안 순위와 계정 종류를 붙여(2026-11-15 공개 HTML 줄이기 2차)", async () => {
+    const response = await cardsRoute.GET(request("/api/product-cards?tier=rising&personal=1&ai=made&category=dev&sort=rising&page=2&list=popular-page&locale=ko"));
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    for (const key of ['"repoUrl":', '"makerName":', '"status":', '"unclaimed":', '"builderClaim":', '"stack":']) expect(text).not.toContain(key);
+    expect(text).not.toMatch(/"id":\d/);
+    const { items } = JSON.parse(text);
+    // 앞 5줄(POPULAR_SERVER_ROWS)은 서버 HTML 에 있다 — 6·7번째 줄만, 2쪽이라 순위는 21·22
+    expect(items.map((item: { slug: string; rank: number; ownerType: string }) => [item.slug, item.rank, item.ownerType]))
+      .toEqual([["row-6", 21, "Organization"], ["row-7", 22, "Organization"]]);
+    expect(mocks.getPopularPage).toHaveBeenLastCalledWith("rising", { personal: true, ai: true, category: "Dev" }, "rising", 2);
+  });
+
+  it("list=popular-page: 공개 쪽 제한을 넘거나 모양이 틀린 쪽은 400 — 화면과 같은 제한", async () => {
+    expect((await cardsRoute.GET(request("/api/product-cards?list=popular-page&tier=rising&page=abc"))).status).toBe(400);
+    expect((await cardsRoute.GET(request("/api/product-cards?list=popular-page&tier=rising&page=100000"))).status).toBe(400);
+    expect(mocks.getPopularPage).not.toHaveBeenCalled();
   });
 });

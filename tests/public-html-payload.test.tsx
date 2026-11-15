@@ -180,6 +180,9 @@ const { HomeContent } = await import("@/app/(public)/[locale]/(content)/page");
 const { default: PopularPage } = await import("@/app/(public)/[locale]/(content)/popular/page");
 const { default: ProductPage } = await import("@/app/(public)/[locale]/(content)/p/[slug]/page");
 const { emptyHomePulse } = await import("@/lib/domain/products/home-pulse");
+const { listHomeNews } = await import("@/lib/news/repository");
+const { TalkHero } = await import("@/components/social/TalkHero");
+const { getTranslator } = await import("@/lib/i18n/dictionary");
 
 /** README 원문 — 앞부분(발췌)과 뒷부분(전문에만 있는 글) */
 const README_LEAD = "Fixture tool turns meeting notes into tidy summaries. It runs locally and keeps your data on your machine.";
@@ -241,14 +244,39 @@ describe("홈·목록 — 카드는 서버가 글자로 그리고 제품 행을 
     const page = await flight(await HomeContent({ params: {} }));
     expect(forbiddenKeys(page.json)).toEqual([]);
     expect(productObjects(page.json)).toEqual([]);
-    // 첫 화면은 서버 HTML 글자로 — 목록·지금 뜨는·많이 쓰이는 첫 구간·가장 활발한
-    for (const name of ["Fixture 1", "Fixture 4", "Fixture 21", "Fixture 41", "Fixture 61"]) expect(page.html).toContain(name);
-    // 첫 화면 아래 '이번 주 새로 나온' 카드·숨은 구간은 서버 HTML 에 없다 — 화면 가까이 오거나 탭을 고를 때 API 로 받는다
+    // 첫 화면은 서버 HTML 글자로 — 목록·지금 뜨는·가장 활발한
+    for (const name of ["Fixture 1", "Fixture 4", "Fixture 21", "Fixture 61"]) expect(page.html).toContain(name);
+    // 첫 화면 아래 '이번 주 새로 나온' 카드·'많이 쓰이는' 모든 구간(홈 목록 아래)은 서버 HTML 에 없다 — 화면 가까이 오거나 탭을 고를 때 API 로 받는다
     expect(page.html).not.toContain("Fixture 11");
+    expect(page.html).not.toContain("Fixture 41");
     expect(page.boundaries).toContain("LazyCompactRow");
     // 집계 창에는 가장 활발한 목록 대신 수만, 회차의 실행 번호 없이
     expect(page.json).not.toContain('"active":');
     expect(page.json).not.toContain('"runId":');
+  });
+
+  it("홈 AI 소식: 출처·제목·날짜는 서버 HTML 글자로만 — 소식 행(출처·회사·분류·색)이 브라우저 부품 속성에 없다(2026-11-15 2차)", async () => {
+    vi.mocked(listHomeNews).mockResolvedValueOnce([
+      { url: "https://openai.example/wallet", title: "Introducing Fixture Wallet", publishedAt: new Date("2026-11-13T15:00:00Z"), source: "OpenAI", vendor: "OpenAI", label: "공식 발표", tone: "mint" },
+      { url: "https://github.example/copilot", title: "Fixture Copilot update", publishedAt: new Date("2026-11-13T20:40:05Z"), source: "GitHub Copilot", vendor: "GitHub", label: "도구 업데이트", tone: "dark" },
+    ]);
+    const page = await flight(await HomeContent({ params: {} }));
+    expect(forbiddenKeys(page.json)).toEqual([]);
+    for (const text of ["OpenAI", "Introducing Fixture Wallet", "GitHub Copilot", "Fixture Copilot update"]) expect(page.html).toContain(text);
+    expect(page.json).not.toContain("Fixture Wallet");
+    expect(page.json).not.toContain('"vendor":');
+    expect(page.boundaries).not.toContain("NewsList");
+  });
+
+  it("화제 대표 카드: 한 줄 소개의 출처(taglineSource)는 보이지 않으므로 브라우저 부품 속성으로 넘기지 않는다(2026-11-15 2차)", async () => {
+    const lead = {
+      rank: 1, repositoryKey: "acme/talk", score: 10, posts: [], sources: ["hn"], byMaker: false, starGrowth: null, homeDecision: null,
+      product: { ...row(71), translation: undefined, taglineSource: "maker" },
+    };
+    const page = await flight(TalkHero({ lead: lead as never, rest: [], sources: ["hn"], t: await getTranslator("ko", "browse"), locale: "ko", preview: false }));
+    expect(page.boundaries).toContain("ProductTagline");
+    expect(forbiddenKeys(page.json)).toEqual([]);
+    expect(page.html).toContain("Fixture 71");
   });
 
   it("검색 결과도 같다", async () => {
@@ -266,6 +294,19 @@ describe("홈·목록 — 카드는 서버가 글자로 그리고 제품 행을 
       expect(page.html).toContain("Fixture 51");
     }
   });
+
+  it("/popular 한 쪽 15줄 가운데 앞 5줄만 서버 HTML — 뒷줄 자리 속성은 조건 주소와 수뿐(2026-11-15 2차)", async () => {
+    const popular = (index: number) => ({ ...row(index), stars: 5_000 + index, ownerType: "User" });
+    mocks.getPopularPage.mockResolvedValueOnce({ items: Array.from({ length: 15 }, (_, index) => popular(101 + index)), total: 15, totals: [15, 0, 0, 0], page: 1, pages: 1, pageSize: 15 });
+    const page = await flight(await PopularPage({ searchParams: Promise.resolve({}) }));
+    expect(forbiddenKeys(page.json)).toEqual([]);
+    expect(productObjects(page.json)).toEqual([]);
+    expect(page.html).toContain("Fixture 105");
+    expect(page.html).not.toContain("Fixture 106");
+    expect(page.json).not.toContain("Fixture 106");
+    expect(page.boundaries).toContain("LazyPopularRest");
+    expect(page.json).toContain('"query":"tier=rising","view":"list","count":10');
+  });
 });
 
 describe("상세 — README 발췌만 서버 HTML 글자로, 전문·부가 자료는 같은 출처 API 로", () => {
@@ -279,6 +320,18 @@ describe("상세 — README 발췌만 서버 HTML 글자로, 전문·부가 자�
     const excerpt = page.text.find((text) => text.startsWith(README_LEAD))!;
     expect(excerpt.length).toBeGreaterThan(README_LEAD.length);
     expect(excerpt.length).toBeLessThanOrEqual(320);
+  });
+
+  it("설치형 제품의 설치 안내: 복사할 글은 서버가 만들고 저장소 주소를 repoUrl 칸으로 넘기지 않는다(2026-11-15 2차)", async () => {
+    const installable = { ...detailProduct, accessMode: "installable", url: "https://github.com/ggml-org/ggml" } as PublicProduct;
+    mocks.getProductIdentity.mockResolvedValue(installable);
+    mocks.getProductDetail.mockResolvedValue({ ...detailView, product: installable });
+    const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
+    expect(page.boundaries).toContain("InstallPrompt");
+    expect(forbiddenKeys(page.json)).toEqual([]);
+    const props = page.clientJson.map((json) => JSON.parse(json) as Record<string, unknown>).find((value) => typeof value.prompt === "string")!;
+    expect(props.prompt).toContain("https://github.com/ggml-org/ggml");
+    expect(Object.keys(props).sort()).toEqual(["prompt", "slug"]);
   });
 
   it("제목·한 줄 소개·분야·최소 JSON-LD 는 서버 HTML 에 남고, 브라우저 부품 속성에는 금지 칸·제품 행이 없다", async () => {

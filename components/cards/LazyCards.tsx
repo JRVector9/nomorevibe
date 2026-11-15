@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { ProductCardsResponse } from "@/app/api/product-cards/route";
 import { CompactCard } from "@/components/home/CompactCard";
 import { CompactRow } from "@/components/home/CompactRow";
 import { ProjectCard } from "@/components/home/ProjectCard";
 import { useSavedSlugs } from "@/components/home/useSavedSlugs";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { PopularRowMarkup, ProjectCardMarkup } from "./markup";
+import { SaveToggle } from "./SaveToggle";
 
 /**
  * 첫 화면에 보이지 않는 카드(2026-11-14 공개 HTML 줄이기) — 서버 HTML 에 싣지 않고 열 때 같은 출처 API(/api/product-cards)로 받는다.
@@ -71,4 +73,28 @@ export function NotFoundRising({ title, more }: { title: string; more: { href: s
   const { items } = useCards(new URLSearchParams({ list: "rising", locale }).toString());
   if (!items?.length) return null;
   return <CompactRow id="rising" title={title} items={items} trailing="category" more={more} />;
+}
+
+/**
+ * /popular 한 쪽의 뒷줄 — 서버가 그린 앞줄과 같은 마크업(PopularRowMarkup·ProjectCardMarkup)이라 모양이 같다.
+ * 받는 동안은 부르는 쪽이 준 자리(hold)를 그대로 두고, 못 받으면 자리를 거둔다(앞줄과 쪽 넘기기는 남는다).
+ */
+export function LazyPopularRows({ query, view, now, hold }: { query: string; view: "list" | "cards"; now: string; hold: ReactNode }) {
+  const locale = useLocale();
+  const t = useTranslations("labels");
+  const { items, done } = useCards(`${query}&${new URLSearchParams({ list: "popular-page", locale })}`);
+  if (!done) return hold;
+  if (!items?.length) return null;
+  const ctx = { locale, t, now };
+  return (
+    <>
+      {items.map((product) => {
+        const rank = product.rank ?? 0;
+        const save = <SaveToggle slug={product.slug} name={product.name} />;
+        return view === "list"
+          ? <PopularRowMarkup key={product.slug} product={product} rank={rank} ctx={ctx} save={save} />
+          : <ProjectCardMarkup key={product.slug} product={product} rank={rank} ctx={ctx} save={save} />;
+      })}
+    </>
+  );
 }

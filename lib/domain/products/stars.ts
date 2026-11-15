@@ -36,6 +36,12 @@ export type PopularView = typeof POPULAR_VIEWS[number];
  * /popular 주소의 상태 — 구간·개인 계정·AI로 제작·분야·정렬·보기·쪽.
  * AI·분야는 홈 거르기와 같은 주소 말(?ai=made, 분야는 소문자 slug)을 쓴다(browse-state.ts).
  */
+/**
+ * /popular 한 쪽(15줄) 가운데 서버 HTML 에 글자로 싣는 앞줄 수(2026-11-15 공개 HTML 줄이기 2차).
+ * 나머지 줄은 화면 가까이 오면 같은 출처 API(/api/product-cards?list=popular-page)로 받는다 — 첫 화면 분량만 HTML 에 둔다.
+ */
+export const POPULAR_SERVER_ROWS = 5;
+
 export type PopularState = {
   tier: StarTier;
   personal: boolean;
