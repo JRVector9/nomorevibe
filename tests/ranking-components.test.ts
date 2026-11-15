@@ -12,6 +12,8 @@ import {
 } from "@/lib/domain/ranking/policy";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
+import { rankingRowData } from "@/lib/domain/ranking/season-rows";
+import { publicTeaser } from "@/lib/domain/products/public-teaser";
 
 function product(slug: string, overrides: Partial<ProductListItem> = {}): ProductListItem {
   return {
@@ -49,10 +51,15 @@ function ranked(slug: string, overrides: Partial<RankingListItem> = {}): Ranking
   };
 }
 
+/** 표가 받는 값 — 서버가 넘기는 이름·요약(rows)과 API 가 주는 채우기 값(details) */
+function table(...items: RankingListItem[]) {
+  return { rows: items.map((item) => ({ ...publicTeaser(item, "ko"), rank: item.rank })), details: items.map(rankingRowData) };
+}
+
 describe("ranking table", () => {
   it("renders the stored rank, new change state, and cooldown warning", () => {
     const html = renderToStaticMarkup(createElement(RankingTable, {
-      items: [ranked("stored-rank")],
+      ...table(ranked("stored-rank")),
       windowHours: 24,
       scoreMode: "valid_visits",
     }));
@@ -69,11 +76,11 @@ describe("ranking table", () => {
 
   it("renders the configured trend window and previous rank", () => {
     const html = renderToStaticMarkup(createElement(RankingTable, {
-      items: [ranked("prior", {
+      ...table(ranked("prior", {
         changePercent: 24,
         cooldownFactorBasisPoints: 10_000,
         previousRank: 2,
-      })],
+      })),
       windowHours: 48,
       scoreMode: "valid_visits",
     }));
@@ -85,14 +92,14 @@ describe("ranking table", () => {
 
   it("uses unique visitors as the primary metric and keeps valid visits secondary", () => {
     const html = renderToStaticMarkup(createElement(RankingTable, {
-      items: [ranked("unique", {
+      ...table(ranked("unique", {
         validClicks: 42,
         uniqueVisitors: 17,
         recentUniqueVisitors: 6,
         previousUniqueVisitors: 4,
         scoreMode: "unique_visitors",
         changePercent: 50,
-      })],
+      })),
       windowHours: 24,
       scoreMode: "unique_visitors",
     }));
@@ -106,11 +113,11 @@ describe("ranking table", () => {
 
   it("uses lifetime labels without seasonal placeholders in all-time mode", () => {
     const html = renderToStaticMarkup(createElement(RankingTable, {
-      items: [ranked("lifetime", {
+      ...table(ranked("lifetime", {
         cooldownFactorBasisPoints: 10_000,
         changePercent: null,
         previousRank: null,
-      })],
+      })),
       windowHours: 24,
       mode: "all-time",
       scoreMode: "unique_visitors",
@@ -127,7 +134,7 @@ describe("ranking table", () => {
 
   it("keeps trust and downtime visible in product identity", () => {
     const html = renderToStaticMarkup(createElement(RankingTable, {
-      items: [ranked("down", { health: { down: true, since: null } })],
+      ...table(ranked("down", { health: { down: true, since: null } })),
       windowHours: 24,
       scoreMode: "valid_visits",
     }));
@@ -138,7 +145,7 @@ describe("ranking table", () => {
 
   it("shows core metrics in the narrow table and stacks secondary season state", () => {
     const html = renderToStaticMarkup(createElement(RankingTable, {
-      items: [ranked("mobile")],
+      ...table(ranked("mobile")),
       windowHours: 24,
       scoreMode: "valid_visits",
     }));
@@ -156,10 +163,10 @@ describe("ranking table", () => {
 
   it("keeps unique-first mobile headers short while desktop headers stay explicit", () => {
     const html = renderToStaticMarkup(createElement(RankingTable, {
-      items: [ranked("unique-mobile", {
+      ...table(ranked("unique-mobile", {
         uniqueVisitors: 17,
         scoreMode: "unique_visitors",
-      })],
+      })),
       windowHours: 48,
       scoreMode: "unique_visitors",
     }));

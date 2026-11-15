@@ -3,7 +3,7 @@ import { formatDate, formatDateTime, formatNumber } from "@/lib/i18n/format";
 import type { Locale } from "@/lib/i18n/locales";
 import type { Translator } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
-import type { ProductTalk } from "@/lib/social/talk";
+import type { ProductTalkData } from "@/lib/social/talk-wire";
 import { TalkSparkline } from "./TalkSparkline";
 import { discussionUrl, linkOnly, SOURCE_NAME, sourceChip, sourceClass } from "./talk-format";
 import "./talk.css";
@@ -11,9 +11,10 @@ import "./talk.css";
 /**
  * 상세 머리 바로 아래의 넓은 화제 띠(SNS 화제 C안) — 왜 지금 이야기되는지를 들어오자마자 보인다.
  * 자격 글(HN 30점 또는 댓글 15)이 있을 때만 그린다. 이슈·PR 글은 그 토론이라고 밝혀 함께 둔다.
+ * 공개 상세에서는 서버 HTML 에 싣지 않는다 — TalkBandSlot 이 같은 출처 API 로 받아 이 부품으로 그린다(2026-11-15 공개 HTML 이름·요약만).
  */
 export function TalkBand({ talk, t, locale, now, preview }: {
-  talk: ProductTalk;
+  talk: ProductTalkData;
   t: Translator<"detail">;
   locale: Locale;
   now: Date;
@@ -40,7 +41,7 @@ export function TalkBand({ talk, t, locale, now, preview }: {
             // X·Bluesky 게시물은 본문·작성자를 옮기지 않는다 — 반응 수와 링크만
             const reactions = linkOnly(post.source), x = post.source === "x";
             return (
-              <div key={post.id} className="talk-line">
+              <div key={`${post.source}:${post.externalId}`} className="talk-line">
                 <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(reactions ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
                 {reactions ? <span className="talk-line-title">{t(x ? "talk.xPost" : "talk.bskyPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
                 <span>{formatDate(post.postedAt, now, locale)}{reactions ? "" : ` · ${t(post.kind === "show" ? "talk.byMaker" : "talk.byOthers")}`}</span>

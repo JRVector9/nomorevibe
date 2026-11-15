@@ -15,13 +15,15 @@ import { SeasonPolicy } from "@/components/SeasonPolicy";
 import { pageTitle } from "@/lib/copy/brand";
 import { translatedSeason } from "@/components/home/i18n";
 import type { Translator } from "@/lib/i18n/messages";
+import { publicTeaser } from "@/lib/domain/products/public-teaser";
+import { readSeasonByKey } from "@/lib/domain/ranking/season-read";
 import { seasonLabel } from "@/lib/domain/ranking/season-label";
-import { getSeasonByKey, type SeasonSummary } from "@/lib/domain/ranking/view";
+import type { SeasonSummary } from "@/lib/domain/ranking/view";
 
 export const dynamic = "force-dynamic";
 
-/** 제목(generateMetadata)과 본문이 같은 요청에서 시즌을 한 번만 읽는다 */
-const loadSeason = cache((key: string) => getSeasonByKey(key));
+/** 제목(generateMetadata)과 본문이 같은 요청에서 시즌을 한 번만 읽는다 — 표 채우기 API(/api/rankings/[key])와 같은 열쇠 */
+const loadSeason = cache((key: string) => readSeasonByKey(key));
 
 /**
  * 시즌 이름 — 열쇠("2026-W41")가 아니라 "2026년 41주"로(2026-10-08 UX 감사 UX-09·UX-39).
@@ -58,7 +60,8 @@ export default async function RankingSeasonPage({
   const { key } = await params;
   const result = await loadSeason(key);
   if (!result) notFound();
-  const items=await localizeProductList(result.items,locale);
+  // 서버 HTML·RSC 에는 순위 자리·이름·요약만(2026-11-15 공개 HTML 이름·요약만) — 점수·변동·배지는 표가 API 로 받아 채운다
+  const rows=(await localizeProductList(result.items,locale)).map((item)=>({ ...publicTeaser(item,locale), rank:item.rank }));
 
   return (
     <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={new Date().toISOString()}><main className="mx-auto max-w-[1280px] px-6 pb-20 pt-9">
@@ -66,7 +69,8 @@ export default async function RankingSeasonPage({
       <div className="mt-6">
         {result.items.length > 0 ? (
           <RankingTable
-            items={items}
+            rows={rows}
+            seasonKey={result.season.key}
             windowHours={result.season.policy.trend.windowHours}
             scoreMode={result.season.policy.scoring.mode}
             mode="season"
