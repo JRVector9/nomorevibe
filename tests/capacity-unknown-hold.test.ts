@@ -38,7 +38,7 @@ describe("hold window setting", () => {
   });
 
   it("is an editable runtime settings group: default, label, bounds and the sparse patch", () => {
-    expect(DEFAULT_RUNTIME_SETTINGS.capacity).toEqual({ unknownHoldSeconds: 600 });
+    expect(DEFAULT_RUNTIME_SETTINGS.capacity).toEqual({ unknownHoldSeconds: 600, ledgerRetentionDays: 14 });
     expect(GROUP_LABELS.capacity).toBe("모델 장부 점유");
     expect(RUNTIME_SETTING_LABELS["capacity.unknownHoldSeconds"]).toBe("결과 미확정 점유 유지(초)");
     expect(resolveRuntimeSettings({ version: 1 })).toMatchObject({ settings: { capacity: { unknownHoldSeconds: 600 } }, issues: [] });

@@ -54,7 +54,7 @@ export function detailExtras(detail: ProductDetailView, related: ProductListItem
       freshness: detailFreshness(detail.freshness),
       unclaimed: detail.unclaimed,
     },
-    timeline: timelineSummary(detail.updates, now),
+    timeline: timelineSummary(detail.updates, now, detail.updateCounts),
     related: { category: product.category, items: related.map((item) => compactCardItem(item, locale)), total: detail.relatedTotal ?? null, basis: detail.relatedBasis },
   };
 }

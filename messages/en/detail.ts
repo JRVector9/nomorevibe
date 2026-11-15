@@ -239,6 +239,8 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "updates.maker": "Maker update",
   "updates.automatic": "Automatically detected",
   "updates.all": "View all {count} ›",
+  "updates.showAll": "Show all",
+  "updates.loadFailed": "Couldn't load more updates. Please try again.",
   "star.unavailable": "Could not check GitHub star status. Please try again later.",
   "star.uncertain": "Could not confirm the change. Check the star directly on GitHub. Refreshing does not release this change lock.",
   "star.rateLimited": "GitHub star requests are rate limited. Please try again later.",

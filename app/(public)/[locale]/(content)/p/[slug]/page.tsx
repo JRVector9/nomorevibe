@@ -154,8 +154,10 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
           <DetailFactsSlot slug={slug} />
           <DetailIntroSlot slug={slug} />
           <DetailActivitySlot slug={slug} />
+          {/* 댓글 구획은 위 선 없이 간격(gap-9)과 머리로만 나눈다 — 바로 위 업데이트 마지막 줄 아래에 이 선만 떨어져 있어
+              내용 없는 빈 줄처럼 보였다(2026-11-15 사람 지적: 내용이 있는 만큼만 선). 다른 구획도 선 없이 간격으로 나눈다 */}
           {productFeedbackEnabled() && (
-            <section id="feedback" className="scroll-mt-24 space-y-4 border-t border-line pt-5" aria-label={t("page.feedback")}>
+            <section id="feedback" className="scroll-mt-24 space-y-4" aria-label={t("page.feedback")}>
               <FeedbackList key={slug} slug={slug} settings={<FeedbackSettingsSlot slug={slug} />}>
                 <FeedbackForm slug={slug} githubDeliveryAvailable={githubDeliveryAvailable} />
               </FeedbackList>

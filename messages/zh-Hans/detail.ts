@@ -239,6 +239,8 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "updates.maker": "制作者更新",
   "updates.automatic": "自动检测",
   "updates.all": "查看全部 {count} 条 ›",
+  "updates.showAll": "全部",
+  "updates.loadFailed": "无法加载更多更新，请重试。",
   "star.unavailable": "无法确认 GitHub 星标状态。请稍后重试。",
   "star.uncertain": "无法确认更改结果。请直接在 GitHub 检查星标状态。重新查询不会解除此次更改锁定。",
   "star.rateLimited": "GitHub 星标请求受到限流。请稍后重试。",
