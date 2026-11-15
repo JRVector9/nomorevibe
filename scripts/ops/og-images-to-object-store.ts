@@ -207,9 +207,14 @@ async function verify(sql: postgres.Sql, store: OgObjectStore, options: Options)
   const slugs = ranged
     ? (await sql<{ slug: string }[]>`select slug from og_images where slug > ${options.fromSlug} order by slug limit ${options.limit ?? options.sample}`)
     : (await sql<{ slug: string }[]>`select slug from og_images order by random() limit ${options.sample}`);
-  const count = { checked: 0, match: 0, mismatch: 0, missingInStore: 0, goneFromDb: 0, failed: 0 };
+  const count = { checked: 0, match: 0, mismatch: 0, missingInStore: 0, goneFromDb: 0, invalid: 0, failed: 0 };
   let lastError: string | null = null;
   await pool(slugs.map((row) => row.slug), Math.min(options.concurrency, 4), async (slug) => {
+    // 공개 주소가 받지 않는 slug 는 옮기지도 않는다(copy 의 invalid)
+    if (!SLUG.test(slug)) {
+      count.invalid += 1;
+      return;
+    }
     try {
       const [row] = await sql<Row[]>`select slug, content_type, data from og_images where slug = ${slug}`;
       if (!row) {

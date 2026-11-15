@@ -134,7 +134,8 @@ export function createOgObjectStore(config: OgStoreConfig, fetchImpl: typeof fet
       }).sign();
       response = await fetchImpl(signed.url, {
         method: signed.method, headers: signed.headers,
-        body: init.body ? new Uint8Array(init.body.buffer, init.body.byteOffset, init.body.byteLength) : undefined,
+        // 복사본(ArrayBuffer 위의 Uint8Array) — Buffer 는 공유 풀 위일 수 있어 fetch 본문 형식에 맞지 않는다. 그림 하나라 비용은 작다
+        body: init.body ? new Uint8Array(init.body) : undefined,
         redirect: "error", cache: "no-store", signal,
       });
     } catch (error) {
