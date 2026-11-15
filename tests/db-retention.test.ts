@@ -6,6 +6,7 @@ import { RUNTIME_SETTING_LABELS, resolveRuntimeSettings } from "@/lib/operations
 import { buildSettingsControl, LEDGER_RETENTION_CONTROL, runtimeSettingsIssueMessage, runtimeSettingsPatchFromForm } from "@/lib/operations/admin-runtime-settings";
 import { ledgerCandidatesSql, REPO_META_KEEP_KEYS, REPO_META_OWNER_KEEP_KEYS, shrunkRepoMetaSql } from "@/lib/operations/db-retention";
 import { PACKAGE_PROOF_KEY } from "@/lib/crawl/package-proof";
+import { DB_RETENTION_PART_SLICE_MS, partSliceMs } from "@/lib/jobs/db-retention";
 import { factsFromRepoMeta, judgeRevision } from "@/lib/crawl/rules";
 import { spamSignals } from "@/lib/crawl/spam-signals";
 import { starAutoApproval } from "@/lib/crawl/star-auto-approval";
@@ -93,5 +94,14 @@ describe("수집 원본 줄이기 — 남기는 키", () => {
       (d: ReturnType<typeof document>) => starAutoApproval(d, settings, new Date("2026-11-15T01:00:00Z")),
       (d: ReturnType<typeof document>) => parseRepositoryStats(d.repoMeta),
     ]) expect(read(document(shrunk))).toEqual(read(document(meta)));
+  });
+});
+
+describe("잡 시간 나누기", () => {
+  it("남은 틱 시간을 아직 돌지 않은 부분 수로 나눈다 — 마감을 모르면 8초", () => {
+    expect(partSliceMs(undefined, 5)).toBe(DB_RETENTION_PART_SLICE_MS);
+    expect(partSliceMs(25_000, 5, 0)).toBe(5_000);
+    expect(partSliceMs(25_000, 1, 20_000)).toBe(5_000);
+    expect(partSliceMs(25_000, 2, 30_000)).toBe(0);
   });
 });
