@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   rateLimitWindow: vi.fn(),
   getProductIdentity: vi.fn(),
   getProductDetail: vi.fn(),
+  getPublicProductUpdates: vi.fn(),
   getReadmeContent: vi.fn(),
   getPopularGroups: vi.fn(),
   getPopularPage: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/lib/domain/products/detail-view", async (original) => ({
   ...await original<typeof import("@/lib/domain/products/detail-view")>(),
   getProductIdentity: mocks.getProductIdentity,
   getProductDetail: mocks.getProductDetail,
+  getPublicProductUpdates: mocks.getPublicProductUpdates,
 }));
 vi.mock("@/lib/domain/products/readme-content", () => ({ getReadmeContent: mocks.getReadmeContent }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: mocks.getPopularGroups, getPopularPage: mocks.getPopularPage }));
@@ -35,6 +37,7 @@ vi.mock("@/lib/domain/products/view", async (original) => ({
 
 const readmeRoute = await import("@/app/api/products/[slug]/readme/route");
 const detailsRoute = await import("@/app/api/products/[slug]/details/route");
+const timelineRoute = await import("@/app/api/products/[slug]/timeline/route");
 const cardsModule = await import("@/app/api/product-cards/route");
 /** 경로 매개변수가 없는 route — withRoute 의 둘째 인자는 빈 params */
 const cardsRoute = { GET: (req: Request) => cardsModule.GET(req, { params: Promise.resolve({}) } as never) };
@@ -74,10 +77,18 @@ const detail = {
   media: [], agents: [], observedAgentFacts: [], skills: [],
   updates: Array.from({ length: 5 }, (_, index) => ({ id: index, sourceKind: "github_release", sourceLabel: "자동 감지", canonicalUrl: null, title: `v${index}`,
     summary: "secret-ish summary", beforeAfter: null, publishedAt: new Date("2026-11-10T00:00:00Z"), observedAt: new Date("2026-11-10T00:00:00Z"), makerEditedAt: null })),
+  updateCounts: { total: 357, recent: 80 },
   freshness: [{ kind: "repository", provider: "github", state: "current", label: "최신", lastSuccessAt: new Date("2026-11-14T00:00:00Z"), lastFailureAt: null,
     nextAttemptAt: new Date(), normalizedFacts: { _githubCollection: { etag: "raw" } } }],
   risingRank: null, related: [related], relatedBasis: "category", relatedTotal: null, readmeExcerpt: "excerpt", aiLevel: { checked: true, level: null },
 } as unknown as ProductDetailView;
+
+/** getPublicProductUpdates 가 돌려주는 값 — 상세와 같은 조건·순서로 고른 보이는 업데이트(조건 자체는 tests/integration/product-detail-view.test.ts) */
+const allUpdates = Array.from({ length: 60 }, (_, index) => ({ id: 1_000 + index, sourceKind: index % 7 === 0 ? "maker" : "github_release",
+  canonicalUrl: index % 7 === 0 ? null : `https://github.com/ggml-org/ggml/releases/tag/v0.${index}`, title: `v0.${index}`,
+  publishedAt: index % 7 === 0 ? null : new Date(Date.UTC(2026, 10, 14) - index * 3_600_000), observedAt: new Date("2026-11-14T00:00:00Z"),
+  // 조회가 더 실어 와도 응답에는 줄이 그리는 칸만 남아야 한다
+  summary: "secret-ish summary", beforeAfter: { stars: 1 }, makerEditedAt: null, sourceLabel: "자동 감지" }));
 
 beforeEach(() => {
   vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
@@ -85,6 +96,7 @@ beforeEach(() => {
   mocks.rateLimitWindow.mockReset().mockResolvedValue({ allowed: true, count: 1, retryAfterSeconds: 600 });
   mocks.getProductIdentity.mockReset().mockResolvedValue(product);
   mocks.getProductDetail.mockReset().mockResolvedValue(detail);
+  mocks.getPublicProductUpdates.mockReset().mockResolvedValue(allUpdates);
   mocks.getPopularGroups.mockReset().mockResolvedValue([{ key: "rising", total: 1, items: [] }, { key: "noticed", total: 1, items: [{ ...related, stars: 6_000, ownerType: "User" }] }]);
   mocks.getPopularPage.mockReset().mockImplementation(async (_tier: string, _filters: unknown, _sort: string, page = 1) => ({
     items: Array.from({ length: 7 }, (_, index) => ({ ...related, slug: `row-${index + 1}`, name: `Row ${index + 1}`, stars: 4_000, ownerType: "Organization" })),
@@ -99,6 +111,7 @@ beforeEach(() => {
 const routes = [
   ["readme", (req: Request) => readmeRoute.GET(req, params("ggml"))],
   ["details", (req: Request) => detailsRoute.GET(req, params("ggml"))],
+  ["timeline", (req: Request) => timelineRoute.GET(req, params("ggml"))],
   ["cards", (req: Request) => cardsRoute.GET(new Request(req.url.replace(/\/api\/products\/ggml\/cards.*/, "/api/product-cards?list=rising"), { headers: req.headers }))],
 ] as const;
 
@@ -113,6 +126,7 @@ describe("README 전문·부가 자료 API — 공개 API 읽기 관문을 그�
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("120");
     expect(mocks.getProductDetail).not.toHaveBeenCalled();
+    expect(mocks.getPublicProductUpdates).not.toHaveBeenCalled();
     expect(mocks.getReadmeContent).not.toHaveBeenCalled();
   });
 
@@ -155,7 +169,9 @@ describe("부가 자료 API", () => {
     expect(Object.keys(body.info.product).sort()).toEqual(["accessMode", "category", "makerName", "repoGone", "repoUrl", "slug", "stack", "url"]);
     expect(body.info.freshness).toEqual([{ provider: "github", lastSuccessAt: new Date("2026-11-14T00:00:00Z") }]);
     expect(body.timeline.rows).toHaveLength(3);
-    expect(body.timeline.total).toBe(5);
+    // 건수는 상세 조회가 DB 에서 센 값 — 함께 실은 50건 상한과 무관하다
+    expect(body.timeline.total).toBe(357);
+    expect(body.timeline.recent).toBe(80);
     expect(Object.keys(body.related.items[0]).sort()).toEqual(["accessMode", "aiLevel", "category", "listedAt", "name", "ogImage", "slug", "stars", "starsAt",
       "starsPrevious", "starsPreviousAt", "tagline", "taglineKo", "taglineSource"]);
   });
@@ -164,6 +180,30 @@ describe("부가 자료 API", () => {
     expect((await detailsRoute.GET(request("/api/products/ggml/details?locale=xx"), params("ggml"))).status).toBe(200);
     mocks.getProductDetail.mockResolvedValueOnce(null);
     expect((await detailsRoute.GET(request("/api/products/missing/details"), params("missing"))).status).toBe(404);
+  });
+});
+
+describe("업데이트 전체 API(/api/products/[slug]/timeline)", () => {
+  it("보이는 업데이트를 모두, 받은 순서 그대로 — 줄이 그리는 칸(날짜·제목·출처 링크)만", async () => {
+    const response = await timelineRoute.GET(request("/api/products/ggml/timeline"), params("ggml"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    const text = await response.text();
+    for (const key of ['"summary":', '"beforeAfter":', '"makerEditedAt":', '"sourceLabel":']) expect(text).not.toContain(key);
+    const body = JSON.parse(text, reviveDetailExtras);
+    expect(Object.keys(body)).toEqual(["rows"]);
+    expect(body.rows).toHaveLength(60);
+    expect(body.rows.map((row: { id: number }) => row.id)).toEqual(allUpdates.map((row) => row.id));
+    expect(Object.keys(body.rows[1]).sort()).toEqual(["canonicalUrl", "id", "observedAt", "publishedAt", "sourceKind", "title"]);
+    expect(body.rows[1].publishedAt).toBeInstanceOf(Date);
+    expect(body.rows[0].publishedAt).toBeNull();
+    expect(mocks.getPublicProductUpdates).toHaveBeenCalledWith("ggml");
+  });
+
+  it("없거나 내린 제품은 404 — 상세와 같은 판정(getPublicProductUpdates 가 null)", async () => {
+    mocks.getPublicProductUpdates.mockResolvedValueOnce(null);
+    expect((await timelineRoute.GET(request("/api/products/missing/timeline"), params("missing"))).status).toBe(404);
   });
 });
 

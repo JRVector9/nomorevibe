@@ -26,6 +26,7 @@ import {
 import {
   getProductDetail,
   getProductIdentity,
+  getPublicProductUpdates,
 } from "@/lib/domain/products/detail-view";
 import { UNIQUE_FIRST_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import { ensureSchema, resetTables } from "./setup";
@@ -272,6 +273,7 @@ describe("public product detail read model", () => {
       "메이커 제공·미검증",
     ]);
     expect(view?.updates.map((update) => update.title)).not.toContain("숨긴 업데이트");
+    expect(view?.updateCounts).toEqual({ total: 2, recent: 2 });
   });
 
   it("represents unclaimed collecting and empty states without false zeroes", async () => {
@@ -302,6 +304,7 @@ describe("public product detail read model", () => {
       license: { state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null },
       media: [],
       updates: [],
+      updateCounts: { total: 0, recent: 0 },
       agents: [],
       skills: [],
       freshness: [{ state: "collecting", label: "집계 중" }],
@@ -562,5 +565,49 @@ describe("public product detail read model", () => {
     await expect(getProductIdentity("detail-banned")).resolves.toBeNull();
     await expect(getProductDetail("detail-banned")).resolves.toBeNull();
     await expect(getProductDetail("detail-missing")).resolves.toBeNull();
+    await expect(getPublicProductUpdates("detail-banned")).resolves.toBeNull();
+    await expect(getPublicProductUpdates("detail-missing")).resolves.toBeNull();
+  });
+
+  it("lists every visible update for 「전체」 with the detail rules and counts beyond the fifty-row read", async () => {
+    const product = await insertProduct("detail-many-updates");
+    await insertProduct("detail-other-updates");
+    // 60건 보임: 40건은 최근 30일(발행일), 10건은 발행일 없이 처음 본 날이 최근, 10건은 오래됨
+    const visible = Array.from({ length: 60 }, (_, index) => ({
+      slug: product.slug,
+      sourceKind: "github_release" as const,
+      dedupeKey: `release:${index}`,
+      title: `v${index}`,
+      publishedAt: index < 40 ? ago((index + 1) * HOUR) : index < 50 ? null : ago((40 + index) * DAY),
+      observedAt: index < 50 ? ago((index + 1) * HOUR + 30 * 60_000) : ago(DAY),
+    }));
+    await db.insert(productUpdates).values([
+      ...visible,
+      { slug: product.slug, sourceKind: "feed", dedupeKey: "hidden", title: "숨긴 업데이트", visible: false, observedAt: ago(HOUR) },
+      { slug: product.slug, sourceKind: "maker", dedupeKey: "maker:deleted", title: "메이커가 지운 업데이트", makerDeletedAt: ago(HOUR), observedAt: ago(HOUR) },
+      { slug: "detail-other-updates", sourceKind: "maker", dedupeKey: "maker:other", title: "다른 제품 업데이트", observedAt: ago(HOUR) },
+      // 같은 시각이면 나중 id 가 먼저
+      { slug: product.slug, sourceKind: "maker", dedupeKey: "maker:tie-a", title: "같은 시각 A", publishedAt: ago(30 * 60_000), observedAt: ago(HOUR) },
+    ]);
+    const [tie] = await db.insert(productUpdates).values(
+      { slug: product.slug, sourceKind: "maker", dedupeKey: "maker:tie-b", title: "같은 시각 B", observedAt: ago(HOUR) },
+    ).returning();
+    await db.update(productUpdates).set({ publishedAt: (await db.select().from(productUpdates).where(eq(productUpdates.dedupeKey, "maker:tie-a")))[0].publishedAt })
+      .where(eq(productUpdates.id, tie.id));
+
+    const all = await getPublicProductUpdates(product.slug);
+    const titles = all?.map((update) => update.title) ?? [];
+    expect(titles).toHaveLength(62);
+    expect(titles.slice(0, 2)).toEqual(["같은 시각 B", "같은 시각 A"]);
+    for (const hidden of ["숨긴 업데이트", "메이커가 지운 업데이트", "다른 제품 업데이트"]) expect(titles).not.toContain(hidden);
+    // 상세와 같은 순서: coalesce(발행일, 처음 본 날) 내림차순
+    const dates = all!.map((update) => (update.publishedAt ?? update.observedAt).getTime());
+    expect(dates).toEqual([...dates].sort((left, right) => right - left));
+    expect(Object.keys(all![0]).sort()).toEqual(["canonicalUrl", "id", "observedAt", "publishedAt", "sourceKind", "title"]);
+
+    const view = await getProductDetail(product.slug);
+    // 상세 조회는 여전히 최신 50건만 싣고, 같은 순서의 앞부분이다
+    expect(view?.updates.map((update) => update.title)).toEqual(titles.slice(0, 50));
+    expect(view?.updateCounts).toEqual({ total: 62, recent: 52 });
   });
 });

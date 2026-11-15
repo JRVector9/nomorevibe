@@ -236,6 +236,8 @@ export const detail = {
   "updates.maker": "메이커 업데이트",
   "updates.automatic": "자동 감지",
   "updates.all": "{count}건 모두 보기 ›",
+  "updates.showAll": "전체",
+  "updates.loadFailed": "업데이트를 더 불러오지 못했습니다. 다시 눌러 주세요.",
   "star.unavailable": "GitHub 스타 상태를 확인할 수 없습니다. 잠시 후 다시 확인해 주세요.",
   "star.uncertain": "변경 결과를 확인할 수 없습니다. GitHub에서 스타 상태를 직접 확인해 주세요. 이 변경 잠금은 재조회로 해제되지 않습니다.",
   "star.rateLimited": "GitHub 스타 요청이 제한되었습니다. 잠시 후 다시 시도해 주세요.",

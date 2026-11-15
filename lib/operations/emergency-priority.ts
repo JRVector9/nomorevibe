@@ -82,6 +82,8 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "product-stars-refresh": "suspended", "product-star-observation": "suspended", "product-readme-refresh": "suspended",
   "hn-talk": "suspended", "bluesky-talk": "suspended", "email-outbox-send": "suspended", "email-weekly-digest": "suspended", "maker-recheck": "suspended",
   "notification-delisted": "suspended", "notification-category-digest": "suspended", "notification-prune": "suspended",
+  // DB 보관 정리 — 비상 중에는 WAL·복제 부담을 늘리지 않는다(복귀 뒤 커서에서 이어 한다)
+  "db-retention": "suspended",
 };
 
 /** 실측 뒤 명시하는 값만 받는다(기본값 없음, host-budget 와 같은 원칙). 제어 단계는 이 예산 밖이다 — heartbeat 여유 */

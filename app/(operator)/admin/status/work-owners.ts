@@ -108,6 +108,7 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "notification-delisted": "팔로한 프로젝트가 내려가면 알림함에 적습니다.",
   "notification-category-digest": "팔로한 분야의 주간 묶음 알림을 넣습니다(월요일 KST).",
   "notification-prune": "90일 지난 알림을 지웁니다.",
+  "db-retention": "한 시간마다 조금씩 DB 보관 기간을 지킵니다 — 끝난 모델 장부(기본 14일, 장비 한도 › 모델 장부 보관), 발굴 근거(24시간 + 저장소마다 최근 commit 5개), 7일 지난 저장소 스캔(보존 집합 밖), 40일 지난 일일 가동 집계를 지우고, 30일 지난 자동 거절 수집 원본은 읽는 키만 남게 줄입니다(행은 지우지 않습니다).",
   "model-capacity-reclaim": "종료가 확인되지 않은 모델 요청 중 종료 증거와 기한이 확인된 것만 1분마다 풀어 다음 심사가 이어지게 합니다.",
   "console-alerts": "운영 홈 할 일 중 멈춤·평소와 다름이 새로 생기면 휴대폰 알림 줄을 엽니다(5분마다, 전송은 감시 → Oracle Telegram 통로). 알림이 꺼져 있으면 할 일을 읽지 않습니다.",
   "product-evidence-refresh": "공개 제품의 근거 출처를 다시 읽어 갱신합니다.",

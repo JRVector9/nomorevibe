@@ -5,6 +5,7 @@ import { adminLog, type AdminLogRow } from "./admin-log";
 import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
 import { readRuntimeSettingsRow, RUNTIME_SETTINGS_AUDIT_ACTION, type RuntimeSettingsRow } from "./runtime-settings";
 import { MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX } from "@/lib/llm/capacity-unknown-hold";
+import { MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MAX, MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MIN } from "@/lib/llm/capacity-retention";
 import { ASSIGNMENT_TABLE_READS, ASSIGNMENT_TABLE_READS_LABELS, BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS,
   GROUP_LABELS, JOB_LABELS, jobKnobsSchema, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
   runtimeSettingLabel, type JobKnobName, type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
@@ -193,6 +194,15 @@ export const UNKNOWN_HOLD_CONTROL: readonly SettingsControlSpec[] = Object.freez
   note: "결과 미확정(확인 못함) 호출은 보낸 시각부터 이 시간 동안 장비 칸·모델 상한·경로 몫을 계속 차지합니다 — 취소가 없는 엔진(M1 mlx-lm·supa)은 "
     + "기한이 지나도 생성을 계속하기 때문입니다. 지나면 칸을 놓고 재실행 대기 목록에만 남습니다(행 상태는 그대로). "
     + `0 이면 차지하지 않습니다(10-30 규칙). 범위 0~${MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX}초. 저장 즉시 다음 모델 입장부터 씁니다.` }]);
+/**
+ * 장비 한도 화면(세부 설정)의 「모델 장부 보관」 칸 — 끝난 장부 행(settled·withdrawn)과 그 이벤트를 지우기 전에 남겨 두는 날 수(2026-11-15 DB 보관 ⑤).
+ * 정리 잡(db-retention, maintenance 한 시간마다)이 틱마다 행에서 바로 읽는다.
+ */
+export const LEDGER_RETENTION_CONTROL: readonly SettingsControlSpec[] = Object.freeze([{ path: "capacity.ledgerRetentionDays",
+  note: "끝난 모델 호출 기록(정산·철회된 장부 행과 그 이벤트)을 이 날 수만큼 남기고, 지난 것은 보관 정리 잡이 한 시간마다 조금씩 지웁니다. "
+    + "진행 중·결과 미확정 행, 아직 열린 생성·작업 열쇠에 묶인 행, 처리 중인 LLM 보조 작업이 가리키는 행은 지우지 않습니다. "
+    + `LLM 보조 주간 상한이 UTC 한 주의 기록을 세므로 ${MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MIN}일보다 줄일 수 없습니다(DB 트리거도 같은 바닥을 지킵니다). `
+    + `범위 ${MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MIN}~${MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MAX}일. 늘리면 그만큼 디스크를 더 씁니다(하루 약 0.35~0.4 GB, 2026-11 실측).` }]);
 /** lib/domain/products/translations.ts DISPATCHABLE_ATTEMPTS — 자동 처리가 보내는 시도 수의 상한(이보다 큰 최대 시도는 보내기에 효과가 없다) */
 export const TRANSLATION_DISPATCHABLE_ATTEMPTS = 4;
 /** 공개 번역 화면으로 옮긴 칸 — 원문 글자 상한·묶음 글자·요청 보류 한도·최대 시도, 묶음 최대 건수(고정). 자동 틱 여유(jobMarginMs)는 실시간 한도에 남는다 */
@@ -409,7 +419,8 @@ export function runtimeSettingsIssueMessage(issue: string): string {
       if (detail in CHOICE_OPTIONS) return `${runtimeSettingLabel(detail)}: 고를 수 있는 값이 아닙니다(${CHOICE_OPTIONS[detail].map(option => option.value).join(" · ")})`;
       // 잡별 묶음의 정수 칸은 스키마 범위를 함께 말한다(2026-11-09 — 재판정 한도를 그 자리에서 고칠 때 무엇을 넣어야 하는지 보이게). ms 칸은 화면 단위가 초라 범위를 붙이지 않는다
       const parts = detail.split("."), range = parts[0] === "jobs" && parts.length === 3 && fieldKind(detail) === "int" ? jobKnobRange(parts[2])
-        : detail === "capacity.unknownHoldSeconds" ? { min: 0, max: MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX } : null;
+        : detail === "capacity.unknownHoldSeconds" ? { min: 0, max: MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX }
+        : detail === "capacity.ledgerRetentionDays" ? { min: MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MIN, max: MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MAX } : null;
       return `${runtimeSettingLabel(detail)}: 범위를 벗어났습니다${range ? `(${range.min}~${range.max})` : ""}`;
     }
     case "runtime_settings_version": return `저장 문서 판 표시가 다릅니다: ${detail}`;

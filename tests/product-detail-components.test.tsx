@@ -765,9 +765,10 @@ describe("evidence product detail components", () => {
       },
     ];
     const now = new Date();
-    const html = renderToStaticMarkup(<UpdateTimeline summary={timelineSummary(older, now)} now={now} />);
+    const html = renderToStaticMarkup(<UpdateTimeline slug="simple-hwp" summary={timelineSummary(older, now)} now={now} />);
     expect(html).not.toContain('role="tab');
-    expect(html).toContain(">전체</span>");
+    // 세 건 이하면 더 펼칠 것이 없다 — '전체' 단추가 없다
+    expect(html).not.toContain("<button");
     expect(html).toContain("표가 포함된 문서의 텍스트 추출을 개선했습니다");
     expect(html).toContain("v1.6.0 공개");
     expect(html).toContain("GitHub 릴리스 ↗");
@@ -799,14 +800,25 @@ describe("evidence product detail components", () => {
     expect(summary.rows.map((row) => row.title)).toEqual(["v2.0.0", "v2.1.0", "v2.2.0"]);
     expect(summary).toMatchObject({ total: 11, recent: 10 });
     expect(Object.keys(summary.rows[0]).sort()).toEqual(["canonicalUrl", "id", "observedAt", "publishedAt", "sourceKind", "title"]);
-    const html = renderToStaticMarkup(<UpdateTimeline summary={summary} now={now} />);
+    const html = renderToStaticMarkup(<UpdateTimeline slug="simple-hwp" summary={summary} now={now} />);
     expect(html).toContain("최근 30일 10건");
     expect(html.match(/<li/g)).toHaveLength(3);
     expect(html).toContain("v2.0.0");
     expect(html).toContain("v2.2.0");
     expect(html).not.toContain("v2.3.0");
     expect(html).not.toContain("모두 보기");
-    expect(html).not.toContain("<button");
+    // 나머지는 '전체'를 눌러 받는다(tests/update-timeline.test.tsx)
+    expect(html).toMatch(/<button type="button" aria-expanded="false"[^>]*>전체<\/button>/);
+  });
+
+  it("counts every visible update from the detail read, not only the fifty rows it carries", () => {
+    const rows: ProductDetailView["updates"] = Array.from({ length: 50 }, (_, index) => ({
+      id: index, sourceKind: "github_release" as const, sourceLabel: "자동 감지" as const, canonicalUrl: null, title: `v${index}`,
+      summary: null, beforeAfter: null, publishedAt: new Date(), observedAt: new Date(), makerEditedAt: null,
+    }));
+    const summary = timelineSummary(rows, new Date(), { total: 357, recent: 80 });
+    expect(summary).toMatchObject({ total: 357, recent: 80 });
+    expect(summary.rows).toHaveLength(3);
   });
 
   it("keeps source badges explicit and every touched visible font at least 13px", async () => {
