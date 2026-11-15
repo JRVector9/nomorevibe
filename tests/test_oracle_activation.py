@@ -334,16 +334,27 @@ class LauncherGateTests(unittest.TestCase):
         self.metadata = {**METADATA, 'displayName': 'onetwoday'}
         self.assert_closed('identity', 'oci_identity_unverified')
 
+        # IMDS that does not answer compared nothing: a distinct (transient) reason, still closed and before the DB.
         def unreachable():
             raise ValueError('oci_metadata_unavailable')
-        self.assert_closed('identity', 'oci_identity_unverified', fetch=unreachable)
+        self.assert_closed('identity', 'oci_metadata_unavailable', fetch=unreachable)
+
+        def refused():
+            raise OSError('connection refused')
+        self.assert_closed('identity', 'oci_metadata_unavailable', fetch=refused)
         self.assertEqual(self.runs, [])
 
     def test_preflight_unknown_rejected_or_malformed_reports_never_start(self):
         cases = [
+            # The preflight answers 78 with its report. Another exit is a crash before reporting (11-15 DB loss).
             ((0, json.dumps(report()).encode()), 'preflight_failed'),
-            ((78, b'x' * (launch.MAX_PREFLIGHT_BYTES + 1)), 'preflight_failed'),
-            ((78, b'not json'), 'preflight_unavailable'),
+            ((1, b''), 'preflight_failed'),
+            # 78 with nothing on stdout: its own fixed failure path when the DB read threw.
+            ((78, b''), 'preflight_unavailable'),
+            ((78, b'\n'), 'preflight_unavailable'),
+            # Something that is not the report is a contract mismatch, never "unavailable".
+            ((78, b'x' * (launch.MAX_PREFLIGHT_BYTES + 1)), 'preflight_report_mismatch'),
+            ((78, b'not json'), 'preflight_report_mismatch'),
             ((78, json.dumps(report(role='translation')).encode()), 'preflight_report_mismatch'),
             ((78, json.dumps(report(releaseSha='d' * 40)).encode()), 'preflight_report_mismatch'),
             ((78, json.dumps(report(activationAllowed=True)).encode()), 'preflight_report_mismatch'),
@@ -360,6 +371,10 @@ class LauncherGateTests(unittest.TestCase):
         def hung(argv, cwd, env):
             raise subprocess.TimeoutExpired(argv, 90)
         self.assert_closed('preflight', 'preflight_unavailable', runner=hung)
+
+    def test_role_reports_never_use_the_consumer_read_only_reason(self):
+        self.preflight = (78, json.dumps(report(checks__database={'status': 'unknown', 'reason': 'database_read_only'})).encode())
+        self.assert_closed('preflight', 'database_unverified')
 
     def test_model_role_and_scheduler_stay_closed_without_their_evidence(self):
         self.env.update(WORKER_ROLE='translation', HOST_DB_BUDGET=self.budget('translation'))
@@ -514,12 +529,120 @@ class ConsumerLauncherGateTests(unittest.TestCase):
             (consumer_report(role='reviewer'), 'preflight_report_mismatch'),
             (consumer_report(kind='nomorevibe-oracle-runtime-preflight'), 'preflight_report_mismatch'),
             ({**consumer_report(), 'checks': {k: v for k, v in consumer_report()['checks'].items() if k != 'timezone'}}, 'preflight_report_mismatch'),
-            (report('crawler'), 'preflight_unavailable'),
+            (report('crawler'), 'preflight_report_mismatch'),
+            # A read-only primary is reported by the consumer preflight as database unknown/database_read_only.
+            (consumer_report(checks__database={'status': 'unknown', 'reason': 'database_read_only'},
+                             workload={'ready': False, 'reason': 'database_read_only'}), 'database_read_only'),
+            # ...but a rejection anywhere wins over it.
+            (consumer_report(checks__database={'status': 'unknown', 'reason': 'database_read_only'},
+                             checks__runtime={'status': 'rejected', 'reason': 'runtime_platform_mismatch'}), 'preflight_rejected'),
         ]
         for value, reason in cases:
             self.preflight = (78, json.dumps(value).encode())
             with self.subTest(reason=reason, value=value.get('kind')):
                 self.assert_consumer_closed('preflight', reason)
+
+    def retry_gate(self, outcomes, **overrides):
+        """Run consumer_gate_with_retry with a fake clock: each preflight result in outcomes is used once (last repeats)."""
+        results = list(outcomes)
+        self.clock, self.slept, self.logged = 0.0, [], []
+
+        def runner(argv, cwd, env):
+            self.runs.append((argv, cwd))
+            value = results.pop(0) if len(results) > 1 else results[0]
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        def sleep(seconds):
+            self.slept.append(seconds)
+            self.clock += seconds
+        options = dict(base=self.base, launcher=self.release / 'deploy/oracle/launch.py', owner_uid=os.getuid(),
+                       platform_info=RUNTIME, user=('nomorevibe-core', False), proc_cgroup=self.proc,
+                       cgroup_root=self.cgroup, approved_identity=self.approved, fetch=self.fetch, runner=runner)
+        options.update(overrides)
+        return launch.consumer_gate_with_retry(CONSUMER, overrides.pop('env', self.env), sleep=sleep, clock=lambda: self.clock,
+                                               log=self.logged.append, **{k: v for k, v in options.items() if k != 'env'})
+
+    def test_a_db_that_comes_back_inside_the_window_starts_after_every_check_passes_again(self):
+        self.use_consumer()
+        ready = (78, json.dumps(consumer_report()).encode())
+        lost = [subprocess.TimeoutExpired('node', 90), (1, b''), (78, b''),
+                (78, json.dumps(consumer_report(checks__database={'status': 'unknown', 'reason': 'database_read_only'},
+                                                workload={'ready': False, 'reason': 'database_read_only'})).encode())]
+        (node, argv), release = self.retry_gate([*lost, ready])
+        self.assertEqual(argv[-2:], ['--role=crawler', f'--consumer={CONSUMER}'])
+        # Backoff 15, 30, 60, 120 s; the whole gate (identity included) ran again each time — nothing was skipped.
+        self.assertEqual(self.slept, [15, 30, 60, 120])
+        self.assertEqual((len(self.runs), len(self.fetches)), (5, 5))
+        self.assertEqual([row['reason'] for row in self.logged],
+                         ['preflight_unavailable', 'preflight_failed', 'preflight_unavailable', 'database_read_only'])
+        self.assertTrue(all(row['transient'] is True for row in self.logged))
+
+    def test_imds_that_does_not_answer_is_asked_again_but_a_different_host_stops_at_once(self):
+        self.use_consumer()
+        answers = [ValueError('oci_metadata_unavailable'), copy.deepcopy(METADATA)]
+
+        def flaky():
+            self.fetches.append(True)
+            value = answers.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        self.retry_gate([(78, json.dumps(consumer_report()).encode())], fetch=flaky)
+        self.assertEqual(self.slept, [15])
+        self.metadata = {**METADATA, 'displayName': 'onetwoday'}
+        with self.assertRaises(launch.Unverified) as caught:
+            self.retry_gate([(78, json.dumps(consumer_report()).encode())])
+        self.assertEqual((caught.exception.reason, self.slept), ('oci_identity_unverified', []))
+
+    def test_a_db_that_stays_away_ends_the_window_with_the_transient_result(self):
+        self.use_consumer()
+        with self.assertRaises(launch.Unverified) as caught:
+            self.retry_gate([(78, b'')])
+        self.assertEqual(caught.exception.reason, 'preflight_unavailable')
+        # 15+30+60+120+120+120+120 = 585 s; the next 120 s wait would pass the 600 s window.
+        self.assertEqual(self.slept, [15, 30, 60, 120, 120, 120, 120])
+        self.assertLessEqual(sum(self.slept), launch.RETRY_WINDOW_SECONDS)
+        self.assertEqual(len(self.runs), 8)
+
+    def test_configuration_contract_and_privilege_results_stop_without_waiting(self):
+        self.use_consumer()
+        for result, reason in [
+                ((78, json.dumps(consumer_report(checks__database={'status': 'unknown', 'reason': 'approved_privilege_profile_unavailable'})).encode()),
+                 'database_unverified'),
+                ((78, json.dumps(consumer_report(checks__consumer={'status': 'rejected', 'reason': 'collector_secret_mismatch'})).encode()),
+                 'preflight_rejected'),
+                ((78, json.dumps(consumer_report(releaseSha='d' * 40)).encode()), 'preflight_report_mismatch'),
+                ((78, b'not json'), 'preflight_report_mismatch')]:
+            with self.subTest(reason=reason), self.assertRaises(launch.Unverified) as caught:
+                self.retry_gate([result])
+            self.assertEqual((caught.exception.reason, self.slept), (reason, []))
+        # A release switched while waiting is re-checked on the next attempt and stops (the env still names the old one).
+        def switched(argv, cwd, env):
+            (self.base / 'current').unlink()
+            (self.base / 'current').symlink_to('releases/' + 'd' * 40)
+            return (78, b'')
+        with self.assertRaises(launch.Unverified) as caught:
+            self.retry_gate([(78, b'')], runner=switched)
+        self.assertEqual((caught.exception.reason, self.slept), ('current_release_mismatch', [15]))
+
+    def test_cli_exit_code_separates_temporary_from_configuration_results(self):
+        for consumer, reason, code, stderr in [
+                ('agent-scan', 'preflight_unavailable', 75, launch.TRANSIENT_FAILURE),
+                ('agent-scan', 'database_read_only', 75, launch.TRANSIENT_FAILURE),
+                ('agent-scan', 'preflight_rejected', 78, launch.FAILURE),
+                (None, 'preflight_unavailable', 78, launch.FAILURE)]:
+            error = launch.Unverified('preflight', reason)
+            argv = ['launch.py', '--consumer', consumer] if consumer else ['launch.py', '--role', 'official-news']
+            with self.subTest(consumer=consumer, reason=reason), \
+                    patch.object(launch, 'consumer_gate_with_retry', side_effect=error), \
+                    patch.object(launch, 'gate', side_effect=error), patch.object(sys, 'argv', argv), \
+                    patch('sys.stdout') as stdout, patch('sys.stderr') as stderr_stream:
+                self.assertEqual(launch.main(), code)
+            printed = json.loads(''.join(call.args[0] for call in stdout.write.call_args_list if call.args[0].strip()))
+            self.assertEqual((printed['reason'], printed.get('transient', False)), (reason, code == 75))
+            self.assertEqual(json.loads(''.join(call.args[0] for call in stderr_stream.write.call_args_list if call.args[0].strip())), stderr)
 
     def test_only_consumers_start_from_a_consumer_profile_release(self):
         stage = prepared_release(self.root / 'prepared-consumer')
@@ -792,6 +915,11 @@ class ConsumerInstallUnitsTests(unittest.TestCase):
                      'ExecStart=/usr/bin/python3 /opt/nomorevibe-core/current/deploy/oracle/launch.py --consumer=%i'):
             self.assertIn(line, lines)
         self.assertEqual([line for line in lines if line.startswith('Environment=TZ')], ['Environment=TZ=UTC'])
+        # 2026-11-15: no start limit; a rejection (78) is never restarted, everything else restarts with a growing delay.
+        for line in ('StartLimitIntervalSec=0', 'Restart=on-failure', 'RestartPreventExitStatus=78', 'RestartSec=15s',
+                     'RestartSteps=5', 'RestartMaxDelaySec=5min'):
+            self.assertIn(line, lines)
+        self.assertFalse(any(line.startswith('StartLimitBurst') for line in lines))
         env = self.root / f'etc/nomorevibe-core/consumer-{CONSUMER}.env'
         self.assertEqual(env.stat().st_mode & 0o777, 0o600)
         text = env.read_text()
