@@ -1,22 +1,43 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * 상세의 이름·요약 밖 칸(2026-11-15 공개 HTML 이름·요약만) — 머리의 아이콘·배지·메타 줄·단추와 소개·미리보기·운영자 상자는
+ * /api/products/[slug]/details 의 hero·intro·media·aside 로 화면 JS 가 채운다(DetailHeroSlots). 여기서는 실제 값 만들기(detailPageData)로
+ * 그 응답을 만들어 받은 것처럼 바꿔 끼우고(useDetailExtras) 자리를 그린다. 기본은 받는 중.
+ */
+process.env.VISITOR_HASH_SECRET ??= "test-visitor-hash-secret-0123456789abcdef";
+const extras = vi.hoisted(() => ({ state: { data: null as unknown, done: false } }));
+vi.mock("@/components/product-detail/DetailExtras", async (original) => ({
+  ...await original<typeof import("@/components/product-detail/DetailExtras")>(),
+  useDetailExtras: (slug: string) => ({ slug, ...extras.state }),
+}));
+// 화제 순위는 공개 스위치·관리자 세션을 읽는다 — 여기서는 꺼 둔다(배지는 talkRank 를 직접 넣어 본다)
+vi.mock("@/lib/social/flags", async (original) => ({
+  ...await original<typeof import("@/lib/social/flags")>(),
+  talkVisibility: async () => ({ visible: false, preview: false }),
+}));
+
 import { BuildTools } from "@/components/product-detail/BuildTools";
 import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
+import { BreadcrumbCategorySlot, DetailAsideSlot, DetailIntroSlot, DetailPreviewSlot } from "@/components/product-detail/DetailHeroSlots";
 import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
 import { FactsStrip, factRows } from "@/components/product-detail/FactsStrip";
 import { InfoCard } from "@/components/product-detail/InfoCard";
-import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
 import { ProductHero } from "@/components/product-detail/ProductHero";
+import { ReadmeMarkdown } from "@/components/product-detail/ReadmeMarkdown";
 import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { timelineSummary } from "@/components/product-detail/client-data";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
+import { detailPageData, type DetailPageData } from "@/lib/domain/products/detail-page-data";
+import { publicTeaser } from "@/lib/domain/products/public-teaser";
 import { LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL, SITE_REPO_RELATION_LABEL, UNCLAIMED_HINT } from "@/lib/copy/terms";
 import { AI_LEVEL_LABELS } from "@/lib/domain/evidence/ai-level-labels";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
@@ -158,18 +179,57 @@ const collectingVisits: ProductDetailView["visits"] = {
 
 const unchecked: ProductDetailView["health"] = { uptime30d: null, latencyMs: null, checkedAt: null, down: false };
 
-/** 히어로는 기본 픽스처로 그리고, 케이스마다 바뀌는 값만 덮어쓴다 */
-function renderHero(overrides: Partial<ComponentProps<typeof ProductHero>> = {}) {
-  return renderToStaticMarkup(<ProductHero product={product} unclaimed={false} risingRank={null} health={unchecked} languages={[]} {...overrides} />);
+afterEach(() => {
+  extras.state = { data: null, done: false };
+  vi.unstubAllEnvs();
+});
+
+/** 상세 API 가 돌려줄 머리·소개·미리보기·운영자 값 — 기본 픽스처에 케이스마다 바뀌는 값만 덮어쓴다 */
+type PageCase = {
+  product?: ProductDetailView["product"];
+  unclaimed?: boolean;
+  risingRank?: number | null;
+  health?: ProductDetailView["health"];
+  languages?: string[];
+  /** GitHub 이 넘겨준 지금 저장소 주소(읽은 저장소의 정식 주소) */
+  repositoryUrl?: string;
+  profile?: ProductDetailView["profile"];
+  readmeExcerpt?: string | null;
+  media?: ProductDetailView["media"];
+};
+function pageData(c: PageCase = {}): Promise<DetailPageData> {
+  const subject = c.product ?? product;
+  const repository = c.languages || c.repositoryUrl ? { ...observedRepository, facts: { ...observedRepository.facts!,
+    repositoryUrl: c.repositoryUrl ?? observedRepository.facts!.repositoryUrl,
+    languages: (c.languages ?? []).map((name) => ({ name, bytes: 1, percent: 1 })) } } : null;
+  const detail = { product: subject, unclaimed: c.unclaimed ?? false, risingRank: c.risingRank ?? null, health: c.health ?? unchecked,
+    repository, profile: c.profile ?? null, readmeExcerpt: c.readmeExcerpt ?? null, media: c.media ?? [] } as unknown as ProductDetailView;
+  return detailPageData(detail, subject);
+}
+/** 받은 것처럼 — data 가 null 이면 받지 못한 것 */
+function received(data: DetailPageData | null) {
+  extras.state = { data, done: true };
+}
+
+/** 서버가 그리는 머리 — slug·이름·요약(teaser)만 받는다 */
+function heroMarkup(subject: ProductDetailView["product"] = product, overrides: Partial<ComponentProps<typeof ProductHero>> = {}) {
+  return renderToStaticMarkup(<ProductHero teaser={publicTeaser(subject, "ko")} {...overrides} />);
+}
+
+/** 상세 API 를 받은 뒤의 머리 */
+async function renderHero(c: PageCase = {}) {
+  received(await pageData(c));
+  return heroMarkup(c.product);
 }
 
 function renderFacts(overrides: Partial<ComponentProps<typeof FactsStrip>> = {}) {
   return renderToStaticMarkup(<FactsStrip product={product} repository={observedRepository} license={observedLicense} health={unchecked} visits={collectingVisits} {...overrides} />);
 }
 
-async function renderIntro(overrides: Partial<ComponentProps<typeof IntroSection>> = {}) {
-  const section = await IntroSection({ product, profile: null, readmeExcerpt: null, unclaimed: false, ...overrides });
-  return renderToStaticMarkup(section);
+/** 소개 자리 — 상세 API 의 intro 로 채운다 */
+async function renderIntro(c: PageCase = {}) {
+  received(await pageData(c));
+  return renderToStaticMarkup(<DetailIntroSlot slug={(c.product ?? product).slug} />);
 }
 
 async function renderTools(overrides: Partial<ComponentProps<typeof BuildTools>> = {}) {
@@ -188,14 +248,33 @@ const observedFact: ProductDetailView["observedAgentFacts"][number] = {
 };
 
 describe("evidence product detail components", () => {
-  it("개인 GitHub 스타를 서비스 저장 버튼과 별개 액션으로 표시한다", () => {
-    const html = renderHero({ personalGithubStar: <button type="button">내 GitHub 스타</button> });
-    expect(html).toContain("내 GitHub 스타</button>");
-    expect(html).toContain('aria-label="simpleHWP 저장"');
-    expect(renderHero()).not.toContain("내 GitHub 스타");
+  it("서버 HTML 의 머리는 이름(h1)과 요약뿐 — 아이콘·메타 줄·단추·배지·출처 줄은 받는 동안 같은 크기의 빈 자리", async () => {
+    const html = heroMarkup({ ...product, stars: 40064, taglineSource: "ai_readme" });
+    expect(html).toContain(`>${product.name}</h1>`);
+    expect(html).toContain(product.tagline);
+    expect(html.match(/aria-busy="true"/g)).toHaveLength(2);
+    for (const hidden of ["생산성", "★", "40,064", "GitHub @example", "/go/simple-hwp", product.repoUrl!, "AI가 요약", "가동 상태", "운영자 미확인", "공유", "저장", "<img"])
+      expect(html, hidden).not.toContain(hidden);
+    // 받지 못하면 빈 자리를 거두고 이름·요약과 공유·저장만 남는다 — 사라진 제품처럼 굴지 않는다
+    received(null);
+    const failed = heroMarkup();
+    expect(failed).toContain(`>${product.name}</h1>`);
+    expect(failed).not.toContain("aria-busy");
+    expect(failed).not.toContain("fill-line");
+    expect(failed).toContain("공유</button>");
+    expect(failed).not.toContain("제품 방문하기");
   });
-  it("renders the name, the unclaimed mark, save and share, and a 44px outbound action", () => {
-    const html = renderHero({ unclaimed: true, health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(), down: false } });
+
+  it("개인 GitHub 스타를 서비스 저장 버튼과 별개 액션으로 표시한다", async () => {
+    vi.stubEnv("GITHUB_STAR_ENABLED", "true");
+    const html = await renderHero();
+    expect(html).toContain('data-testid="github-star-control"');
+    expect(html).toContain('aria-label="simpleHWP 저장"');
+    vi.stubEnv("GITHUB_STAR_ENABLED", "false");
+    expect(await renderHero()).not.toContain("github-star-control");
+  });
+  it("renders the name, the unclaimed mark, save and share, and a 44px outbound action", async () => {
+    const html = await renderHero({ unclaimed: true, health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(), down: false } });
 
     expect(html).toContain(`>${product.name}</h1>`);
     // 옛 '미클레임' 대신 용어표의 말(UX-14)과 툴팁
@@ -214,8 +293,8 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("이번 시즌");
   });
 
-  it("keeps four buttons — visit, GitHub, share with a label, save — and drops the duplicate domain link (UX-31)", () => {
-    const html = renderHero();
+  it("keeps four buttons — visit, GitHub, share with a label, save — and drops the duplicate domain link (UX-31)", async () => {
+    const html = await renderHero();
     expect(html).toMatch(/<a [^>]*aria-label="GitHub 저장소"[^>]*>GitHub<\/a>/);
     // 공유는 바깥 링크 화살표(↗)가 아니라 공유 아이콘과 '공유' 글자 — 접근 이름도 '공유'
     expect(html).toMatch(/<button type="button"[^>]*><svg[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>공유<\/button>/);
@@ -229,11 +308,11 @@ describe("evidence product detail components", () => {
     expect(html.match(/href="\/go\/simple-hwp"/g)).toHaveLength(1);
   });
 
-  it("names the current repository owner as the operator, not the account in an old repository URL (UX-15, amontlabs/lcu)", () => {
+  it("names the current repository owner as the operator, not the account in an old repository URL (UX-15, amontlabs/lcu)", async () => {
     // 등록한 주소는 0xpolarzero/lcu, GitHub 이 넘겨준 정식 주소는 amontlabs/lcu(2026-10-08 감사)
     const lcu = { ...product, repoUrl: "https://github.com/0xpolarzero/lcu" };
     const moved = { ...observedRepository, facts: { ...observedRepository.facts!, repositoryKey: "amontlabs/lcu", repositoryUrl: "https://github.com/amontlabs/lcu" } };
-    const hero = textOf(renderHero({ product: lcu, repositoryUrl: moved.facts.repositoryUrl }));
+    const hero = textOf(await renderHero({ product: lcu, repositoryUrl: moved.facts.repositoryUrl }));
     expect(hero).toContain("GitHub @amontlabs");
     expect(hero).not.toContain("@0xpolarzero");
     const info = renderToStaticMarkup(<InfoCard product={lcu} repository={moved} freshness={freshness} unclaimed />);
@@ -247,61 +326,63 @@ describe("evidence product detail components", () => {
     expect(unread).not.toContain("주요 기여자");
   });
 
-  it("shows the rising rank badge only inside the top twenty", () => {
-    expect(renderHero({ risingRank: 5 })).toContain("지금 뜨는 5위");
-    expect(renderHero({ risingRank: 21 })).not.toContain("지금 뜨는");
-    expect(renderHero({ risingRank: null })).not.toContain("지금 뜨는");
+  it("shows the rising rank badge only inside the top twenty", async () => {
+    expect(await renderHero({ risingRank: 5 })).toContain("지금 뜨는 5위");
+    expect(await renderHero({ risingRank: 21 })).not.toContain("지금 뜨는");
+    expect(await renderHero({ risingRank: null })).not.toContain("지금 뜨는");
   });
 
-  it("puts category, stars, top languages, owner and status in one meta line without a large image", () => {
-    const html = renderHero({ product: { ...product, stars: 40064 }, languages: ["Rust", "TypeScript"] });
+  it("puts category, stars, top languages, owner and status in one meta line without a large image", async () => {
+    const html = await renderHero({ product: { ...product, stars: 40064 }, languages: ["Rust", "TypeScript", "C"] });
     expect(html).toContain("생산성");
     expect(html).toContain("★ 40,064");
+    // 언어는 위 둘만
     expect(html).toContain("Rust · TypeScript");
+    expect(html).not.toContain("TypeScript · C");
     expect(html).toContain("GitHub @example");
     expect(html).toContain("가동 상태 확인 전");
     expect(html).not.toContain("product-hero-media");
     expect(html).not.toContain("<figure");
   });
 
-  it("저장소가 사라졌다고 확정되면 저장소로 보내거나 설치하라고 하지 않고 그렇다고 알린다", () => {
+  it("저장소가 사라졌다고 확정되면 저장소로 보내거나 설치하라고 하지 않고 그렇다고 알린다", async () => {
     // 웹사이트: 제품 방문은 그대로, GitHub 저장소 단추·★ 는 빼고 한 줄로 알린다(★ 는 detail-view 가 이미 비운다)
-    const website = renderHero({ product: { ...product, repoGone: true, stars: null } });
+    const website = await renderHero({ product: { ...product, repoGone: true, stars: null } });
     expect(website).toContain("제품 방문하기");
     expect(website).not.toContain(`href="${product.repoUrl}"`);
     expect(website).not.toContain("★");
     expect(textOf(website)).toContain("GitHub 저장소가 사라졌습니다(삭제 또는 비공개).");
     // 설치형: 저장소 열기·설치 프롬프트 대신
-    const installable = textOf(renderHero({ product: { ...product, accessMode: "installable", repoGone: true, stars: null } }));
+    const installable = textOf(await renderHero({ product: { ...product, accessMode: "installable", repoGone: true, stars: null } }));
     expect(installable).toContain("저장소가 사라졌습니다");
     expect(installable).not.toContain("GitHub 저장소 열기");
     expect(installable).not.toContain("설치 프롬프트 복사");
     // 확정 전에는 그대로
-    expect(textOf(renderHero({ product: { ...product, accessMode: "installable" } }))).toContain("설치 프롬프트 복사");
+    expect(textOf(await renderHero({ product: { ...product, accessMode: "installable" } }))).toContain("설치 프롬프트 복사");
     // 정보 카드의 저장소 줄도 링크 없이
     const info = renderToStaticMarkup(<InfoCard product={{ ...product, repoGone: true }} repository={observedRepository} freshness={freshness} unclaimed={false} />);
     expect(info).not.toContain('href="https://github.com/example/simple-hwp"');
     expect(textOf(info)).toContain("사라짐 · 삭제 또는 비공개");
   });
 
-  it("shows only an internal icon copy, never an external image URL", () => {
-    // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts)
-    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp?thumbnail=site_icon&w=64&h=64" } }))
-      .toContain('src="/api/og-cache/simple-hwp.webp?thumbnail=site_icon&amp;w=64&amp;h=64&amp;size=192"');
+  it("shows only an internal icon copy, never an external image URL", async () => {
+    // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts) — 상세 API 가 준 보호 주소(<slug>.<열쇠>, cover-url.ts)로
+    expect(await renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp?thumbnail=site_icon&w=64&h=64" } }))
+      .toMatch(/src="\/api\/og-cache\/simple-hwp\.[0-9a-f]{32}\.webp\?thumbnail=site_icon&amp;w=64&amp;h=64&amp;size=192"/);
     // 대표 이미지(OG 배너)는 정사각 아이콘 자리에 잘라 넣지 않는다 — 모노그램이 대신한다(UX-32)
-    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).not.toContain("<img");
-    expect(renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");
+    expect(await renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).not.toContain("<img");
+    expect(await renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");
   });
 
-  it("still says when the one-line intro was written by AI rather than the maker", () => {
+  it("still says when the one-line intro was written by AI rather than the maker", async () => {
     // 지은 소개를 메이커가 쓴 것처럼 두지 않는다(사용자 결정 2026-09-20)
-    expect(renderHero({ product: { ...product, taglineSource: "ai_readme" } })).toContain("AI가 요약 · README에서");
-    expect(renderHero()).not.toContain("AI가 요약");
+    expect(await renderHero({ product: { ...product, taglineSource: "ai_readme" } })).toContain("AI가 요약 · README에서");
+    expect(await renderHero()).not.toContain("AI가 요약");
   });
 
-  it("does not call a nineteen-day-old health observation online", () => {
+  it("does not call a nineteen-day-old health observation online", async () => {
     const health = { uptime30d: 99, latencyMs: 84, checkedAt: new Date(Date.now() - 19 * 86400000), down: false };
-    const html = renderHero({ health });
+    const html = await renderHero({ health });
     expect(html).not.toContain("온라인");
     expect(html).toContain("가동 상태 재확인 필요");
     const facts = renderFacts({ health });
@@ -309,9 +390,9 @@ describe("evidence product detail components", () => {
     expect(facts).toContain("재확인 필요");
   });
 
-  it("does not label a fresh failed health check online before the down threshold", () => {
+  it("does not label a fresh failed health check online before the down threshold", async () => {
     const health = { uptime30d: 99, latencyMs: null, checkedAt: new Date(), down: false, lastCheckSucceeded: false };
-    const html = renderHero({ health });
+    const html = await renderHero({ health });
     expect(html).not.toContain("온라인");
     expect(html).toContain("최근 접속 확인 실패");
     expect(html).not.toContain("접속 불안정");
@@ -474,10 +555,35 @@ describe("evidence product detail components", () => {
 
   it("adds a readme excerpt when the intro is a single line", async () => {
     const html = await renderIntro({ product: { ...product, description: product.tagline }, readmeExcerpt: "The README says more.\n\nSecond paragraph." });
-    expect(html).toContain("README에서");
+    // 발췌는 README 상자 안에 먼저 보이고(받는 동안 aria-busy) 전문은 README API 로 바꿔 그린다
+    expect(html).toContain('<h2 id="readme-title"');
+    expect(html).toContain('aria-label="저장된 README 발췌"');
     expect(html).toContain("Second paragraph");
     expect(html).toContain("README 전문 보기");
+    expect(html).toContain('href="https://github.com/example/simple-hwp#readme"');
     expect(html).not.toContain("위의 한 줄이 전부입니다");
+    // 저장소가 사라졌으면 README 상자가 없다
+    expect(await renderIntro({ product: { ...product, repoGone: true }, readmeExcerpt: "The README says more." })).not.toContain("readme-title");
+  });
+
+  it("빵부스러기 분야 칸 — 받은 뒤 main 과 같은 '분야 ›'(최신순 분야 주소), 받는 동안·못 받으면 비운다(서버 HTML 은 홈 › 이름)", async () => {
+    extras.state = { data: null, done: false };
+    expect(renderToStaticMarkup(<BreadcrumbCategorySlot slug={product.slug} />)).toBe("");
+    received(await pageData());
+    const html = renderToStaticMarkup(<BreadcrumbCategorySlot slug={product.slug} />);
+    expect(textOf(html)).toBe("생산성›");
+    expect(html).toMatch(/href="[^"]*productivity[^"]*sort=recent[^"]*"/i);
+    received(null);
+    expect(renderToStaticMarkup(<BreadcrumbCategorySlot slug={product.slug} />)).toBe("");
+  });
+
+  it("소개 자리는 받는 동안 글자 없는 자리, 받지 못하면 비운다", () => {
+    extras.state = { data: null, done: false };
+    const pending = renderToStaticMarkup(<DetailIntroSlot slug={product.slug} />);
+    expect(pending).toContain('aria-busy="true"');
+    expect(pending).not.toContain("소개");
+    received(null);
+    expect(renderToStaticMarkup(<DetailIntroSlot slug={product.slug} />)).toBe("");
   });
 
   it("shows structured introduction and safe markdown without raw scripts", async () => {
@@ -490,6 +596,13 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("alert(1)");
     expect(html).not.toContain("tracker.example");
+    // 긴 설명 마크다운은 화면에서 불러오는 README 그리기 조각(ReadmeMarkdown)이 그린다 — HTML·그림은 버리고 안전한 링크만
+    const markdown = renderToStaticMarkup(<ReadmeMarkdown markdown={profile.longDescriptionMarkdown!} sourceUrl={product.repoUrl!} repositoryRootUrl={`${product.repoUrl}/blob/HEAD/`} />);
+    expect(markdown).toContain("설치 없이 바로 열기");
+    expect(markdown).toContain('<a href="https://simplehwp.example/" target="_blank" rel="noopener noreferrer">공식 사이트</a>');
+    expect(markdown).not.toContain("<script>");
+    expect(markdown).not.toContain("alert(1)");
+    expect(markdown).not.toContain("tracker.example");
 
     const unclaimed = await renderIntro({ profile, unclaimed: true });
     // 운영자 미확인 제품은 출처 줄을 달지 않는다 — 「저장소 README에서 가져옴」은 운영자 요청으로 뺐다(2026-11-08)
@@ -825,8 +938,8 @@ describe("evidence product detail components", () => {
     expect(renderToStaticMarkup(await SourceBadge({ label: "메이커 제공·미검증" }))).toContain("메이커 제공·미검증");
     const files = [
       "ProductHero.tsx",
+      "DetailHeroSlots.tsx",
       "FactsStrip.tsx",
-      "IntroSection.tsx",
       "LanguageBar.tsx",
       "BuildTools.tsx",
       "UpdateTimeline.tsx",
@@ -845,12 +958,16 @@ describe("evidence product detail components", () => {
   it("composes the dynamic page from the safe detail model in the mobile reading order", () => {
     const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/page.tsx", "utf8");
     expect(source).toContain('export const dynamic = "force-dynamic"');
-    expect(source).toContain("getProductDetail(slug)");
+    // 서버는 기본 정보(이름·요약)만 읽는다 — 상세 모델(getProductDetail)은 상세 API 가 읽는다(2026-11-15 공개 HTML 이름·요약만)
+    expect(source).not.toContain("getProductDetail");
+    expect(source).toContain("publicTeaser(localized[0], locale)");
     expect(source).not.toContain("findBySlug");
     expect(source).toContain("productFeedbackEnabled() &&");
     expect(source).toContain('aria-label={t("page.feedback")}');
     expect(detailKorean["page.feedback"]).toBe("프로젝트 댓글");
-    expect(source).toContain("risingRank={detail.risingRank}");
+    // 지금 뜨는 순위 배지는 상세 API 의 머리 값이다
+    const pageData = readFileSync("lib/domain/products/detail-page-data.ts", "utf8");
+    expect(pageData).toContain("risingRank: detail.risingRank");
     expect(source).not.toContain("<ProductGallery");
     expect(source).not.toContain("<EvidenceCard");
     expect(source).not.toContain("<BuildTools");
@@ -860,8 +977,8 @@ describe("evidence product detail components", () => {
     expect(source).not.toContain("max-w-[1220px]");
     // 분야 급상승 총수는 상세 모델이 같은 완료된 8시간 회차로 읽은 값이다 — 실패하면 숫자 없이 표시한다.
     // 같은 분야 목록은 부가 자료 API(/api/products/[slug]/details)로 브라우저가 받는다(2026-11-14 공개 HTML 줄이기)
-    const extras = readFileSync("lib/domain/products/detail-extras.ts", "utf8");
-    expect(extras).toContain("total: detail.relatedTotal ?? null");
+    const extrasSource = readFileSync("lib/domain/products/detail-extras.ts", "utf8");
+    expect(extrasSource).toContain("total: detail.relatedTotal ?? null");
     expect(source).not.toMatch(/countProducts|risingLoad/);
     // 없는 제품은 진짜 404 — 기본 정보로 notFound() 를 먼저 부르고, 본문만 Suspense 안에서 머리 골격을 보이며 채운다.
     // 구간 loading.tsx 는 응답을 먼저 흘려 상태를 200 으로 굳히므로 두지 않는다(UX-38)
@@ -871,22 +988,45 @@ describe("evidence product detail components", () => {
     expect(notFoundAt).toBeLessThan(source.indexOf("<Suspense fallback={<DetailSkeleton />}>"));
     expect(renderToStaticMarkup(<DetailSkeleton />)).toContain('aria-busy="true"');
     // 읽기 순서: 히어로 → 핵심 사실 → 소개(README 발췌) → 언어·업데이트 → 댓글 → 정보 → 미리보기 → 운영자 → 같은 분야
-    // 핵심 사실·언어·업데이트·정보·같은 분야는 서버 HTML 에 자리만 두고 브라우저가 부가 자료 API 로 채운다
+    // 히어로의 이름·요약 밖은 모두 서버 HTML 에 자리만 두고 브라우저가 상세 API 한 번으로 채운다
     const order = [
       "<ProductHero",
       "<DetailFactsSlot",
-      "<IntroSection",
-      "<ReadmeExcerptSection",
+      "<DetailIntroSlot",
       "<DetailActivitySlot",
       "<FeedbackList",
       "<FeedbackForm",
       "<DetailInfoSlot",
-      "<PreviewFigure",
-      "<UnclaimedOwnerContact",
+      "<DetailPreviewSlot",
+      "<DetailAsideSlot",
       "<DetailRelatedSlot",
     ].map((needle) => source.indexOf(needle));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((left, right) => left - right));
+  });
+
+  it("미리보기·운영자 상자도 상세 API 값으로 — 주인 없는 GitHub 저장소만 운영자 상자, 검증 전 제품은 안내", async () => {
+    const media: ProductDetailView["media"] = [{ id: 1, hash: "a".repeat(64), src: `/api/media/${"a".repeat(64)}`, thumbnailSrc: `/api/media/${"a".repeat(64)}?variant=thumbnail`,
+      width: 960, height: 600, thumbnailWidth: 480, thumbnailHeight: 300, altText: "simpleHWP 문서 뷰어 화면", position: 0, sourceMissing: false, lastSuccessAt: observedAt }];
+    received(await pageData({ media }));
+    const preview = renderToStaticMarkup(<DetailPreviewSlot slug={product.slug} name={product.name} />);
+    expect(preview).toContain(`src="/api/media/${"a".repeat(64)}"`);
+    expect(preview).toContain("simpleHWP 문서 뷰어 화면");
+    // 주인 확인된(claimed) 제품은 운영자 상자가 없다
+    expect(renderToStaticMarkup(<DetailAsideSlot slug={product.slug} />)).toBe("");
+    received(await pageData({ unclaimed: true, product: { ...product, status: "seeded" } }));
+    const aside = renderToStaticMarkup(<DetailAsideSlot slug={product.slug} />);
+    expect(aside).toContain("이 프로젝트의 운영자인가요?");
+    expect(aside).not.toContain("https://github.com/example");
+    // GitHub 저장소가 아니면 운영자 상자 없이
+    received(await pageData({ unclaimed: true, product: { ...product, repoUrl: "https://gitlab.com/example/simple-hwp" } }));
+    expect(renderToStaticMarkup(<DetailAsideSlot slug={product.slug} />)).not.toContain("운영자인가요");
+    received(await pageData({ product: { ...product, status: "unverified" } }));
+    expect(renderToStaticMarkup(<DetailAsideSlot slug={product.slug} />)).toContain("아직 공개 목록에 없습니다");
+    // 받기 전·실패는 비운다
+    extras.state = { data: null, done: false };
+    expect(renderToStaticMarkup(<DetailAsideSlot slug={product.slug} />)).toBe("");
+    expect(renderToStaticMarkup(<DetailPreviewSlot slug={product.slug} name={product.name} />)).toBe("");
   });
 
   it("ends with the rising projects of the same category, linking to that category's rising list", () => {
@@ -938,10 +1078,10 @@ describe("evidence product detail components", () => {
 });
 
 
-it("offers an installation prompt instead of a visit CTA or a website uptime claim", () => {
+it("offers an installation prompt instead of a visit CTA or a website uptime claim", async () => {
   const installable = { ...product, accessMode: "installable" as const, url: product.repoUrl! };
   const health = { uptime30d: null, latencyMs: null, checkedAt: null, down: false };
-  const html = renderHero({ product: installable, unclaimed: true, health });
+  const html = await renderHero({ product: installable, unclaimed: true, health });
   expect(html).toContain("직접 설치");
   expect(html).toContain("GitHub 저장소 열기");
   expect(html).toContain("설치 프롬프트 복사");

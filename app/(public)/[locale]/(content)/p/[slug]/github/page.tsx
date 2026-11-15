@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: Pick<Props, "params">) {
     alternates: localizedAlternates(locale, `/p/${encodeURIComponent(slug)}/github`, []) };
 }
 
-async function MakerSettings({ slug, searchParams }: { slug: string; searchParams: Props["searchParams"] }) {
+async function MakerSettings({ slug, searchParams, repository }: { slug: string; searchParams: Props["searchParams"]; repository: { htmlUrl: string; fullName: string } }) {
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "detail");
   const installationPending = (await searchParams).pending === "1";
@@ -38,7 +38,11 @@ async function MakerSettings({ slug, searchParams }: { slug: string; searchParam
     }
     return <p className="mt-6 text-[14px] leading-6">{t("settings.loginNote")} {" "}<DetailLoginLink path={`/p/${encodeURIComponent(slug)}/github`} query={query.size ? `?${query}` : ""}>{t("settings.login")}</DetailLoginLink></p>;
   }
-  return <GithubIntegrationSettings slug={slug} csrfToken={session.csrfToken} installationPending={installationPending} />;
+  // 저장소 이름은 로그인한 사람에게만 — 공개 HTML 의 제품 값은 이름·요약뿐이다(2026-11-15)
+  return <>
+    <p className="mt-3 text-[14px] leading-6">{t("settings.repository")} <a href={repository.htmlUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">{repository.fullName}</a></p>
+    <GithubIntegrationSettings slug={slug} csrfToken={session.csrfToken} installationPending={installationPending} />
+  </>;
 }
 
 export default async function GithubSettingsPage({ params, searchParams }: Props) {
@@ -52,9 +56,7 @@ export default async function GithubSettingsPage({ params, searchParams }: Props
   return <I18nProvider locale={locale} dictionaries={{ detail: dictionary }}><main className="mx-auto max-w-2xl px-5 py-12 text-fg">
     <Link prefetch={false} href={localePath(locale, `/p/${encodeURIComponent(slug)}`)} className="text-[14px] underline underline-offset-2">{t("settings.back", { name: product.name })}</Link>
     <h1 className="mt-6 text-2xl font-semibold">{t("settings.title")}</h1>
-    {repository ? <>
-      <p className="mt-3 text-[14px] leading-6">{t("settings.repository")} <a href={repository.htmlUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">{repository.fullName}</a></p>
-      <Suspense fallback={<PublicSkeleton lines={1} className="mt-6 max-w-64" />}><MakerSettings slug={slug} searchParams={searchParams} /></Suspense>
-    </> : <p className="mt-6 text-[14px] leading-6">{t("settings.noRepository")}</p>}
+    {repository ? <Suspense fallback={<PublicSkeleton lines={1} className="mt-6 max-w-64" />}><MakerSettings slug={slug} searchParams={searchParams} repository={{ htmlUrl: repository.htmlUrl, fullName: repository.fullName }} /></Suspense>
+      : <p className="mt-6 text-[14px] leading-6">{t("settings.noRepository")}</p>}
   </main></I18nProvider>;
 }

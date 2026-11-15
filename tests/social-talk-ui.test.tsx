@@ -18,6 +18,8 @@ vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
 
 const { TalkBand } = await import("@/components/social/TalkBand");
 const { TalkHero } = await import("@/components/social/TalkHero");
+const { loadTalkBoard } = await import("@/components/social/TalkFill");
+const { talkEntryData } = await import("@/lib/social/talk-wire");
 const { SiteHeader } = await import("@/components/home/SiteHeader");
 const { MobileNav } = await import("@/components/home/MobileNav");
 const { talkPublicEnabled, talkVisibility } = await import("@/lib/social/flags");
@@ -106,40 +108,26 @@ describe("홈 대표 구획", () => {
       <TalkHero lead={null} rest={[]} sources={["hn"]} t={t} locale="ko" preview={false} {...props} />
     </I18nProvider>);
 
-  it("허용된 1위는 크게, 나머지는 목록으로", () => {
+  it("허용된 1위는 크게, 나머지는 목록으로 — 서버 HTML 에는 이름·요약·순위 자리만", () => {
     const html = render({ lead: entry(1, "doory", { starGrowth: growth }), rest: [entry(2, "konnect"), entry(3, "spotatui")] });
     expect(html).toContain("지금 SNS에서 화제");
     expect(html).toContain("Hacker News에서 이야기된 AI로 만든 프로젝트");
     expect(html).toContain('id="talk-lead-title"><a href="/p/doory">doory</a>');
-    expect(html).toContain("첫 관측 뒤 GitHub 스타");
+    expect(html).toContain("doory tagline");
     expect(html.match(/class="talk-row"/g)).toHaveLength(2);
     expect(html).toContain('href="/talk"');
-  });
-
-  it("Bluesky 출처는 이름·칩을 달고 반응 수로 적는다", () => {
-    const bsky = post(9, { source: "bluesky", externalId: "did:plc:ltjj43huonogytm4szn5hzkx/3mygbhpmh762y", title: "", points: 7, comments: 1 });
-    const html = render({ lead: entry(1, "doory", { posts: [post(1), bsky], sources: ["hn", "bluesky"] }), sources: ["hn", "bluesky"] });
-    expect(html).toContain("Hacker News·Bluesky에서 이야기된 AI로 만든 프로젝트");
-    expect(html).toContain('class="talk-src talk-src-bluesky"><b>Bsky</b>반응 7 · 답글 1');
-    // 집계 기준 문구는 상수와 같은 값을 말한다
-    expect(browse["talk.methodThreshold"]).toContain(`Bluesky 반응(좋아요 + 재게시×2) ${TALK_THRESHOLD.bluesky.points} 이상`);
-    // 글 빼기 요청은 공개 연락처로(Bluesky 개발자 지침 5). 상세 페이지 요청 폼은 제품을 내리는 곳이라 SNS 글 빼기로 안내하지 않는다 —
-    // 그 폼으로 오면 제품 내림 요청이 되어 제품이 잘못 내려갈 수 있다(2026-10-22)
-    expect(t("talk.methodRequest", { email: CONTACT_EMAIL })).toBe("글쓴이가 원하면 뺍니다 — 원문을 지우거나, contact@nomorevibe.com 로 글 주소를 보내 주세요. 프로젝트 상세 페이지의 요청 폼은 프로젝트 자체를 내리는 곳이라 SNS 글 빼기에는 쓰지 않습니다");
-  });
-
-  it("실제 항목 하나면 크게 보여주고 없는 목록이나 스타 곡선을 만들지 않는다", () => {
-    const html = render({ rest: [entry(1, "doory", { product: { ...entry(1, "doory").product, stars: null } })] });
-    expect(html).toContain('id="talk-lead-title"><a href="/p/doory">doory</a>');
-    expect(html).not.toContain('class="talk-list"');
-    expect(html).not.toContain('class="talk-lead-chart"');
-    expect(html).not.toContain("★");
-    expect(html).not.toContain("talk-sample");
+    // 칩·점수·스타·곡선·원문 토론은 브라우저가 채운다(2026-11-15 공개 HTML 이름·요약만) — 받기 전에는 글자 없는 자리
+    expect(html).not.toContain("첫 관측 뒤 GitHub 스타");
+    expect(html).not.toContain("230점");
+    expect(html).not.toContain("1,563");
+    expect(html).not.toContain("news.ycombinator.com");
+    expect(html).toContain('aria-busy="true"');
   });
 
   it("아무것도 없으면 조용하다고 말하고 빈 카드나 목록을 만들지 않는다", () => {
     expect(render({})).toContain("지금은 화제가 된 프로젝트가 없습니다.");
     expect(render({})).not.toContain('class="talk-hero-grid"');
+    expect(render({})).not.toContain("aria-busy");
     expect(render({ preview: true })).toContain("미리보기");
   });
 
@@ -169,5 +157,50 @@ describe("홈 대표 구획", () => {
     expect(html).toContain('id="talk-lead-title"><a href="/p/third">third</a>');
     expect(html).toContain('class="talk-lead-rank">지금 3위</p>');
     expect(html.match(/class="talk-row"/g)).toHaveLength(1);
+  });
+});
+
+/*
+ * 채운 뒤 — /api/talk-board?mode=home 을 받은 뒤의 모양. 받은 값은 모듈에 남으므로(앱 안 이동 때 바로 그림) 받기 전 모양을 보는 위 시험들보다 뒤에 둔다.
+ */
+describe("홈 대표 구획 채우기", () => {
+  const t = createTranslator("browse", browse);
+  const render = (props: Partial<Parameters<typeof TalkHero>[0]>) => renderToStaticMarkup(
+    <TalkHero lead={null} rest={[]} sources={["hn"]} t={t} locale="ko" preview={false} {...props} />);
+
+  it("받은 값으로 칩·곡선·원문 토론·스타를 채운다. Bluesky 는 이름·칩을 달고 반응 수로 적는다", async () => {
+    const bsky = post(9, { source: "bluesky", externalId: "did:plc:ltjj43huonogytm4szn5hzkx/3mygbhpmh762y", title: "", points: 7, comments: 1 });
+    const lead = entry(1, "doory", { posts: [post(1), bsky], sources: ["hn", "bluesky"], starGrowth: growth });
+    const rows = [entry(2, "konnect", { starGrowth: { ...growth, delta: 12 } })];
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ preview: false, checkedAt: null, unlisted: null, entries: [lead, ...rows].map(talkEntryData) })));
+    vi.stubGlobal("fetch", fetch);
+    expect(await loadTalkBoard("home", "ko")).not.toBeNull();
+    vi.unstubAllGlobals();
+    expect(fetch).toHaveBeenCalledWith("/api/talk-board?mode=home&locale=ko", expect.anything());
+
+    const html = render({ lead, rest: rows, sources: ["hn", "bluesky"] });
+    expect(html).toContain("Hacker News·Bluesky에서 이야기된 AI로 만든 프로젝트");
+    expect(html).toContain('class="talk-src talk-src-bluesky"><b>Bsky</b>반응 7 · 답글 1');
+    expect(html).toContain("첫 관측 뒤 GitHub 스타");
+    expect(html).toContain('href="https://news.ycombinator.com/item?id=5001"');
+    expect(html).toContain("★ 1,563");
+    expect(html).toContain('<span class="talk-grow">+12</span>');
+    expect(html).not.toContain("aria-busy");
+    // 집계 기준 문구는 상수와 같은 값을 말한다
+    expect(browse["talk.methodThreshold"]).toContain(`Bluesky 반응(좋아요 + 재게시×2) ${TALK_THRESHOLD.bluesky.points} 이상`);
+    // 글 빼기 요청은 공개 연락처로(Bluesky 개발자 지침 5). 상세 페이지 요청 폼은 제품을 내리는 곳이라 SNS 글 빼기로 안내하지 않는다 —
+    // 그 폼으로 오면 제품 내림 요청이 되어 제품이 잘못 내려갈 수 있다(2026-10-22)
+    expect(t("talk.methodRequest", { email: CONTACT_EMAIL })).toBe("글쓴이가 원하면 뺍니다 — 원문을 지우거나, contact@nomorevibe.com 로 글 주소를 보내 주세요. 프로젝트 상세 페이지의 요청 폼은 프로젝트 자체를 내리는 곳이라 SNS 글 빼기에는 쓰지 않습니다");
+  });
+
+  it("스타가 없고 증가 곡선도 없으면 ★ 나 곡선을 만들지 않는다", () => {
+    // 위에서 받은 값에 없는 항목 — 그사이 순위가 바뀐 것과 같다. 자리를 거두고 아이콘은 이름 첫 글자 타일
+    const html = render({ rest: [entry(7, "gone", { product: { ...entry(7, "gone").product, stars: null } })] });
+    expect(html).toContain('id="talk-lead-title"><a href="/p/gone">gone</a>');
+    expect(html).not.toContain('class="talk-list"');
+    expect(html).not.toContain('class="talk-lead-chart"');
+    expect(html).not.toContain("★");
+    expect(html).not.toContain("aria-busy");
+    expect(html).toContain('class="product-monogram"');
   });
 });

@@ -1,4 +1,5 @@
 import { displayProjectName } from './display-name';
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { Product, ProductStatus, TaglineSource } from "@/lib/db/schema";
 import { countNewRepositories, listNewRepositoryRows, listProductRows, listRecentlyDiscovered, type ListOptions, type ProductListRow, type ProductSort } from "./repository";
@@ -90,7 +91,8 @@ export function toListItem(p: ProductListRow): ProductListItem {
     builder: builderClaim === "reported" ? p.builder : null,
     builderClaim,
     stack: p.stack ?? [],
-    ogImage: p.ogImage,
+    // 표지는 추측할 수 없는 보호 주소로만 내보낸다(cover-url.ts) — 이 값은 같은 출처 API 응답에만 실린다
+    ogImage: protectedCoverUrl(p.ogImage),
     makerName: p.makerName,
     repoUrl: p.repoUrl,
     repoRenamedTo: p.repoRenamedTo ?? null,

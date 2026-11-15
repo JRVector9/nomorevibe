@@ -9,6 +9,7 @@ import type { ShareCardData } from "./share";
 
 /**
  * 공유 카드 그림(SNS 설계 T13·M5) — 1200×630, 어두운 잉크 카드. next/og ImageResponse(Satori)로 그린다.
+ * 이름·요약·브랜드 줄·사이트 표기만 그린다 — 칩(스타·HN·써본 사람·분야)과 날짜는 없다(2026-11-15 사람 결정, 공개 출력은 주소·이름·요약).
  * 글꼴: 저장소에 둔 Noto Sans KR·SC·TC 부분집합(assets/fonts, WOFF, SIL OFL 1.1 — 만든 방법은 scripts/fonts/subset-share-card-fonts.py).
  * lib 밖에 두는 것은 글꼴을 쓰지 않는 워커 이미지·Oracle 릴리스(lib 를 통째로 복사한다)를 키우지 않으려는 것이다.
  * KR 은 한글 완성형·라틴·기호, SC 는 간체 GB2312(가나 포함), TC 는 번체 Big5 상용자를 담는다.
@@ -18,7 +19,7 @@ import type { ShareCardData } from "./share";
  * 그래서 그리기 전에 실은 글꼴의 cmap 에 없는 글자를 글에서 뺀다 — 빠진 글자가 없으면 Satori 는 받으러 가지 않는다.
  * 글꼴은 카드 언어의 것을 먼저 싣고, 그 글꼴에 없는 글자(한 카드에 섞인 한글·한자·가나)를 담은 글꼴만 뒤에 더 싣는다.
  */
-const INK = { card: "#10141c", fg: "#f0f3fa", fg2: "#98a2b8", chip: "rgba(255, 255, 255, 0.09)", tile: "#f2f2f7", tileFg: "#1d1d1f", accent: "#d63a40", hn: "#b4500f" };
+const INK = { card: "#10141c", fg: "#f0f3fa", fg2: "#98a2b8", tile: "#f2f2f7", tileFg: "#1d1d1f", accent: "#d63a40" };
 type Script = "kr" | "sc" | "tc";
 type Weight = 400 | 700;
 type Face = { script: Script; weight: Weight; data: ArrayBuffer; covers: Set<number> };
@@ -176,8 +177,7 @@ export function clampCardText(text: string, units: number): string {
 }
 
 export async function shareCardPng(data: ShareCardData, locale: Locale): Promise<ArrayBuffer> {
-  const chips = data.chips.map((chip) => chip.text);
-  const scripts = await cardScripts(locale, [data.name, data.tagline, data.brandLine, data.url, data.date, ...chips].join(" "));
+  const scripts = await cardScripts(locale, [data.name, data.tagline, data.brandLine, data.url].join(" "));
   const fonts = await cardFonts(scripts);
   const bold = (text: string) => drawableText(text.replace(/\s+/g, " "), fonts, 700).replace(/ {2,}/g, " ").trim();
   const regular = (text: string) => drawableText(text.replace(/\s+/g, " "), fonts, 400).replace(/ {2,}/g, " ").trim();
@@ -201,16 +201,8 @@ export async function shareCardPng(data: ShareCardData, locale: Locale): Promise
           {tagline ? <div style={{ display: "flex", fontSize: 34, color: INK.fg2, marginTop: 18, lineHeight: 1.38 }}>{tagline}</div> : null}
         </div>
       </div>
-      <div style={{ display: "flex", alignItems: "flex-end" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", flex: 1 }}>
-          {data.chips.map((chip) => (
-            <span key={chip.text} style={{ display: "flex", fontSize: 26, padding: "10px 20px", borderRadius: 14, background: INK.chip, marginRight: 14, marginTop: 10, ...(chip.hn ? { borderLeft: `6px solid ${INK.hn}` } : {}) }}>{regular(chip.text)}</span>
-          ))}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", marginLeft: 24, color: INK.fg2 }}>
-          <span style={{ fontSize: 26 }}>{regular(data.url)}</span>
-          <span style={{ fontSize: 20, marginTop: 6 }}>{regular(data.date)}</span>
-        </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", color: INK.fg2 }}>
+        <span style={{ fontSize: 26 }}>{regular(data.url)}</span>
       </div>
     </div>
   );

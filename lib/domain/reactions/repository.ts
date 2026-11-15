@@ -1,4 +1,5 @@
 import "server-only";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { and, asc, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { clickEvents, products, rateLimits } from "@/lib/db/schema";
@@ -260,7 +261,7 @@ function listQuery(where: ReturnType<typeof and>) {
 }
 
 const toItem = (row: ListRow): ReactionListItem => ({
-  ...toMine(row.reaction), slug: row.slug, name: row.name, ogImage: row.ogImage?.startsWith("/") && !row.ogImage.startsWith("//") ? row.ogImage : null, category: row.category,
+  ...toMine(row.reaction), slug: row.slug, name: row.name, ogImage: row.ogImage?.startsWith("/") && !row.ogImage.startsWith("//") ? protectedCoverUrl(row.ogImage) : null, category: row.category,
   reply: row.replyBody && row.replyAt ? { body: row.replyBody, authorName: row.replyAuthor, createdAt: row.replyAt.toISOString() } : null,
 });
 

@@ -50,10 +50,11 @@ describe("anti-scrape pagination page entry points", () => {
     expect(growth).not.toHaveBeenCalled();
   });
 
-  it("keeps canonical and normal robots behavior, adding noindex only to blocked lists", async () => {
-    for (const deep of [false, true]) {
-      const page = deep ? "101" : "2";
-      const shown = deep ? "901" : "18";
+  // 2026-11-15 공개 HTML 이름·요약만: 첫 쪽 뒤(?shown>9, page>1)는 카드가 서버 HTML 에 없는 빈 틀이라 막힌 쪽과 같이 noindex,follow
+  it("keeps canonical and normal robots behavior on first pages, adding noindex to later and blocked pages", async () => {
+    for (const depth of ["first", "later", "deep"] as const) {
+      const page = { first: "1", later: "2", deep: "101" }[depth];
+      const shown = { first: "9", later: "18", deep: "901" }[depth];
       const cases = [
         await homeMetadata({ searchParams: Promise.resolve({ shown }) }, parent),
         await categoryMetadata({ params: Promise.resolve({ category: "dev" }), searchParams: Promise.resolve({ shown }) }, parent),
@@ -63,8 +64,11 @@ describe("anti-scrape pagination page entry points", () => {
       expect(cases.map(meta => new URL(String(meta.alternates?.canonical)).pathname)).toEqual([
         "/", "/c/dev", "/popular", "/rising",
       ]);
-      for (const meta of cases) expect(meta.robots).toEqual(deep ? { index: false, follow: true } : undefined);
+      for (const meta of cases) expect(meta.robots).toEqual(depth === "first" ? undefined : { index: false, follow: true });
     }
+    expect((await homeMetadata({ searchParams: Promise.resolve({}) }, parent)).robots).toBeUndefined();
+    expect((await homeMetadata({ searchParams: Promise.resolve({ new: "1", page: "1" }) }, parent)).robots).toBeUndefined();
+    expect((await homeMetadata({ searchParams: Promise.resolve({ new: "1", page: "2" }) }, parent)).robots).toEqual({ index: false, follow: true });
     expect((await homeMetadata({ searchParams: Promise.resolve({ q: "PDF" }) }, parent)).robots).toEqual({ index: false, follow: true });
   });
 

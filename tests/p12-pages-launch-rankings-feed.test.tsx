@@ -110,22 +110,24 @@ const row = (slug: string, status: "verified" | "seeded", extra: Record<string, 
 });
 
 describe("feed.xml", () => {
-  it("항목 제목에 상태 꼬리표를 붙이지 않고, 상태는 분류로 싣는다", async () => {
+  it("항목은 이름·요약·주소·등재 시각만 — 상태 꼬리표·분류·저장소·그림이 없다", async () => {
     mocks.listRecentlyDiscovered.mockResolvedValue([
-      row("mine", "verified"),
+      row("mine", "verified", { category: "SENTINEL_CAT", repoUrl: "https://github.com/sentinel/repo", stars: 987654,
+        ogImage: "/api/og-cache/sentinel", makerName: "SENTINEL_MAKER", url: "https://sentinel.example/site" }),
       row("found", "seeded", { taglineKo: "  한국어 한 줄 소개  " }),
     ]);
 
     const res = await feed(new Request("https://nomorevibe.test/feed.xml"), { params: Promise.resolve({}) });
     const xml = await res.text();
-    const items = new XMLParser().parse(xml).rss.channel.item as { title: string; description: string; category: string[] }[];
+    const items = new XMLParser().parse(xml).rss.channel.item as Record<string, unknown>[];
 
     expect(items.map((item) => item.title)).toEqual(["Mine", "Found"]);
     expect(xml).not.toContain("— 운영자 미확인");
     expect(xml).not.toContain("— ✓ 검증됨");
-    expect(items[0].category).toEqual(["Dev", "✓ 검증됨"]);
-    expect(items[1].category).toEqual(["Dev", "운영자 미확인"]);
-    // 상세 설명과 같은 순서 — 한국어 한 줄이 있으면 그것, 없으면 원문
+    for (const item of items) expect(Object.keys(item).sort()).toEqual(["description", "guid", "link", "pubDate", "title"]);
+    expect(items[0].link).toBe("https://nomorevibe.test/p/mine");
+    expect(xml).not.toMatch(/<category|SENTINEL|987654|sentinel\.example|github\.com|og-cache|운영자 미확인|검증됨<\/category/);
+    // 요약 — 한국어 한 줄이 있으면 그것, 없으면 원문
     expect(items[0].description).toBe("mine tagline");
     expect(items[1].description).toBe("한국어 한 줄 소개");
   });

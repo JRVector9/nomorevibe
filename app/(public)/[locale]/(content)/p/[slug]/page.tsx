@@ -5,25 +5,21 @@ import { notFound } from "next/navigation";
 import { DetailEntry } from "@/components/product-detail/DetailEntry";
 import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
 import { DetailActivitySlot, DetailFactsSlot, DetailInfoSlot, DetailRelatedSlot } from "@/components/product-detail/DetailExtras";
-import { IntroSection } from "@/components/product-detail/IntroSection";
-import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
-import { ReadmeExcerptSection } from "@/components/product-detail/ReadmeExcerpt";
+import { BreadcrumbCategorySlot, DetailAsideSlot, DetailIntroSlot, DetailPreviewSlot, FeedbackSettingsSlot } from "@/components/product-detail/DetailHeroSlots";
 import { ProductHero } from "@/components/product-detail/ProductHero";
-import { GithubStarButton } from "@/components/product-detail/GithubStarButton";
 import { FeedbackForm } from "@/components/product-detail/FeedbackForm";
 import { FeedbackList } from "@/components/product-detail/FeedbackList";
-import { FeedbackSettingsMenu } from "@/components/product-detail/FeedbackSettingsMenu";
-import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { TryPanel } from "@/components/feedback/TryPanel";
+import { followLabels as followLabels_ } from "@/components/me/follow-labels";
 import { productReactionsEnabled } from "@/lib/domain/reactions/flags";
-import { categoryHref } from "@/components/home/browse-state";
-import { DEFAULT_SHARE_IMAGE, productShareImage, shareMetadata } from "@/lib/copy/share";
+import { productShareCard, shareMetadata } from "@/lib/copy/share";
 import { pageTitle } from "@/lib/copy/brand";
-import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
+import { getProductIdentity } from "@/lib/domain/products/detail-view";
 import { productIndexable } from "@/lib/domain/products/indexing";
-import { translatedCategory } from "@/components/home/i18n";
+import { publicTeaser } from "@/lib/domain/products/public-teaser";
 import { I18nProvider } from "@/lib/i18n/context";
 import { bundledOrDictionary, getDictionary, getTranslator } from "@/lib/i18n/dictionary";
+import { createTranslator } from "@/lib/i18n/messages";
 import { DetailMessages } from "@/lib/i18n/bundled/detail";
 import type { Locale } from "@/lib/i18n/locales";
 import { getRequestLocale } from "@/lib/i18n/server";
@@ -36,16 +32,11 @@ import { logger } from "@/lib/observability/logger";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
-import { githubFeedbackDeliveryEnabled, githubStarEnabled, productFeedbackEnabled, publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
-import { parseGithubRepository } from "@/lib/github/repositories";
-import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
+import { githubFeedbackDeliveryEnabled, productFeedbackEnabled, publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import { getProductGithubBinding } from "@/lib/domain/github-installations/bindings";
-import { TalkBand } from "@/components/social/TalkBand";
+import { TalkBandSlot } from "@/components/social/TalkBandSlot";
 import { talkVisibility } from "@/lib/social/flags";
-import { productTalk, type ProductTalk } from "@/lib/social/talk";
-import { productFollowSlots } from "@/components/me/FollowSlot";
 import { tryPanelMessages } from "@/components/feedback/try-messages";
-import { shortReadmeExcerpt } from "@/lib/domain/products/readme-excerpt";
 
 export const dynamic = "force-dynamic";
 
@@ -63,21 +54,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const source = productTranslationSource(product);
   const baseIndexable = productIndexable(product);
   const contentEligible = product.translationEligible !== false;
-  const [translations, readiness, common] = await Promise.all([
+  const [translations, readiness] = await Promise.all([
     readTranslationsForProducts([product], locale).catch((error) => {
       logger.warn("i18n.product_metadata_translation_unavailable", { error }); return [];
     }),
     baseIndexable && contentEligible ? onReplica(() => readProductTranslationReadiness([source])).catch((error) => {
       logger.warn("i18n.product_metadata_readiness_unavailable", { error }); return [];
     }) : [],
-    getTranslator(locale, "common"),
   ]);
   const description = locale === "ko" ? product.taglineKo?.trim() || product.tagline
     : selectProductTranslation(source, locale, "tagline", translations.find((row) => row.field === "tagline")).text;
   const title = pageTitle(product.name);
-  const image = productShareImage(product.ogImage);
-  const share = shareMetadata({ title, description, image: { ...image,
-    alt: image.url === DEFAULT_SHARE_IMAGE.url ? `nomorevibe — ${common("site.tagline")}` : product.name } });
+  // 공유 미리보기 그림은 이름·요약만 그린 공유 카드(/p/<slug>/share-card.png, 언어별 주소) — 2026-11-15 사람 결정.
+  // 제품 표지(og-cache)는 서버 HTML·메타에 싣지 않는다(표지는 보호 API 가 추측할 수 없는 주소로만 준다, cover-url.ts)
+  const share = shareMetadata({ title, description, image: productShareCard(locale, slug, product.name) });
   const localized = productLocaleMetadata(locale, `/p/${slug}`, source, readiness, baseIndexable, contentEligible);
   return {
     ...share, ...localized, title, description,
@@ -108,45 +98,36 @@ export default async function ProductPage({ params }: Props) {
   );
 }
 
+/**
+ * 상세 본문(2026-11-15 공개 HTML 이름·요약만, 문서 4.2) — 서버 HTML·RSC 데이터에 싣는 제품 값은 slug·이름·요약뿐이다.
+ * 빵부스러기는 홈 › 이름, JSON-LD 는 WebPage+CreativeWork(이름·요약)+빵부스러기. 머리의 나머지 칸·소개·README 발췌·사실 칸·정보 카드·
+ * 미리보기·운영자 상자·같은 분야는 모두 같은 출처 API(/api/products/[slug]/details) 한 번으로 화면 JS 가 채운다.
+ * 모든 요청(봇 포함)에 같은 HTML 을 준다.
+ */
 async function ProductDetail({ slug, locale }: { slug: string; locale: Locale }) {
   // 기본 정보를 읽은 뒤 그사이 내려갔으면 여기서 404 화면(응답은 이미 흘렀으므로 상태는 200, noindex 가 붙는다)
-  const detail = await publicRead("detail", ["detail", slug], () => getProductDetail(slug));
-  if (!detail) notFound();
-
-  const [t, labels, localized] = await Promise.all([
-    getTranslator(locale, "detail"), getTranslator(locale, "labels"),
-    localizeProductList([detail.product], locale, ["tagline", "description"]),
-  ]);
-  const product = localized[0];
-  const categoryName = translatedCategory(product.category, labels);
-  const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
+  const identity = await identityOf(slug);
+  if (!identity) notFound();
+  const [t, localized] = await Promise.all([getTranslator(locale, "detail"), localizeProductList([identity], locale)]);
+  const teaser = publicTeaser(localized[0], locale);
   const githubDeliveryAvailable = githubFeedbackDeliveryEnabled()
-    && Boolean((await getProductGithubBinding(product.id).catch(() => null))?.enabled);
-  // SNS 화제 띠(C안) — 화면을 켰거나 관리자 미리보기일 때만 읽는다. 실패해도 상세는 그대로 연다
+    && Boolean((await getProductGithubBinding(identity.id).catch(() => null))?.enabled);
   const talkView = await talkVisibility();
-  const talk: ProductTalk | null = talkView.visible
-    ? await productTalk(product.id, product.repoUrl).catch((error: unknown) => { logger.warn("detail.talk_unavailable", { slug, error }); return null; })
-    : null;
-  // 날짜의 '올해'를 정하는 시각 — 업데이트 목록(클라이언트)도 서버가 읽은 이 값으로 그린다
   const now = new Date();
   // 써보기 판(피드백 PR3) — 내 평가·요약은 판이 브라우저에서 읽는다(이 HTML 은 엣지에 4분 남는다)
-  const me = productReactionsEnabled() ? tryPanelMessages(await getDictionary(locale, "me")) : null;
-  // 구조화 데이터(SEO-06) — 우리가 가진 사실만, 화면의 경로 nav 와 같은 빵부스러기. 소개는 메타 description 과 같은 값
+  const me = productReactionsEnabled() || publicUserAuthEnabled() ? await getDictionary(locale, "me") : null;
+  const tryMessages = me && productReactionsEnabled() ? tryPanelMessages(me) : null;
+  const meT = me ? createTranslator("me", me) : null;
+  // 팔로 단추 글자 — 메이커 단추의 주인 이름 자리(\u0000)는 받은 뒤 채운다(주인 계정은 서버 HTML 에 싣지 않는다)
+  const followLabels = meT && publicUserAuthEnabled() ? {
+    product: followLabels_(meT, "product", meT("follow.product", { name: teaser.name })),
+    maker: followLabels_(meT, "maker", meT("follow.maker", { login: "\u0000" })),
+  } : null;
   const jsonLd = productJsonLd({
-    origin: siteOrigin(), slug, name: product.name, description: product.translation?.ready ? product.translation.text : locale === "ko" ? product.taglineKo?.trim() || product.tagline : product.tagline,
-    url: product.url, category: product.category, categoryName,
-    categoryPath: localePath(locale, categoryHref(product.category)), accessMode: product.accessMode,
+    origin: siteOrigin(), slug, name: teaser.name, description: teaser.summary, inLanguage: locale,
+    shareCardImage: `${siteOrigin()}${productShareCard(locale, slug, teaser.name).url}`,
     pagePath: localePath(locale, `/p/${slug}`), homePath: localePath(locale, "/"), homeName: t("page.discover"),
-    repoUrl: product.repoUrl, repoGone: product.repoGone, image: product.ogImage, languages,
   });
-
-  /*
-   * 서버 HTML 에는 제목·한 줄 소개·분야·README 발췌(몇 문장)·최소 JSON-LD 만 글자로 남긴다(2026-11-14 공개 HTML 줄이기,
-   * 2026-11-15 README 사람 결정). 사실 칸·정보 카드·언어·업데이트·같은 분야 목록과 README 전문은 브라우저가 같은 출처 API
-   * (/api/products/[slug]/details·/readme, 공개 API 읽기 관문)로 불러온다 — 제품 값을 JSON 으로 HTML 에 싣지 않는다.
-   */
-  const readmeExcerpt = shortReadmeExcerpt(detail.readmeExcerpt);
-  const media = detail.media.map(({ src, width, height, altText, sourceMissing, lastSuccessAt }) => ({ src, width, height, altText, sourceMissing, lastSuccessAt }));
 
   return (
     <I18nProvider locale={locale} dictionaries={{}} now={now.toISOString()}><main className="wrap pb-14">
@@ -155,59 +136,41 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
       <nav aria-label={t("page.breadcrumb")} className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
         <Link prefetch={false} href={localePath(locale, "/")} className="shrink-0 hover:text-fg">{t("page.discover")}</Link>
         <span aria-hidden>›</span>
-        <Link prefetch={false} href={localePath(locale, categoryHref(product.category, { sort: "recent" }))} className="shrink-0 hover:text-fg">{categoryName}</Link>
-        <span aria-hidden>›</span>
-        <span className="min-w-0 truncate text-fg">{product.name}</span>
+        {/* 분야는 API 로 받은 뒤 채운다 — 서버 HTML·JSON-LD 빵부스러기는 홈 › 이름 */}
+        <BreadcrumbCategorySlot slug={slug} />
+        <span className="min-w-0 truncate text-fg">{teaser.name}</span>
       </nav>
 
-      <ProductHero product={product} i18n={{ locale, t, labels }} now={now} unclaimed={detail.unclaimed} risingRank={detail.risingRank} talkRank={talk?.qualifies ? talk.rank : null} health={detail.health} languages={languages}
-        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null} follow={productFollowSlots(product, detail.repository?.facts?.repositoryUrl ?? null)}
-        personalGithubStar={githubStarEnabled() && !product.repoGone && product.repoUrl && parseGithubRepository(product.repoUrl)
-          ? <GithubStarButton key={product.slug} slug={product.slug} stars={product.stars} /> : undefined}
-        tryPanel={me ? <I18nProvider locale={locale} dictionaries={{ me }}><TryPanel key={product.slug} slug={product.slug} name={product.name} /></I18nProvider> : undefined} />
+      <ProductHero teaser={teaser} followLabels={followLabels}
+        tryPanel={tryMessages ? <I18nProvider locale={locale} dictionaries={{ me: tryMessages }}><TryPanel key={slug} slug={slug} name={teaser.name} /></I18nProvider> : undefined} />
 
-      {talk && <TalkBand talk={talk} t={t} locale={locale} now={now} preview={talkView.preview} />}
+      {talkView.visible && <TalkBandSlot slug={slug} />}
 
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
         <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-9">
-          <DetailFactsSlot slug={product.slug} />
-          <IntroSection product={product} profile={detail.profile} readmeExcerpt={readmeExcerpt} unclaimed={detail.unclaimed}>
-            <ReadmeExcerptSection slug={product.slug} repoUrl={product.repoUrl} repoGone={product.repoGone} excerpt={readmeExcerpt} t={t} />
-          </IntroSection>
-          <DetailActivitySlot slug={product.slug} />
+          <DetailFactsSlot slug={slug} />
+          <DetailIntroSlot slug={slug} />
+          <DetailActivitySlot slug={slug} />
           {/* 댓글 구획은 위 선 없이 간격(gap-9)과 머리로만 나눈다 — 바로 위 업데이트 마지막 줄 아래에 이 선만 떨어져 있어
               내용 없는 빈 줄처럼 보였다(2026-11-15 사람 지적: 내용이 있는 만큼만 선). 다른 구획도 선 없이 간격으로 나눈다 */}
           {productFeedbackEnabled() && (
             <section id="feedback" className="scroll-mt-24 space-y-4" aria-label={t("page.feedback")}>
-              <FeedbackList key={product.slug} slug={product.slug}
-                settings={product.repoUrl && parseGithubRepository(product.repoUrl) ? <FeedbackSettingsMenu slug={product.slug} /> : undefined}>
-                <FeedbackForm slug={product.slug} githubDeliveryAvailable={githubDeliveryAvailable} />
+              <FeedbackList key={slug} slug={slug} settings={<FeedbackSettingsSlot slug={slug} />}>
+                <FeedbackForm slug={slug} githubDeliveryAvailable={githubDeliveryAvailable} />
               </FeedbackList>
             </section>
           )}
         </div>
 
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
-          <DetailInfoSlot slug={product.slug} />
-          <PreviewFigure product={{ name: product.name, ogImage: product.ogImage }} media={media} />
-          {detail.unclaimed && githubOwnerFromRepositoryUrl(product.repoUrl) && (
-            // 내부 id 는 로그인 운영자 확인(API)이 켜졌을 때만 넘긴다 — 꺼져 있으면 단추가 쓰지 않는다
-            <UnclaimedOwnerContact productId={publicUserAuthEnabled() ? product.id : undefined} slug={product.slug} installable={product.accessMode === "installable"}
-              authEnabled={publicUserAuthEnabled()} githubEnabled={githubStarEnabled()} />
-          )}
-          {product.status === "unverified" && (
-            <section className="rounded-[12px] border border-line bg-bg-card p-5">
-              <h2 className="text-[15px] font-extrabold text-fg">{t("page.unlisted")}</h2>
-              <p className="mt-2 text-[13px] leading-6 text-fg-2">
-                {t("page.verify", { command: "/nomorevibe verify" })}
-              </p>
-            </section>
-          )}
+          <DetailInfoSlot slug={slug} />
+          <DetailPreviewSlot slug={slug} name={teaser.name} />
+          <DetailAsideSlot slug={slug} />
         </aside>
       </div>
 
-      <DetailRelatedSlot slug={product.slug} />
+      <DetailRelatedSlot slug={slug} />
     </main></I18nProvider>
   );
 }

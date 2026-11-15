@@ -1,23 +1,36 @@
 import Link from "next/link";
 import { Fragment, Suspense, isValidElement, type ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProductDetailView, PublicProduct } from "@/lib/domain/products/detail-view";
+import type { PublicProduct } from "@/lib/domain/products/detail-view";
 import type { PopularProduct } from "@/lib/domain/products/popular";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
 /**
- * 공개 화면 HTML 줄이기(2026-11-14) — 서버 HTML 안 RSC 데이터에 제품 값이 JSON 으로 실리지 않는지 본다.
- * DB 없이 실제 화면 부품(홈·/popular·상세)을 대역 값으로 그린다.
+ * 공개 HTML 은 제품 이름·요약만(2026-11-15 사람 결정, docs/tasks/2026-11-15-public-html-name-summary.md 7장) — 허용 목록 시험.
+ *
+ * 대역 제품의 숨길 칸마다 표식 값(SENTINEL_*·987654·sentinel.example…)을 넣고, 4.2의 화면·generateMetadata·JSON-LD·feed.xml·og 카드 데이터를
+ * 그린 결과에 표식이 0개이고 이름·요약은 있음을 본다. 브라우저 부품 속성(RSC 데이터)에 실린 제품 객체(slug 를 가진 객체)는
+ * 허용 칸(slug·name·summary·lang)만 가져야 한다. DB 없이 실제 화면 부품을 대역 값으로 그린다.
  *
  * RSC 를 흉내 낸다: 서버 부품은 펼치고, "use client" 파일의 부품(vitest.config.ts 가 경계 표시를 단다)과 next/link 는 경계로 보고
- * 그 속성을 JSON 으로 모은다 — Next 가 HTML 안 self.__next_f 로 싣는 값이다. 경계 속성 안의 부품(children 등)은 서버가 그린 글자로 다시 펼친다.
+ * 그 속성을 JSON 으로 모은다 — Next 가 HTML 안 self.__next_f 로 싣는 값이다. 브라우저 부품의 첫 그림(SSR)은 이 속성만으로 그린다.
  *  - clientJson: 브라우저 부품 속성의 JSON(= RSC 데이터의 값)
  *  - text: 서버가 그린 글자와 속성 값(= 서버 HTML 의 글자)
  */
 
-/** RSC 데이터·브라우저 부품 속성에 실리면 안 되는 운영·식별 칸 */
-const FORBIDDEN = ["id", "repoUrl", "status", "builderClaim", "taglineSource", "starsPreviousAt", "starsPrevious", "starsAt", "listedAt",
-  "makerName", "unclaimed", "pushedAt", "repoRenamedTo", "createdAt", "source", "claimedAt", "verifiedAt", "description"] as const;
+/**
+ * 브라우저 부품 속성 안 제품 객체(slug 를 가진 객체)에 허용하는 칸 — 제품 값은 slug·name·summary·lang 뿐이고,
+ * 나머지는 그리기 설정(차례·제목 단계·채울 목록 주소·팔로 단추 글자 등)이다. 새 칸이 생기면 이 목록에 일부러 더해야 한다.
+ */
+const ALLOWED_PRODUCT_KEYS = new Set(["slug", "name", "summary", "lang",
+  "rank", "priority", "headingLevel", "fillFrom", "trailing", "followLabels"]);
+
+/** 숨길 칸의 표식 — 어느 하나라도 서버 HTML·RSC 데이터·메타·JSON-LD·피드·og 데이터에 보이면 실패 */
+const SENTINELS = [
+  "SENTINEL", "sentinel.example", "sentinel-owner", "987654", "987,654", "987653", "987,653", "987001", "987,001", "987002", "987,002",
+  "987003", "987,003", "987004", "987,004", "og-cache", "github.com/",
+];
+const NAMES = ["Fixture 1", "Fixture 4"];
 
 type Flight = { clientJson: string[]; text: string[]; boundaries: string[] };
 
@@ -29,7 +42,6 @@ function isClient(type: unknown): boolean {
   return type === Link || (typeof type === "function" && (type as { $$nmvClientBoundary?: boolean }).$$nmvClientBoundary === true);
 }
 
-/** 브라우저 부품의 속성을 RSC 처럼 JSON 으로 — 그 안의 부품은 서버가 그린 것이라 따로 펼친다 */
 function serializeProps(props: Record<string, unknown>, nested: unknown[]): string {
   return JSON.stringify(props, (_key, value: unknown) => {
     if (isValidElement(value)) { nested.push(value); return "$element"; }
@@ -50,7 +62,6 @@ async function walk(node: unknown, out: Flight): Promise<void> {
     const nested: unknown[] = [];
     out.boundaries.push(typeof type === "function" ? type.name : "Link");
     out.clientJson.push(serializeProps(props, nested));
-    // 브라우저 부품이 그대로 그리는 글자 자식(링크 글자 등)은 서버 HTML 에도 있다
     for (const child of [props.children].flat()) if (typeof child === "string" || typeof child === "number") out.text.push(String(child));
     for (const child of nested) await walk(child, out);
     return;
@@ -80,85 +91,105 @@ async function flight(node: unknown): Promise<Flight & { json: string; html: str
   return { ...out, json: out.clientJson.join("\n"), html: out.text.join(" ") };
 }
 
-/** 금지 칸 이름 — id 는 숫자 값일 때만(내부 순차 id). 문서 요소의 id 속성("projects-title" 같은 글자)은 아니다 */
-const forbiddenKeys = (json: string) => FORBIDDEN.filter((field) => field === "id" ? /"id":\d/.test(json) : json.includes(`"${field}":`));
-
-/** 제품 행처럼 보이는 객체 — slug 와 함께 소개·별·분야 같은 값을 가진 것(저장 단추의 slug·이름은 아니다) */
-function productObjects(json: string): Record<string, unknown>[] {
-  const found: Record<string, unknown>[] = [];
+/** 브라우저 부품 속성 안의 제품 객체(slug 를 가진 객체)에서 허용 목록 밖의 칸 */
+function extraProductKeys(json: string): string[] {
+  const extra = new Set<string>();
   const visit = (value: unknown) => {
     if (Array.isArray(value)) value.forEach(visit);
     else if (value && typeof value === "object") {
       const record = value as Record<string, unknown>;
-      if (typeof record.slug === "string" && ("tagline" in record || "stars" in record || "category" in record)) found.push(record);
+      if (typeof record.slug === "string") for (const key of Object.keys(record)) if (!ALLOWED_PRODUCT_KEYS.has(key)) extra.add(key);
       Object.values(record).forEach(visit);
     }
   };
   for (const line of json.split("\n")) if (line) visit(JSON.parse(line));
-  return found;
+  return [...extra];
+}
+
+const leaked = (text: string) => SENTINELS.filter((sentinel) => text.includes(sentinel));
+
+/** 화면이 허용 목록을 지키는가 — 표식 0개, 제품 객체는 허용 칸만 */
+function expectNameSummaryOnly(page: { html: string; json: string }) {
+  expect(leaked(page.html)).toEqual([]);
+  expect(leaked(page.json)).toEqual([]);
+  expect(extraProductKeys(page.json)).toEqual([]);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// 대역 값 — 공개 목록 행 그대로(금지 칸을 모두 가진다)
+// 대역 값 — 숨길 칸마다 표식
 
 const NOW = new Date("2026-11-14T12:00:00Z");
-function row(index: number, over: Partial<ProductListItem> = {}): ProductListItem & { starGrowth?: unknown } {
+const SENTINEL_PRODUCT = {
+  category: "SENTINEL_CAT", accessMode: "installable", builder: "SENTINEL_BUILDER", builderClaim: "reported", stack: ["SENTINEL_STACK"],
+  ogImage: "/api/og-cache/sentinel-og.png", makerName: "SENTINEL_MAKER", repoUrl: "https://github.com/sentinel-owner/sentinel-repo", repoRenamedTo: null,
+  url: "https://sentinel.example/site", status: "seeded", unclaimed: true, stars: 987654, starsAt: new Date("2026-11-14T00:00:00Z"),
+  starsPrevious: 987653, starsPreviousAt: new Date("2026-11-13T00:00:00Z"), health: { down: true, since: null },
+  activity: { updatedAt: null, pushedAt: "2026-11-12T00:00:00.000Z", pushCount: 987654, pushObservedAt: "2026-11-13T00:00:00.000Z" }, aiLevel: 3,
+  listedAt: new Date("2026-11-01T00:00:00Z"), repoCreatedAt: new Date("2026-11-10T00:00:00Z"), taglineSource: "ai_readme",
+  description: "SENTINEL_DESCRIPTION long text", ownerType: "Organization",
+} as const;
+
+function row(index: number, over: Partial<ProductListItem> = {}): ProductListItem {
   return {
-    id: 95_290 + index, translationName: `Fixture ${index}`, slug: `fixture-${index}`, name: `Fixture ${index}`, tagline: `Tagline number ${index} for the card`,
-    taglineSource: "ai_readme", taglineKo: `카드 소개 ${index}`, category: "Dev", accessMode: "website", builder: "Claude Code", builderClaim: "guessed",
-    stack: ["TypeScript"], ogImage: null, makerName: `maker-${index}`, repoUrl: `https://github.com/org-${index}/repo-${index}`, repoRenamedTo: null,
-    listedAt: new Date("2026-11-01T00:00:00Z"), status: "seeded", unclaimed: true, stars: 100 + index, starsAt: new Date("2026-11-14T00:00:00Z"),
-    starsPrevious: 90 + index, starsPreviousAt: new Date("2026-11-13T00:00:00Z"), health: { down: false, since: null },
-    activity: { updatedAt: null, pushedAt: "2026-11-12T00:00:00.000Z", pushCount: 3, pushObservedAt: "2026-11-13T00:00:00.000Z" }, aiLevel: 2,
-    ...over,
-  } as ProductListItem;
+    ...SENTINEL_PRODUCT, id: 987_000 + index, translationName: `Fixture ${index}`, slug: `fixture-${index}`, name: `Fixture ${index}`,
+    tagline: `Tagline number ${index} for the card`, taglineKo: `카드 소개 ${index}`, ...over,
+  } as unknown as ProductListItem;
 }
+
+const growth = { gain: 987654, stars: 987653, baselineStars: 1, observedAt: "2026-11-14T06:00:00.000Z", baselineObservedAt: "2026-11-13T22:00:00.000Z" };
+const snapshot = { status: "ready", reason: null, asOf: "2026-11-14T07:00:00.000Z", nextCycle: "2026-11-14T15:00:00.000Z", baselineAsOf: "2026-11-13T23:00:00.000Z",
+  runId: 4, runStatus: "closed", closedAt: "2026-11-14T07:00:00.000Z", policyVersion: "growth-8h-v1", policy: null, targetCount: 80, successCount: 80, failureCount: 0,
+  firstObservedAt: null, lastObservedAt: null, baseline: null, comparableCount: 2 };
 
 const mocks = vi.hoisted(() => ({
   getPublicList: vi.fn(),
   getStarGrowthPage: vi.fn(),
   getNewThisWeek: vi.fn(),
+  countNewThisWeek: vi.fn(),
   getPopularGroups: vi.fn(),
   getPopularPage: vi.fn(),
   getPopularFacets: vi.fn(),
   getHomePulse: vi.fn(),
   getProductIdentity: vi.fn(),
   getProductDetail: vi.fn(),
-  getReadmeContent: vi.fn(),
+  getPublicListBySlugs: vi.fn(),
+  searchRelevance: vi.fn(),
+  relevanceWindow: vi.fn(),
+  listRecentlyDiscovered: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), after: () => {}, connection: async () => {} }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: vi.fn().mockResolvedValue({ agentEvidence: { displayObservedFacts: true } }) }));
 vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/social/home-talk", () => ({ loadHomeTalk: vi.fn().mockResolvedValue(null) }));
-vi.mock("@/lib/social/flags", () => ({ talkVisibility: vi.fn().mockResolvedValue({ visible: false, preview: false }) }));
+vi.mock("@/lib/social/flags", () => ({ talkVisibility: vi.fn().mockResolvedValue({ visible: false, preview: false }), talkPublicEnabled: () => false }));
 vi.mock("@/lib/domain/products/popular", () => ({
   getPopularGroups: mocks.getPopularGroups, getPopularPage: mocks.getPopularPage, getPopularFacets: mocks.getPopularFacets,
 }));
-vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage: mocks.getStarGrowthPage }));
+vi.mock("@/lib/domain/products/star-growth", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()), getStarGrowthPage: mocks.getStarGrowthPage,
+}));
 vi.mock("@/lib/domain/products/repository", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  aiLevelCounts: vi.fn().mockResolvedValue([]),
-  categoryCounts: vi.fn().mockResolvedValue({ Dev: 7, Data: 3 }),
-  countProducts: vi.fn().mockResolvedValue(12),
+  aiLevelCounts: vi.fn().mockResolvedValue([{ level: 1, count: 987003 }]),
+  categoryCounts: vi.fn().mockResolvedValue({ Dev: 987001, Data: 987004 }),
+  countProducts: vi.fn().mockResolvedValue(987002),
+  listRecentlyDiscovered: mocks.listRecentlyDiscovered,
   RISING_MAX_STARS: 2000,
 }));
 vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), popularSearches: vi.fn().mockResolvedValue([]) }));
-vi.mock("@/lib/domain/products/search-translation", () => ({
+vi.mock("@/lib/domain/products/admin-models-search", () => ({
   resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
-  normalizeQuery: (query: string) => query.trim().toLowerCase(),
+  warmQueryTranslation: vi.fn(),
 }));
-vi.mock("@/lib/domain/products/relevance", () => ({
-  searchRelevance: vi.fn().mockResolvedValue({ head: [], total: 0, semantic: false, reranked: false, plan: [], translated: null }),
-  relevanceWindow: vi.fn().mockResolvedValue([]),
-}));
+vi.mock("@/lib/domain/products/relevance", () => ({ searchRelevance: mocks.searchRelevance, relevanceWindow: mocks.relevanceWindow }));
 vi.mock("@/lib/domain/products/view", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getUnclaimedList: vi.fn().mockResolvedValue([]),
   getPublicList: mocks.getPublicList,
-  getPublicListBySlugs: vi.fn().mockResolvedValue([]),
+  getPublicListBySlugs: mocks.getPublicListBySlugs,
   getNewThisWeek: mocks.getNewThisWeek,
-  countNewThisWeek: vi.fn().mockResolvedValue(0),
+  countNewThisWeek: mocks.countNewThisWeek,
 }));
 vi.mock("@/lib/domain/products/home-pulse", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -173,176 +204,207 @@ vi.mock("@/lib/domain/products/detail-view", async (importOriginal) => ({
   getProductIdentity: mocks.getProductIdentity,
   getProductDetail: mocks.getProductDetail,
 }));
-vi.mock("@/lib/domain/products/readme-content", () => ({ getReadmeContent: mocks.getReadmeContent }));
 vi.mock("@/lib/domain/github-installations/bindings", () => ({ getProductGithubBinding: vi.fn().mockResolvedValue(null) }));
+vi.mock("@/lib/i18n/products", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  readTranslationsForProducts: vi.fn().mockResolvedValue([]),
+}));
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  onReplica: async (load: () => Promise<unknown>) => load(),
+}));
+vi.mock("@/lib/domain/products/translations", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  readProductTranslationReadiness: vi.fn().mockResolvedValue([]),
+}));
 
-const { HomeContent } = await import("@/app/(public)/[locale]/(content)/page");
+const { HomeContent, generateMetadata: homeMetadata } = await import("@/app/(public)/[locale]/(content)/page");
 const { default: PopularPage } = await import("@/app/(public)/[locale]/(content)/popular/page");
-const { default: ProductPage } = await import("@/app/(public)/[locale]/(content)/p/[slug]/page");
+const { default: RisingPage } = await import("@/app/(public)/[locale]/(content)/rising/page");
+const { default: ProductPage, generateMetadata: productMetadata } = await import("@/app/(public)/[locale]/(content)/p/[slug]/page");
+const { PublicNotFound } = await import("@/components/home/PublicNotFound");
+const { GET: feed } = await import("@/app/feed.xml/route");
+const { shareCardData } = await import("@/lib/me/share");
 const { emptyHomePulse } = await import("@/lib/domain/products/home-pulse");
-const { listHomeNews } = await import("@/lib/news/repository");
-const { TalkHero } = await import("@/components/social/TalkHero");
-const { getTranslator } = await import("@/lib/i18n/dictionary");
 
-/** README 원문 — 앞부분(발췌)과 뒷부분(전문에만 있는 글) */
-const README_LEAD = "Fixture tool turns meeting notes into tidy summaries. It runs locally and keeps your data on your machine.";
-const README_TAIL_MARKER = "UNIQUE-FULL-README-TAIL contributors should open a pull request against the develop branch";
-const README_MARKDOWN = `# Fixture\n\n${README_LEAD}\n\n## Install\n\n${"Install it with npm and run the command line tool. ".repeat(40)}\n\n## Contributing\n\n${README_TAIL_MARKER}.\n`;
-const STORED_EXCERPT = `${README_LEAD}\n\n${"Install it with npm and run the command line tool. ".repeat(9).trim()}`;
-
-const detailProduct: PublicProduct = {
-  id: 95_292, slug: "ggml", url: "https://ggml.example", accessMode: "website", name: "ggml", tagline: "Tensor library for machine learning",
-  taglineSource: "ai_readme", description: "A tensor library description that differs from the tagline.", category: "Dev", builder: null,
-  stack: ["C"], ogImage: null, makerName: "maker-x", repoUrl: "https://github.com/ggml-org/ggml", status: "seeded", source: "crawler",
-  claimedAt: null, verifiedAt: null, createdAt: new Date("2026-10-01T00:00:00Z"), updatedAt: new Date("2026-11-01T00:00:00Z"),
-  stars: 197, starsAt: new Date("2026-11-14T00:00:00Z"), starsPrevious: 190, starsPreviousAt: new Date("2026-11-13T00:00:00Z"),
-  auditHoldAt: null, repoGone: false, aiEvidence: true, takedownPending: false, taglineKo: "머신러닝용 텐서 라이브러리", translationName: "ggml", translationEligible: true,
-} as PublicProduct;
-
-const detailView = {
-  product: detailProduct, unclaimed: true, rank: null,
-  visits: { validVisits: 4, uniqueVisitors: 3, uniqueChangePercent: null, collectionStartedAt: null, collecting: false, periodDays: 30 },
-  health: { uptime30d: 99, latencyMs: 120, checkedAt: new Date("2026-11-14T11:00:00Z"), lastCheckSucceeded: true, down: false },
-  profile: null, links: [],
-  repository: { provider: "github", sourceUrl: "https://github.com/ggml-org/ggml", state: "current", observedAt: NOW, lastSuccessAt: NOW, lastFailureAt: null,
-    facts: { repositoryKey: "ggml-org/ggml", repositoryUrl: "https://github.com/ggml-org/ggml", createdAt: "2023-01-01T00:00:00.000Z", pushedAt: "2026-11-12T00:00:00.000Z",
-      updatedAt: null, stars: 197, forks: 10, public: true, archived: false, fork: false, homepage: null, contributors: { count: 5, incomplete: false, cap: null },
-      license: { value: "MIT License", spdxId: "MIT", url: null, sourceLabel: "GitHub에서 확인" }, languages: [{ name: "C", bytes: 10, percent: 80 }, { name: "C++", bytes: 2, percent: 20 }],
-      latestRelease: null, relationshipState: null } },
-  license: { state: "observed_only", label: "GitHub에서 확인", maker: null, observed: { value: "MIT License", spdxId: "MIT", url: null, sourceLabel: "GitHub에서 확인" } },
-  media: [], updates: [], agents: [], observedAgentFacts: [], skills: [],
-  freshness: [{ kind: "repository", provider: "github", state: "current", label: "최신", lastSuccessAt: NOW, lastFailureAt: null, nextAttemptAt: NOW,
-    normalizedFacts: { _githubCollection: { etag: "raw" } } }],
-  risingRank: null, related: [row(31), row(32)], relatedBasis: "category", relatedTotal: null,
-  readmeExcerpt: STORED_EXCERPT, aiLevel: { checked: true, level: 2 },
-} as unknown as ProductDetailView;
+const detailProduct = {
+  ...SENTINEL_PRODUCT, id: 987_999, slug: "ggml", name: "ggml", tagline: "Tensor library for machine learning", taglineKo: "머신러닝용 텐서 라이브러리",
+  translationName: "ggml", translationEligible: true, source: "crawler", claimedAt: null, verifiedAt: null, auditHoldAt: null, repoGone: false,
+  aiEvidence: true, takedownPending: false, createdAt: new Date("2026-10-01T00:00:00Z"), updatedAt: new Date("2026-11-01T00:00:00Z"),
+} as unknown as PublicProduct;
 
 beforeEach(() => {
-  mocks.getPublicList.mockResolvedValue([1, 2, 3, 4].map((index) => row(index)));
-  mocks.getNewThisWeek.mockResolvedValue([row(11, { repoCreatedAt: new Date("2026-11-10T00:00:00Z") }), row(12)]);
-  mocks.getStarGrowthPage.mockResolvedValue({
-    items: [row(21), row(22)].map((item) => ({ ...item, starGrowth: { gain: 12, stars: 150, baselineStars: 138, observedAt: "2026-11-14T06:00:00.000Z", baselineObservedAt: "2026-11-13T22:00:00.000Z" } })),
-    total: 2, page: 1, pages: 1, pageSize: 5, offset: 0, facets: null,
-    snapshot: { status: "ready", reason: null, asOf: "2026-11-14T07:00:00.000Z", nextCycle: "2026-11-14T15:00:00.000Z", baselineAsOf: "2026-11-13T23:00:00.000Z",
-      runId: 4, runStatus: "closed", closedAt: "2026-11-14T07:00:00.000Z", policyVersion: "growth-8h-v1", policy: null, targetCount: 80, successCount: 80, failureCount: 0,
-      firstObservedAt: null, lastObservedAt: null, baseline: { runId: 3, asOf: "2026-11-13T23:00:00.000Z", status: "closed", policyVersion: "growth-8h-v1",
-        targetCount: 80, successCount: 80, failureCount: 0, firstObservedAt: null, lastObservedAt: null, closedAt: null }, comparableCount: 2 },
-  });
-  const popular = (index: number): PopularProduct => ({ ...row(index), stars: 5_000 + index, ownerType: "User" } as unknown as PopularProduct);
-  mocks.getPopularGroups.mockResolvedValue([{ key: "rising", total: 2, items: [popular(41), popular(42)] }]);
-  mocks.getPopularPage.mockResolvedValue({ items: [popular(51), popular(52)], total: 2, totals: [2, 0, 0, 0], page: 1, pages: 1, pageSize: 15 });
-  mocks.getPopularFacets.mockResolvedValue({ categories: [{ category: "Dev", count: 2 }], all: 2, ai: 2, personal: 2 });
-  mocks.getHomePulse.mockResolvedValue({ ...emptyHomePulse(NOW), active: [{ slug: "fixture-61", name: "Fixture 61", category: "Dev", releases: 3, stars: 300, ogImage: null }] });
+  vi.clearAllMocks();
+  mocks.getPublicList.mockImplementation(async (limit: number, options: { offset?: number } = {}) =>
+    Array.from({ length: limit }, (_, index) => row((options.offset ?? 0) + index + 1)));
+  mocks.getPublicListBySlugs.mockImplementation(async (slugs: string[]) => slugs.map((slug) => row(Number(slug.split("-")[1]))));
+  mocks.searchRelevance.mockResolvedValue({ head: [], total: 30, semantic: false, reranked: false, plan: [], translated: null });
+  mocks.relevanceWindow.mockImplementation(async (_ranked: unknown, _plan: unknown, _filters: unknown, offset: number, limit: number) =>
+    Array.from({ length: limit }, (_, index) => `fixture-${offset + index + 1}`));
+  mocks.getNewThisWeek.mockImplementation(async (limit: number, _since: Date, _until: Date, offset = 0) =>
+    Array.from({ length: Math.min(limit, 3) }, (_, index) => row(offset + 11 + index)));
+  mocks.countNewThisWeek.mockResolvedValue(40);
+  mocks.getStarGrowthPage.mockImplementation(async (options: { page?: string } = {}) => ({
+    items: [row(21), row(22)].map((item) => ({ ...item, starGrowth: growth })),
+    total: 40, page: Number(options.page ?? 1), pages: 3, pageSize: 15, offset: 0, facets: null, snapshot,
+  }));
+  const popular = (index: number): PopularProduct => row(index) as unknown as PopularProduct;
+  mocks.getPopularGroups.mockResolvedValue([{ key: "rising", total: 987654, items: [popular(41), popular(42)] }]);
+  mocks.getPopularPage.mockImplementation(async (_tier: string, _filters: unknown, _sort: string, page = 1) => ({
+    items: Array.from({ length: 15 }, (_, index) => popular(100 + index + 1)), total: 987002, totals: [987004, 0, 0, 0], page, pages: 3, pageSize: 15,
+  }));
+  mocks.getPopularFacets.mockResolvedValue({ categories: [{ category: "Dev", count: 987001 }], all: 987002, ai: 987003, personal: 987004 });
+  mocks.getHomePulse.mockResolvedValue({ ...emptyHomePulse(NOW),
+    active: [{ slug: "fixture-61", name: "Fixture 61", category: "SENTINEL_CAT", releases: 987653, stars: 987654, ogImage: "/api/og-cache/sentinel.png" }],
+    categories: [{ key: "Dev", total: 987001, born: 987004 }] });
   mocks.getProductIdentity.mockResolvedValue(detailProduct);
-  mocks.getProductDetail.mockResolvedValue(detailView);
-  mocks.getReadmeContent.mockResolvedValue({ state: "available", markdown: README_MARKDOWN, sourceUrl: "https://github.com/ggml-org/ggml#readme",
-    repositoryRootUrl: "https://github.com/ggml-org/ggml/blob/master/" });
+  mocks.getProductDetail.mockRejectedValue(new Error("상세 본문은 서버에서 detail 을 읽지 않는다"));
+  mocks.listRecentlyDiscovered.mockResolvedValue([{ ...row(71), createdAt: NOW }, { ...row(72), createdAt: NOW }]);
 });
 
-describe("홈·목록 — 카드는 서버가 글자로 그리고 제품 행을 RSC 데이터에 싣지 않는다", () => {
-  it("홈: 브라우저 부품 속성에 금지 칸(내부 id·저장소 주소·상태·판정 근거·관측 시각…)과 제품 행이 없다", async () => {
+describe("홈·분야·검색 — 서버 HTML 은 첫 쪽 카드의 이름·요약·링크뿐", () => {
+  it("홈 기본: 표식 0개, 제품 객체는 slug·이름·요약만, 첫 쪽 카드·급상승 띠·활발한 목록의 이름은 있다", async () => {
     const page = await flight(await HomeContent({ params: {} }));
-    expect(forbiddenKeys(page.json)).toEqual([]);
-    expect(productObjects(page.json)).toEqual([]);
-    // 첫 화면은 서버 HTML 글자로 — 목록·지금 뜨는·가장 활발한
-    for (const name of ["Fixture 1", "Fixture 4", "Fixture 21", "Fixture 61"]) expect(page.html).toContain(name);
-    // 첫 화면 아래 '이번 주 새로 나온' 카드·'많이 쓰이는' 모든 구간(홈 목록 아래)은 서버 HTML 에 없다 — 화면 가까이 오거나 탭을 고를 때 API 로 받는다
-    expect(page.html).not.toContain("Fixture 11");
-    expect(page.html).not.toContain("Fixture 41");
-    expect(page.boundaries).toContain("LazyCompactRow");
-    // 집계 창에는 가장 활발한 목록 대신 수만, 회차의 실행 번호 없이
-    expect(page.json).not.toContain('"active":');
-    expect(page.json).not.toContain('"runId":');
+    expectNameSummaryOnly(page);
+    for (const name of [...NAMES, "Fixture 21", "Fixture 61"]) expect(page.html + page.json).toContain(name);
+    expect(page.json).toContain("카드 소개 1");
+    // 첫 쪽(9장)만 — 10번째 카드는 없다
+    expect(page.json).not.toContain("Fixture 10\"");
+    expect(page.boundaries).toEqual(expect.arrayContaining(["TeaserProjectCard", "TeaserCompactCard", "BrowseFilters", "IntroLine", "ActiveRows"]));
   });
 
-  it("홈 AI 소식: 출처·제목·날짜는 서버 HTML 글자로만 — 소식 행(출처·회사·분류·색)이 브라우저 부품 속성에 없다(2026-11-15 2차)", async () => {
-    vi.mocked(listHomeNews).mockResolvedValueOnce([
-      { url: "https://openai.example/wallet", title: "Introducing Fixture Wallet", publishedAt: new Date("2026-11-13T15:00:00Z"), source: "OpenAI", vendor: "OpenAI", label: "공식 발표", tone: "mint" },
-      { url: "https://github.example/copilot", title: "Fixture Copilot update", publishedAt: new Date("2026-11-13T20:40:05Z"), source: "GitHub Copilot", vendor: "GitHub", label: "도구 업데이트", tone: "dark" },
-    ]);
-    const page = await flight(await HomeContent({ params: {} }));
-    expect(forbiddenKeys(page.json)).toEqual([]);
-    for (const text of ["OpenAI", "Introducing Fixture Wallet", "GitHub Copilot", "Fixture Copilot update"]) expect(page.html).toContain(text);
-    expect(page.json).not.toContain("Fixture Wallet");
-    expect(page.json).not.toContain('"vendor":');
-    expect(page.boundaries).not.toContain("NewsList");
+  it("더 보기(?shown=18): 첫 쪽 뒤 카드는 서버 HTML 에 없고 빈 틀(list=home)만, 그 주소는 noindex,follow", async () => {
+    const page = await flight(await HomeContent({ params: { shown: "18" } }));
+    expectNameSummaryOnly(page);
+    expect(page.json).toContain("Fixture 9");
+    expect(page.json).not.toContain("Fixture 10\"");
+    expect(page.json).not.toContain("Fixture 18");
+    expect(page.json).toMatch(/"fillFrom":"[^"]*list=home[^"]*offset=9[^"]*limit=9/);
+    const metadata = await homeMetadata({ searchParams: Promise.resolve({ shown: "18" }) } as never, Promise.resolve({}) as never);
+    expect(metadata.robots).toEqual({ index: false, follow: true });
   });
 
-  it("화제 대표 카드: 한 줄 소개의 출처(taglineSource)는 보이지 않으므로 브라우저 부품 속성으로 넘기지 않는다(2026-11-15 2차)", async () => {
-    const lead = {
-      rank: 1, repositoryKey: "acme/talk", score: 10, posts: [], sources: ["hn"], byMaker: false, starGrowth: null, homeDecision: null,
-      product: { ...row(71), translation: undefined, taglineSource: "maker" },
-    };
-    const page = await flight(TalkHero({ lead: lead as never, rest: [], sources: ["hn"], t: await getTranslator("ko", "browse"), locale: "ko", preview: false }));
-    expect(page.boundaries).toContain("ProductTagline");
-    expect(forbiddenKeys(page.json)).toEqual([]);
-    expect(page.html).toContain("Fixture 71");
+  it("분야 화면(category=Dev): 분야 목록도 첫 쪽만, 분야별 수·공개 수는 서버 HTML 에 없다", async () => {
+    const page = await flight(await HomeContent({ params: { category: "Dev" } }));
+    expectNameSummaryOnly(page);
+    expect(page.json).toContain("Fixture 1");
   });
 
-  it("검색 결과도 같다", async () => {
-    const page = await flight(await HomeContent({ params: { q: "fixture", sort: "recent" } }));
-    expect(forbiddenKeys(page.json)).toEqual([]);
-    expect(productObjects(page.json)).toEqual([]);
-    expect(page.html).toContain("Fixture 2");
+  it("검색(?q=): 순위 계산은 그대로, 출력만 이름·요약 — 늘린 쪽도 서버가 이름·요약으로 그린다", async () => {
+    const page = await flight(await HomeContent({ params: { q: "fixture", shown: "18" } }));
+    expectNameSummaryOnly(page);
+    expect(mocks.searchRelevance).toHaveBeenCalled();
+    expect(page.json).toContain("Fixture 18");
   });
 
-  it("/popular 목록·카드 보기", async () => {
+  it("저장 보기(?saved=1): 후보 카드를 서버 HTML 에 싣지 않는다", async () => {
+    const page = await flight(await HomeContent({ params: { saved: "1" } }));
+    expectNameSummaryOnly(page);
+    expect(page.boundaries).toContain("SavedOnlyGrid");
+    expect(page.json).not.toContain("Fixture 1\"");
+  });
+
+  it("이번 주 새로 나온(?new=1): 첫 쪽은 이름·요약, 2쪽은 빈 틀(list=new-page)", async () => {
+    const first = await flight(await HomeContent({ params: { new: "1" } }));
+    expectNameSummaryOnly(first);
+    expect(first.json).toContain("Fixture 11");
+    const second = await flight(await HomeContent({ params: { new: "1", page: "2" } }));
+    expectNameSummaryOnly(second);
+    expect(second.json).not.toContain("Fixture");
+    expect(second.json).toContain("list=new-page&page=2");
+  });
+});
+
+describe("/popular·/rising — 첫 쪽 앞줄만 이름·요약, 2쪽부터 빈 틀", () => {
+  it("/popular 목록·카드 보기: 표식 0개(순위 수·구간 수·알약 수 포함), 앞 5줄 이름만", async () => {
     for (const view of ["list", "cards"]) {
       const page = await flight(await PopularPage({ searchParams: Promise.resolve({ view }) }));
-      expect(forbiddenKeys(page.json)).toEqual([]);
-      expect(productObjects(page.json)).toEqual([]);
-      expect(page.html).toContain("Fixture 51");
+      expectNameSummaryOnly(page);
+      expect(page.json).toContain("Fixture 105");
+      expect(page.json).not.toContain("Fixture 106");
+      expect(page.json).toContain("from=0");
     }
   });
 
-  it("/popular 한 쪽 15줄 가운데 앞 5줄만 서버 HTML — 뒷줄 자리 속성은 조건 주소와 수뿐(2026-11-15 2차)", async () => {
-    const popular = (index: number) => ({ ...row(index), stars: 5_000 + index, ownerType: "User" });
-    mocks.getPopularPage.mockResolvedValueOnce({ items: Array.from({ length: 15 }, (_, index) => popular(101 + index)), total: 15, totals: [15, 0, 0, 0], page: 1, pages: 1, pageSize: 15 });
-    const page = await flight(await PopularPage({ searchParams: Promise.resolve({}) }));
-    expect(forbiddenKeys(page.json)).toEqual([]);
-    expect(productObjects(page.json)).toEqual([]);
-    expect(page.html).toContain("Fixture 105");
-    expect(page.html).not.toContain("Fixture 106");
-    expect(page.json).not.toContain("Fixture 106");
+  it("/popular 2쪽: 줄 없이 빈 틀", async () => {
+    const page = await flight(await PopularPage({ searchParams: Promise.resolve({ page: "2" }) }));
+    expectNameSummaryOnly(page);
+    expect(page.json).not.toContain("Fixture");
     expect(page.boundaries).toContain("LazyPopularRest");
-    expect(page.json).toContain('"query":"tier=rising","view":"list","count":10');
+  });
+
+  it("/rising 1쪽은 이름·요약, 2쪽은 빈 틀 — 8시간 증가 수는 어디에도 없다", async () => {
+    const first = await flight(await RisingPage({ searchParams: Promise.resolve({}) }));
+    expectNameSummaryOnly(first);
+    expect(first.json).toContain("Fixture 21");
+    const second = await flight(await RisingPage({ searchParams: Promise.resolve({ page: "2" }) }));
+    expectNameSummaryOnly(second);
+    expect(second.json).not.toContain("Fixture");
   });
 });
 
-describe("상세 — README 발췌만 서버 HTML 글자로, 전문·부가 자료는 같은 출처 API 로", () => {
-  it("README 전문은 서버 HTML·RSC 데이터 어디에도 없고, 발췌는 한 번만 짧게 있다", async () => {
+describe("상세 — h1 이름·요약·빵부스러기 홈›이름·JSON-LD(이름·요약)만", () => {
+  it("본문: 표식 0개, 분야·소유자·스타·README·사이트 주소·표지·내부 id 없음", async () => {
     const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
-    expect(page.html).not.toContain("UNIQUE-FULL-README-TAIL");
-    expect(page.json).not.toContain("UNIQUE-FULL-README-TAIL");
-    // 발췌는 서버 HTML 에 한 번 — 브라우저 부품 속성(JSON)으로 다시 싣지 않는다
-    expect(page.html.split(README_LEAD).length - 1).toBe(1);
-    expect(page.json).not.toContain(README_LEAD);
-    const excerpt = page.text.find((text) => text.startsWith(README_LEAD))!;
-    expect(excerpt.length).toBeGreaterThan(README_LEAD.length);
-    expect(excerpt.length).toBeLessThanOrEqual(320);
-  });
-
-  it("설치형 제품의 설치 안내: 설치 주소(url)와 slug 만 넘기고 제품 행 칸(repoUrl)은 넘기지 않는다(2026-11-15 2차)", async () => {
-    const installable = { ...detailProduct, accessMode: "installable", url: "https://github.com/ggml-org/ggml" } as PublicProduct;
-    mocks.getProductIdentity.mockResolvedValue(installable);
-    mocks.getProductDetail.mockResolvedValue({ ...detailView, product: installable });
-    const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
-    expect(page.boundaries).toContain("InstallPrompt");
-    expect(forbiddenKeys(page.json)).toEqual([]);
-    const props = page.clientJson[page.boundaries.indexOf("InstallPrompt")];
-    expect(JSON.parse(props)).toEqual({ url: "https://github.com/ggml-org/ggml", slug: "ggml" });
-  });
-
-  it("제목·한 줄 소개·분야·최소 JSON-LD 는 서버 HTML 에 남고, 브라우저 부품 속성에는 금지 칸·제품 행이 없다", async () => {
-    const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
+    expectNameSummaryOnly(page);
     expect(page.html).toContain("ggml");
     expect(page.html).toContain("머신러닝용 텐서 라이브러리");
-    expect(page.html).toContain("개발 도구");
-    expect(page.html).toContain('"@context":"https://schema.org"');
-    expect(forbiddenKeys(page.json)).toEqual([]);
-    expect(productObjects(page.json)).toEqual([]);
-    // 같은 분야 카드·사실 칸(지표)·라이선스는 서버 HTML 에 없다 — 브라우저가 부가 자료 API 로 받는다
-    expect(page.html).not.toContain("Fixture 31");
-    expect(page.html).not.toContain("MIT");
+    expect(page.json).not.toMatch(/987999/);
+    expect(mocks.getProductDetail).not.toHaveBeenCalled();
+  });
+
+  it("JSON-LD: WebPage+CreativeWork(이름·요약)+빵부스러기 홈›이름", async () => {
+    const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
+    const script = page.text.find((text) => text.includes('"@context"'))!;
+    const [webPage, breadcrumb] = JSON.parse(script);
+    expect(webPage["@type"]).toBe("WebPage");
+    expect(webPage.mainEntity).toEqual({ "@type": "CreativeWork", name: "ggml", description: "머신러닝용 텐서 라이브러리",
+      image: expect.stringMatching(/\/p\/ggml\/share-card\.png$/) });
+    expect(breadcrumb.itemListElement.map((item: { name: string }) => item.name)).toEqual(["발견하기", "ggml"]);
+    expect(leaked(script)).toEqual([]);
+  });
+
+  it("generateMetadata: 제목=이름, 설명=요약, og:image·twitter:image 는 이름·요약 공유 카드(share-card.png) — 표지·og-cache 0개", async () => {
+    const metadata = await productMetadata({ params: Promise.resolve({ slug: "ggml" }) });
+    const text = JSON.stringify(metadata);
+    expect(metadata.openGraph?.images).toEqual([{ url: "/p/ggml/share-card.png", width: 1200, height: 630, alt: "ggml" }]);
+    expect(metadata.twitter?.images).toEqual(["/p/ggml/share-card.png"]);
+    expect(text).not.toContain("og-cache");
+    expect(text).not.toContain("sentinel-og");
+    expect(leaked(text)).toEqual([]);
+    expect(metadata.description).toBe("머신러닝용 텐서 라이브러리");
+  });
+
+  it("서버 HTML(본문·RSC·JSON-LD·메타) 어디에도 /api/og-cache/ 주소가 0개 — JSON-LD image 도 공유 카드", async () => {
+    const page = await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) }));
+    const metadata = JSON.stringify(await productMetadata({ params: Promise.resolve({ slug: "ggml" }) }));
+    const all = [page.html, page.json, metadata].join("\n");
+    expect(all.match(/\/api\/og-cache\//g) ?? []).toHaveLength(0);
+    const script = page.text.find((text) => text.includes('"@context"'))!;
+    const [webPage] = JSON.parse(script);
+    expect(webPage.mainEntity.image).toMatch(/\/p\/ggml\/share-card\.png$/);
+  });
+});
+
+describe("피드·og 카드·없는 주소", () => {
+  it("feed.xml: 이름·요약·주소·시각만", async () => {
+    const xml = await (await feed(new Request("https://nomorevibe.test/feed.xml"), { params: Promise.resolve({}) } as never)).text();
+    expect(leaked(xml)).toEqual([]);
+    expect(xml).toContain("Fixture 71");
+    expect(xml).toContain("카드 소개 71");
+    expect(xml).not.toContain("<category");
+  });
+
+  it("og 카드 데이터: 이름·요약·사이트 표기만(칩·날짜 없음)", async () => {
+    const data = await shareCardData("ggml", "ko");
+    expect(Object.keys(data!).sort()).toEqual(["brandLine", "name", "tagline", "url"]);
+    expect(leaked(JSON.stringify(data))).toEqual([]);
+    expect(data!.tagline).toBe("머신러닝용 텐서 라이브러리");
+  });
+
+  it("없는 주소 화면(모든 공개 화면의 404 경계): 제품 값 없음", async () => {
+    const page = await flight(await PublicNotFound({ locale: "ko" }));
+    expectNameSummaryOnly(page);
+    expect(page.json).not.toContain("Fixture");
   });
 });

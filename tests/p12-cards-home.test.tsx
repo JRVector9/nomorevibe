@@ -2,7 +2,8 @@ import type { ResolvingMetadata } from "next";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadMarkup } from "@/components/cards/markup-loader";
 
 /**
  * 2026-10-08 점검 SEO-04(정식 주소)·A11Y-05(제목 단계)·A11Y-03(문장 안 링크)·UX-06(부제)·PERF-03(목록 첫 줄).
@@ -46,6 +47,12 @@ vi.mock("@/lib/domain/products/home-pulse", async () => ({
   ...(await vi.importActual<typeof import("@/lib/domain/products/home-pulse")>("@/lib/domain/products/home-pulse")),
   getHomePulse: vi.fn().mockRejectedValue(new Error("not in unit tests")),
 }));
+/** 카드의 나머지 칸은 화면 JS 가 /api/product-cards?slugs= 로 채운다(2026-11-15) — 받은 값을 바꿔 끼운다. 기본은 받는 중(undefined) */
+const cardFills = vi.hoisted(() => ({ fill: undefined as ((slug: string) => unknown) | undefined }));
+vi.mock("@/components/cards/CardEnrich", async (original) => ({
+  ...await original<typeof import("@/components/cards/CardEnrich")>(),
+  useCardFill: (slug: string) => cardFills.fill?.(slug),
+}));
 vi.mock("@/lib/domain/ranking/view", () => ({
   getAllTimeRanking: vi.fn().mockResolvedValue([]),
   getCurrentSeason: mocks.getCurrentSeason,
@@ -76,10 +83,14 @@ const skipsLevel = (levels: number[]) => levels.some((level, index) => index > 0
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cardFills.fill = undefined;
   mocks.getCurrentSeason.mockResolvedValue(null);
   mocks.countProducts.mockResolvedValue(4);
   mocks.getPublicList.mockResolvedValue(["a", "b", "c", "d"].map(product));
 });
+
+// 다 그린 카드 마크업은 첫 로드 JS 밖에서 받는다(markup-loader.ts) — 채운 모양을 보는 시험은 미리 받아 둔다
+beforeAll(async () => { await loadMarkup(); });
 
 describe("정식 주소 (SEO-04)", () => {
   it("보기 조건이 붙은 홈은 홈을 정식 주소로 — 레이아웃의 RSS 알림은 지우지 않는다", async () => {
@@ -130,6 +141,12 @@ describe("검색·분야 화면의 제목 단계 (A11Y-05)", () => {
 
 describe("목록 첫 줄 그림 (PERF-03)", () => {
   it("목록이 화면 첫 그림이면(검색) 앞 세 장만 먼저 받는다", async () => {
+    // 서버 HTML 의 카드(이름·요약)에는 표지 그림이 없다 — 같은 크기의 빈 자리만
+    const teasers = renderToStaticMarkup(await HomeContent({ params: { q: "pdf", sort: "recent" } }));
+    expect(teasers).not.toContain("<img ");
+    expect(teasers).not.toContain("/api/og-cache/");
+    // 카드 API 로 채운 뒤 다 그린 카드가 앞 세 장의 표지를 먼저 받는다
+    cardFills.fill = (slug) => ({ ...product(slug), owner: null });
     const html = renderToStaticMarkup(await HomeContent({ params: { q: "pdf", sort: "recent" } }));
     const loading = [...html.matchAll(/<img [^>]*class="tile-preview"[^>]*>/g)].map((match) => match[0].match(/loading="(\w+)"/)?.[1]);
     expect(loading).toEqual(["eager", "eager", "eager", "lazy"]);
@@ -138,7 +155,7 @@ describe("목록 첫 줄 그림 (PERF-03)", () => {
 
 describe("홈 부제 (UX-06)", () => {
   it("타이틀 아래 무엇을 모았고 표시가 무슨 뜻인지 한 줄, 게재 기준 링크", () => {
-    const html = renderToStaticMarkup(createElement(IntroLine, { pulse: emptyHomePulse(new Date("2026-10-11T00:00:00Z")), total: 10, state: { sort: "ai" } }));
+    const html = renderToStaticMarkup(createElement(IntroLine, { pulse: emptyHomePulse(new Date("2026-10-11T00:00:00Z")), state: { sort: "ai" } }));
     expect(html).toContain('<p class="intro-sub">');
     expect(html).toContain("공개 저장소에서 찾아 모은 프로젝트");
     expect(html).toContain("✓는 메이커가 도메인을 확인한 곳에만");

@@ -18,6 +18,16 @@
 .talk-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .talk-preview { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }
 
+/* 채우기 전 자리(2026-11-15 공개 HTML 이름·요약만) — 글자 없이 높이만, 받은 칸과 같은 자리를 잡는다 */
+.talk-pending { border-radius: 10px; background: var(--bg-soft); }
+.talk-pending-block { display: block; min-width: 48px; }
+.talk-lead .talk-pending, .talk-list .talk-pending { background: var(--bg-hover); }
+.talk-icon-pending { background: var(--bg-soft); }
+@media (prefers-reduced-motion: no-preference) {
+  .talk-pending, .talk-icon-pending { animation: talk-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes talk-pulse { 50% { opacity: 0.55; } }
+
 /* 스타 곡선 */
 .talk-spark { display: block; width: 100%; height: 34px; }
 .talk-spark-lg { display: block; width: 100%; height: 96px; }

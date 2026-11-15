@@ -22,9 +22,9 @@ export async function PopularTiers({personal=false}:{personal?:boolean}){
   logger.warn('home.popular_unavailable',{error});
   return <section className="popular-section" id="popular"><h2>{t("popular.title")}</h2><p role="status">{t("error.load")}</p></section>;
  }
- // 탭 부품(브라우저)에는 구간 이름·수·주소만 넘어간다. 카드는 서버 HTML 에 싣지 않는다 — 이 구획은 홈 목록 아래(첫 화면 밖)라
+ // 탭 부품(브라우저)에는 구간 이름·주소만 넘어간다(구간 수는 /api/browse-counts?part=tiers 로 받는다, 2026-11-15). 카드는 서버 HTML 에 싣지 않는다 — 이 구획은 홈 목록 아래(첫 화면 밖)라
  // 첫 구간도 화면 가까이 오면, 다른 구간은 탭을 처음 고를 때 같은 출처 API 로 받는다(2026-11-15 공개 HTML 줄이기 2차)
- const tiers=groups.map(group=>({key:group.key,label:t(`tier.${group.key}`),range:t(`tierRange.${group.key}`),total:group.total,href:localePath(locale,popularHref(group.key,personal))}));
+ const tiers=groups.map(group=>({key:group.key,label:t(`tier.${group.key}`),range:t(`tierRange.${group.key}`),href:localePath(locale,popularHref(group.key,personal))}));
  return <section className="popular-section" id="popular" aria-labelledby="popular-title">
   <div className="row-head"><div><h2 id="popular-title" className="row-title">{t("popular.title")}</h2>
    <p className="row-note">{t("popular.homeNote")} · <Link prefetch={false} href={localePath(locale,"/?metric=popular#popular")} scroll={false}>{t("nav.methodology")}</Link></p></div>
