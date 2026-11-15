@@ -3,6 +3,7 @@ import { z } from "zod";
 import { JOB_NAMES } from "@/lib/jobs/catalog";
 import { intervalOverridable, JOB_INTERVAL_MAX_MS, JOB_INTERVAL_MIN_MS } from "@/lib/jobs/job-intervals";
 import { DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS, unknownHoldSecondsSchema } from "@/lib/llm/capacity-unknown-hold";
+import { DEFAULT_MODEL_CAPACITY_LEDGER_RETENTION_DAYS, ledgerRetentionDaysSchema } from "@/lib/llm/capacity-retention";
 import { DEADLINE_LADDER_SKEW_MS, deadlineLadderSchema, type DeadlineLadder } from "@/lib/llm/deadline-policy";
 import { DEFAULT_MODEL_DEADLINES, DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPOSE_LIMITS, DEFAULT_MODEL_TIMEOUTS, MODEL_PURPOSE_ENV,
   modelTimeoutMs, type ModelDefinition } from "@/lib/llm/model-registry";
@@ -48,8 +49,10 @@ export type RuntimeSettings = Readonly<{
   /**
    * 모델 장부 점유(2026-11-10 소유자 결정 「결과 미확정 점유」). unknownHoldSeconds = 결과 미확정(indeterminate) 행이 보낸 시각부터 칸을 계속 차지하는 시간(초).
    * 0 = 예전(10-30)처럼 차지하지 않음. 입장 TX 는 이 문서를 30초 스냅숏이 아니라 행에서 바로 읽는다(lib/llm/capacity-unknown-hold.ts).
+   * ledgerRetentionDays = 끝난 장부 행(settled·withdrawn)과 그 이벤트를 지우기 전에 남겨 두는 날 수(2026-11-15 DB 보관 ⑤, 기본 14·8~90).
+   * 정리 잡(db-retention)이 틱마다 행에서 바로 읽는다(lib/llm/capacity-retention.ts).
    */
-  capacity: { unknownHoldSeconds: number };
+  capacity: { unknownHoldSeconds: number; ledgerRetentionDays: number };
 }>;
 
 export const RUNTIME_SETTINGS_VERSION = 1 as const;
@@ -125,7 +128,7 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
   // 배정 표 읽기(PR 3b-E) — 기본 꺼짐: 3b-B 배포 상태(설정으로 고른다)와 같다
   assignments: { tableReads: "off" },
   // 결과 미확정 점유(2026-11-10) — 기본 600초: 가장 긴 호출 상한(product-translate 300초)의 두 배, 45~60초 경로의 열 배. 근거는 lib/llm/capacity-unknown-hold.ts
-  capacity: { unknownHoldSeconds: DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS },
+  capacity: { unknownHoldSeconds: DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS, ledgerRetentionDays: DEFAULT_MODEL_CAPACITY_LEDGER_RETENTION_DAYS },
 });
 
 /**
@@ -186,8 +189,8 @@ export const jobBudgetSchema = z.union([ms(5_000), z.literal("auto")]);
 export const JOB_KNOB_NAMES = Object.freeze(Object.keys(jobKnobsSchema.shape) as JobKnobName[]);
 /** 모델 배정 읽기 묶음 — 열거 칸만(불리언처럼 쓰되 저장 문서에는 글자로 남아 감사 줄이 "off → on" 으로 읽힌다) */
 export const assignmentsSchema = z.object({ tableReads: z.enum(ASSIGNMENT_TABLE_READS) }).strict();
-/** 모델 장부 점유 묶음 — 결과 미확정 점유 유지 시간(초, 0~3600) */
-export const capacitySettingsSchema = z.object({ unknownHoldSeconds: unknownHoldSecondsSchema }).strict();
+/** 모델 장부 묶음 — 결과 미확정 점유 유지 시간(초, 0~3600) · 끝난 장부 보관(일, 8~90) */
+export const capacitySettingsSchema = z.object({ unknownHoldSeconds: unknownHoldSecondsSchema, ledgerRetentionDays: ledgerRetentionDaysSchema }).strict();
 
 const boundsSchema = z.object({
   version: z.literal(RUNTIME_SETTINGS_VERSION),
@@ -499,6 +502,7 @@ export const RUNTIME_SETTING_LABELS: Readonly<Record<string, string>> = Object.f
   ]),
   ["assignments.tableReads", "배정 표 읽기"],
   ["capacity.unknownHoldSeconds", "결과 미확정 점유 유지(초)"],
+  ["capacity.ledgerRetentionDays", "끝난 모델 장부 보관(일)"],
 ]));
 export function runtimeSettingLabel(path: string): string {
   const known = RUNTIME_SETTING_LABELS[path];

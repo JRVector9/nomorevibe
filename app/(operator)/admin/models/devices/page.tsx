@@ -8,7 +8,7 @@ import { buildDeviceTableRows, staleRouteItems } from "@/lib/operations/admin-ca
 import { capacityRetireIssueMessage, readAdminStaleCapacityRoutes } from "@/lib/operations/admin-capacity-retire";
 import { listAiConnections } from "@/lib/operations/admin-ai-tasks-repository";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
-import { readSettingsControl, UNKNOWN_HOLD_CONTROL } from "@/lib/operations/admin-runtime-settings";
+import { LEDGER_RETENTION_CONTROL, readSettingsControl, UNKNOWN_HOLD_CONTROL } from "@/lib/operations/admin-runtime-settings";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { cliTaskUsagesByDevice, readCliTaskUsages, type CliTaskUsageView } from "@/lib/operations/cli-task-usage";
 import { deviceDisplay } from "@/lib/operations/llm-display";
@@ -38,10 +38,10 @@ const EDITOR = modelsAdvancedEditor("devices");
 export default async function CapacityDevicesPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   const now = new Date();
-  const [view, connections, observation, stale, cli, unknownHold] = await Promise.all([readCapacityDevicesAdminView(now), listAiConnections().catch(() => null),
+  const [view, connections, observation, stale, cli, unknownHold, ledgerRetention] = await Promise.all([readCapacityDevicesAdminView(now), listAiConnections().catch(() => null),
     readAdminModelsObservation({ throughput: false }).catch(() => null), readAdminStaleCapacityRoutes(),
     readCliTaskUsages().catch((): CliTaskUsageView => ({ usages: [], unavailable: ["CLI 작업별 모델·추론 강도를 읽지 못했습니다."] })),
-    readSettingsControl(UNKNOWN_HOLD_CONTROL)]);
+    readSettingsControl(UNKNOWN_HOLD_CONTROL), readSettingsControl(LEDGER_RETENTION_CONTROL)]);
   const { byDevice: cliByDevice, unmapped: cliUnmapped } = cliTaskUsagesByDevice(cli.usages);
   const cliRows: DeviceCliRows = Object.fromEntries(Object.entries(cliByDevice).map(([deviceId, usages]) => [deviceId, <CliTaskRows key={deviceId} usages={usages} columns={7} />]));
   // 장비 이름 = 그 장비를 쓰는 연결 이름(장비 id 는 정책 groupId 라 옆에 작게 둔다). 연결이 없는 장비는 「연결 없음」
@@ -87,6 +87,16 @@ export default async function CapacityDevicesPage() {
           실시간 한도 화면의 「지금 볼 것」이 틱 끝에서 끊긴 미확정을 따로 알립니다.</p>
         {unknownHold.rowError && <p role="alert" className="devlim-refusal">실시간 한도 행을 읽지 못했습니다({unknownHold.rowError}) — 기본값을 보이며 저장할 수 없습니다.</p>}
         <CapacityForm fields={unknownHold.fields} revision={unknownHold.revision} readOnly={adminWorkspaceReadOnly() || unknownHold.revision === null} />
+      </section>
+    </details>
+    {/* 모델 장부 보관(runtime_settings capacity.ledgerRetentionDays, 2026-11-15 DB 보관 ⑤) — 보관 정리 잡(db-retention)이 틱마다 행에서 읽는다 */}
+    <details className="devlim-panel devlim-details">
+      <summary className="devlim-panel-head"><h2>모델 장부 보관</h2> <span className="devlim-muted">끝난 호출 기록을 {ledgerRetention.fields[0]?.input ?? "?"}일 남깁니다</span></summary>
+      <section id="ledger-retention" className="grid gap-2 p-4 scroll-mt-6">
+        {ledgerRetention.rowError && <p role="alert" className="devlim-refusal">실시간 한도 행을 읽지 못했습니다({ledgerRetention.rowError}) — 기본값을 보이며 저장할 수 없습니다.</p>}
+        <CapacityForm fields={ledgerRetention.fields} revision={ledgerRetention.revision} unit="일"
+          summary="저장하면 배포 없이 다음 보관 정리 틱(한 시간 안)부터 씁니다."
+          readOnly={adminWorkspaceReadOnly() || ledgerRetention.revision === null} />
       </section>
     </details>
     <details className="devlim-panel devlim-details">

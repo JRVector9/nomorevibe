@@ -31,6 +31,7 @@ import { purgeRemovedProducts } from "@/lib/jobs/products/cdn-purge";
 import { rescanPublishedSpam } from "@/lib/jobs/products/spam-rescan";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
+import { runDbRetention } from "@/lib/jobs/db-retention";
 import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refresh";
 import { refreshAiLevelsJob } from "@/lib/jobs/products/ai-level-refresh";
@@ -183,6 +184,8 @@ const HANDLERS: Record<string, AnyJob> = {
   "model-capacity-reclaim": reclaimEvidencedModelCapacity,
   /** 휴대폰 알림 — 홈 할 일(멈춤·평소와 다름)이 새로 생기면 알림 줄을 연다(전송은 감시 → Oracle Telegram 통로, 운영 콘솔 조각 4b) */
   "console-alerts": sendConsoleAlerts,
+  /** DB 보관 정리 — 끝난 모델 장부·발굴 근거·지난 스캔·지난 가동 집계를 지우고 자동 거절 원본을 줄인다(행은 남긴다) */
+  "db-retention": runDbRetention,
 
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),
