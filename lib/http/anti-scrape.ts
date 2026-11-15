@@ -21,6 +21,9 @@ export const API_READ_WINDOW_MS = 10 * 60_000;
 /** 검색(?q=, 엣지에 담기지 않는다) — IP 하나가 10분에 60번 */
 export const SEARCH_LIMIT = 60;
 export const SEARCH_WINDOW_MS = 10 * 60_000;
+/** /go/<slug>(바깥으로 나가는 문, 엣지에 담기지 않는다) — IP 하나가 10분에 60번 */
+export const GO_LIMIT = 60;
+export const GO_WINDOW_MS = 10 * 60_000;
 /** 함정 경로를 부른 IP 의 API 읽기 차단 시간 */
 export const TRAP_BLOCK_MS = 60 * 60_000;
 
@@ -28,6 +31,7 @@ const NO_STORE = { "Cache-Control": "private, no-store", "Cloudflare-CDN-Cache-C
 
 export const apiReadKey = (ip: string) => `api-read:${ip}`;
 export const searchKey = (ip: string) => `search:${ip}`;
+export const goKey = (ip: string) => `go:${ip}`;
 
 type GuardRequest = Pick<Request, "headers">;
 
@@ -68,6 +72,20 @@ export async function guardSearch(request: GuardRequest): Promise<Response | nul
   if (!response) return null;
   const retryAfter = response.headers.get("Retry-After") ?? "60";
   return new Response("Too many searches. Please try again later.\n", {
+    status: 429,
+    headers: { ...NO_STORE, "Content-Type": "text/plain; charset=utf-8", "Retry-After": retryAfter },
+  });
+}
+
+/**
+ * /go 한도 — 화면 이동이라 UA 로 거절하지 않고(봇 처리는 /go 가 따로), 넘치면 검색과 같은 글자 429 + Retry-After.
+ * 토큰을 모아 바깥 주소를 빠르게 훑는 것을 늦춘다(토큰을 내주는 상세 API 에도 따로 한도가 있다).
+ */
+export async function guardGoRedirect(request: GuardRequest): Promise<Response | null> {
+  const response = await limitByIp(request, "go", goKey, GO_LIMIT, GO_WINDOW_MS);
+  if (!response) return null;
+  const retryAfter = response.headers.get("Retry-After") ?? "60";
+  return new Response("Too many requests. Please try again later.\n", {
     status: 429,
     headers: { ...NO_STORE, "Content-Type": "text/plain; charset=utf-8", "Retry-After": retryAfter },
   });

@@ -32,8 +32,11 @@ export type DetailExtras = {
   related: { category: string; items: CompactCardItem[]; total: number | null; basis: ProductDetailView["relatedBasis"] };
 };
 
-/** 상세 API 응답 — 부가 자료와 머리·소개·미리보기·운영자 상자(detail-page-data.ts) */
-export type DetailApiResponse = DetailExtras & DetailPageData;
+/** 바깥으로 나가는 문 — 서명 토큰이 붙은 /go 주소(go-token.ts). 서버 비밀이 없으면 null(링크는 토큰 없는 /go → 상세로) */
+export type DetailGoLink = { href: string; expiresAt: number } | null;
+
+/** 상세 API 응답 — 부가 자료와 머리·소개·미리보기·운영자 상자(detail-page-data.ts), /go 주소 */
+export type DetailApiResponse = DetailExtras & DetailPageData & { go: DetailGoLink };
 
 export function detailExtras(detail: ProductDetailView, related: ProductListItem[], locale: Locale, now: Date): DetailExtras {
   const product = detail.product;

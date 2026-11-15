@@ -207,7 +207,7 @@ function pageData(c: PageCase = {}): Promise<DetailPageData> {
   return detailPageData(detail, subject);
 }
 /** 받은 것처럼 — data 가 null 이면 받지 못한 것 */
-function received(data: DetailPageData | null) {
+function received(data: (DetailPageData & { go?: typeof SIGNED_GO | null }) | null) {
   extras.state = { data, done: true };
 }
 
@@ -217,8 +217,10 @@ function heroMarkup(subject: ProductDetailView["product"] = product, overrides: 
 }
 
 /** 상세 API 를 받은 뒤의 머리 */
+/** 상세 API 가 함께 주는 서명 토큰 /go 주소(go-token.ts) — 단추는 이 값을 쓴다 */
+const SIGNED_GO = { href: "/go/simple-hwp?t=signed", expiresAt: Date.now() + 15 * 60_000 };
 async function renderHero(c: PageCase = {}) {
-  received(await pageData(c));
+  received({ ...await pageData(c), go: SIGNED_GO });
   return heroMarkup(c.product);
 }
 
@@ -273,6 +275,14 @@ describe("evidence product detail components", () => {
     vi.stubEnv("GITHUB_STAR_ENABLED", "false");
     expect(await renderHero()).not.toContain("github-star-control");
   });
+  it("바깥 단추는 상세 API 의 서명 토큰 주소를 쓰고, 토큰을 못 받았으면 토큰 없는 /go(서버가 상세로 돌려보냄)", async () => {
+    const signed = await renderHero();
+    expect(signed).toContain('href="/go/simple-hwp?t=signed"');
+    expect(signed).not.toContain('href="/go/simple-hwp"');
+    received({ ...await pageData(), go: null });
+    const unsigned = heroMarkup();
+    expect(unsigned).toMatch(/<a href="\/go\/simple-hwp"[^>]*>제품 방문하기<\/a>/);
+  });
   it("renders the name, the unclaimed mark, save and share, and a 44px outbound action", async () => {
     const html = await renderHero({ unclaimed: true, health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(), down: false } });
 
@@ -281,7 +291,7 @@ describe("evidence product detail components", () => {
     expect(textOf(html)).toContain("운영자 미확인");
     expect(html).not.toContain("미클레임");
     expect(html).toContain(`title="${UNCLAIMED_HINT}"`);
-    expect(html).toMatch(/<a href="\/go\/simple-hwp"[^>]*class="[^"]*min-h-11[^"]*"[^>]*>제품 방문하기<\/a>/);
+    expect(html).toMatch(/<a href="\/go\/simple-hwp\?t=signed"[^>]*class="[^"]*min-h-11[^"]*"[^>]*>제품 방문하기<\/a>/);
     expect(html).not.toContain('href="https://simplehwp.example"');
     expect(html).toContain(`href="${product.repoUrl}"`);
     // 응답 시간(ms)은 툴팁으로만
@@ -305,7 +315,7 @@ describe("evidence product detail components", () => {
     expect(order).toEqual([...order].sort((left, right) => left - right));
     // 같은 사이트로 가는 도메인 글자 링크는 없다 — 사이트 주소는 정보 카드의 '웹사이트' 줄
     expect(textOf(html)).not.toContain("simplehwp.example");
-    expect(html.match(/href="\/go\/simple-hwp"/g)).toHaveLength(1);
+    expect(html.match(/href="\/go\/simple-hwp\?t=signed"/g)).toHaveLength(1);
   });
 
   it("names the current repository owner as the operator, not the account in an old repository URL (UX-15, amontlabs/lcu)", async () => {
@@ -315,13 +325,13 @@ describe("evidence product detail components", () => {
     const hero = textOf(await renderHero({ product: lcu, repositoryUrl: moved.facts.repositoryUrl }));
     expect(hero).toContain("GitHub @amontlabs");
     expect(hero).not.toContain("@0xpolarzero");
-    const info = renderToStaticMarkup(<InfoCard product={lcu} repository={moved} freshness={freshness} unclaimed />);
+    const info = renderToStaticMarkup(<InfoCard goHref="/go/simple-hwp?t=signed" product={lcu} repository={moved} freshness={freshness} unclaimed />);
     expect(textOf(info)).toContain("운영 주체@amontlabs ↗GitHub 저장소 소유자");
     expect(textOf(info)).toContain("주요 기여자@0xpolarzero ↗이전 저장소 주소의 계정");
     expect(info).toContain('href="https://github.com/amontlabs"');
     expect(info).toContain('href="https://github.com/amontlabs/lcu"');
     // 저장소를 아직 읽지 않았으면 등록한 주소의 계정이 운영 주체, 기여자 줄은 없다
-    const unread = textOf(renderToStaticMarkup(<InfoCard product={lcu} repository={null} freshness={[]} unclaimed />));
+    const unread = textOf(renderToStaticMarkup(<InfoCard goHref="/go/simple-hwp?t=signed" product={lcu} repository={null} freshness={[]} unclaimed />));
     expect(unread).toContain("운영 주체@0xpolarzero ↗");
     expect(unread).not.toContain("주요 기여자");
   });
@@ -360,7 +370,7 @@ describe("evidence product detail components", () => {
     // 확정 전에는 그대로
     expect(textOf(await renderHero({ product: { ...product, accessMode: "installable" } }))).toContain("설치 프롬프트 복사");
     // 정보 카드의 저장소 줄도 링크 없이
-    const info = renderToStaticMarkup(<InfoCard product={{ ...product, repoGone: true }} repository={observedRepository} freshness={freshness} unclaimed={false} />);
+    const info = renderToStaticMarkup(<InfoCard goHref="/go/simple-hwp?t=signed" product={{ ...product, repoGone: true }} repository={observedRepository} freshness={freshness} unclaimed={false} />);
     expect(info).not.toContain('href="https://github.com/example/simple-hwp"');
     expect(textOf(info)).toContain("사라짐 · 삭제 또는 비공개");
   });
@@ -623,7 +633,7 @@ describe("evidence product detail components", () => {
   });
 
   it("renders objective facts as one info card: owner, site, repository, connection, category, access, stack, last refresh", () => {
-    const html = renderToStaticMarkup(<InfoCard product={product} repository={observedRepository} freshness={freshness} unclaimed={false} />);
+    const html = renderToStaticMarkup(<InfoCard goHref="/go/simple-hwp?t=signed" product={product} repository={observedRepository} freshness={freshness} unclaimed={false} />);
     const text = textOf(html);
     for (const label of ["정보", "운영 주체", "웹사이트", "저장소", SITE_REPO_RELATION_LABEL, "분야", "이용 방식", "기술 스택", "정보 갱신"]) expect(text).toContain(label);
     // '확인'은 AI 흔적 검사와 헷갈린다 — 정보를 읽은 때는 '정보 갱신'(UX-16), 옛 '서비스 연결'(UX-14)도 없다
@@ -635,7 +645,8 @@ describe("evidence product detail components", () => {
     expect(text).toContain("example/simple-hwp ↗");
     expect(text).toContain("공개 · 활성");
     expect(text).toContain("서로 주소를 적어 둠");
-    expect(html).toContain('href="/go/simple-hwp"');
+    // 사이트 링크는 보호 API 가 준 서명 토큰 주소(goHref) — slug 만으로 만든 /go 가 아니다
+    expect(html).toContain('href="/go/simple-hwp?t=signed"');
     expect(text).toContain("simplehwp.example ↗");
     expect(text).toContain("생산성");
     expect(text).toContain("웹사이트");
@@ -647,7 +658,7 @@ describe("evidence product detail components", () => {
     expect(html.match(/<a [^>]*text-accent-ink/g)).toHaveLength(3);
 
     // GitHub 저장소가 아니면 소유자 대신 메이커 — 미클레임이면 신고값이 아니라 우리 추정
-    const unclaimed = textOf(renderToStaticMarkup(<InfoCard product={{ ...product, repoUrl: "https://gitlab.com/example/simple-hwp" }} repository={null} freshness={[]} unclaimed />));
+    const unclaimed = textOf(renderToStaticMarkup(<InfoCard goHref="/go/simple-hwp?t=signed" product={{ ...product, repoUrl: "https://gitlab.com/example/simple-hwp" }} repository={null} freshness={[]} unclaimed />));
     expect(unclaimed).toContain("Simple Tools");
     expect(unclaimed).toContain("우리 추정");
     expect(unclaimed).not.toContain("신고값");
@@ -656,7 +667,7 @@ describe("evidence product detail components", () => {
     expect(unclaimed).not.toContain("정보 갱신");
     expect(unclaimed).not.toContain("확인 전");
 
-    const installable = textOf(renderToStaticMarkup(<InfoCard product={{ ...product, accessMode: "installable" }} repository={observedRepository} freshness={freshness} unclaimed={false} />));
+    const installable = textOf(renderToStaticMarkup(<InfoCard goHref="/go/simple-hwp?t=signed" product={{ ...product, accessMode: "installable" }} repository={observedRepository} freshness={freshness} unclaimed={false} />));
     expect(installable).toContain("없음 · 저장소가 제품 페이지");
     expect(installable).toContain("직접 설치");
     expect(installable).not.toContain("simplehwp.example");
@@ -698,7 +709,7 @@ describe("evidence product detail components", () => {
 
   it("정보 카드와 운영자 안내를 함께 보여줘도 저장소 소유자 프로필은 한 번만 나온다", () => {
     const html = renderToStaticMarkup(<>
-      <InfoCard product={product} repository={observedRepository} freshness={freshness} unclaimed />
+      <InfoCard goHref="/go/simple-hwp?t=signed" product={product} repository={observedRepository} freshness={freshness} unclaimed />
       <UnclaimedOwnerContact productId={1} repoUrl={product.repoUrl} slug={product.slug} />
     </>);
     expect(textOf(html).match(/@example ↗/g)).toHaveLength(1);
@@ -809,7 +820,7 @@ describe("evidence product detail components", () => {
   });
 
   it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {
-    const html = renderToStaticMarkup(<InfoCard product={product} freshness={[]} unclaimed={false} repository={{
+    const html = renderToStaticMarkup(<InfoCard goHref="/go/simple-hwp?t=signed" product={product} freshness={[]} unclaimed={false} repository={{
       provider: "github", sourceUrl: "https://github.com/acme/app", state: "ok", observedAt, lastSuccessAt: observedAt, lastFailureAt: null,
       facts: { repositoryKey: "acme/app", repositoryUrl: "https://github.com/acme/app", createdAt: null, pushedAt: null, updatedAt: null,
         stars: null, forks: null, public: null, archived: null, fork: null, homepage: null, contributors: null, license: null,

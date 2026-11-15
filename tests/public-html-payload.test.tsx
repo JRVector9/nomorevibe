@@ -408,3 +408,25 @@ describe("피드·og 카드·없는 주소", () => {
     expect(page.json).not.toContain("Fixture");
   });
 });
+
+describe("바깥으로 나가는 문(2026-11-15 /go 서명 토큰) — 서버 HTML·RSC 에 /go 주소·바깥 주소 0개", () => {
+  /** 토큰 붙은 /go 주소와 바깥 주소는 보호 API(/api/products/[slug]/details)로만 받는다 — slug 만으로 바깥 주소를 얻지 못한다 */
+  const OUTBOUND = ["/go/", "?t=", "github.com/", SENTINEL_PRODUCT.url, SENTINEL_PRODUCT.repoUrl, "sentinel.example"];
+  const outbound = (page: { html: string; json: string }) =>
+    OUTBOUND.map((needle) => [needle, (page.html + "\n" + page.json).split(needle).length - 1] as const).filter(([, count]) => count > 0);
+
+  it("상세·홈·분야·검색·/popular·/rising·더 보기 모두 0개", async () => {
+    const pages = {
+      detail: await flight(await ProductPage({ params: Promise.resolve({ slug: "ggml" }) })),
+      home: await flight(await HomeContent({ params: {} })),
+      category: await flight(await HomeContent({ params: { category: "Dev" } })),
+      search: await flight(await HomeContent({ params: { q: "fixture", shown: "18" } })),
+      more: await flight(await HomeContent({ params: { shown: "18" } })),
+      popular: await flight(await PopularPage({ searchParams: Promise.resolve({ view: "cards" }) })),
+      rising: await flight(await RisingPage({ searchParams: Promise.resolve({}) })),
+    };
+    for (const [name, page] of Object.entries(pages)) expect(outbound(page), name).toEqual([]);
+    // 상세 화면은 바깥 단추를 받는 자리(DetailHeroSlots)만 둔다
+    expect(pages.detail.html).toContain("ggml");
+  });
+});

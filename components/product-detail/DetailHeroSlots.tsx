@@ -19,7 +19,7 @@ import type { Locale } from "@/lib/i18n/locales";
 import type { Translator } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
 import { trackAttrs } from "@/lib/analytics/attrs";
-import { useDetailExtras } from "./DetailExtras";
+import { goHref, useDetailExtras } from "./DetailExtras";
 import { FeedbackSettingsMenu } from "./FeedbackSettingsMenu";
 import { GithubStarButton } from "./GithubStarButton";
 import { InstallPrompt } from "./InstallPrompt";
@@ -42,9 +42,9 @@ const BUTTON = "inline-flex min-h-11 shrink-0 items-center rounded-full px-4 tex
 /** 홈 '지금 뜨는'과 같은 순위 — 20위 안일 때만 배지 */
 const RISING_BADGE_MAX = 20;
 
-function useHero(slug: string): { hero: DetailHero | null; done: boolean } {
+function useHero(slug: string): { hero: DetailHero | null; done: boolean; go: string } {
   const { data, done } = useDetailExtras(slug);
-  return { hero: data?.hero ?? null, done };
+  return { hero: data?.hero ?? null, done, go: goHref(data, slug) };
 }
 
 export function HeroIconSlot({ slug, name }: { slug: string; name: string }) {
@@ -162,7 +162,7 @@ export function HeroMetaSlot({ slug, followLabels }: { slug: string; followLabel
 
 /** 단추 줄 — [제품 방문하기·저장소 열기][GitHub·설치 안내][공유][저장][팔로] */
 export function HeroActionsSlot({ slug, name, followLabels }: { slug: string; name: string; followLabels: HeroFollowLabels }) {
-  const { hero, done } = useHero(slug);
+  const { hero, done, go } = useHero(slug);
   const t = useTranslations("detail");
   const locale = useLocale();
   if (!done) return <div className="mt-2 flex flex-wrap items-center gap-2" aria-busy="true">
@@ -177,12 +177,12 @@ export function HeroActionsSlot({ slug, name, followLabels }: { slug: string; na
           <span className={`${BUTTON} bg-bg-soft text-down`}>{t("hero.repoGone")}</span>
         ) : installable ? (
           <>
-            <a href={`/go/${slug}`} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="repo" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.openRepo")}</a>
+            <a href={go} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="repo" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.openRepo")}</a>
             <InstallPrompt url={hero.repoUrl ?? hero.url} slug={slug} />
           </>
         ) : (
           <>
-            <a href={`/go/${slug}`} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="site" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.visit")}</a>
+            <a href={go} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="site" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.visit")}</a>
             {hero.repoUrl && !hero.repoGone && <a href={hero.repoUrl} target="_blank" rel="noopener noreferrer" aria-label={t("hero.repoLabel")} className={`${BUTTON} bg-bg-soft text-fg`}>GitHub</a>}
           </>
         )}
