@@ -32,11 +32,11 @@ export function textStageProgressSql(homeSlugs: readonly string[], group: 'all' 
   const translationMaxAttempts = productTranslationPolicy().maxAttempts;
   const sameDocument = sql`${crawlTaglines.documentAt} IS NOT DISTINCT FROM ${crawlDocuments.fetchedAt}`;
   const filter = group === 'reason' ? sql`WHERE key='reason-translate'` : group === 'other' ? sql`WHERE key<>'reason-translate'` : sql``;
-  return sql`WITH reason_sources AS MATERIALIZED (
-    -- Repeated model reasons share one translation. Group text before hashing/filtering, rather than per history row.
-    SELECT body, max(at) AS at FROM (${TRANSLATION_SOURCE_ROWS_SQL}) source_rows GROUP BY body
-  ), reason_eligible AS MATERIALIZED (
-    SELECT encode(sha256(convert_to(body, 'UTF8')), 'hex') AS hash, at FROM reason_sources WHERE ${progressReasonNeedsKoreanSql()}
+  return sql`WITH reason_eligible AS MATERIALIZED (
+    -- Repeated model reasons share one translation: one row per text hash. Group by the hash, not the body text — 89% of
+    -- reasons are distinct (2026-11-15: 359k of 404k), so a body-keyed aggregate spilled 80MB+ to temp files on every read.
+    SELECT encode(sha256(convert_to(body, 'UTF8')), 'hex') AS hash, max(at) AS at
+      FROM (${TRANSLATION_SOURCE_ROWS_SQL}) source_rows WHERE ${progressReasonNeedsKoreanSql()} GROUP BY 1
   ), reason_translations AS MATERIALIZED (
     -- Distinct source cardinality is underestimated. Avoid one random PK probe for every eligible reason.
     SELECT source_hash, status, updated_at, retry_at FROM ${textTranslations} WHERE target_lang='ko'

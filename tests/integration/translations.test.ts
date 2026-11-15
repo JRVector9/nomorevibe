@@ -77,6 +77,20 @@ it('2차 판단 사유도 옮긴다', async () => {
   expect((await untriedTranslations(10)).map((row) => row.body)).toEqual([EN_B]);
 });
 
+it('같은 글이 심사 기록과 2차 사유에 함께 있어도 한 줄이고, 본문은 고른 줄만 원본 행에서 다시 읽는다', async () => {
+  // 2026-11-15: 본문 키 집계가 임시 파일로 흘려 해시로만 묶고 ref('a<id>'·'s<id>')로 본문을 다시 읽는다 — 두 원본 모두에서 같은 글이 나와야 한다
+  const candidate = await attempt('acme/both', EN_A, new Date(Date.now() - 3600_000));
+  await db.insert(secondReviews).values({ candidateId: candidate.id, repo: 'acme/both', trigger: 'ai_decided', firstDecision: 'reject',
+    firstConfidence: 0.9, inputHash: 'h', status: 'needs_human', secondDecision: 'reject', secondReason: EN_A, model: 'opus' });
+  await db.insert(secondReviews).values({ candidateId: candidate.id, repo: 'acme/both', trigger: 'ai_decided', firstDecision: 'reject',
+    firstConfidence: 0.9, inputHash: 'h2', status: 'needs_human', secondDecision: 'reject', secondReason: EN_B, model: 'opus' });
+  const pending = await untriedTranslations(10);
+  expect(pending).toEqual([{ hash: textHash(EN_B), body: EN_B, attempts: 0 }, { hash: textHash(EN_A), body: EN_A, attempts: 0 }]);
+  await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' }], 'fixture-model');
+  await db.update(textTranslations).set({ retryAt: new Date(Date.now() - 1000) }).where(eq(textTranslations.sourceHash, textHash(EN_A)));
+  expect(await retryableTranslations(10)).toEqual([{ hash: textHash(EN_A), body: EN_A, attempts: 1 }]);
+});
+
 it('옮긴 글은 같은 글이면 다시 쓰고, 한 글자라도 다르면 새로 옮긴다', async () => {
   await attempt('acme/a', EN_A);
   await recordTranslations([{ hash: textHash(EN_A), translated: 'URL 은 Ruby gem 의 문서 사이트다.' }], 'gpt-oss');
