@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { timelineSummary, type TimelineUpdate } from "@/components/product-detail/client-data";
@@ -49,6 +50,13 @@ describe("업데이트 선 — 줄이 있는 만큼만", () => {
       expect(html).not.toContain("<ol");
       expect(html).toContain("아직 감지된 업데이트가 없습니다");
     }
+  });
+
+  it("바로 아래 댓글 구획도 위 선을 긋지 않는다 — 마지막 줄 아래 빈 띠를 다른 선이 닫아 빈 줄처럼 보였다", () => {
+    const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/page.tsx", "utf8");
+    const feedback = source.match(/<section id="feedback" className="([^"]+)"/)?.[1];
+    expect(feedback).toBeDefined();
+    expect(feedback).not.toMatch(/\bborder/);
   });
 
   it.each([[0, false], [1, false], [3, false], [4, true], [10, true]] as const)("%i건: '전체' 단추 %s", (count, present) => {
