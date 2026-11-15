@@ -184,9 +184,11 @@ CHECK를 다시 짜는 migration(0155·0157·0158·0160)은 이 DRAIN 아래에�
 ### Swarm 시작 경합 되돌림은 한 번만 스스로 다시 배포한다(2026-11-12)
 
 Dokploy는 `done`인데 새 태스크가 `No such container: <서비스>.<슬롯>.<태스크>`로 시작하지 못하고 Swarm이 이전 spec으로
-되돌리는 일이 반복됐다(09-14 publisher·reviewer, 10-22 crawler, 11-08·11-10·11-12 reviewer-m3, 11-12 monitor-m3).
-매번 사람이 그 앱만 같은 저장 설정으로 다시 배포해 풀었고, 그동안 모델 접수는 10~15분 더 DRAINING이었다.
-이제 `run`(`deploy_release.deploy_one`)이 그 재배포를 **앱당 한 번만** 스스로 한다. 이것은 "응답이 불명확한 배포를 자동
+되돌리는 일이 반복됐다(09-14 publisher·reviewer, 10-22 crawler, 11-08·11-10·11-12 reviewer-m3, 11-12 monitor-m3,
+11-15 scheduler-m3 — Git 경로). 매번 사람이 그 앱만 같은 저장 설정으로 다시 배포해 풀었고, 그동안 모델 접수는 10~15분 더 DRAINING이었다.
+이제 `run`이 그 재배포를 **앱당 한 번만** 스스로 한다 — 공통 이미지 앱·monitor(`deploy_release.deploy_one`)와 2026-11-15부터
+Git 경로(text·maintenance·scheduler·connect, `deploy_git_apps.deploy`)가 같은 함수(`verify_redeploying_once` →
+`redeploy_after_start_race`)로 같은 경계를 쓴다([Git 경로](#git-경로도-같은-경계로-한-번2026-11-15)). 이것은 "응답이 불명확한 배포를 자동
 재요청하지 않는다"의 예외가 아니다 — 아래가 **모두 증명된** 경우에만 해당하고, 응답이 불명확한 배포는 여전히 재요청하지 않는다.
 
 1. 검증이 Swarm 되돌림을 봤다: `UpdateStatus`가 `rollback_started`·`rollback_completed`다. `paused`·`rollback_paused`는 기다리지도
@@ -199,14 +201,15 @@ Dokploy는 `done`인데 새 태스크가 `No such container: <서비스>.<슬롯
 5. 실행이 **plan의 원래 릴리스 그대로**다: 같은 서비스 ID·spec·release·image·컨테이너 env·health·소스 바이트
    (`release_runtime.rolled_back_to_original` — 최종 fleet 검증이 유지 앱에 요구하는 증명과 같다).
 6. 그사이 다른 배포가 없고(같은 deploymentId) Dokploy 저장 설정이 여전히 **정확히 목표**다(image·`RELEASE_TAG`·나머지 안정 설정).
-7. 모델 접수가 여전히 DRAINING·유효 예약/전송 0이다(교체 묶음마다 하는 관문을 재배포 직전에 다시 읽는다). 읽기 자체가 실패하면
-   최대 30초 다시 읽고, 읽은 결과가 DRAINING이 아니면 바로 멈춘다.
+7. 모델 접수가 여전히 DRAINING·유효 예약/전송 0이다(그 교체를 들여보낸 관문을 재배포 직전에 같은 범위로 다시 읽는다 — 공통
+   이미지 앱은 그 앱, Git 경로는 run 시작 관문의 교체 대상 전체). 읽기 자체가 실패하면 최대 30초 다시 읽고, 읽은 결과가
+   DRAINING이 아니면 바로 멈춘다. 모델 호출을 보유한 앱이 범위에 없으면 관문 자체가 `required: false`다(crawler·monitor와 같다).
 
 하나라도 아니면 원래의 `SwarmRollback`을 그대로 올려 오늘과 똑같이 멈춘다. 재배포는 저장 설정을 다시 쓰지 않고
 `application.deploy`만 같은 payload로 한 번 더 요청한다. 재배포 뒤 다시 되돌리면 `<app>_swarm_rollback_repeated:task_error=…`로
 멈추고 세 번째 요청은 없다(`<app>.redeploy.attempted.json`은 `O_EXCL`로 한 번만 만들어진다). 재배포 뒤 시간 초과 등 다른 실패도 지금처럼 멈춘다.
 
-`execution/`에 남는 기록(값·URL·비밀 없음, 0600):
+`execution/`(Git 경로 앱은 `execution/git/`)에 남는 기록(값·URL·비밀 없음, 0600):
 
 | 파일 | 내용 |
 |---|---|
@@ -215,7 +218,8 @@ Dokploy는 `done`인데 새 태스크가 `No such container: <서비스>.<슬롯
 | `<app>.redeploy.attempted.json`·`.completed.json` | 재배포 요청 영수증. attempted만 있으면 응답 불명확 — 자동으로 다시 요청하지 않는다 |
 | `<app>.swarm-rollback-repeated.safe.json` | 재배포 뒤 다시 되돌린 증거(`decision: stop`) |
 | `<app>.verified.json` | `swarmRedeploys`(0·1)와 최종 deploymentId |
-| `result.safe.json`·`stopped.safe.json` | `swarmRedeploys: {"count": N, "apps": [...]}` — 이 run이 요청한 재배포 수(attempted 영수증 기준) |
+| `git/<app>.failed.json`·`git/summary.json` | Git 경로가 멈추면 `detail`에 안전 코드(`<app>_swarm_rollback_completed`, `<app>_swarm_rollback_repeated:task_error=…` 등) |
+| `result.safe.json`·`stopped.safe.json` | `swarmRedeploys: {"count": N, "apps": [...]}` — 이 run이 요청한 재배포 수(`execution/`·`execution/git/`의 attempted 영수증 기준) |
 
 멈춤 `reason`: `swarm_update_paused`, `task_error_not_start_race`, `deployment_not_done`, `rollback_not_settled`(`settleStop`에 코드),
 `runtime_not_original_release`, `deployment_changed_during_rollback`, `saved_configuration_not_target`, `model_drain_not_proven`.
@@ -228,8 +232,26 @@ monitor-m3도 같은 경계를 따른다. monitor 검증(`release_monitor.check_
 그 읽기는 "아직 증명 안 됨"으로 보고 같은 기한(300초) 안에서 다시 읽는다. 마지막 읽기가 실패한 채 기한이 지나면 사람 판별로 넘기지
 않고 지금처럼 `monitor-m3_source_health_or_push_verification_timeout`으로 멈춘다.
 
-이 재배포는 공통 이미지 앱(publisher·reviewer·crawler·웹·소비자)과 monitor의 `deploy_one`에만 있다. text·maintenance·scheduler·connect의
-Git stage 경로(`deploy_git_apps.deploy`)는 바꾸지 않았다 — 거기서 되돌림이 나면 지금처럼 멈춘다.
+#### Git 경로도 같은 경계로 한 번(2026-11-15)
+
+11-15 창에서 Git 경로(`deploy_git_apps.deploy`)가 두 번 멈췄다: wave 2 검증이 `deploy.completed` 직후 M3 SSH `command_failed:ssh:255`를
+받았고(maintenance-m3·text-m3 배포는 실제로 끝나 있었다), 다음 run에서 scheduler-m3가 `scheduler-m3_swarm_rollback_completed`로
+되돌려졌다(저장 설정은 목표, 실행은 이전 릴리스 — 같은 설정으로 `application.deploy` 한 번에 풀렸다).
+
+- **시작 경합 재배포**: `run`이 Git 롤아웃에 `deploy_release.git_start_race_redeploy`를 넘기고, 각 앱 검증(`check_deployed`)이
+  `SwarmRollback`을 내면 위 1~7을 공통 경로와 **같은 함수**로 판정한다. Git 검증의 런타임 읽기도 `UpdateStatus`만 보므로 태스크 오류는
+  monitor처럼 `swarm_status`로 한 번 읽는다. 6의 저장 설정 비교는 Git 경로가 쓰는 그대로 `stable_config(expected_config(…))`이고,
+  5는 같은 `rolled_back_to_original`이다(Git 앱 scheduler-m3·text-m3·connect-agent-m3도 테스트로 확인). 7은 Git 웨이브마다
+  관문이 없으므로 run 시작 때 Git 롤아웃을 들여보낸 관문(`model-drain.safe.json`, run의 교체 대상 전체)을 다시 읽는다 — 그 run이
+  DRAINING을 요구했으면(모델 보유 앱이 하나라도 있으면) scheduler·connect 재배포도 DRAINING·0을 다시 확인한다.
+  재배포 뒤 다시 되돌리면 `<app>_swarm_rollback_repeated:task_error=…`로 멈추고(Git `failed.json`·`summary.json`의 `detail`에 남는다),
+  paused·rollback_paused·다른 오류·설정 drift·불명확 영수증은 지금처럼 `GitRolloutStopped`로 멈춘다. 같은 웨이브의 동료는 그대로
+  끝까지 확인하고, 실패가 있으면 다음 웨이브를 시작하지 않는 규칙도 같다.
+- **일시적 검증 읽기**: `deploy.completed` 뒤 런타임 읽기가 아무것도 답하지 못하면 — SSH 연결 실패(exit 255), 원격 inspect가 빈 응답·
+  Swarm이 바꾸던 컨테이너로 실패(exit 1), 느린 호스트(시간 초과), 빈·잘못된 JSON — "아직 증명 안 됨"으로 보고 같은 기한(480초)
+  안에서 다시 읽는다(`deploy_git_apps.unreadable_runtime`). 배포 요청은 이미 받아들여졌으므로 `application.deploy`를 다시 보내지
+  않는다. 기한까지 계속 읽지 못하면 지금처럼 `<app>_verification_timeout`으로 멈춘다. 계약 오류·되돌림·명시적 멈춤·객체가 아닌
+  응답(`<app>_runtime_unknown`)은 바로 멈춘다. Dokploy API 읽기 실패와 롤아웃 끝의 앱별 최종 확인(`deploy`의 마지막 probe)은 바꾸지 않았다.
 
 실제 배포·전체 health·보호 관문이 끝나면 `result.safe.json`에 `deployed-and-verified`를 먼저 기록한다.
 그다음 detached 관측 드라이버를 시작하고 시작 영수증과 살아 있는 PID를 확인한다.

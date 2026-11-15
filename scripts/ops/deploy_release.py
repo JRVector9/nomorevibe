@@ -570,7 +570,7 @@ def _swarm_evidence(evidence):
 
 
 def _rollback_evidence(short, expected, rollback):
-    """The rollback's Swarm evidence; the monitor verifier sees no task errors, so they are read once (unread is empty)."""
+    """The rollback's Swarm evidence; the monitor and Git verifiers see no task errors, so they are read once (unread is empty)."""
     evidence = _swarm_evidence(rollback.evidence)
     if 'taskErrors' in evidence:
         return evidence
@@ -581,11 +581,14 @@ def _rollback_evidence(short, expected, rollback):
     return {**_swarm_evidence(status), 'updateState': rollback.state}
 
 
-def _redeploy_drain(client, short):
-    """model_replacement_gate before the redeploy; only a read failure is retried, never a refusal."""
+def _redeploy_drain(client, short, scope=None):
+    """model_replacement_gate before the redeploy; only a read failure is retried, never a refusal.
+
+    scope is the app list of the gate that admitted this replacement: the app itself (the shared path re-reads it per
+    batch) or, for the Git rollout that has no gate per wave, the run's replaced apps."""
     for attempt in range(REDEPLOY_DRAIN_ATTEMPTS):
         try:
-            return model_replacement_gate(client, [short])
+            return model_replacement_gate(client, list(scope) if scope else [short])
         except ValueError as error:
             if str(error) == MODEL_DRAIN_REFUSED or attempt + 1 == REDEPLOY_DRAIN_ATTEMPTS:
                 raise
@@ -596,7 +599,7 @@ def _redeploy_drain(client, short):
     raise AssertionError('unreachable')
 
 
-def redeploy_after_start_race(client, plan, short, directory, rollback, expected, old_id):
+def redeploy_after_start_race(client, plan, short, directory, rollback, expected, old_id, *, drain_scope=None):
     """Request the same saved deployment once more after a proven Swarm start race.
 
     Returns the rolled-back deployment id that the next verification must replace, or None when the rollback does not
@@ -659,7 +662,7 @@ def redeploy_after_start_race(client, plan, short, directory, rollback, expected
     checks['savedConfigIsTarget'] = True
     try:
         # Re-read model admission like before every replacement batch; reopened admission is never replaced under.
-        drain = _redeploy_drain(client, short)
+        drain = _redeploy_drain(client, short, drain_scope)
     except Exception:
         decide('stop', 'model_drain_not_proven')
         return None
@@ -670,10 +673,55 @@ def redeploy_after_start_race(client, plan, short, directory, rollback, expected
     return rolled_back_id
 
 
+def verify_redeploying_once(client, plan, short, directory, expected, old_id, verify, rollbacks, *,
+                            stopped=None, drain_scope=None):
+    """verify(old_id); after a proven Swarm start race, one same-config redeploy and verify(rolled_back_id).
+
+    Returns (evidence, redeploys, rolled_back_id). A rollback that does not qualify (redeploy_after_start_race) is
+    re-raised unchanged, so the caller stops exactly as before. A rollback after the redeploy is recorded and stops as
+    <app>_swarm_rollback_repeated, raised as `stopped` (the caller's ReleaseStopped class); never a second redeploy.
+    """
+    try:
+        return verify(old_id), 0, None
+    except rollbacks as rollback:
+        rolled_back_id = redeploy_after_start_race(client, plan, short, directory, rollback, expected, old_id,
+                                                   drain_scope=drain_scope)
+        if rolled_back_id is None:
+            raise  # not the proven start race: stop exactly as before
+    try:
+        return verify(rolled_back_id), 1, rolled_back_id
+    except rollbacks as again:
+        # Never a second redeploy: record what Swarm reported and stop.
+        repeated = _rollback_evidence(short, expected, again)
+        write_private(directory / (short + '.swarm-rollback-repeated.safe.json'), {
+            'app': short, 'detected': repeated, 'redeploys': 1, 'decision': 'stop',
+            'reason': 'swarm_rollback_repeated', 'at': now()})
+        raise (stopped or shared.ReleaseStopped)(
+            shared.swarm_detail(short + '_swarm_rollback_repeated', repeated)) from again
+
+
+def git_start_race_redeploy(client, plan, directory, drain_scope):
+    """The Git rollout's verification with the same single start-race redeploy (deploy_git_apps.deploy hook).
+
+    Receipts go to the Git receipts directory. The Git verifier raises its own module copy's SwarmRollback, and the
+    repeated stop is raised as that copy's ReleaseStopped so the Git failed/summary receipts keep the safe code.
+    Model admission is re-read with the gate that admitted the Git rollout (the run's replaced apps): there is no gate
+    per Git wave, so this is the same requirement the shared path re-reads before each batch.
+    """
+    def verified(short, expected, old_id, verify):
+        evidence, redeploys, _ = verify_redeploying_once(client, plan, short, directory, expected, old_id, verify,
+                                                         (git.shared.SwarmRollback,), stopped=git.shared.ReleaseStopped,
+                                                         drain_scope=drain_scope)
+        return {**evidence, 'swarmRedeploys': redeploys}
+    return verified
+
+
 def swarm_redeploys(directory):
-    """Start-race redeploys this run requested, from their durable receipts (write_private allows one per app)."""
+    """Start-race redeploys this run requested, from their durable receipts (write_private allows one per app),
+    in the execution directory and the Git receipts directory alike."""
     suffix = '.redeploy.attempted.json'
-    apps = sorted(path.name[:-len(suffix)] for path in Path(directory).glob('*' + suffix))
+    apps = sorted(path.name[:-len(suffix)] for folder in (Path(directory), Path(directory) / 'git')
+                  for path in folder.glob('*' + suffix))
     return {'count': len(apps), 'apps': apps}
 
 
@@ -712,23 +760,8 @@ def deploy_one(client, plan, short, directory):
 
     # The monitor verifier raises the SwarmRollback class of its own module copy.
     rollbacks = (shared.SwarmRollback,) + ((monitor.git.shared.SwarmRollback,) if monitor is not None else ())
-    redeploys, rolled_back_id = 0, None
-    try:
-        evidence = verify(old_id)
-    except rollbacks as rollback:
-        rolled_back_id = redeploy_after_start_race(client, plan, short, directory, rollback, expected, old_id)
-        if rolled_back_id is None:
-            raise  # not the proven start race: stop exactly as before
-        redeploys = 1
-        try:
-            evidence = verify(rolled_back_id)
-        except rollbacks as again:
-            # Never a second redeploy: record what Swarm reported and stop.
-            repeated = _rollback_evidence(short, expected, again)
-            write_private(directory / (short + '.swarm-rollback-repeated.safe.json'), {
-                'app': short, 'detected': repeated, 'redeploys': redeploys, 'decision': 'stop',
-                'reason': 'swarm_rollback_repeated', 'at': now()})
-            raise shared.ReleaseStopped(shared.swarm_detail(short + '_swarm_rollback_repeated', repeated)) from again
+    evidence, redeploys, rolled_back_id = verify_redeploying_once(client, plan, short, directory, expected, old_id,
+                                                                  verify, rollbacks)
     if monitor is not None and evidence.get('verification') == HUMAN_REVIEW_VERIFICATION:
         # The deployment is proven; only the push proof is missing. Leave the operator a safe record now,
         # before the final fleet verification, so it survives any later stop.
@@ -817,7 +850,8 @@ def run_release(plan, execution_dir, *, observe=True):
         if git_selected:
             validate_tool_sources(plan)
             prepared = git.prepare(client, target, git_selected, plan['snapshot'], proof, **_retired_kwargs(retired))
-            result = git.deploy(client, target, prepared, directory / 'git')
+            result = git.deploy(client, target, prepared, directory / 'git', start_race_redeploy=git_start_race_redeploy(
+                client, plan, directory / 'git', deployed))
             write_private(directory / 'git.summary.safe.json', result)
             if set(result['skipped']) != set(skipped) & set(git_selected):
                 raise ValueError('git_skip_contract_changed')

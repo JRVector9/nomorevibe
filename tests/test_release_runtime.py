@@ -204,7 +204,8 @@ class RuntimeProofTests(unittest.TestCase):
     def test_a_settled_swarm_rollback_is_proven_only_when_the_runtime_is_the_exact_original(self):
         snapshot = self.collect()
         before = copy.deepcopy(snapshot)
-        for short in ('reviewer-m3', 'web-mini', 'monitor-m3', 'ai2-consumer-m3'):
+        # The Git rollout's apps too (2026-11-15 scheduler-m3): Git source, two scheduler replicas, connect's own stage.
+        for short in ('reviewer-m3', 'web-mini', 'monitor-m3', 'ai2-consumer-m3', 'scheduler-m3', 'text-m3', 'connect-agent-m3'):
             self.roll_back(short)
             with self.subTest(short=short), redirect_stdout(io.StringIO()) as output:
                 self.assertIs(runtime.rolled_back_to_original(snapshot, short, ROOT), True)
