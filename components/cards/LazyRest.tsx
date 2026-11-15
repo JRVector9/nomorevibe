@@ -27,12 +27,12 @@ export function SkeletonCards({ count, compact = false }: { count: number; compa
   ));
 }
 
-/** 큰 카드 격자 안의 뒷카드 — source 는 list=home&… 같은 목록 주소 값 */
-export function LazyProjectCards({ source, count, headingLevel = 3 }: { source: string; count: number; headingLevel?: 2 | 3 }) {
+/** 큰 카드 격자 안의 뒷카드 — fillFrom 은 list=home&… 같은 목록 주소 값 */
+export function LazyProjectCards({ fillFrom, count, headingLevel = 3 }: { fillFrom: string; count: number; headingLevel?: 2 | 3 }) {
   const locale = useLocale();
   const t = useTranslations("labels");
   const now = useServerNow();
-  const items = useCardList(source);
+  const items = useCardList(fillFrom);
   if (items === undefined) return <SkeletonCards count={count} />;
   if (!items) return null;
   const ctx = { locale, t, now };
@@ -43,11 +43,11 @@ export function LazyProjectCards({ source, count, headingLevel = 3 }: { source: 
 }
 
 /** 작은 카드 격자 안의 뒷카드(/?new=1 2쪽부터) */
-export function LazyCompactCardsGrid({ source, count, trailing, headingLevel = 3 }: { source: string; count: number; trailing: "category" | "listed"; headingLevel?: 2 | 3 }) {
+export function LazyCompactCardsGrid({ fillFrom, count, trailing, headingLevel = 3 }: { fillFrom: string; count: number; trailing: "category" | "listed"; headingLevel?: 2 | 3 }) {
   const locale = useLocale();
   const t = useTranslations("labels");
   const now = useServerNow();
-  const items = useCardList(source);
+  const items = useCardList(fillFrom);
   if (items === undefined) return <SkeletonCards count={count} compact />;
   if (!items) return null;
   return items.map((product) => <CompactCardMarkup key={product.slug} product={product} ctx={{ locale, t, now }} trailing={trailing} headingLevel={headingLevel} />);

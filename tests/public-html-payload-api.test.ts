@@ -158,6 +158,13 @@ describe("부가 자료 API", () => {
     expect(body.timeline.total).toBe(5);
     expect(Object.keys(body.related.items[0]).sort()).toEqual(["accessMode", "aiLevel", "category", "listedAt", "name", "ogImage", "slug", "stars", "starsAt",
       "starsPrevious", "starsPreviousAt", "tagline", "taglineKo", "taglineSource"]);
+    // 2026-11-15 공개 HTML 이름·요약만 — 서버 HTML 에서 뺀 머리·소개·미리보기·운영자 상자도 같은 응답에(부품이 읽는 칸만)
+    expect(Object.keys(body).sort()).toEqual(["aside", "facts", "hero", "info", "intro", "media", "related", "timeline"]);
+    expect(body.hero).toMatchObject({ category: "Dev", stars: 197, owner: { login: "ggml-org" }, unclaimed: true, follow: null });
+    expect(body.hero.health.checkedAt).toBeInstanceOf(Date);
+    expect(body.intro).toMatchObject({ text: "Long description", readmeExcerpt: "excerpt", repo: "https://github.com/ggml-org/ggml" });
+    // 내부 id 는 로그인 운영자 확인이 꺼져 있으면 담지 않는다
+    expect(body.aside.ownerContact).toEqual({ installable: false, authEnabled: false, githubEnabled: false });
   });
 
   it("모르는 언어는 기본 언어, 없는 제품은 404", async () => {

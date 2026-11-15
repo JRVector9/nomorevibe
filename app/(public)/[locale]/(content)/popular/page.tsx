@@ -84,7 +84,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const serverRows=result?.page===1?all.slice(0,POPULAR_SERVER_ROWS):[];
  const items=(await localizeProductList(serverRows,locale)).map((item,index)=>({teaser:publicTeaser(item,locale),rank:first+index}));
  const restCount=all.length-items.length;
- const rest=restCount>0?<LazyPopularRest source={source} skip={items.length} view={state.view} count={restCount} now={now.toISOString()}/>:null;
+ const rest=restCount>0?<LazyPopularRest fillFrom={source} skip={items.length} view={state.view} count={restCount} now={now.toISOString()}/>:null;
  const split=(text:string)=>text.split('\u0000') as [string,string];
 
  return <main className="wrap popular-page">
@@ -140,7 +140,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
     </div>
    </div>
    {all.length===0?<p className="popular-empty">{t("popular.filteredEmpty")}</p>
-    :state.view==='cards'?<RankedCards items={items} source={source} rest={rest}/>:<PopularList items={items} source={source} rest={rest}/>}
+    :state.view==='cards'?<RankedCards items={items} fillFrom={source} rest={rest}/>:<PopularList items={items} fillFrom={source} rest={rest}/>}
    {result.total>0&&<nav className="popular-pagination" aria-label={t("nav.pages")}>
     {result.page>1?<Link prefetch={false} href={href({page:result.page-1})}>‹ {t("nav.previous")}</Link>:<span aria-disabled="true">‹ {t("nav.previous")}</span>}
     <span aria-live="polite"><PopularCountText query={query} pick="total" parts={split(t("popular.position", { first:count(first),last:count(first+all.length-1),total:'\u0000' }))}/></span>

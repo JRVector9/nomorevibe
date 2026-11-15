@@ -80,11 +80,11 @@ export function NotFoundRising({ title, more }: { title: string; more: { href: s
  * /popular 한 쪽의 뒷줄 — 서버가 그린 앞줄과 같은 마크업(PopularRowMarkup·ProjectCardMarkup)이라 모양이 같다.
  * 받는 동안은 부르는 쪽이 준 자리(hold)를 그대로 두고, 못 받으면 자리를 거둔다(앞줄과 쪽 넘기기는 남는다).
  */
-export function LazyPopularRows({ source, skip, view, now, hold }: { source: string; skip: number; view: "list" | "cards"; now: string; hold: ReactNode }) {
+export function LazyPopularRows({ fillFrom, skip, view, now, hold }: { fillFrom: string; skip: number; view: "list" | "cards"; now: string; hold: ReactNode }) {
   const locale = useLocale();
   const t = useTranslations("labels");
   // 서버가 이름·요약으로 그린 앞줄을 채운 같은 응답(CardEnrich)을 쓴다 — 한 쪽에 한 번 받는다
-  const list = useCardList(source);
+  const list = useCardList(fillFrom);
   if (list === undefined) return hold;
   const items = list?.slice(skip);
   if (!items?.length) return null;

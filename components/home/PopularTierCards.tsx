@@ -7,13 +7,16 @@ import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import { trackAttrs } from "@/lib/analytics/attrs";
+import { FillLine } from "@/components/cards/fill-line";
+import type { TierCountsResponse } from "@/app/api/browse-counts/route";
+import { useCountsQuery } from "./browse-counts";
 
 
 /**
  * 구간 탭 하나 — 이름·범위·수·주소만. 카드는 서버 HTML 에 없고 같은 출처 API 로 받는다:
  * 처음 보이는 구간은 구획이 화면 가까이 올 때, 나머지 구간은 탭을 처음 고를 때(2026-11-14·11-15 공개 HTML 줄이기).
  */
-export type PopularTierGroup = { key: string; label: string; range: string; total: number; href: string };
+export type PopularTierGroup = { key: string; label: string; range: string; href: string };
 
 /**
  * 홈 '많이 쓰이는 프로젝트'의 구간 탭과 카드 3장(2026-10-11 시안 안 C) — 탭은 발견하기 정렬 탭과 같은 모양(.tabs),
@@ -25,6 +28,9 @@ export function PopularTierCards({ groups, personal }: { groups: PopularTierGrou
   const locale = useLocale();
   const t = useTranslations("browse");
   const count = (n: number) => formatNumber(n, locale);
+  // 구간마다의 수는 서버 HTML 에 싣지 않는다(2026-11-15 공개 HTML 이름·요약만) — 받으면 탭·모두 보기 글에 단다
+  const totals = useCountsQuery<TierCountsResponse>(`part=tiers${personal ? "&personal=1" : ""}`)?.totals;
+  const totalOf = (key: string) => totals?.[key];
   const [current, setCurrent] = useState(0);
   // 한 번 고른 구간은 받은 카드를 그대로 둔다. 처음 구간은 구획이 화면 가까이 오면 연다(홈 목록 아래 — 첫 화면 밖)
   const [opened, setOpened] = useState<ReadonlySet<number>>(() => new Set());
@@ -57,11 +63,12 @@ export function PopularTierCards({ groups, personal }: { groups: PopularTierGrou
               aria-selected={index === current} aria-controls={`${id}-panel-${tier.key}`} tabIndex={index === current ? 0 : -1}
               className={`tab${index === current ? " active" : ""}`} onClick={() => open(index)}
               {...trackAttrs("select_content", { content_type: "popular_tier", content_id: tier.key, surface: "home" })}>
-              {tier.label} <span className="tab-count">{count(tier.total)}</span>
+              {tier.label}{totals !== undefined && totalOf(tier.key) !== undefined && <> <span className="tab-count">{count(totalOf(tier.key)!)}</span></>}
             </button>
           ))}
         </div>
-        <Link prefetch={false} className="row-more" href={localePath(locale, group.href)}>{t("popular.more", { tier: group.label, count: count(group.total) })}</Link>
+        <Link prefetch={false} className="row-more" href={localePath(locale, group.href)}>{totalOf(group.key) === undefined ? <>{t("popular.more", { tier: group.label, count: "\u0000" }).split("\u0000")[0]}<FillLine width="2.5em" />{t("popular.more", { tier: group.label, count: "\u0000" }).split("\u0000")[1]}</>
+          : t("popular.more", { tier: group.label, count: count(totalOf(group.key)!) })}</Link>
       </div>
       {groups.map((tier, index) => (
         <div key={tier.key} role="tabpanel" id={`${id}-panel-${tier.key}`} aria-labelledby={`${id}-tab-${tier.key}`} hidden={index !== current}

@@ -3,7 +3,7 @@ import { aiLevelTotals } from "@/components/home/browse-state";
 import { homeListFromParams, homeListOptions, listFor, readHomeList } from "@/components/home/home-list";
 import type { AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { getHomePulse, type HomePulse } from "@/lib/domain/products/home-pulse";
-import { getPopularFacets, getPopularPage, type PopularFacets } from "@/lib/domain/products/popular";
+import { getPopularFacets, getPopularGroups, getPopularPage, type PopularFacets } from "@/lib/domain/products/popular";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { parsePopularParams } from "@/lib/domain/products/stars";
 import { publicPaginationBlocked } from "@/lib/web/public-pagination";
@@ -18,6 +18,8 @@ export type BrowseCountsResponse = { total: number; counts: Record<string, numbe
 /** 집계 기준 창(?metric=)의 분야별 수·AI 단계별 수 */
 export type MethodCountsResponse = { aiLevels: Record<AiLevel, number> | null; categories: HomePulse["categories"] };
 
+/** 홈 '많이 쓰이는 프로젝트' 구간 탭의 수 — 구간 열쇠마다 */
+export type TierCountsResponse = { totals: Record<string, number> };
 /** /popular 의 구간별 수·지금 목록 수·거르기 알약 수 */
 export type PopularCountsResponse = { totals: number[]; total: number; facets: PopularFacets | null };
 
@@ -26,6 +28,7 @@ export type PopularCountsResponse = { totals: number[]; total: number; facets: P
  * 홈 화면(app/(public)/[locale]/(content)/page.tsx)과 같은 읽기·같은 열쇠다. 검색어(?q=)가 있는 화면은 알약 수를 숨기므로 받지 않는다.
  *  - 기본: total·counts(현재 목록 자격의 분야별 수)·resultCount(현재 목록의 수)
  *  - part=method: 집계 기준 창의 AI 단계별 수·분야별 공개 수
+ *  - part=tiers[&personal=1]: 홈 '많이 쓰이는' 구간 탭의 수(홈 구간과 같은 읽기·같은 열쇠)
  *  - part=popular&</popular 의 tier·personal·ai·category·sort·page>: 구간 탭·알약·목록 제목의 수(/popular 와 같은 읽기·같은 열쇠)
  */
 export const GET = withRoute("products.counts", async (req: Request) => {
@@ -38,6 +41,11 @@ export const GET = withRoute("products.counts", async (req: Request) => {
       getHomePulse(new Date()).catch(() => null),
     ]);
     return NextResponse.json({ aiLevels: aiLevelTotals(ai), categories: pulse?.categories ?? [] } satisfies MethodCountsResponse, { headers: NO_STORE });
+  }
+  if (params.get("part") === "tiers") {
+    const personal = params.get("personal") === "1";
+    const groups = await publicRead("list", ["popular-groups", personal], () => getPopularGroups(personal));
+    return NextResponse.json({ totals: Object.fromEntries(groups.map((group) => [group.key, group.total])) } satisfies TierCountsResponse, { headers: NO_STORE });
   }
   if (params.get("part") === "popular") {
     const query = Object.fromEntries(params.entries());

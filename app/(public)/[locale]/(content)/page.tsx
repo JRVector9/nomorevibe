@@ -248,7 +248,6 @@ function serializePulse(pulse: Pulse, now: Date, locale: Locale = "ko") {
     born: pulse.born,
     updates: pulse.updates,
     activeCount: pulse.active.length,
-    categories: pulse.categories,
     tools: pulse.tools,
   };
 }
@@ -379,7 +378,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
             // 첫 쪽만 이름·요약을 서버 HTML 에 — 2쪽부터는 빈 틀을 두고 같은 목록 API(list=new-page)로 받는다(2026-11-15)
             : <div className="compact-grid">{page === 1
               ? items.map((product, index) => <TeaserCompactCard key={product.slug} teaser={publicTeaser(product, locale)} trailing="listed" priority={index < 3} headingLevel={2} />)
-              : <LazyCompactCardsGrid source={`list=new-page&page=${page}`} count={items.length} trailing="listed" headingLevel={2} />}</div>}
+              : <LazyCompactCardsGrid fillFrom={`list=new-page&page=${page}`} count={items.length} trailing="listed" headingLevel={2} />}</div>}
         {!failed && pages > 1 && <nav className="row-head" aria-label={t("new.pages")}>
           {page > 1 && <Link prefetch={false} href={href(page - 1)}>{t("nav.previous")}</Link>}
           <span>{count(page)} / {count(pages)}</span>
@@ -612,7 +611,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
     if (section === "unclaimed") params.set("section", "unclaimed");
     return {
       teasers: rows.slice(0, server).map((row) => publicTeaser(row, locale)),
-      rest: restCount > 0 ? { source: params.toString(), count: restCount } : null,
+      rest: restCount > 0 ? { fillFrom: params.toString(), count: restCount } : null,
     };
   };
   // 0건 안내(EmptyReason 의 걸러서 0건)가 뜨는 때 — 아래 '주인을 기다리는' 목록이 붙으면 없다고 말하지 않는다
@@ -649,7 +648,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           more={{ href: strip ? `/rising?${new URLSearchParams({ cycle: strip.snapshot.asOf })}` : "/rising", label: t("nav.all") }}
           cards={(strip?.items ?? []).map((item, index) => (
             // 8시간 증가는 slug 로 다시 셀 수 없어 띠 목록 API(list=rising)로 채운다 — 같은 읽기·같은 열쇠
-            <TeaserCompactCard key={item.slug} teaser={publicTeaser(item, locale)} source="list=rising" trailing="category" priority={index < 3} />
+            <TeaserCompactCard key={item.slug} teaser={publicTeaser(item, locale)} fillFrom="list=rising" trailing="category" priority={index < 3} />
           ))} trailing="category" />
       )}
 

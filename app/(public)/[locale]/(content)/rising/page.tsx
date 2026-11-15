@@ -67,7 +67,7 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   const all = result?.items ?? [];
   const source = result ? `list=rising-page&${new URLSearchParams({ page: String(result.page), cycle: result.snapshot.asOf })}` : "";
   const items = result?.page === 1 ? (await localizeProductList(all, locale)).map((product, index) => ({ teaser: publicTeaser(product, locale), rank: first + index })) : [];
-  const rest = all.length > items.length ? <LazyPopularRest source={source} skip={0} view={view} count={all.length} now={now.toISOString()} /> : null;
+  const rest = all.length > items.length ? <LazyPopularRest fillFrom={source} skip={0} view={view} count={all.length} now={now.toISOString()} /> : null;
   return (
     <BrowseMessages locale={locale} messages={dictionary} now={now.toISOString()}><main className="wrap popular-page">
       {!result && <RenderReadRecovery key={now.toISOString()} />}
@@ -94,7 +94,7 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
           <StarGrowthSummary snapshot={starGrowthView(result?.snapshot ?? null)} now={now} />
         </div> : <>
           <p className="row-note">{t("growth.cycle", { asOf:formatDateTime(result.snapshot.asOf,now,locale),next:formatDateTime(result.snapshot.nextCycle,now,locale) })}</p>
-          {view === "cards" ? <RankedCards items={items} source={source} rest={rest} /> : <PopularList items={items} source={source} rest={rest} />}
+          {view === "cards" ? <RankedCards items={items} fillFrom={source} rest={rest} /> : <PopularList items={items} fillFrom={source} rest={rest} />}
           <nav className="popular-pagination" aria-label={t("nav.pages")}>
             {result.page > 1 ? <Link prefetch={false} href={href(result.page - 1)}>‹ {t("nav.previous")}</Link> : <span aria-disabled="true">‹ {t("nav.previous")}</span>}
             <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+all.length-1),total:count(result.total) })}</span>

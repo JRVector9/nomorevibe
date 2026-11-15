@@ -25,7 +25,6 @@ export type DetailHero = {
   repoUrl: string | null;
   repoGone: boolean;
   stars: number | null;
-  status: PublicProduct["status"];
   unclaimed: boolean;
   tagline: string;
   taglineKo: string | null;
@@ -48,8 +47,9 @@ export type DetailHero = {
 };
 
 export type DetailIntro = {
-  description: string | null;
-  descriptionLang?: string;
+  /** 한 줄 소개와 다른 소개 글(그 언어로 고른 것) */
+  text: string | null;
+  textLang?: string;
   descriptionTranslation: { machine: boolean; pending: boolean; translated: boolean; sourceLocale: string | null; original: string | null } | null;
   /** 메이커가 준 소개인가(주인 확인됨) — 출처 줄 */
   makerSource: boolean;
@@ -91,7 +91,7 @@ export async function detailPageData(detail: ProductDetailView, product: PublicP
   return {
     hero: {
       url: product.url, accessMode: product.accessMode, category: product.category, ogImage: product.ogImage, repoUrl: product.repoUrl,
-      repoGone: Boolean(product.repoGone), stars: product.stars ?? null, status: product.status, unclaimed: detail.unclaimed,
+      repoGone: Boolean(product.repoGone), stars: product.stars ?? null, unclaimed: detail.unclaimed,
       tagline: product.tagline, taglineKo: product.taglineKo, taglineSource: product.taglineSource, translation: product.translation,
       risingRank: detail.risingRank, talkRank: talk?.qualifies ? talk.rank : null, health: detail.health,
       languages: (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name),
@@ -102,8 +102,8 @@ export async function detailPageData(detail: ProductDetailView, product: PublicP
       feedbackSettings: githubRepo,
     },
     intro: {
-      description: description || null,
-      descriptionLang: description ? selected?.lang ?? englishLang(description) : undefined,
+      text: description || null,
+      textLang: description ? selected?.lang ?? englishLang(description) : undefined,
       descriptionTranslation: description && selected ? {
         machine: Boolean(selected.translated && selected.provenance === "machine"), pending: Boolean(selected.pending), translated: Boolean(selected.translated),
         sourceLocale: selected.sourceLocale ?? null, original: selected.translated ? originalDescription : null,

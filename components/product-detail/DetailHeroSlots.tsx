@@ -188,7 +188,7 @@ export function DetailIntroSlot({ slug }: { slug: string }) {
   if (!done) return <div aria-busy="true" className="h-[160px] motion-safe:animate-pulse rounded-[12px] bg-bg-soft" />;
   const intro = data?.intro;
   if (!intro) return null;
-  const { description, descriptionTranslation: selected, profile, readmeExcerpt: excerpt, repo } = intro;
+  const { text: description, descriptionTranslation: selected, profile, readmeExcerpt: excerpt, repo } = intro;
   const hasProfile = profile && (profile.problem || profile.targetUsers || profile.privacySummary
     || profile.keyFeatures.length > 0 || profile.useCases.length > 0 || profile.longDescriptionMarkdown);
   return (
@@ -196,7 +196,7 @@ export function DetailIntroSlot({ slug }: { slug: string }) {
       <section aria-labelledby="intro-title" className="flex flex-col gap-3">
         <Heading id="intro-title">{t("intro.title")}</Heading>
         {description
-          ? <p lang={intro.descriptionLang} className="m-0 max-w-[720px] whitespace-pre-line text-[17px] leading-[1.6] text-fg">{description}</p>
+          ? <p lang={intro.textLang} className="m-0 max-w-[720px] whitespace-pre-line text-[17px] leading-[1.6] text-fg">{description}</p>
           : !excerpt && (
             <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">
               {t("intro.onlyTagline")}
