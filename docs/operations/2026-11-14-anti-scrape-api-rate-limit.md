@@ -32,7 +32,13 @@ API·HTML 대량 수집과 봇 크롤링은 막는다. 공개 화면은 Cloudfla
      (모두가 한 통을 나눠 서로를 막지 않게).
    - 기존 쓰기 한도(`edit:`, `register:`, `verify:`, `takedown:`)도 같은 `clientIp()`를 쓰므로 CF 설정 뒤 방문자별로 정확해진다.
 2. **공개 JSON 최소화**
-   - 제품: `slug,url,name,tagline,category,status` (+주인 없는 제품만 `claimable,verify`). 내부 `id`, 설명·스택·메이커·저장소·출처·시각 제거.
+   - 제품(11/16 응답 규칙 갱신, PR #975): `slug,name,tagline,category,status`. 원래 주소 `url`은 세션·관문 모드와 무관하게 항상 제외한다.
+     `?url=`이 있으면 기존 정규화로 사이트·repoUrl과 비교한 `matches`만 더한다.
+     주인 없는 제품은 항상 `claimable: true`이며, 주소 일치(`matches: true`) 때만 `verify`를 더한다.
+     주소가 없거나 불일치면 `verify` 대신 `message` 한 필드로 최신 `<사이트>/skill.md`와 `?url=<내 주소>` 재확인을 안내한다.
+     주인 있는 제품은 `claimable`·`verify`·`message`를 주지 않는다.
+     관문 enforce·세션 없는 최소 응답도 같은 규칙이며 `SESSION_HEADERS`의 private/no-store를 유지한다.
+     내부 `id`, 설명·스택·메이커·저장소·출처·시각 제거. 이 규칙은 병합·배포 전까지 운영 적용을 뜻하지 않는다.
    - 공개 의견: `id,kind,title,body,authorDisplayName,reviewState,reviewReason(null),deliveryState,createdAt,githubIssueUrl,externalIssueState`.
      내부 `productId`, 작성자 계정 `authorUserId`, `productName`, `slug`, `lastErrorCode` 제거(내 의견은 `/api/me/feedback`이 따로 준다).
    - Origin/Sec-Fetch-Site 검토: 같은 사이트만 받게 하면 스킬(curl)과 Sec-Fetch-Site가 없는 옛 Safari(16.4 미만)가 깨진다.
