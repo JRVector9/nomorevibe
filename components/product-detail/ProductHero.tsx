@@ -1,17 +1,19 @@
 import type { ReactNode } from "react";
 import type { PublicTeaser } from "@/lib/domain/products/public-teaser";
+import { HiddenSource } from "./HiddenSource";
 import { HeroActionsSlot, HeroBadgesSlot, HeroIconSlot, HeroMetaSlot, HeroTaglineNotes, type HeroFollowLabels } from "./DetailHeroSlots";
 
 /**
  * 상세 머리 — 아이콘 80 · 이름 40 · 한 줄 소개 20 · 메타 한 줄 · 버튼.
  *
- * 서버 HTML 에는 이름(h1)·요약과 요약 바로 아래 사이트 출처를 글자로 둔다.
+ * 서버 HTML 에는 이름(h1)과 요약(그 언어의 한 줄)만 보이는 글자로 둔다(2026-11-15 공개 HTML 이름·요약만, 문서 4.2).
+ * 사이트 출처는 요약 문단 안 끝에 숨김 글자(HiddenSource)로만 둔다 — 사람 화면 0번, 서버 HTML·DOM 글자에는 남는다(2026-11-16).
  * 아이콘·배지·요약 작성 근거·메타 줄(분야·스타·언어·주인·가동 상태)·단추는 같은 출처 API 로 받아 채운다(DetailHeroSlots) — 받는 동안은 같은 크기의 빈 자리.
  * 단추는 [제품 방문하기][GitHub][공유][저장] 넷이다(UX-31). 써보기 판(tryPanel)은 slug·이름만 받는 브라우저 부품이라 서버가 그대로 넘긴다.
  */
 export function ProductHero({ teaser, sourceLine, tryPanel, followLabels = null }: {
   teaser: PublicTeaser;
-  /** 서버가 고른 언어의 intro.siteSource — 소개 유무와 관계없이 보인다 */
+  /** 서버가 고른 언어의 intro.siteSource — 소개 유무와 관계없이 요약 문단 안 숨김 글자로만 남는다 */
   sourceLine: string;
   /** 써보기 판(components/feedback/TryPanel) — 단추 바로 아래. 써봤어요가 켜졌을 때만 넘긴다 */
   tryPanel?: ReactNode;
@@ -29,8 +31,7 @@ export function ProductHero({ teaser, sourceLine, tryPanel, followLabels = null 
             <h1 className="text-[40px] font-semibold leading-[1.05] tracking-[-0.03em] text-fg">{teaser.name}</h1>
             <HeroBadgesSlot slug={teaser.slug} />
           </div>
-          <p className="max-w-[720px] text-[20px] leading-[1.35] tracking-[-0.01em] text-fg" lang={teaser.lang}>{teaser.summary}</p>
-          <p className="m-0 text-[13px] leading-[1.5] text-fg-2">{sourceLine}</p>
+          <p className="max-w-[720px] text-[20px] leading-[1.35] tracking-[-0.01em] text-fg" lang={teaser.lang}>{teaser.summary}<HiddenSource source={sourceLine} /></p>
           <HeroTaglineNotes slug={teaser.slug} />
           <HeroMetaSlot slug={teaser.slug} followLabels={followLabels} />
           <HeroActionsSlot slug={teaser.slug} name={teaser.name} followLabels={followLabels} />

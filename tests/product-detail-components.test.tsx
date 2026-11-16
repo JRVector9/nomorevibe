@@ -250,7 +250,7 @@ const observedFact: ProductDetailView["observedAgentFacts"][number] = {
 };
 
 describe("evidence product detail components", () => {
-  it("서버 HTML 머리는 이름(h1)·요약·사이트 출처 — 아이콘·메타 줄·단추·배지는 받는 동안 같은 크기의 빈 자리", async () => {
+  it("서버 HTML 머리는 이름(h1)·요약(안에 숨긴 사이트 출처) — 아이콘·메타 줄·단추·배지는 받는 동안 같은 크기의 빈 자리", async () => {
     const html = heroMarkup({ ...product, stars: 40064, taglineSource: "ai_readme" });
     expect(html).toContain(`>${product.name}</h1>`);
     expect(html).toContain(product.tagline);
@@ -1124,11 +1124,13 @@ describe("사실 표 줄 나눔(factRows, 2026-11-08) — 어느 줄에도 빈�
 });
 
 
-it("소개 화면은 API 끝 출처를 생략하고 요약 아래 서버 출처만 한 번 그린다", async () => {
+it("소개 화면은 API 끝 출처를 소개 문단 안 숨김 글자(sr-only·aria-hidden)로 한 번만 그린다 — 사람 화면 0번", async () => {
+  const hidden = '<span class="sr-only" aria-hidden="true" data-nmv-source=""> · 출처: nomorevibe.com</span></p>';
   const html = await renderIntro();
-  expect(html).not.toContain("출처: nomorevibe.com");
-  expect((heroMarkup() + html).split("출처: nomorevibe.com")).toHaveLength(2);
+  expect(html.split("출처: nomorevibe.com")).toHaveLength(2);
+  expect(html).toContain(`${product.description}${hidden}`);
+  expect(heroMarkup()).toContain(`>${product.tagline}${hidden}`);
   const existing = await renderIntro({ product: { ...product, description: `${product.description}\n\n출처: nomorevibe.com` } });
-  expect(existing).not.toContain("출처: nomorevibe.com");
-  expect((heroMarkup() + existing).split("출처: nomorevibe.com")).toHaveLength(2);
+  expect(existing.split("출처: nomorevibe.com")).toHaveLength(2);
+  expect(existing).toContain(hidden);
 });

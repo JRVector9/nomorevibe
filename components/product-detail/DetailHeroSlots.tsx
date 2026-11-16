@@ -26,6 +26,7 @@ import { InstallPrompt } from "./InstallPrompt";
 import { PreviewFigure } from "./PreviewFigure";
 import { ReadmeLoader } from "./ReadmeLoader";
 import { README_HEADING, README_SCROLL } from "./readme-style";
+import { HiddenSource } from "./HiddenSource";
 import { SaveButton } from "./SaveButton";
 import { ShareButton } from "./ShareButton";
 import { UnclaimedOwnerContact } from "./UnclaimedOwnerContact";
@@ -213,11 +214,10 @@ export function DetailIntroSlot({ slug }: { slug: string }) {
   const intro = data?.intro;
   if (!intro) return null;
   const { descriptionTranslation: selected, profile, readmeExcerpt: excerpt, repo } = intro;
-  // API 끝 출처는 유지하고, 화면에서는 서버가 요약 바로 아래 그린 한 줄로 모은다.
+  // API intro.text 끝 출처는 그대로 두고, 화면에서는 그 끝 줄을 소개 문단 안 숨김 글자(HiddenSource)로 그린다 — 사람 화면 0번, DOM 글자에는 남는다.
   const sourceLine = t("intro.siteSource");
-  const description = intro.text?.endsWith(sourceLine)
-    ? intro.text.slice(0, -sourceLine.length).trimEnd()
-    : intro.text;
+  const endsWithSource = Boolean(intro.text?.endsWith(sourceLine));
+  const description = endsWithSource ? intro.text!.slice(0, -sourceLine.length).trimEnd() : intro.text;
   const hasProfile = profile && (profile.problem || profile.targetUsers || profile.privacySummary
     || profile.keyFeatures.length > 0 || profile.useCases.length > 0 || profile.longDescriptionMarkdown);
   return (
@@ -225,7 +225,7 @@ export function DetailIntroSlot({ slug }: { slug: string }) {
       <section aria-labelledby="intro-title" className="flex flex-col gap-3">
         <Heading id="intro-title">{t("intro.title")}</Heading>
         {description
-          ? <p lang={intro.textLang} className="m-0 max-w-[720px] whitespace-pre-line text-[17px] leading-[1.6] text-fg">{description}</p>
+          ? <p lang={intro.textLang} className="m-0 max-w-[720px] whitespace-pre-line text-[17px] leading-[1.6] text-fg">{description}{endsWithSource && <HiddenSource source={sourceLine} />}</p>
           : !excerpt && (
             <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">
               {t("intro.onlyTagline")}

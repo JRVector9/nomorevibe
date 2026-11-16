@@ -100,7 +100,7 @@ export default async function ProductPage({ params }: Props) {
 }
 
 /**
- * 상세 본문(2026-11-15 공개 HTML 이름·요약만, 문서 4.2) — 서버 HTML·RSC 데이터에 싣는 제품 값은 slug·이름·요약뿐이며, 요약 아래 사이트 출처 한 줄은 항상 보인다.
+ * 상세 본문(2026-11-15 공개 HTML 이름·요약만, 문서 4.2) — 서버 HTML·RSC 데이터에 싣는 제품 값은 slug·이름·요약뿐이며, 사이트 출처는 요약 문단 안 숨김 글자로만 둔다(사람 화면 0번).
  * 빵부스러기는 홈 › 이름, JSON-LD 는 WebPage+CreativeWork(이름·요약)+빵부스러기. 머리의 나머지 칸·소개·README 발췌·사실 칸·정보 카드·
  * 미리보기·운영자 상자·같은 분야는 모두 같은 출처 API(/api/products/[slug]/details) 한 번으로 화면 JS 가 채운다.
  * 모든 요청(봇 포함)에 같은 HTML 을 준다.

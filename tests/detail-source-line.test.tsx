@@ -68,6 +68,43 @@ async function serverTree(node: ReactNode): Promise<ReactNode> {
 const bodyText = (html: string) => html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, "").replace(/<[^>]*>/g, " ");
 const count = (text: string, source: string) => text.split(source).length - 1;
 
+type Tag = { tag: string; attrs: Record<string, string> };
+const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+/** 출처 글자를 가진 글자 마디마다 그 바로 위 요소와 조상들 — 시험 환경에 DOM 이 없어 정적 HTML 을 직접 걷는다 */
+function sourceNodes(html: string, source: string) {
+  const stack: Tag[] = [];
+  const found: { element: Tag | undefined; ancestors: Tag[] }[] = [];
+  const pattern = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)((?:"[^"]*"|[^>"])*)>|([^<]+)/g;
+  for (const match of html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, "").matchAll(pattern)) {
+    const [, closing, tag, rawAttrs, text] = match;
+    if (text !== undefined) { if (text.includes(source)) found.push({ element: stack.at(-1), ancestors: [...stack] }); continue; }
+    if (!tag) continue;
+    if (closing) { const at = stack.map((item) => item.tag).lastIndexOf(tag.toLowerCase()); if (at >= 0) stack.length = at; continue; }
+    const attrs = Object.fromEntries([...rawAttrs.matchAll(/([^\s=/]+)(?:="([^"]*)")?/g)].map(([, name, value]) => [name, value ?? ""]));
+    if (!VOID.has(tag.toLowerCase()) && !rawAttrs.trimEnd().endsWith("/")) stack.push({ tag: tag.toLowerCase(), attrs });
+  }
+  return found;
+}
+const classes = (item: Tag | undefined) => (item?.attrs.class ?? "").split(/\s+/);
+/** 출처는 sr-only+aria-hidden 요소 안에만 — 사람 눈에 보이는 출처 0개, 긁는 글자를 버리게 하는 숨김 방식 0개 */
+function expectHiddenSourceOnly(html: string, source: string) {
+  const nodes = sourceNodes(html, source);
+  expect(nodes.length).toBeGreaterThan(0);
+  for (const { element, ancestors } of nodes) {
+    expect(element?.tag).toBe("span");
+    expect(classes(element)).toContain("sr-only");
+    expect(element?.attrs["aria-hidden"]).toBe("true");
+    expect(element?.attrs).not.toHaveProperty("style");
+    for (const item of ancestors) {
+      expect(item.attrs).not.toHaveProperty("hidden");
+      expect(item.attrs.style ?? "").not.toMatch(/display\s*:\s*none|visibility\s*:\s*hidden/i);
+      expect(item.tag).not.toBe("a");
+    }
+  }
+  expect(nodes.filter(({ ancestors }) => !ancestors.some((item) => classes(item).includes("sr-only")))).toHaveLength(0);
+  return nodes.length;
+}
+
 beforeEach(() => {
   mocks.data = null;
   mocks.done = false;
@@ -78,7 +115,8 @@ beforeEach(() => {
 
 for (const locale of Object.keys(SOURCE_LABELS) as Locale[]) describe(locale, () => {
   for (const description of ["A longer introduction", "", product.tagline]) {
-    it(`소개 ${description ? description === product.tagline ? "요약과 같음" : "있음" : "없음"}: 서버 본문·화면 출처 각 1회, API 계약 유지`, async () => {
+    const hasIntro = Boolean(description) && description !== product.tagline;
+    it(`소개 ${description ? description === product.tagline ? "요약과 같음" : "있음" : "없음"}: 출처는 서버 HTML·API·DOM 글자에만, 사람 화면 0번`, async () => {
       mocks.locale = locale;
       const subject = { ...product, description };
       mocks.identity.mockResolvedValue(subject);
@@ -88,25 +126,33 @@ for (const locale of Object.keys(SOURCE_LABELS) as Locale[]) describe(locale, ()
       const dictionaries = { detail: await getDictionary(locale, "detail"), labels: await getDictionary(locale, "labels"), common: await getDictionary(locale, "common") };
       const wrap = (children: ReactNode) => <I18nProvider locale={locale} dictionaries={dictionaries} now="2026-11-16T00:00:00Z">{children}</I18nProvider>;
 
+      // 서버 HTML — 글자(textContent)에는 출처가 있고, 그 요소는 요약 문단 안의 숨김 span 뿐
       const html = renderToStaticMarkup(wrap(await serverTree(await ProductPage({ params: Promise.resolve({ slug: subject.slug }) }))));
-      expect(count(bodyText(html), source)).toBe(1);
-      expect(html).toContain(`text-fg-2">${source}</p>`);
-      expect(html).toMatch(new RegExp(`${subject.tagline}</p><p[^>]*>${source.replaceAll(".", "\\.")}</p>`));
+      expect(count(bodyText(html), source)).toBeGreaterThanOrEqual(1);
+      expect(expectHiddenSourceOnly(html, source)).toBe(1);
+      expect(html).toMatch(new RegExp(`>${subject.tagline}<span class="sr-only" aria-hidden="true"[^>]*> · ${source.replaceAll(".", "\\.")}</span></p>`));
 
+      // 상세 API — 소개 끝 출처 유지, 빈 소개에 출처만 새로 만들지 않음, 요약 칸은 그대로
       const response = await GET(new Request(`https://nomorevibe.test/api/products/${subject.slug}/details?locale=${locale}`), { params: Promise.resolve({ slug: subject.slug }) });
       expect(response.status).toBe(200);
       mocks.data = JSON.parse(await response.text(), reviveDetailExtras) as DetailApiResponse;
       mocks.done = true;
-      if (description && description !== subject.tagline) {
+      if (hasIntro) {
         expect(mocks.data.intro.text).toBe(`${description}\n\n${source}`);
+        expect(mocks.data.intro.text!.endsWith(source)).toBe(true);
         expect(count(mocks.data.intro.text!, source)).toBe(1);
-      } else expect(mocks.data.intro.text).toBeNull(); // 빈 소개에 출처만 새로 만들지 않는다
+      } else expect(mocks.data.intro.text).toBeNull();
       expect(mocks.data.hero.tagline).toBe(subject.tagline);
       expect(subject.description).toBe(description);
 
-      const screen = renderToStaticMarkup(wrap(<><ProductHero teaser={publicTeaser(subject, locale)} sourceLine={source} /><DetailIntroSlot slug={subject.slug} /></>));
-      expect(count(bodyText(screen), source)).toBe(1);
-      if (description && description !== subject.tagline) expect(bodyText(screen)).toContain(description);
+      // API 를 받은 뒤 브라우저 DOM — 소개가 있으면 소개 문단 안에도 숨김 출처, 사람에게 보이는 출처는 여전히 0
+      const intro = renderToStaticMarkup(wrap(<DetailIntroSlot slug={subject.slug} />));
+      const screen = renderToStaticMarkup(wrap(<ProductHero teaser={publicTeaser(subject, locale)} sourceLine={source} />)) + intro;
+      expect(expectHiddenSourceOnly(screen, source)).toBe(hasIntro ? 2 : 1);
+      if (hasIntro) {
+        expect(count(bodyText(intro), source)).toBe(1);
+        expect(intro).toContain(`${description}<span class="sr-only" aria-hidden="true"`);
+      } else expect(count(bodyText(intro), source)).toBe(0);
     });
   }
 });
