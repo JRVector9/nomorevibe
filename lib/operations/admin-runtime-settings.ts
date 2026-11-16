@@ -6,7 +6,7 @@ import { isConsumerServiceInstance, parseServiceObservationKey } from "./instanc
 import { readRuntimeSettingsRow, RUNTIME_SETTINGS_AUDIT_ACTION, type RuntimeSettingsRow } from "./runtime-settings";
 import { MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX } from "@/lib/llm/capacity-unknown-hold";
 import { MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MAX, MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MIN } from "@/lib/llm/capacity-retention";
-import { ASSIGNMENT_TABLE_READS, ASSIGNMENT_TABLE_READS_LABELS, BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS,
+import { ASSIGNMENT_TABLE_READS, ASSIGNMENT_TABLE_READS_LABELS, BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, CRAWL_BURST_RANGES, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS,
   GROUP_LABELS, JOB_LABELS, jobKnobsSchema, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
   runtimeSettingLabel, type JobKnobName, type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
 import { parseRuntimeLanes } from "./worker-progress";
@@ -420,7 +420,8 @@ export function runtimeSettingsIssueMessage(issue: string): string {
       // 잡별 묶음의 정수 칸은 스키마 범위를 함께 말한다(2026-11-09 — 재판정 한도를 그 자리에서 고칠 때 무엇을 넣어야 하는지 보이게). ms 칸은 화면 단위가 초라 범위를 붙이지 않는다
       const parts = detail.split("."), range = parts[0] === "jobs" && parts.length === 3 && fieldKind(detail) === "int" ? jobKnobRange(parts[2])
         : detail === "capacity.unknownHoldSeconds" ? { min: 0, max: MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX }
-        : detail === "capacity.ledgerRetentionDays" ? { min: MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MIN, max: MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MAX } : null;
+        : detail === "capacity.ledgerRetentionDays" ? { min: MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MIN, max: MODEL_CAPACITY_LEDGER_RETENTION_DAYS_MAX }
+        : detail.startsWith("publicApi.burst") ? CRAWL_BURST_RANGES[detail.slice("publicApi.".length) as keyof typeof CRAWL_BURST_RANGES] ?? null : null;
       return `${runtimeSettingLabel(detail)}: 범위를 벗어났습니다${range ? `(${range.min}~${range.max})` : ""}`;
     }
     case "runtime_settings_version": return `저장 문서 판 표시가 다릅니다: ${detail}`;
