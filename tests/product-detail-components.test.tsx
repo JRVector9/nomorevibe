@@ -213,7 +213,7 @@ function received(data: (DetailPageData & { go?: typeof SIGNED_GO | null }) | nu
 
 /** 서버가 그리는 머리 — slug·이름·요약(teaser)만 받는다 */
 function heroMarkup(subject: ProductDetailView["product"] = product, overrides: Partial<ComponentProps<typeof ProductHero>> = {}) {
-  return renderToStaticMarkup(<ProductHero teaser={publicTeaser(subject, "ko")} {...overrides} />);
+  return renderToStaticMarkup(<ProductHero teaser={publicTeaser(subject, "ko")} sourceLine={detailKorean["intro.siteSource"]} {...overrides} />);
 }
 
 /** 상세 API 를 받은 뒤의 머리 */
@@ -250,7 +250,7 @@ const observedFact: ProductDetailView["observedAgentFacts"][number] = {
 };
 
 describe("evidence product detail components", () => {
-  it("서버 HTML 의 머리는 이름(h1)과 요약뿐 — 아이콘·메타 줄·단추·배지·출처 줄은 받는 동안 같은 크기의 빈 자리", async () => {
+  it("서버 HTML 머리는 이름(h1)·요약·사이트 출처 — 아이콘·메타 줄·단추·배지는 받는 동안 같은 크기의 빈 자리", async () => {
     const html = heroMarkup({ ...product, stars: 40064, taglineSource: "ai_readme" });
     expect(html).toContain(`>${product.name}</h1>`);
     expect(html).toContain(product.tagline);
@@ -1124,9 +1124,11 @@ describe("사실 표 줄 나눔(factRows, 2026-11-08) — 어느 줄에도 빈�
 });
 
 
-it("소개 API의 출처 문자열을 화면에 한 번만 그린다", async () => {
+it("소개 화면은 API 끝 출처를 생략하고 요약 아래 서버 출처만 한 번 그린다", async () => {
   const html = await renderIntro();
-  expect(html.split("출처: nomorevibe.com")).toHaveLength(2);
+  expect(html).not.toContain("출처: nomorevibe.com");
+  expect((heroMarkup() + html).split("출처: nomorevibe.com")).toHaveLength(2);
   const existing = await renderIntro({ product: { ...product, description: `${product.description}\n\n출처: nomorevibe.com` } });
-  expect(existing.split("출처: nomorevibe.com")).toHaveLength(2);
+  expect(existing).not.toContain("출처: nomorevibe.com");
+  expect((heroMarkup() + existing).split("출처: nomorevibe.com")).toHaveLength(2);
 });

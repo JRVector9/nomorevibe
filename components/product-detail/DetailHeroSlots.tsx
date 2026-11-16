@@ -212,7 +212,12 @@ export function DetailIntroSlot({ slug }: { slug: string }) {
   if (!done) return <div key="pending" aria-busy="true" className="h-[320px] motion-safe:animate-pulse rounded-[12px] bg-bg-soft" />;
   const intro = data?.intro;
   if (!intro) return null;
-  const { text: description, descriptionTranslation: selected, profile, readmeExcerpt: excerpt, repo } = intro;
+  const { descriptionTranslation: selected, profile, readmeExcerpt: excerpt, repo } = intro;
+  // API 끝 출처는 유지하고, 화면에서는 서버가 요약 바로 아래 그린 한 줄로 모은다.
+  const sourceLine = t("intro.siteSource");
+  const description = intro.text?.endsWith(sourceLine)
+    ? intro.text.slice(0, -sourceLine.length).trimEnd()
+    : intro.text;
   const hasProfile = profile && (profile.problem || profile.targetUsers || profile.privacySummary
     || profile.keyFeatures.length > 0 || profile.useCases.length > 0 || profile.longDescriptionMarkdown);
   return (
