@@ -17,7 +17,7 @@ vi.mock("@/lib/domain/products/repository", async (original) => ({
 const { proxy } = await import("@/proxy");
 const { guardPublicApiRead } = await import("@/lib/http/anti-scrape");
 const { setCrawlBurstStoreForTest } = await import("@/lib/http/crawl-burst");
-const { CRAWL_BURST_DEFAULTS, CRAWL_PROHIBITED_MESSAGE, CRAWL_PROHIBITED_MESSAGE_EN, countsTowardCrawlBurst, crawlBurstKey } = await import("@/lib/http/crawl-burst-policy");
+const { DETAIL_API_DEFAULTS, CRAWL_BURST_DEFAULTS, CRAWL_PROHIBITED_MESSAGE, CRAWL_PROHIBITED_MESSAGE_EN, countsTowardCrawlBurst, crawlBurstKey } = await import("@/lib/http/crawl-burst-policy");
 const { setSearchBotResolverForTest } = await import("@/lib/http/search-bot-verify");
 const { resolveRuntimeSettings, DEFAULT_RUNTIME_SETTINGS } = await import("@/lib/operations/runtime-settings-schema");
 const { RATE_LIMIT_BLOCKED_COUNT } = await import("@/lib/rate-limit");
@@ -41,7 +41,7 @@ const MEASURED_DETAIL_COUNTED = 6;
 const LIMIT = CRAWL_BURST_DEFAULTS.burstLimit;
 
 /** rate_limits 한 행의 의미(lib/http/crawl-burst.ts hitInDb·blockInDb)를 메모리로 — 시계는 now 로 움직인다 */
-function memoryStore(settings = { ...CRAWL_BURST_DEFAULTS }) {
+function memoryStore(settings = { ...CRAWL_BURST_DEFAULTS, ...DETAIL_API_DEFAULTS }) {
   const rows = new Map<string, { count: number; resetAt: number }>();
   const clock = { now: Date.now() };
   const retry = (resetAt: number) => Math.max(1, Math.ceil((resetAt - clock.now) / 1000));
@@ -90,13 +90,13 @@ afterEach(() => {
 describe("기본값과 관리자 설정(runtime_settings publicApi.burst*)", () => {
   it("기본: 10초에 80번을 넘으면 30분(1800초) 차단", () => {
     expect(CRAWL_BURST_DEFAULTS).toEqual({ burstLimit: 80, burstWindowSeconds: 10, burstBlockSeconds: 1800 });
-    expect(DEFAULT_RUNTIME_SETTINGS.publicApi).toEqual({ mode: "observe", burstLimit: 80, burstWindowSeconds: 10, burstBlockSeconds: 1800 });
+    expect(DEFAULT_RUNTIME_SETTINGS.publicApi).toEqual({ mode: "observe", ...DETAIL_API_DEFAULTS, burstLimit: 80, burstWindowSeconds: 10, burstBlockSeconds: 1800 });
   });
 
   it("저장 문서의 값을 쓰고, 범위 밖·정수 아님·모르는 키는 거절한다(기본값 유지)", () => {
     const saved = resolveRuntimeSettings({ publicApi: { burstLimit: 120, burstWindowSeconds: 30, burstBlockSeconds: 3600 } });
     expect(saved.issues).toEqual([]);
-    expect(saved.settings.publicApi).toEqual({ mode: "observe", burstLimit: 120, burstWindowSeconds: 30, burstBlockSeconds: 3600 });
+    expect(saved.settings.publicApi).toEqual({ mode: "observe", ...DETAIL_API_DEFAULTS, burstLimit: 120, burstWindowSeconds: 30, burstBlockSeconds: 3600 });
     expect(resolveRuntimeSettings({ publicApi: { burstLimit: 0 } })).toMatchObject({ issues: [], settings: { publicApi: { burstLimit: 0 } } });
     const bad = resolveRuntimeSettings({ publicApi: { burstLimit: 10_001, burstWindowSeconds: 0, burstBlockSeconds: 30.5, burstFoo: 1 } });
     expect(bad.issues).toEqual(expect.arrayContaining([
@@ -122,6 +122,7 @@ describe("기본값과 관리자 설정(runtime_settings publicApi.burst*)", () 
 
   it("기준 수 0 = 끔 — 세지도 막지도 않는다", async () => {
     mem.settings.burstLimit = 0;
+    mem.settings.detailBurstLimit = 0;
     for (let i = 0; i < 200; i += 1) expect((await page("/popular")).status).not.toBe(429);
     expect(mem.store.hit).not.toHaveBeenCalled();
   });

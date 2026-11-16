@@ -109,3 +109,16 @@ X-Forwarded-For는 항목 하나이고, 그 피어는 두 서버 모두 `192.168
 - [ ] (막힘·사람) Cloudflare 화면 쪽 학습 봇 차단·속도 제한 — 사람이 직접 설정
 - [ ] (병합 뒤) 이미 설치된 옛 스킬은 `-A`가 없어 클레임 확인 GET이 403(본문에 최신 스킬 안내)이다. 쓰기는 영향 없다. `/skill.md`는 병합·배포 뒤 새 문구로 서빙된다
 - [ ] (병합 뒤 관측) 공용 NAT 뒤 사용자가 함정 링크를 부를 일은 없지만, 같은 IP의 수집기가 함정에 걸리면 그 IP의 사람도 1시간 의견·반응 로딩이 막힌다. 로그 `anti_scrape.trap_hit` 빈도를 보고 시간 조정
+
+## 2026-11-16 상세 추가 한도·출처 (PR #978)
+
+상세 `details`·`readme`·`timeline`은 공통 300/10분 외에 **IP 합산 60/600초**를 적용한다.
+**20번째/10초**에는 공유 `burst:<ip>`를 **30분** 차단한다(19회 허용). 최소 스킬 확인 경로는 상세 합산 제외.
+설정 `publicApi.detailReadLimit/detailReadWindowSeconds/detailBurstLimit/detailBurstWindowSeconds`와
+status·set·해제 절차는 [과다 호출 운영 문서](2026-11-16-crawl-burst-block.md#상세-api-추가-기준--pr-978-2026-11-16)를 따른다.
+0은 해당 limit만 끄며 기존 공통 제한·관문 observe/enforce는 그대로다. 운영 설정 저장·병합·배포는 이 PR 범위 밖.
+
+제품 상세의 meta/OG/Twitter description 끝에는 ` · nomorevibe.com`, WebPage JSON-LD에는 고정 정식 사이트의
+WebSite isPartOf와 Organization publisher를 넣는다. 소개는 내보내는 상세 API의 intro.text 끝에 언어별 출처 한 줄을 붙여
+화면도 같은 문자열을 한 번만 그린다. 저장된 DB 소개·번역은 바꾸지 않는다.
+색인 불가인 공개 제품 상세는 모든 언어에서 `noindex, follow`. indexing.ts·sitemap·404·내린 제품 화면은 그대로다.

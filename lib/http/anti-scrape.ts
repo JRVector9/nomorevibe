@@ -3,7 +3,7 @@ import { onPrimary } from "@/lib/db";
 import { blockRateLimitKey, publicClientIp, rateLimitWindow } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
 import { agentKind, refusedApiAgent } from "./agents";
-import { guardCrawlBurst } from "./crawl-burst";
+import { guardCrawlBurst, guardDetailApiRead } from "./crawl-burst";
 import { verifiedSearchBot } from "./search-bot-verify";
 
 /**
@@ -73,6 +73,8 @@ export async function guardPublicApiRead(
   if (burst) return burst;
   const limited = await limitByIp(request, route, apiReadKey, API_READ_LIMIT, API_READ_WINDOW_MS);
   if (limited) return limited;
+  const detailLimited = await guardDetailApiRead(request, route);
+  if (detailLimited) return detailLimited;
   return route === "session" ? null : guardApiSession(request, route, onSessionRequired);
 }
 

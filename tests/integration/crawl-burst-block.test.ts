@@ -1,10 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq, like } from "drizzle-orm";
+import { eq, like, or } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { operationsAudit, rateLimits, runtimeSettings } from "@/lib/db/schema";
 import { setCrawlBurstStoreForTest } from "@/lib/http/crawl-burst";
-import { CRAWL_BURST_DEFAULTS, CRAWL_PROHIBITED_MESSAGE, crawlBurstKey } from "@/lib/http/crawl-burst-policy";
+import { CRAWL_BURST_DEFAULTS, DETAIL_API_DEFAULTS, CRAWL_PROHIBITED_MESSAGE, crawlBurstKey, detailBurstKey, detailReadKey } from "@/lib/http/crawl-burst-policy";
 import { guardPublicApiRead } from "@/lib/http/anti-scrape";
 import { CRAWL_BURST_RELEASE_ACTION, crawlBurstStatus, releaseCrawlBurst, saveCrawlBurstSettings } from "@/lib/operations/crawl-burst-ops";
 import { readRuntimeSettingsRow } from "@/lib/operations/runtime-settings";
@@ -16,6 +16,8 @@ import { auditFloor, auditRowsAfter, ensureSchema } from "./setup";
  * 과다 호출 30분 차단 — 실제 Postgres(55435 방식)에서 rate_limits 한 행의 창·차단·풀림과 runtime_settings 저장 반영을 잰다.
  * 단위 시험(tests/crawl-burst-block.test.ts)은 같은 의미를 메모리로 본다. operations_audit 는 지우지 않는다(감사 바닥만 잰다).
  */
+vi.mock("server-only", () => ({}));
+
 const IP = "198.51.100.61";
 const OTHER = "198.51.100.62";
 const BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -34,14 +36,14 @@ beforeAll(async () => {
 function withoutBurstKeys(values: unknown): Record<string, unknown> {
   const doc = { ...(values as Record<string, unknown> ?? {}) };
   const group = { ...(doc.publicApi as Record<string, unknown> ?? {}) };
-  for (const key of Object.keys(group)) if (key.startsWith("burst")) delete group[key];
+  for (const key of Object.keys(group)) if (key.startsWith("burst") || key.startsWith("detail")) delete group[key];
   if (Object.keys(group).length) doc.publicApi = group; else delete doc.publicApi;
   return doc;
 }
 beforeEach(async () => {
   vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
   await db.update(runtimeSettings).set({ values: withoutBurstKeys(originalSettings) }).where(eq(runtimeSettings.id, 1));
-  await db.delete(rateLimits).where(like(rateLimits.key, "burst:%"));
+  await db.delete(rateLimits).where(or(like(rateLimits.key, "burst:%"), like(rateLimits.key, "detail-burst:%"), like(rateLimits.key, "detail-read:%")));
   await db.delete(rateLimits).where(like(rateLimits.key, "api-read:%"));
   setCrawlBurstStoreForTest(null);
 });
@@ -113,7 +115,7 @@ describe("관리자 설정(runtime_settings) 반영과 운영 도구", () => {
     // 범위 밖은 저장되지 않는다
     expect(await saveCrawlBurstSettings({ burstBlockSeconds: 10 }, "test:crawl-burst")).toMatchObject({ ok: false, issues: ["runtime_settings_invalid:publicApi.burstBlockSeconds"] });
     // 0 = 끔
-    expect((await saveCrawlBurstSettings({ burstLimit: 0 }, "test:crawl-burst")).ok).toBe(true);
+    expect((await saveCrawlBurstSettings({ burstLimit: 0, detailBurstLimit: 0 }, "test:crawl-burst")).ok).toBe(true);
     setCrawlBurstStoreForTest(null);
     for (let i = 0; i < 20; i += 1) expect((await page("/", OTHER)).status).not.toBe(429);
     expect(await row(OTHER)).toBeUndefined();
@@ -131,5 +133,52 @@ describe("관리자 설정(runtime_settings) 반영과 운영 도구", () => {
     expect(JSON.stringify(audit.detail)).not.toContain(IP);
     expect((await page("/")).status).not.toBe(429);
     await expect(releaseCrawlBurst("not-an-ip", "test:crawl-burst")).rejects.toThrow("ip_required");
+  });
+});
+
+
+describe("상세 세 API 실제 경로와 DB 키", () => {
+  async function detail(n: number) {
+    const route = ["details", "readme", "timeline"][n % 3];
+    const request = new Request(`https://nomorevibe.com/api/products/missing-${n}/${route}`, { headers: { "user-agent": BROWSER, "x-forwarded-for": IP } });
+    const context = { params: Promise.resolve({ slug: `missing-${n}` }) };
+    if (route === "details") return (await import("@/app/api/products/[slug]/details/route")).GET(request, context);
+    if (route === "readme") return (await import("@/app/api/products/[slug]/readme/route")).GET(request, context);
+    return (await import("@/app/api/products/[slug]/timeline/route")).GET(request, context);
+  }
+  it("61번째 상세만 429, 최소 스킬 응답은 상세 키를 세지 않음; 공통 300 키도 유지", async () => {
+    expect((await saveCrawlBurstSettings({ detailBurstLimit: 0 }, "test:detail-limits")).ok).toBe(true);
+    setCrawlBurstStoreForTest(null);
+    for (let i = 0; i < 60; i++) expect((await detail(i)).status).toBe(404);
+    const minimum = await import("@/app/api/products/[slug]/route");
+    expect((await minimum.GET(new Request("https://nomorevibe.com/api/products/missing-skill", { headers: { "user-agent": "nomorevibe-skill/1", "x-forwarded-for": IP } }), { params: Promise.resolve({ slug: "missing-skill" }) })).status).toBe(404);
+    expect((await db.select().from(rateLimits).where(eq(rateLimits.key, detailReadKey(IP))))[0].count).toBe(60);
+    const limited = await detail(60);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(590);
+    expect(await limited.json()).toEqual({ error: "rate_limited" });
+    expect((await db.select().from(rateLimits).where(eq(rateLimits.key, `api-read:${IP}`)))[0].count).toBe(62);
+    await db.update(rateLimits).set({ count: 300 }).where(eq(rateLimits.key, `api-read:${IP}`));
+    expect((await api("/api/products/x/reactions"))?.status).toBe(429);
+  });
+  it("20번째에 공유 burst 키를 30분 막고 release는 상세 두 창도 함께 지움", async () => {
+    for (let i = 0; i < 19; i++) expect((await detail(i)).status).toBe(404);
+    expect((await detail(19)).status).toBe(429);
+    expect((await row()).count).toBe(RATE_LIMIT_BLOCKED_COUNT);
+    expect((await row()).resetAt.getTime() - Date.now()).toBeGreaterThan(1_795_000);
+    expect((await page("/p/missing" )).status).toBe(429);
+    expect((await api("/api/products/x/reactions"))?.status).toBe(429);
+    expect((await crawlBurstStatus()).settings).toMatchObject(DETAIL_API_DEFAULTS);
+    await releaseCrawlBurst(IP, "test:detail-limits");
+    for (const key of [crawlBurstKey(IP), detailReadKey(IP), detailBurstKey(IP)]) expect(await db.select().from(rateLimits).where(eq(rateLimits.key, key))).toEqual([]);
+    expect((await detail(20)).status).toBe(404);
+  });
+  it("설정 저장·status에서 상세 값 확인, 공통 기준은 그대로", async () => {
+    expect((await saveCrawlBurstSettings({ detailReadLimit: 2, detailReadWindowSeconds: 60, detailBurstLimit: 0, detailBurstWindowSeconds: 3 }, "test:detail-limits")).ok).toBe(true);
+    setCrawlBurstStoreForTest(null);
+    expect((await crawlBurstStatus()).settings).toMatchObject({ ...CRAWL_BURST_DEFAULTS, detailReadLimit: 2, detailReadWindowSeconds: 60, detailBurstLimit: 0, detailBurstWindowSeconds: 3 });
+    expect((await detail(0)).status).toBe(404);
+    expect((await detail(1)).status).toBe(404);
+    expect((await detail(2)).status).toBe(429);
   });
 });

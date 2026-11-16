@@ -22,6 +22,15 @@ export const CRAWL_BURST_DEFAULTS: Readonly<CrawlBurstSettings> = Object.freeze(
   burstBlockSeconds: 1_800,
 });
 
+/** 상세 세 경로는 slug·경로와 관계없이 IP 하나의 통에 합산한다. */
+export type DetailApiSettings = { detailReadLimit: number; detailReadWindowSeconds: number; detailBurstLimit: number; detailBurstWindowSeconds: number };
+export const DETAIL_API_DEFAULTS: Readonly<DetailApiSettings> = Object.freeze({
+  detailReadLimit: 60, detailReadWindowSeconds: 600, detailBurstLimit: 20, detailBurstWindowSeconds: 10,
+});
+export const isDetailApiRoute = (route: string) => ["products.details", "products.readme", "products.timeline"].includes(route);
+export const detailReadKey = (ip: string) => `detail-read:${ip}`;
+export const detailBurstKey = (ip: string) => `detail-burst:${ip}`;
+
 /** 사람 지시 원문 그대로 */
 export const CRAWL_PROHIBITED_MESSAGE = "이 사이트는 크롤링을 금지합니다. 법적 조치를 취할 수 있습니다.";
 export const CRAWL_PROHIBITED_MESSAGE_EN = "This site prohibits crawling. Legal action may be taken.";

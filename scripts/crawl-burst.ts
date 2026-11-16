@@ -8,10 +8,11 @@
  *   npx tsx scripts/crawl-burst.ts release <ip> <actor>
  *     그 IP 의 차단을 바로 푼다 + operations_audit `crawl-burst-release` 한 줄
  */
+import { pathToFileURL } from "node:url";
 import { crawlBurstStatus, releaseCrawlBurst, saveCrawlBurstSettings } from "@/lib/operations/crawl-burst-ops";
 
-async function main() {
-  const [command, ...args] = process.argv.slice(2);
+export async function runCrawlBurstCommand(argv: string[]) {
+  const [command, ...args] = argv;
   if (command === "status" && args.length === 0) return crawlBurstStatus();
   if (command === "set" && args.length === 4) {
     const [burstLimit, burstWindowSeconds, burstBlockSeconds] = args.slice(0, 3).map(Number);
@@ -19,9 +20,16 @@ async function main() {
     if (!result.ok) throw new Error(result.issues.join(","));
     return { burstLimit, burstWindowSeconds, burstBlockSeconds, revision: result.revision };
   }
+  if (command === "set" && args[0] === "detail" && args.length === 6) {
+    const [detailReadLimit, detailReadWindowSeconds, detailBurstLimit, detailBurstWindowSeconds] = args.slice(1, 5).map(Number);
+    const patch = { detailReadLimit, detailReadWindowSeconds, detailBurstLimit, detailBurstWindowSeconds };
+    const result = await saveCrawlBurstSettings(patch, args[5]);
+    if (!result.ok) throw new Error(result.issues.join(","));
+    return { ...patch, revision: result.revision };
+  }
   if (command === "release" && args.length === 2) return releaseCrawlBurst(args[0], args[1]);
-  throw new Error("usage: crawl-burst.ts status | set <limit> <windowSeconds> <blockSeconds> <actor> | release <ip> <actor>");
+  throw new Error("usage: crawl-burst.ts status | set <limit> <windowSeconds> <blockSeconds> <actor> | set detail <readLimit> <readWindowSeconds> <burstLimit> <burstWindowSeconds> <actor> | release <ip> <actor>");
 }
 
-main().then((result) => { console.log(JSON.stringify(result)); process.exit(0); },
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) runCrawlBurstCommand(process.argv.slice(2)).then((result) => { console.log(JSON.stringify(result)); process.exit(0); },
   (error) => { console.error(`crawl_burst_cli_failed: ${error instanceof Error ? error.message : String(error)}`); process.exit(1); });

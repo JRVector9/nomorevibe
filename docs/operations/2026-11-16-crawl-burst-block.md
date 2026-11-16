@@ -88,3 +88,33 @@ IP는 남기지 않는다(기존 `anti_scrape.*`와 같음). 자동 해제는 �
 - [ ] (막힘·사람) 운영 env `TRUST_CF_CONNECTING_IP=1` — 없으면 이 차단도 동작하지 않는다(2026-11-14 문서)
 - [ ] (병합 뒤 관측) `anti_scrape.burst_blocked` 빈도와 오탐(사람 신고) — 기준 조정은 `set`
 - [ ] (범위 밖) 약관의 법적 문구(#952)·Cloudflare 엣지 속도 제한
+
+## 상세 API 추가 기준 — PR #978 (2026-11-16)
+
+`products.details`·`products.readme`·`products.timeline`만 slug에 관계없이 IP별 합산한다.
+스킬 최소 응답 `GET /api/products/<slug>`는 아래 두 통에 넣지 않는다. 공통 300/10분과 화면+API 80/10초는 유지한다.
+
+| 설정(publicApi) | 기본 | 의미 |
+| --- | --- | --- |
+| `detailReadLimit` | 60 | `detail-read:<ip>`에서 60회 허용, 61번째부터 기존 `rate_limited` 429 + Retry-After |
+| `detailReadWindowSeconds` | 600 | 상세 읽기 창, 1~86400초 |
+| `detailBurstLimit` | 20 | `detail-burst:<ip>`에서 **19회 허용, 20번째부터 차단** |
+| `detailBurstWindowSeconds` | 10 | 상세 과다 호출 창, 1~600초 |
+
+두 limit 범위는 0~10000이며 각각 0이면 해당 한도만 끈다. 상세 burst 차단 시간은 기존 `burstBlockSeconds`(기본 1800초)를 함께 쓴다.
+상세 기준에 걸리면 기존 **`burst:<ip>`**를 막아 화면과 다른 공개 API에도 같은 크롤링 금지 429를 준다.
+공통 burst 기준만 0으로 해도 상세 burst가 켜져 있으면 이 공유 차단은 유지한다.
+역방향·정방향 DNS로 확인된 검색 봇은 면제. IP 모름·설정/한도 DB 오류는 통과한다.
+새 로그 `anti_scrape.detail_burst_blocked`·`detail_rate_limited`는 최초 초과 때 한 줄, `detail_limit_unavailable`은 장애 경고다.
+IP·DB 오류 객체(쿼리에 주소가 포함될 수 있음)는 기록하지 않는다.
+
+```bash
+npx tsx scripts/crawl-burst.ts status  # 공통·상세 설정과 현재 공유 차단 수
+npx tsx scripts/crawl-burst.ts set detail 60 600 20 10 <actor>
+npx tsx scripts/crawl-burst.ts set detail 0 600 0 10 <actor>  # 새 상세 제한 둘만 끔
+npx tsx scripts/crawl-burst.ts release <ip> <actor>  # burst 및 상세 두 창을 함께 지움, 감사 기록
+```
+
+기존 `set 80 10 1800 <actor>`는 공통 설정만 바꾼다. 두 set 모두 publicApi 나머지 설정·관문 mode를 보존한다.
+수동 해제는 공통 API 읽기/함정 `api-read:<ip>` 차단은 건드리지 않는다. 설정 반영 캐시는 기존 30초다.
+기존 rate_limits·runtime_settings를 재사용하므로 DB 마이그레이션은 필요 없다. 이 PR 작업에서 운영 설정은 저장하지 않았다.
