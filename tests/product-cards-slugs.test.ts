@@ -66,7 +66,7 @@ describe("slugs= 카드 채우기", () => {
     const [item] = JSON.parse(text).items;
     expect(item).toMatchObject({ slug: "alpha", category: "Dev", aiLevel: 2, stars: 120, owner: { login: "owner-alpha" } });
     // 표지는 slug 만으로는 만들 수 없는 보호 주소(<slug>.<열쇠>)로만 — slug 주소는 응답에 없다(cover-url.ts)
-    expect(item.ogImage).toMatch(/^\/api\/og-cache\/alpha\.[0-9a-f]{32}\?thumbnail=og&w=1200&h=630$/);
+    expect(item.ogImage).toMatch(/^\/api\/og-cache\/alpha\.[0-9a-f]{32}\?thumbnail=og&w=1200&h=630&wm=1$/);
     expect(text).not.toContain('"/api/og-cache/alpha?');
     const full = await (await GET(request(`slugs=alpha,y${counter}&full=1&locale=ko`))).json();
     expect(full.items[0]).toMatchObject({ slug: "alpha", name: "ALPHA" });

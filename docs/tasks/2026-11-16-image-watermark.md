@@ -24,3 +24,5 @@
   [현재 head checks](https://github.com/JRVector9/nomorevibe/pull/976/checks)와 완료 개발 보고가 영수증이다.
 - 이 구역 구현의 남은 코드 작업 없음. 운영 적용은 승인된 후속 병합/배포 단계에서 진행한다.
 - 제한: 병합·배포·운영 Cloudflare 변경은 범위 밖. rate-limit.ts/proxy.ts/anti-scrape.ts와 다른 PR은 변경하지 않는다.
+
+- CI 첫 ready 실행: unit (2)의 기존 카드 API 주소 기대값 1건이 `wm=1`을 반영하지 않아 실패. `product-cards-slugs.test.ts`를 갱신하고 카드 API 5개·워터마크 19개(2파일 24개) 회귀, typegen/tsc, 해당 파일 ESLint가 모두 통과했다. 응답 코드/화면은 변경하지 않았다. 새 head CI 결과는 위 PR checks 영수증을 따른다.
