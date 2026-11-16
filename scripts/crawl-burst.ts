@@ -5,6 +5,8 @@
  *     지금 설정(기준 수·창·차단 시간)과 지금 막힌 IP 수·창 안에서 세는 IP 수(읽기 전용)
  *   npx tsx scripts/crawl-burst.ts set <기준 수> <창 초> <차단 초> <actor>
  *     runtime_settings publicApi.burst* 저장(검증·operations_audit runtime-settings-save). 웹은 30초 안에 읽는다 — 재배포 없음. 기준 수 0 = 끔
+ *   npx tsx scripts/crawl-burst.ts set detail <읽기 수> <읽기 창 초> <차단 번째> <차단 창 초> <actor>
+ *     상세 세 경로의 IP 합산 기준. 기본 60/600초, 20번째/10초. 각 limit 0 = 끔
  *   npx tsx scripts/crawl-burst.ts release <ip> <actor>
  *     그 IP 의 차단을 바로 푼다 + operations_audit `crawl-burst-release` 한 줄
  */

@@ -66,7 +66,7 @@ npx tsx scripts/crawl-burst.ts release <ip> <actor>          # 바로 해제 →
 
 **관측**: 차단마다 웹 로그 한 줄 `anti_scrape.burst_blocked`(`route`, `kind`, `agent`, `limit`, `windowSeconds`, `blockSeconds`, `releaseAt`).
 IP는 남기지 않는다(기존 `anti_scrape.*`와 같음). 자동 해제는 시각이 지나면 행이 다시 1부터 세는 것이라 따로 줄이 없다 — `releaseAt`으로 센다.
-지금 막힌 IP 수는 `status`. 설정·한도 표가 안 될 때는 `anti_scrape.burst_unavailable`·`burst_settings_unavailable`(경고, 막지 않음).
+지금 막힌 IP 수는 `status`. 설정·한도 표가 안 될 때는 `anti_scrape.burst_unavailable`(설정·한도 DB 오류 경고, 막지 않음).
 
 ## 한계
 

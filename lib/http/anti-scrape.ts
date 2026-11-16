@@ -111,8 +111,9 @@ async function limitByIp(
   let result;
   try {
     result = await onPrimary(() => rateLimitWindow(keyOf(ip), limit, windowMs));
-  } catch (error) {
-    logger.warn("anti_scrape.limit_unavailable", { route, error });
+  } catch {
+    // DB 오류 객체의 쿼리 매개변수에 IP가 들어갈 수 있다.
+    logger.warn("anti_scrape.limit_unavailable", { route });
     return null;
   }
   if (result.allowed) return null;

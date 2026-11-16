@@ -5,6 +5,7 @@ import { guardCrawlBurst, setCrawlBurstStoreForTest } from "@/lib/http/crawl-bur
 import { CRAWL_BURST_DEFAULTS, DETAIL_API_DEFAULTS, crawlBurstKey, detailBurstKey, detailReadKey } from "@/lib/http/crawl-burst-policy";
 import { setSearchBotResolverForTest } from "@/lib/http/search-bot-verify";
 import { RATE_LIMIT_BLOCKED_COUNT } from "@/lib/rate-limit";
+import { logger } from "@/lib/observability/logger";
 import { resolveRuntimeSettings } from "@/lib/operations/runtime-settings-schema";
 
 const IP = "198.51.100.75";
@@ -107,4 +108,20 @@ describe("상세 IP 합산 한도", () => {
     expect(bad.issues).toHaveLength(4);
     expect(bad.settings.publicApi).toMatchObject(DETAIL_API_DEFAULTS);
   });
+});
+
+
+it("차단 첫 초과만 anti_scrape 한 줄, IP·DB 쿼리 오류는 기록하지 않는다", async () => {
+  const info = vi.spyOn(logger, "info");
+  const warn = vi.spyOn(logger, "warn");
+  try {
+    for (let i = 0; i < 25; i++) await call(i);
+    const blocks = info.mock.calls.filter(([event]) => event === "anti_scrape.detail_burst_blocked");
+    expect(blocks).toHaveLength(1);
+    expect(JSON.stringify(blocks)).not.toContain(IP);
+    mem.store.settings.mockRejectedValue(new Error(`query contains ${IP}`));
+    await call(26);
+    expect(warn).toHaveBeenCalledWith("anti_scrape.burst_unavailable", { route: "products.timeline" });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(IP);
+  } finally { info.mockRestore(); warn.mockRestore(); }
 });

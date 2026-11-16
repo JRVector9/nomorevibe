@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import { eq, like, or } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
@@ -10,7 +11,7 @@ import { CRAWL_BURST_RELEASE_ACTION, crawlBurstStatus, releaseCrawlBurst, saveCr
 import { readRuntimeSettingsRow } from "@/lib/operations/runtime-settings";
 import { RATE_LIMIT_BLOCKED_COUNT } from "@/lib/rate-limit";
 import { proxy } from "@/proxy";
-import { auditFloor, auditRowsAfter, ensureSchema } from "./setup";
+import { auditFloor, auditRowsAfter, ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 /**
  * 과다 호출 30분 차단 — 실제 Postgres(55435 방식)에서 rate_limits 한 행의 창·차단·풀림과 runtime_settings 저장 반영을 잰다.
@@ -181,4 +182,13 @@ describe("상세 세 API 실제 경로와 DB 키", () => {
     expect((await detail(1)).status).toBe(404);
     expect((await detail(2)).status).toBe(429);
   });
+});
+
+
+it("실제 CLI set detail·status: 시험 DB에서 저장·조회하고 공통 값은 유지", () => {
+  const cli = (...args: string[]) => JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "scripts/crawl-burst.ts", ...args], {
+    env: { PATH: process.env.PATH, DATABASE_URL: TEST_DATABASE_URL, LOG_LEVEL: "error", NODE_ENV: "test" }, timeout: 15_000, encoding: "utf8",
+  }));
+  expect(cli("set", "detail", "0", "600", "0", "10", "test:cli-detail")).toMatchObject({ detailReadLimit: 0, detailBurstLimit: 0 });
+  expect(cli("status").settings).toEqual({ ...CRAWL_BURST_DEFAULTS, ...DETAIL_API_DEFAULTS, detailReadLimit: 0, detailBurstLimit: 0 });
 });
