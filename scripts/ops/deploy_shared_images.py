@@ -536,6 +536,29 @@ if len(matches)==1 and (detail or not result['ready']):
  result.update(swarm_detail(service))
 print(json.dumps(result))
 '''
+# Every running Swarm container of one standard web instance (SERVICE_INSTANCE_ID mini-web/m3-web) and its own /api/health,
+# read on its server without the Dokploy key (scripts/ops/verify-prod-revision.sh). The public endpoint answers only {status}.
+# Only fixed fields leave the host — no environment value is printed.
+REMOTE_WEB_RELEASES = r'''import json,subprocess,sys
+instance=sys.argv[1]
+def command(*args):
+ r=subprocess.run(args,capture_output=True,text=True,timeout=40)
+ return r.stdout.strip() if r.returncode==0 else ''
+ids=command('docker','ps','--filter','label=com.docker.swarm.service.name','--format','{{.ID}}').split()
+rows=[]
+for row in (json.loads(command('docker','inspect',*ids) or '[]') if ids else []):
+ config=row.get('Config') or {}
+ env=dict(line.split('=',1) for line in config.get('Env') or [] if '=' in line)
+ if env.get('SERVICE_INSTANCE_ID')!=instance or (row.get('State') or {}).get('Running') is not True: continue
+ script="fetch('http://'+process.env.HOSTNAME+':3000/api/health').then(async r=>console.log(JSON.stringify({status:r.status,body:await r.json()}))).catch(()=>console.log(JSON.stringify({status:0})))"
+ try: health=json.loads(command('docker','exec',row['Id'],'node','-e',script) or '{}')
+ except ValueError: health={}
+ body=health.get('body') if isinstance(health,dict) and isinstance(health.get('body'),dict) else {}
+ rows.append({'container':row['Id'][:12],'service':(config.get('Labels') or {}).get('com.docker.swarm.service.name'),
+              'http':health.get('status') if isinstance(health,dict) else None,'status':body.get('status'),'db':body.get('db'),
+              'release':body.get('release'),'instanceId':body.get('instanceId')})
+print(json.dumps(rows))
+'''
 # The same Swarm detail for any registered kind (monitor included): only the host and the service name are used.
 REMOTE_SWARM_STATUS = r'''import json,subprocess,sys
 def command(*args):
@@ -1143,18 +1166,45 @@ def monitor_gate(client, role, *, roles=None, timeout=120, pause=MONITOR_POLL_SE
     raise TimeoutError(detail + (':' + ','.join(blocking) if blocking else ''))
 
 
-def public_gate(sha, *, attempts=24):
+PUBLIC_HEALTH_URL = 'https://nomorevibe.com/api/health'
+# 표준 웹 두 서비스와 그 컨테이너가 /api/health 에 내는 instanceId(SERVICE_INSTANCE_ID)
+WEB_INSTANCE_IDS = {'web-mini': 'mini-web', 'web-m3': 'm3-web'}
+PUBLIC_GATE_PAUSE_SECONDS = 5
+
+
+def public_gate(client, target, *, attempts=24, pause=PUBLIC_GATE_PAUSE_SECONDS):
+    """웹 둘을 올린 뒤의 마지막 관문. 결과 모양({'publicHealth','instances'})과 실패 이름(public_health_gate_timeout)은 예전과 같다.
+
+    2026-11-16 부터 공개 /api/health 는 상태({status})만 낸다(배포 커밋·서버 이름을 공개하지 않는다, app/api/health/route.ts).
+    그래서 두 가지를 따로 본다:
+      - 공개 주소: curl -f 로 HTTP 200 과 status ok — Cloudflare·Traefik 을 지나 웹이 응답한다.
+      - 두 웹 서비스(web-mini·web-m3) 각각: 그 서버에서 SSH + docker exec 로 **모든 컨테이너**가 자기 /api/health 에
+        status·db ok·release == 목표 SHA 를 내고(probe 의 webHealthMatch), 복제본 수가 Dokploy 값과 같고, instanceId 가
+        mini-web / m3-web 인지. 예전에는 공개 응답의 instanceId 두 개를 모아 증명했다 — 이제 같은 증명을 서버에서 직접 한다.
+    한 번 확인한 쪽은 다시 읽지 않고, 모자란 쪽만 pause 초 뒤에 다시 본다."""
     seen = set()
-    for _ in range(attempts):
-        try:
-            health = json.loads(run(['curl', '-fsS', '--max-time', '10',
-                                     'https://nomorevibe.com/api/health'], timeout=12))
-            if (health.get('status'), health.get('db'), health.get('release')) == ('ok', 'ok', sha):
-                seen.add(health.get('instanceId'))
-                if seen == {'mini-web', 'm3-web'}:
-                    return {'publicHealth': 'ok', 'instances': sorted(seen)}
-        except (RuntimeError, ValueError):
-            pass
+    public = False
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(pause)
+        if not public:
+            try:
+                health = json.loads(run(['curl', '-fsS', '--max-time', '10', PUBLIC_HEALTH_URL], timeout=12))
+                public = isinstance(health, dict) and health.get('status') == 'ok'
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired):
+                pass
+        for short, instance in WEB_INSTANCE_IDS.items():
+            if instance in seen:
+                continue
+            try:
+                app = client.app(short)
+                evidence = probe(short, app, target, app.get('replicas'))
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired):
+                continue
+            if isinstance(evidence, dict) and evidence.get('ready') is True and evidence.get('instanceId') == instance:
+                seen.add(instance)
+        if public and seen == set(WEB_INSTANCE_IDS.values()):
+            return {'publicHealth': 'ok', 'instances': sorted(seen)}
     raise TimeoutError('public_health_gate_timeout')
 
 
@@ -1293,7 +1343,7 @@ def deploy(client, target, token, state, snapshot, consumers=(), *, parallel_rol
             label = describe_steps([(kind, names)])[0]
             with timeline.step(label):
                 if kind == 'public':
-                    result = public_gate(target['sha'])
+                    result = public_gate(client, target)
                 elif len(names) == 1:
                     result = monitor_gate(client, names[0])
                 else:
