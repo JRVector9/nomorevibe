@@ -5,6 +5,7 @@ import { detail as english } from "@/messages/en/detail";
 /** Product content is Japanese; untranslated support/account/policy copy explicitly falls back to English. */
 export const detail = defineCatalog<typeof Schema>()({
   ...english,
+  "intro.siteSource": "出典: nomorevibe.com",
   "action.close": "閉じる",
   "action.cancel": "キャンセル",
   "action.expand": "続きを読む",

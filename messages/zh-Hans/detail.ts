@@ -102,6 +102,7 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "relation.repository_link": "仓库链接到此网站",
   "relation.maker_reported": "制作者提供 · 尚未确认",
   "relation.disconnected": "连接中断",
+  "intro.siteSource": "来源: nomorevibe.com",
   "intro.title": "介绍",
   "intro.onlyTagline": "制作者的介绍仅有上面的一句话。",
   "intro.moreReadme": "更多详情请阅读仓库 README。",

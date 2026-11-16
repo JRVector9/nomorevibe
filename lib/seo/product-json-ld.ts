@@ -33,6 +33,8 @@ export function productJsonLd(input: ProductJsonLdInput): JsonLd[] {
 
   const webPage: JsonLd = {
     "@type": "WebPage", "@id": page, url: page, inLanguage: input.inLanguage, name: input.name, description,
+    isPartOf: { "@type": "WebSite", "@id": "https://nomorevibe.com/#website", name: "nomorevibe", url: "https://nomorevibe.com" },
+    publisher: { "@type": "Organization", "@id": "https://nomorevibe.com/#organization", name: "nomorevibe", url: "https://nomorevibe.com" },
     mainEntity: { "@type": "CreativeWork", name: input.name, description, image: input.shareCardImage },
   };
 

@@ -13,6 +13,7 @@ import { TryPanel } from "@/components/feedback/TryPanel";
 import { followLabels as followLabels_ } from "@/components/me/follow-labels";
 import { productReactionsEnabled } from "@/lib/domain/reactions/flags";
 import { productShareCard, shareMetadata } from "@/lib/copy/share";
+import { detailMetaDescription } from "@/lib/copy/attribution";
 import { pageTitle } from "@/lib/copy/brand";
 import { getProductIdentity } from "@/lib/domain/products/detail-view";
 import { productIndexable } from "@/lib/domain/products/indexing";
@@ -62,8 +63,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       logger.warn("i18n.product_metadata_readiness_unavailable", { error }); return [];
     }) : [],
   ]);
-  const description = locale === "ko" ? product.taglineKo?.trim() || product.tagline
-    : selectProductTranslation(source, locale, "tagline", translations.find((row) => row.field === "tagline")).text;
+  const description = detailMetaDescription(locale === "ko" ? product.taglineKo?.trim() || product.tagline
+    : selectProductTranslation(source, locale, "tagline", translations.find((row) => row.field === "tagline")).text);
   const title = pageTitle(product.name);
   // 공유 미리보기 그림은 이름·요약만 그린 공유 카드(/p/<slug>/share-card.png, 언어별 주소) — 2026-11-15 사람 결정.
   // 제품 표지(og-cache)는 서버 HTML·메타에 싣지 않는다(표지는 보호 API 가 추측할 수 없는 주소로만 준다, cover-url.ts)
