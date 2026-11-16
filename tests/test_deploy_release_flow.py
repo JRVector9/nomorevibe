@@ -113,7 +113,7 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.stack.enter_context(patch.object(release.shared, 'github_integration_preflight', side_effect=actual_integration))
         self.monitor = self.stack.enter_context(patch.object(release.shared, 'monitor_gate', side_effect=self.monitor_gate))
         self.health = self.stack.enter_context(patch.object(release.shared, 'check_app_deployed', side_effect=self.check_health))
-        self.public = self.stack.enter_context(patch.object(release.shared, 'public_gate', side_effect=lambda sha: self.record('public-verified', {'release': sha})))
+        self.public = self.stack.enter_context(patch.object(release.shared, 'public_gate', side_effect=lambda _client, target: self.record('public-verified', {'release': target['sha']})))
         self.purge = self.stack.enter_context(patch.object(release.shared, 'purge_html', side_effect=lambda: self.record('cache-purged', {'purged': True})))
         self.launch = self.stack.enter_context(patch.object(release, 'load', side_effect=lambda name, filename: SimpleNamespace(launch_observer=self.launch_observer)
             if filename == 'release_observer.py' else (_ for _ in ()).throw(AssertionError('unexpected dynamic module'))))

@@ -876,7 +876,7 @@ def run_release(plan, execution_dir, *, observe=True):
                 result = shared.monitor_gate(client, 'crawler', roles=names, timeout=shared.PARALLEL_GATE_TIMEOUT)
                 write_private(directory / ('gate-' + '-'.join(names) + '.safe.json'), result)
             else:
-                write_private(directory / 'public.safe.json', shared.public_gate(target['sha']))
+                write_private(directory / 'public.safe.json', shared.public_gate(client, target))
                 write_private(directory / 'purge.safe.json', shared.purge_html())
         final_snapshot = {}
         validate_tool_sources(plan)

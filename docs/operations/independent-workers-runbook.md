@@ -122,8 +122,8 @@ source, 이미지/커밋, `RELEASE_TAG`, 환경·build 설정과 배포 상태�
 역할별 주·예비는 같은 worker digest와 `RELEASE_TAG=<SHA>`로 교체한다.
 mini 예비를 먼저 배포해 healthy standby를 확인하고 M3 주를 배포해 active와
 동일 릴리스를 확인한다. publisher → reviewer → crawler 순서로 역할 하나씩
-끝낸다. 그다음 mini 웹, M3 웹을 같은 web digest로 배포하고 각각 `/api/health`와
-공개 로드밸런서 응답을 확인한다. Dokploy의 `done`만으로 완료를 판단하지 않고
+끝낸다. 그다음 mini 웹, M3 웹을 같은 web digest로 배포하고 각 컨테이너 안의 직접 `/api/health`(release·instanceId)와
+공개 로드밸런서 응답(2026-11-16부터 `status`만)을 확인한다. Dokploy의 `done`만으로 완료를 판단하지 않고
 실제 실행 중 컨테이너의 image digest, release, 다섯 역할의 readiness/progress를
 대조한다. 문제가 있으면 뒤의 앱을 전환하지 않고 해당 역할의 이전 이미지와
 source/env 설정으로 되돌린다. DB 서버·스트리밍 설정은 이 작업에서 바꾸지 않는다.
@@ -163,7 +163,9 @@ deployment ID와 `done`, Swarm 1/1, 실행 컨테이너 digest·release·health�
 기다린다. 역할 쌍 뒤에는 그 역할이 M3 주가 쥔 `ready`이고 다른 역할은 유효한 소유자(`ready` 또는
 `standby_active`)이며 scheduler 최소 두 복제본과 mini의 최근 관측·`check-worker-progress.ts`가 `ok`인지 확인한다(아래 "관문의 소유자 판정").
 웹 둘 뒤에는 공개
-`/api/health`에서 두 인스턴스의 같은 릴리스를 확인한다. 실패하면 뒤 앱 배포를
+`/api/health`가 `status: ok`(200)인지와, 두 서버에서 SSH + docker exec로 web-mini·web-m3의 모든 컨테이너가 직접
+`/api/health`에 같은 새 릴리스와 `mini-web`·`m3-web` instanceId를 내는지 확인한다. 공개 주소는 2026-11-16부터
+배포 커밋·서버 이름을 내지 않는다(상태만). 실패하면 뒤 앱 배포를
 멈추고 스냅샷 경로만 출력한다. 스냅샷에는 환경 비밀값이 있어 공유하거나 Git에
 넣지 않는다.
 
@@ -253,7 +255,8 @@ Dokploy 설정만 이전 값으로 되돌리고 **다시 배포하지 않는다*
     --sha "$RELEASE_SHA" --worker-image "$WORKER_IMAGE" --web-image "$WEB_IMAGE"
   ```
 - **확인 간격**: 앱 배포 확인 2초(예전 5초 — 한 번에 Dokploy 읽기 두 번이고, SSH 상태 확인은 Dokploy가 `done`을 낸 뒤에만 한다),
-  감시 관문 3초(예전 5초 — 한 번에 컨테이너 안에서 tsx 확인 둘을 띄운다). 공개 health 관문은 그대로다.
+  감시 관문 3초(예전 5초 — 한 번에 컨테이너 안에서 tsx 확인 둘을 띄운다). 공개 관문은 모자란 쪽(공개 status·서버별 직접 확인)만
+  5초 뒤 다시 본다(최대 24회, 2026-11-16).
 
 #### `--parallel-roles` (선택, 기본은 순차)
 
@@ -403,7 +406,7 @@ Dokploy와 Keychain에만 저장하고 렌더링된 환경을 로그나 문서�
    M3/mini web과 publisher는 Tailscale 내부
    주소로 연결하고 해당 포트는 공개 domain을 만들지 않는다. 각 서비스에는 고유한
    `SERVICE_INSTANCE_ID`를 넣는다.
-5. M3 singleton 역할을 시작하고 `/api/health` 및 `/admin/status`에서 DB, 두 web instance, scheduler와
+5. M3 singleton 역할을 시작하고 각 web 컨테이너 안의 직접 `/api/health`(공개 주소는 `status`만) 및 `/admin/status`에서 DB, 두 web instance, scheduler와
    4개 worker, connect-agent 관측을 확인한다. 두 web을 직접 확인한 뒤 같은 public domain의
    load-balancer target으로 넣는다. `TRUSTED_PROXY_HOPS`는 실제 전달된 header를 표본으로 정한다.
 
