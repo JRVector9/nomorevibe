@@ -178,7 +178,9 @@ describe("부가 자료 API", () => {
     expect(Object.keys(body).sort()).toEqual(["aside", "facts", "go", "hero", "info", "intro", "media", "related", "timeline"]);
     expect(body.hero).toMatchObject({ category: "Dev", stars: 197, owner: { login: "ggml-org" }, unclaimed: true, follow: null });
     expect(body.hero.health.checkedAt).toBeInstanceOf(Date);
-    expect(body.intro).toMatchObject({ text: "Long description", readmeExcerpt: "excerpt", repo: "https://github.com/ggml-org/ggml" });
+    // 2026-11-16 소개 끝 출처 한 줄 — 내보낼 때만 붙이고(DB 원문은 그대로) 한 번만
+    expect(body.intro).toMatchObject({ text: "Long description\n\n출처: nomorevibe.com", readmeExcerpt: "excerpt", repo: "https://github.com/ggml-org/ggml" });
+    expect(body.intro.text.split("출처: nomorevibe.com")).toHaveLength(2);
     // 내부 id 는 로그인 운영자 확인이 꺼져 있으면 담지 않는다
     expect(body.aside.ownerContact).toEqual({ installable: false, authEnabled: false, githubEnabled: false });
   });
