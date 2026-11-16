@@ -1,3 +1,4 @@
+import { watermarkedImageUrl } from "@/lib/images/watermark-policy";
 import { displayProjectName } from './display-name';
 import type { StarObservation } from './star-change';
 import "server-only";
@@ -642,8 +643,8 @@ async function visibleMedia(slug: string): Promise<ProductMediaView[]> {
   return rows.map((row) => ({
     id: row.id,
     hash: row.hash,
-    src: `/api/media/${row.hash}`,
-    thumbnailSrc: `/api/media/${row.hash}?variant=thumbnail`,
+    src: watermarkedImageUrl(`/api/media/${row.hash}`),
+    thumbnailSrc: watermarkedImageUrl(`/api/media/${row.hash}?variant=thumbnail`),
     width: row.width,
     height: row.height,
     thumbnailWidth: row.thumbnailWidth,

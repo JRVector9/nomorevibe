@@ -378,7 +378,7 @@ describe("evidence product detail components", () => {
   it("shows only an internal icon copy, never an external image URL", async () => {
     // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts) — 상세 API 가 준 보호 주소(<slug>.<열쇠>, cover-url.ts)로
     expect(await renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp?thumbnail=site_icon&w=64&h=64" } }))
-      .toMatch(/src="\/api\/og-cache\/simple-hwp\.[0-9a-f]{32}\.webp\?thumbnail=site_icon&amp;w=64&amp;h=64&amp;size=192"/);
+      .toMatch(/src="\/api\/og-cache\/simple-hwp\.[0-9a-f]{32}\.webp\?thumbnail=site_icon&amp;w=64&amp;h=64&amp;wm=1&amp;size=192"/);
     // 대표 이미지(OG 배너)는 정사각 아이콘 자리에 잘라 넣지 않는다 — 모노그램이 대신한다(UX-32)
     expect(await renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).not.toContain("<img");
     expect(await renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");

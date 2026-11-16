@@ -45,11 +45,11 @@ describe("보호 표지 주소(cover-url.ts)", () => {
   it("slug 주소를 <slug>.<열쇠> 로 바꾸고 쿼리는 그대로 — 열쇠는 비밀이 바뀌면 달라지고 slug 만으로는 만들 수 없다", () => {
     const key = coverKey("tiny-cron")!;
     expect(key).toMatch(/^[0-9a-f]{32}$/);
-    expect(protectedCoverUrl("/api/og-cache/tiny-cron")).toBe(`/api/og-cache/tiny-cron.${key}`);
+    expect(protectedCoverUrl("/api/og-cache/tiny-cron")).toBe(`/api/og-cache/tiny-cron.${key}?wm=1`);
     expect(protectedCoverUrl("/api/og-cache/tiny-cron?thumbnail=og&w=1200&h=630&v=3"))
-      .toBe(`/api/og-cache/tiny-cron.${key}?thumbnail=og&w=1200&h=630&v=3`);
+      .toBe(`/api/og-cache/tiny-cron.${key}?thumbnail=og&w=1200&h=630&v=3&wm=1`);
     // 이미 보호 주소면 그대로, 바깥 주소는 그대로, 없으면 null
-    expect(protectedCoverUrl(`/api/og-cache/tiny-cron.${key}`)).toBe(`/api/og-cache/tiny-cron.${key}`);
+    expect(protectedCoverUrl(`/api/og-cache/tiny-cron.${key}`)).toBe(`/api/og-cache/tiny-cron.${key}?wm=1`);
     expect(protectedCoverUrl("https://cdn.example/x.png")).toBe("https://cdn.example/x.png");
     expect(protectedCoverUrl(null)).toBeNull();
     expect(protectedCoverUrl("/api/og-cache/../etc")).toBeNull();
