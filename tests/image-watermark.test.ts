@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ og: vi.fn(), rendered: vi.fn() }));
+const mocks = vi.hoisted(() => ({ og: vi.fn(), identity: vi.fn(), rendered: vi.fn() }));
 vi.mock("@/lib/domain/products/repository", () => ({ getOgImage: mocks.og }));
-vi.mock("@/lib/domain/products/detail-view", () => ({ getProductIdentity: async (slug: string) => ({ slug, name: "Watermark QA", tagline: "Image QA", status: "verified" }) }));
+vi.mock("@/lib/domain/products/detail-view", () => ({ getProductIdentity: mocks.identity }));
 vi.mock("@/lib/domain/products/public-reads", () => ({ publicRead: (_kind: string, _key: unknown[], load: () => Promise<unknown>) => load() }));
 vi.mock("@/lib/i18n/products", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/i18n/products")>()), readTranslationsForProducts: async () => [] }));
 vi.mock("@/lib/db", () => ({ db: {} }));
@@ -41,6 +41,14 @@ const callOg = async (slug: string, webp = true, query = "") => {
   expect(response.status).toBe(200);
   return Buffer.from(await response.arrayBuffer());
 };
+const identity = (slug: string, kind = "og") => ({
+  slug, name: "Watermark QA", tagline: "Image QA", status: "verified",
+  ogImage: `/api/og-cache/${slug}?thumbnail=${kind}`,
+});
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.identity.mockImplementation(async (slug: string) => identity(slug));
+});
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("served image watermark", () => {
@@ -93,16 +101,57 @@ describe("served image watermark", () => {
     expect(cacheSet.mock.calls.at(-1)?.[0]).toMatch(/^preview-v3\|/);
   });
 
-  it("does not watermark avatar OG responses and keeps their cache separate from covers", async () => {
-    const original = await source(640, 336);
+  describe.each([false, true])("request thumbnail bypass (webp=%s)", (webp) => {
+    it.each(["default", "site_icon", "github_avatar"])("watermarks a protected cover despite thumbnail=%s", async (kind) => {
+      const original = await source(1200, 630);
+      mocks.og.mockResolvedValue({ data: original, contentType: "image/png" });
+      const output = await callOg(`watermark-bypass-${kind.replaceAll("_", "-")}-${webp}`, webp, `thumbnail=${kind}`);
+      const width = webp ? 640 : 1200, height = webp ? 336 : 630;
+      const baseline = await (webp ? sharp(original).resize(width, height).webp({ quality: 78 }) : sharp(original).jpeg({ quality: 78 })).toBuffer();
+      expect((await region(output, width - 180, height - 60, 180, 60))
+        .equals(await region(baseline, width - 180, height - 60, 180, 60))).toBe(false);
+    });
+
+    it("reuses one watermarked cache entry when only request thumbnail changes", async () => {
+      const original = await source(1200, 630);
+      mocks.og.mockResolvedValue({ data: original, contentType: "image/png" });
+      const cacheGet = vi.spyOn(VariantCache.prototype, "get");
+      const cacheSet = vi.spyOn(VariantCache.prototype, "set");
+      const slug = `watermark-cache-${webp}`;
+      // Start with the bypass attempt so a clean entry cannot be hidden by a warm cover cache.
+      const first = await callOg(slug, webp, "thumbnail=default");
+      const width = webp ? 640 : 1200, height = webp ? 336 : 630;
+      const baseline = await (webp ? sharp(original).resize(width, height).webp({ quality: 78 }) : sharp(original).jpeg({ quality: 78 })).toBuffer();
+      expect((await region(first, width - 180, height - 60, 180, 60))
+        .equals(await region(baseline, width - 180, height - 60, 180, 60))).toBe(false);
+      for (const query of ["", "thumbnail=site_icon", "thumbnail=github_avatar", "thumbnail=og", "thumbnail=unknown"]) {
+        expect(await callOg(slug, webp, query)).toEqual(first);
+      }
+      expect(new Set(cacheGet.mock.calls.map(([key]) => key)).size).toBe(1);
+      expect(cacheSet).toHaveBeenCalledTimes(1);
+      expect(mocks.og).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["github_avatar", "site_icon", "default"])("excludes stored %s without a request thumbnail and separates a later cover", async (kind) => {
+      const slug = `watermark-stored-${kind.replaceAll("_", "-")}-${webp}`;
+      const original = await source(640, 336);
+      mocks.identity.mockResolvedValue(identity(slug, kind));
+      mocks.og.mockResolvedValue({ data: original, contentType: "image/png" });
+      const avatar = await callOg(slug, webp);
+      const baseline = await (webp ? sharp(original).webp({ quality: 78 }) : sharp(original).jpeg({ quality: 78 })).toBuffer();
+      expect((await sharp(avatar).raw().toBuffer()).equals(await sharp(baseline).raw().toBuffer())).toBe(true);
+      expect((await callOg(slug, webp, "thumbnail=og")).equals(avatar)).toBe(true);
+      mocks.identity.mockResolvedValue(identity(slug));
+      expect((await callOg(slug, webp)).equals(avatar)).toBe(false);
+    });
+  });
+
+  it.each([64, 96, 192])("does not watermark %spx OG icons with a stored cover kind", async (width) => {
+    const original = await source(width, width / 2);
     mocks.og.mockResolvedValue({ data: original, contentType: "image/png" });
-    const avatar = await callOg("watermark-avatar", true, "thumbnail=github_avatar");
     const baseline = await sharp(original).webp({ quality: 78 }).toBuffer();
-    expect(await sharp(avatar).raw().toBuffer()).toEqual(await sharp(baseline).raw().toBuffer());
-    expect(await callOg("watermark-avatar")).not.toEqual(avatar);
-    mocks.og.mockResolvedValue({ data: await source(192, 96), contentType: "image/png" });
-    expect(await sharp(await callOg("watermark-tiny")).raw().toBuffer())
-      .toEqual(await sharp(await source(192, 96)).webp({ quality: 78 }).toBuffer().then((data) => sharp(data).raw().toBuffer()));
+    expect(await sharp(await callOg(`watermark-tiny-${width}`, true)).raw().toBuffer())
+      .toEqual(await sharp(baseline).raw().toBuffer());
   });
 
   it.each(["web", "thumbnail"])("composites the maker %s response while preserving storage bytes and headers", async (variant) => {

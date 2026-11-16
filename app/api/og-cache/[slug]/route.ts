@@ -46,10 +46,13 @@ export const GET = withRoute("og.serve", async (req: Request, { params }: Params
   }
   const missing = () => NextResponse.json({ error: "이미지가 없습니다" }, { status: 404,
     headers: { "cache-control": "public, max-age=300", ...tags(slug) } });
-  if (!coverKeyMatches(slug, coverKey) || !(await identityOf(slug))) return missing();
+  if (!coverKeyMatches(slug, coverKey)) return missing();
+  const product = await identityOf(slug);
+  if (!product) return missing();
   const url = new URL(req.url);
   const size = variantSize(url.searchParams.get("size"));
-  const thumbnail = url.searchParams.get("thumbnail");
+  // Only the stored image kind can exempt an icon. Ignore request thumbnail even on cache hits.
+  const thumbnail = new URLSearchParams(product.ogImage?.split("?", 2)[1] ?? "").get("thumbnail");
   const key = `preview-v3|${isWatermarkIcon(thumbnail) ? "icon" : "cover"}|${variant ? "webp" : "jpeg"}|${slug}|${variant ? size : 1200}|${url.searchParams.get("v") ?? ""}`;
   const headers = {
     "content-type": variant ? "image/webp" : "image/jpeg",

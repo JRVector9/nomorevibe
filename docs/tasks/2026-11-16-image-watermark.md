@@ -26,3 +26,19 @@
 - 제한: 병합·배포·운영 Cloudflare 변경은 범위 밖. rate-limit.ts/proxy.ts/anti-scrape.ts와 다른 PR은 변경하지 않는다.
 
 - CI 첫 ready 실행: unit (2)의 기존 카드 API 주소 기대값 1건이 `wm=1`을 반영하지 않아 실패. `product-cards-slugs.test.ts`를 갱신하고 카드 API 5개·워터마크 19개(2파일 24개) 회귀, typegen/tsc, 해당 파일 ESLint가 모두 통과했다. 응답 코드/화면은 변경하지 않았다. 새 head CI 결과는 위 PR checks 영수증을 따른다.
+
+## PR #976 후속 수정 — 요청 thumbnail 우회 차단
+
+- 완료: 아이콘 제외 여부와 JPEG/WebP 메모리 사본의 `icon`/`cover` 열쇠는 저장된 제품 `og_image`의 `thumbnail`만 따른다.
+  요청 `thumbnail`은 완전히 무시한다. 저장값 일치 검사를 추가하는 것보다 분기가 적고, 요청 조작으로 제외·캐시 분리를 만들 수 없다.
+- 완료: 출력 폭 200px 미만 규칙은 그대로 유지한다. 저장된 아바타·사이트 아이콘·기본 이미지는 요청에 종류가 없어도 제외한다.
+- 완료: JPEG 1200px와 WebP 640px에서 세 종류의 요청 우회, 연속 캐시 요청, 저장 종류 변경, 64/96/192px 아이콘 회귀 시험을 추가했다.
+  공유 카드의 `nomorevibe.com/p/<slug>` 문구 시험은 유지했다.
+- 의도된 현재 동작: `/api/media`는 서버 메모리 캐시 없이 요청마다 워터마크 대상만 재인코딩하며, 움직이는 WebP는 첫 장면만 합성한다.
+- 실측: 같은 확장 시험을 이전 머리 `126e97c2`의 route에 적용하면 21/35 통과·14실패 → 수정 후 35/35 통과·0실패.
+  명령: `npx vitest run tests/image-watermark.test.ts --reporter=json --outputFile=<영수증 경로>`.
+- 완료: 워터마크 35개와 보호 표지 주소 12개, `npx next typegen` → `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p .`,
+  `npx eslint 'app/api/og-cache/[slug]/route.ts' tests/image-watermark.test.ts`, `git diff --check` 통과.
+- 커밋·push·새 head CI의 최종 상태는 위 PR checks 및 후속 완료 보고를 영수증으로 삼는다. 남은 구현 작업 없음.
+- 최초 로컬 실행은 공유 `node_modules`의 `aws4fetch` 누락으로 시험 수집 전에 실패했다. 등록 checkout을 수정하지 않고 격리 폴더에 `npm ci --no-audit --no-fund --ignore-scripts`로 설치한다.
+- 마이그레이션 0개. 화면·창 변경 없음. 병합·배포·운영 설정·Cloudflare 및 PR #977/#952 변경 금지 범위 유지.
