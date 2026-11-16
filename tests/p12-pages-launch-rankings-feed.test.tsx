@@ -121,6 +121,9 @@ describe("feed.xml", () => {
     const xml = await res.text();
     const items = new XMLParser().parse(xml).rss.channel.item as Record<string, unknown>[];
 
+    // 한 번 가져갈 때 최신 20개만 — 2026-11-16 사람 결정
+    expect(mocks.listRecentlyDiscovered).toHaveBeenCalledWith(20);
+
     expect(items.map((item) => item.title)).toEqual(["Mine", "Found"]);
     expect(xml).not.toContain("— 운영자 미확인");
     expect(xml).not.toContain("— ✓ 검증됨");
