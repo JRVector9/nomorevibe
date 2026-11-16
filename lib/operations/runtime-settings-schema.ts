@@ -4,6 +4,7 @@ import { JOB_NAMES } from "@/lib/jobs/catalog";
 import { intervalOverridable, JOB_INTERVAL_MAX_MS, JOB_INTERVAL_MIN_MS } from "@/lib/jobs/job-intervals";
 import { DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS, unknownHoldSecondsSchema } from "@/lib/llm/capacity-unknown-hold";
 import { DEFAULT_MODEL_CAPACITY_LEDGER_RETENTION_DAYS, ledgerRetentionDaysSchema } from "@/lib/llm/capacity-retention";
+import { CRAWL_BURST_DEFAULTS } from "@/lib/http/crawl-burst-policy";
 import { DEADLINE_LADDER_SKEW_MS, deadlineLadderSchema, type DeadlineLadder } from "@/lib/llm/deadline-policy";
 import { DEFAULT_MODEL_DEADLINES, DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPOSE_LIMITS, DEFAULT_MODEL_TIMEOUTS, MODEL_PURPOSE_ENV,
   modelTimeoutMs, type ModelDefinition } from "@/lib/llm/model-registry";
@@ -53,7 +54,12 @@ export type RuntimeSettings = Readonly<{
    * 정리 잡(db-retention)이 틱마다 행에서 바로 읽는다(lib/llm/capacity-retention.ts).
    */
   capacity: { unknownHoldSeconds: number; ledgerRetentionDays: number };
-  publicApi: { mode: "observe" | "enforce" };
+  /**
+   * 공개 API 관문(mode) + 과다 호출 차단(2026-11-16 사람 지시 「초당 호출이 너무 많으면 30분 제한」, lib/http/crawl-burst.ts).
+   * burstLimit = 같은 공인 IP 가 burstWindowSeconds 안에 부를 수 있는 공개 화면·공개 API 읽기 수(넘으면 차단, 0 이면 끔).
+   * burstBlockSeconds = 넘은 IP 를 막는 시간. 웹이 30초마다 행에서 다시 읽는다 — 재배포 없음.
+   */
+  publicApi: { mode: "observe" | "enforce"; burstLimit: number; burstWindowSeconds: number; burstBlockSeconds: number };
 }>;
 
 export const RUNTIME_SETTINGS_VERSION = 1 as const;
@@ -128,7 +134,8 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
   },
   // 배정 표 읽기(PR 3b-E) — 기본 꺼짐: 3b-B 배포 상태(설정으로 고른다)와 같다
   assignments: { tableReads: "off" },
-  publicApi: { mode: "observe" },
+  // 과다 호출 기본값 근거(실측)는 lib/http/crawl-burst-policy.ts 의 CRAWL_BURST_DEFAULTS 설명
+  publicApi: { mode: "observe", ...CRAWL_BURST_DEFAULTS },
   // 결과 미확정 점유(2026-11-10) — 기본 600초: 가장 긴 호출 상한(product-translate 300초)의 두 배, 45~60초 경로의 열 배. 근거는 lib/llm/capacity-unknown-hold.ts
   capacity: { unknownHoldSeconds: DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS, ledgerRetentionDays: DEFAULT_MODEL_CAPACITY_LEDGER_RETENTION_DAYS },
 });
@@ -192,6 +199,14 @@ export const JOB_KNOB_NAMES = Object.freeze(Object.keys(jobKnobsSchema.shape) as
 /** 모델 배정 읽기 묶음 — 열거 칸만(불리언처럼 쓰되 저장 문서에는 글자로 남아 감사 줄이 "off → on" 으로 읽힌다) */
 export const assignmentsSchema = z.object({ tableReads: z.enum(ASSIGNMENT_TABLE_READS) }).strict();
 /** 모델 장부 묶음 — 결과 미확정 점유 유지 시간(초, 0~3600) · 끝난 장부 보관(일, 8~90) */
+/** 과다 호출 차단 손잡이의 범위 — 0 이면 끔. 창 1~600초, 차단 1분~하루 */
+export const CRAWL_BURST_RANGES = Object.freeze({ burstLimit: { min: 0, max: 10_000 }, burstWindowSeconds: { min: 1, max: 600 }, burstBlockSeconds: { min: 60, max: 86_400 } });
+export const publicApiSettingsSchema = z.object({
+  mode: z.enum(["observe", "enforce"]),
+  burstLimit: z.number().int().min(CRAWL_BURST_RANGES.burstLimit.min).max(CRAWL_BURST_RANGES.burstLimit.max),
+  burstWindowSeconds: z.number().int().min(CRAWL_BURST_RANGES.burstWindowSeconds.min).max(CRAWL_BURST_RANGES.burstWindowSeconds.max),
+  burstBlockSeconds: z.number().int().min(CRAWL_BURST_RANGES.burstBlockSeconds.min).max(CRAWL_BURST_RANGES.burstBlockSeconds.max),
+}).strict();
 export const capacitySettingsSchema = z.object({ unknownHoldSeconds: unknownHoldSecondsSchema, ledgerRetentionDays: ledgerRetentionDaysSchema }).strict();
 
 const boundsSchema = z.object({
@@ -203,7 +218,7 @@ const boundsSchema = z.object({
   budgets: z.record(z.string(), jobBudgetSchema),
   assignments: assignmentsSchema,
   capacity: capacitySettingsSchema,
-  publicApi: z.object({ mode: z.enum(["observe", "enforce"]) }).strict(),
+  publicApi: publicApiSettingsSchema,
 }).strict();
 /** 유효(병합된) 문서를 검사한다: 범위 + 교차 불변식(코드 기본 등록부 기준). 저장 경로는 resolveRuntimeSettings(…, { models }) 로 덮어쓴 등록부까지 본다. */
 export const runtimeSettingsSchema = boundsSchema.superRefine((value, context) => {
@@ -423,9 +438,10 @@ export function resolveRuntimeSettings(stored: unknown, options: { models?: read
   const publicApi: RuntimeSettings["publicApi"] = { ...defaults.publicApi };
   for (const [key, value] of Object.entries(groupOf(doc, "publicApi", issues))) {
     if (value === null) continue;
-    if (key !== "mode") { issues.push(`unknown_setting:publicApi.${key}`); continue; }
-    if (value === "observe" || value === "enforce") publicApi.mode = value;
-    else issues.push("runtime_settings_invalid:publicApi.mode");
+    const field = publicApiSettingsSchema.shape[key as keyof typeof publicApiSettingsSchema.shape];
+    if (!field) { issues.push(`unknown_setting:publicApi.${key}`); continue; }
+    const parsed = field.safeParse(value);
+    if (parsed.success) (publicApi as Record<string, unknown>)[key] = parsed.data; else issues.push(`runtime_settings_invalid:publicApi.${key}`);
   }
   const settings: RuntimeSettings = { routes, translation: { product: product as ProductTranslationPolicy }, jobs, budgets, assignments, capacity, publicApi };
   const bounds = boundsSchema.safeParse({ version: RUNTIME_SETTINGS_VERSION, ...settings });
@@ -511,6 +527,9 @@ export const RUNTIME_SETTING_LABELS: Readonly<Record<string, string>> = Object.f
     [`budgets.${job}`, `${jobLabel(job)} 틱 예산(ms)`],
   ]),
   ["publicApi.mode", "공개 API 관문 모드"],
+  ["publicApi.burstLimit", "과다 호출 기준 수(0 = 끔)"],
+  ["publicApi.burstWindowSeconds", "과다 호출 기준 창(초)"],
+  ["publicApi.burstBlockSeconds", "과다 호출 차단 시간(초)"],
   ["assignments.tableReads", "배정 표 읽기"],
   ["capacity.unknownHoldSeconds", "결과 미확정 점유 유지(초)"],
   ["capacity.ledgerRetentionDays", "끝난 모델 장부 보관(일)"],

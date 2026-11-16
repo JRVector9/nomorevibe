@@ -3,6 +3,7 @@ import { onPrimary } from "@/lib/db";
 import { blockRateLimitKey, publicClientIp, rateLimitWindow } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
 import { agentKind, refusedApiAgent } from "./agents";
+import { guardCrawlBurst } from "./crawl-burst";
 import { verifiedSearchBot } from "./search-bot-verify";
 
 /**
@@ -12,6 +13,7 @@ import { verifiedSearchBot } from "./search-bot-verify";
  *  1. 수집 도구·학습 봇·이름 없는 요청의 공개 API 읽기(403)
  *  2. 다른 사이트의 브라우저 요청(Sec-Fetch-Site: cross-site, 403) — 이 머리가 없는 오래된 브라우저는 그대로 받는다
  *  3. IP 별 읽기 한도(429 + Retry-After) — 함정 경로를 부른 IP 는 같은 키로 한동안 막힌다
+ *  4. 과다 호출(짧은 창에 공개 화면 + API 읽기가 기준을 넘음) — 30분 차단, 크롤링 금지 안내(lib/http/crawl-burst.ts)
  * IP 를 모르면(신뢰 프록시 설정 전·사설 주소) 한도를 걸지 않는다 — 모두가 한 통을 나눠 서로를 막는다.
  * 확인된 검색 봇(역방향 DNS)은 한도를 넘어도 받는다. 이름만 댄 봇은 보통 방문자와 같다.
  */
@@ -34,7 +36,7 @@ export const apiReadKey = (ip: string) => `api-read:${ip}`;
 export const searchKey = (ip: string) => `search:${ip}`;
 export const goKey = (ip: string) => `go:${ip}`;
 
-type GuardRequest = Pick<Request, "headers"> & Partial<Pick<Request, "url">>;
+type GuardRequest = Pick<Request, "headers"> & Partial<Pick<Request, "url" | "method">>;
 
 function refused(): Response {
   return Response.json({
@@ -66,6 +68,9 @@ export async function guardPublicApiRead(
     logger.info("anti_scrape.cross_site_refused", { route });
     return refused();
   }
+  // 과다 호출(짧은 창, 넘으면 30분 차단 — lib/http/crawl-burst.ts)이 10분 읽기 한도보다 먼저다: 막힌 IP 는 크롤링 금지 안내를 받는다
+  const burst = await guardCrawlBurst(request, "api", route);
+  if (burst) return burst;
   const limited = await limitByIp(request, route, apiReadKey, API_READ_LIMIT, API_READ_WINDOW_MS);
   if (limited) return limited;
   return route === "session" ? null : guardApiSession(request, route, onSessionRequired);
