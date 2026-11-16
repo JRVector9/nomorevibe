@@ -6,14 +6,14 @@ import { resolveRuntimeSettings } from "@/lib/operations/runtime-settings-schema
 import { logger } from "@/lib/observability/logger";
 import { publicClientIp, RATE_LIMIT_BLOCKED_COUNT, type RateLimitResult } from "@/lib/rate-limit";
 import { agentKind } from "./agents";
-import { CRAWL_BURST_DEFAULTS, crawlBlockedResponse, crawlBurstKey, type CrawlBurstSettings } from "./crawl-burst-policy";
+import { DETAIL_API_DEFAULTS, crawlBlockedResponse, crawlBurstKey, detailBurstKey, detailReadKey, isDetailApiRoute, type CrawlBurstSettings, type DetailApiSettings } from "./crawl-burst-policy";
 import { verifiedSearchBot } from "./search-bot-verify";
 
 /**
  * 과다 호출 차단(2026-11-16 사람 지시 「크롤링 봇 초당 호출이 너무 많으면 30분 제한하고 크롤링 금지·법적 조치 안내」).
  *
  * 같은 공인 IP 의 공개 화면(proxy.ts) + 공개 API 읽기(guardPublicApiRead)를 한 통(`burst:<ip>`, rate_limits 표)에 센다.
- * 창(기본 10초) 안에 기준 수(기본 50)를 넘으면 그 키를 차단 시간(기본 30분) 동안 한도 밖으로 만든다(blockRateLimitKey 와 같은 방식 —
+ * 창(기본 10초) 안에 기준 수(기본 80)를 넘으면 그 키를 차단 시간(기본 30분) 동안 한도 밖으로 만든다(blockRateLimitKey 와 같은 방식 —
  * 따로 차단 표를 두지 않고 count 를 크게 올린다. 그래서 막힌 동안에도 한 문장으로 남은 시간을 안다). 기준 수·창·차단 시간은
  * runtime_settings 의 publicApi.burst* 이고 30초마다 다시 읽는다.
  *
@@ -25,7 +25,7 @@ import { verifiedSearchBot } from "./search-bot-verify";
  */
 
 export type CrawlBurstStore = {
-  settings(): Promise<CrawlBurstSettings>;
+  settings(): Promise<CrawlBurstSettings & Partial<DetailApiSettings>>;
   /** 창 갱신과 증가를 한 문장에서 — rateLimitWindow 와 같은 의미 */
   hit(key: string, limit: number, windowMs: number): Promise<RateLimitResult>;
   /** 키를 지금부터 durationMs 동안 한도 밖으로(이미 더 길면 줄이지 않는다) */
@@ -33,21 +33,16 @@ export type CrawlBurstStore = {
 };
 
 const SETTINGS_TTL_MS = 30_000;
-let settingsCache: { at: number; value: CrawlBurstSettings } | null = null;
-let settingsLoading: Promise<CrawlBurstSettings> | null = null;
+type ProtectionSettings = CrawlBurstSettings & Partial<DetailApiSettings>;
+let settingsCache: { at: number; value: ProtectionSettings } | null = null;
+let settingsLoading: Promise<ProtectionSettings> | null = null;
 
-async function loadSettings(): Promise<CrawlBurstSettings> {
-  try {
-    const [row] = await onPrimary(() => db.select({ values: runtimeSettings.values }).from(runtimeSettings).where(eq(runtimeSettings.id, 1)));
-    const { burstLimit, burstWindowSeconds, burstBlockSeconds } = resolveRuntimeSettings(row?.values ?? {}).settings.publicApi;
-    return { burstLimit, burstWindowSeconds, burstBlockSeconds };
-  } catch (error) {
-    logger.warn("anti_scrape.burst_settings_unavailable", { error });
-    return settingsCache?.value ?? { ...CRAWL_BURST_DEFAULTS };
-  }
+async function loadSettings(): Promise<ProtectionSettings> {
+  const [row] = await onPrimary(() => db.select({ values: runtimeSettings.values }).from(runtimeSettings).where(eq(runtimeSettings.id, 1)));
+  return resolveRuntimeSettings(row?.values ?? {}).settings.publicApi;
 }
 
-async function cachedSettings(): Promise<CrawlBurstSettings> {
+async function cachedSettings(): Promise<ProtectionSettings> {
   const now = Date.now();
   if (settingsCache && now - settingsCache.at < SETTINGS_TTL_MS) return settingsCache.value;
   settingsLoading ??= loadSettings().then((value) => {
@@ -114,34 +109,63 @@ type GuardRequest = Pick<Request, "headers"> & { method?: string; url?: string; 
 export async function guardCrawlBurst(request: GuardRequest, kind: "page" | "api", route: string): Promise<Response | null> {
   const ip = publicClientIp(request);
   if (!ip) return null;
-  let settings: CrawlBurstSettings;
-  let result: RateLimitResult;
   try {
-    settings = await store.settings();
-    if (settings.burstLimit <= 0) return null;
-    result = await store.hit(crawlBurstKey(ip), settings.burstLimit, settings.burstWindowSeconds * 1000);
-  } catch (error) {
-    logger.warn("anti_scrape.burst_unavailable", { route, error });
+    const settings = { ...DETAIL_API_DEFAULTS, ...await store.settings() };
+    const pathname = request.nextUrl?.pathname ?? (request.url ? new URL(request.url).pathname : "/");
+    const respond = (seconds: number) => crawlBlockedResponse({ kind, retryAfterSeconds: seconds, method: request.method, pathname });
+    // 상세 기준으로 막힌 IP도 화면·모든 API에서 같은 burst 키로 막는다.
+    if (settings.burstLimit > 0 || settings.detailBurstLimit > 0) {
+      const limit = settings.burstLimit > 0 ? settings.burstLimit : RATE_LIMIT_BLOCKED_COUNT - 1;
+      const result = await store.hit(crawlBurstKey(ip), limit, settings.burstWindowSeconds * 1000);
+      if (!result.allowed) {
+        if (await verifiedSearchBot(request.headers.get("user-agent"), ip)) return null;
+        if (result.count >= RATE_LIMIT_BLOCKED_COUNT) return respond(result.retryAfterSeconds);
+        await store.block(crawlBurstKey(ip), settings.burstBlockSeconds * 1000);
+        if (result.count === limit + 1) logBlock("burst", limit, settings.burstWindowSeconds);
+        return respond(settings.burstBlockSeconds);
+      }
+    }
+    if (kind === "api" && isDetailApiRoute(route) && settings.detailBurstLimit > 0) {
+      // 공통 기준은 '넘으면', 상세 기준은 '20번째부터'(19번까지 허용).
+      const result = await store.hit(detailBurstKey(ip), settings.detailBurstLimit - 1, settings.detailBurstWindowSeconds * 1000);
+      if (!result.allowed) {
+        if (await verifiedSearchBot(request.headers.get("user-agent"), ip)) return null;
+        await store.block(crawlBurstKey(ip), settings.burstBlockSeconds * 1000);
+        if (result.count === settings.detailBurstLimit) logBlock("detail_burst", settings.detailBurstLimit, settings.detailBurstWindowSeconds);
+        return respond(settings.burstBlockSeconds);
+      }
+    }
+    return null;
+
+    function logBlock(event: string, limit: number, windowSeconds: number) {
+      logger.info(`anti_scrape.${event}_blocked`, {
+        route, kind, agent: agentKind(request.headers.get("user-agent")), limit, windowSeconds,
+        blockSeconds: settings.burstBlockSeconds, releaseAt: new Date(Date.now() + settings.burstBlockSeconds * 1000).toISOString(),
+      });
+    }
+  } catch {
+    // DB 오류에는 쿼리·매개변수(IP)가 섞일 수 있어 오류 객체는 기록하지 않는다.
+    logger.warn("anti_scrape.burst_unavailable", { route });
     return null;
   }
-  if (result.allowed) return null;
-  const pathname = request.nextUrl?.pathname ?? (request.url ? new URL(request.url).pathname : "/");
-  const respond = (retryAfterSeconds: number) => crawlBlockedResponse({ kind, retryAfterSeconds, method: request.method, pathname });
-  // 이미 막힌 IP — 남은 차단 시간이 Retry-After
-  if (result.count >= RATE_LIMIT_BLOCKED_COUNT) return respond(result.retryAfterSeconds);
-  const userAgent = request.headers.get("user-agent");
-  if (await verifiedSearchBot(userAgent, ip)) return null;
+}
+
+/** 공통 300/10분과 별도로 적용하는 상세 세 경로 합산 한도. */
+export async function guardDetailApiRead(request: GuardRequest, route: string): Promise<Response | null> {
+  if (!isDetailApiRoute(route)) return null;
+  const ip = publicClientIp(request);
+  if (!ip) return null;
   try {
-    await store.block(crawlBurstKey(ip), settings.burstBlockSeconds * 1000);
-  } catch (error) {
-    logger.warn("anti_scrape.burst_block_unavailable", { route, error });
-  }
-  // 차단마다 한 줄 — 창에서 처음 넘친 요청만 남긴다(동시에 넘친 요청들이 같은 차단을 다시 써도 줄은 하나)
-  if (result.count === settings.burstLimit + 1) {
-    logger.info("anti_scrape.burst_blocked", {
-      route, kind, agent: agentKind(userAgent), limit: settings.burstLimit, windowSeconds: settings.burstWindowSeconds,
-      blockSeconds: settings.burstBlockSeconds, releaseAt: new Date(Date.now() + settings.burstBlockSeconds * 1000).toISOString(),
+    const settings = { ...DETAIL_API_DEFAULTS, ...await store.settings() };
+    if (settings.detailReadLimit <= 0) return null;
+    const result = await store.hit(detailReadKey(ip), settings.detailReadLimit, settings.detailReadWindowSeconds * 1000);
+    if (result.allowed || await verifiedSearchBot(request.headers.get("user-agent"), ip)) return null;
+    if (result.count === settings.detailReadLimit + 1) logger.info("anti_scrape.detail_rate_limited", { route, limit: settings.detailReadLimit });
+    return Response.json({ error: "rate_limited" }, {
+      status: 429, headers: { "Cache-Control": "private, no-store", "Cloudflare-CDN-Cache-Control": "no-store", "Retry-After": String(result.retryAfterSeconds) },
     });
+  } catch {
+    logger.warn("anti_scrape.detail_limit_unavailable", { route });
+    return null;
   }
-  return respond(settings.burstBlockSeconds);
 }

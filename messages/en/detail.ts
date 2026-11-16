@@ -102,6 +102,7 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "relation.repository_link": "Repository links to this site",
   "relation.maker_reported": "Maker-reported · not checked yet",
   "relation.disconnected": "Disconnected",
+  "intro.siteSource": "Source: nomorevibe.com",
   "intro.title": "Introduction",
   "intro.onlyTagline": "The maker's introduction consists of the line above.",
   "intro.moreReadme": "Read the repository README for more details.",

@@ -372,7 +372,8 @@ describe("상세 — h1 이름·요약·빵부스러기 홈›이름·JSON-LD(�
     expect(text).not.toContain("og-cache");
     expect(text).not.toContain("sentinel-og");
     expect(leaked(text)).toEqual([]);
-    expect(metadata.description).toBe("머신러닝용 텐서 라이브러리");
+    // 2026-11-16 메타 설명 끝 출처(중복 없이 한 번)
+    expect(metadata.description).toBe("머신러닝용 텐서 라이브러리 · nomorevibe.com");
   });
 
   it("서버 HTML(본문·RSC·JSON-LD·메타) 어디에도 /api/og-cache/ 주소가 0개 — JSON-LD image 도 공유 카드", async () => {

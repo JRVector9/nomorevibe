@@ -5,6 +5,9 @@ import { savableProduct } from "@/components/product-detail/savable";
 import { safeExternalUrl } from "@/components/product-detail/format";
 import { githubStarEnabled, publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import { parseGithubRepository } from "@/lib/github/repositories";
+import { attributedIntroduction } from "@/lib/copy/attribution";
+import { getTranslator } from "@/lib/i18n/dictionary";
+import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/locales";
 import { englishLang } from "@/lib/i18n/content-language";
 import { logger } from "@/lib/observability/logger";
 import { talkVisibility } from "@/lib/social/flags";
@@ -74,7 +77,7 @@ export type DetailAside = {
 
 export type DetailPageData = { hero: DetailHero; intro: DetailIntro; media: DetailMedia; aside: DetailAside };
 
-export async function detailPageData(detail: ProductDetailView, product: PublicProduct & { descriptionTranslation?: PublicProduct["translation"] }): Promise<DetailPageData> {
+export async function detailPageData(detail: ProductDetailView, product: PublicProduct & { descriptionTranslation?: PublicProduct["translation"] }, locale: Locale = DEFAULT_LOCALE): Promise<DetailPageData> {
   const repositoryUrl = detail.repository?.facts?.repositoryUrl ?? null;
   const owner = repositoryOperator(product.repoUrl, repositoryUrl)?.owner ?? null;
   const auth = publicUserAuthEnabled();
@@ -88,6 +91,8 @@ export async function detailPageData(detail: ProductDetailView, product: PublicP
   const originalDescription = product.description.trim() !== product.tagline.trim() ? product.description : null;
   const selected = product.descriptionTranslation;
   const description = originalDescription && (selected?.ready ? selected.text : originalDescription);
+
+  const sourceLine = description ? (await getTranslator(locale, "detail"))("intro.siteSource") : null;
 
   return {
     hero: {
@@ -103,7 +108,7 @@ export async function detailPageData(detail: ProductDetailView, product: PublicP
       feedbackSettings: githubRepo,
     },
     intro: {
-      text: description || null,
+      text: description && sourceLine ? attributedIntroduction(description, sourceLine) : null,
       textLang: description ? selected?.lang ?? englishLang(description) : undefined,
       descriptionTranslation: description && selected ? {
         machine: Boolean(selected.translated && selected.provenance === "machine"), pending: Boolean(selected.pending), translated: Boolean(selected.translated),

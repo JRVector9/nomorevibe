@@ -121,11 +121,26 @@ describe("detailPageData — 머리·소개", () => {
     const same = { ...product, description: ` ${product.tagline} ` } as PublicProduct;
     expect((await detailPageData(view({}, same), same)).intro).toMatchObject({ text: null, makerSource: false });
     const own = await detailPageData(view({ unclaimed: false }), product);
-    expect(own.intro).toMatchObject({ text: "A long description of the helper for the client", textLang: "en", descriptionTranslation: null, makerSource: true,
+    expect(own.intro).toMatchObject({ text: "A long description of the helper for the client\n\n출처: nomorevibe.com", textLang: "en", descriptionTranslation: null, makerSource: true,
       repo: "https://github.com/0xpolarzero/lcu", repoGone: false });
     const translated = { ...product, descriptionTranslation: { text: "도우미의 긴 설명", lang: "ko", translated: true, ready: true, pending: false,
       sourceHash: "h", sourceLocale: "en", provenance: "machine" } } as PublicProduct;
-    expect((await detailPageData(view({}, translated), translated)).intro).toMatchObject({ text: "도우미의 긴 설명", textLang: "ko",
+    expect((await detailPageData(view({}, translated), translated)).intro).toMatchObject({ text: "도우미의 긴 설명\n\n출처: nomorevibe.com", textLang: "ko",
       descriptionTranslation: { machine: true, pending: false, translated: true, sourceLocale: "en", original: "A long description of the helper for the client" }, makerSource: false });
   });
+});
+
+
+it("각 언어 소개 응답에 출처 한 줄만 붙이고 DB에서 온 객체는 바꾸지 않는다", async () => {
+  const lines = { ko: "출처", en: "Source", ja: "出典", "zh-Hans": "来源", "zh-Hant": "來源" } as const;
+  for (const [locale, label] of Object.entries(lines)) {
+    const before = JSON.stringify(product);
+    const text = `${label}: nomorevibe.com`;
+    const data = await detailPageData(view(), product, locale as keyof typeof lines);
+    expect(data.intro.text?.endsWith(text)).toBe(true);
+    expect(data.intro.text?.split(text)).toHaveLength(2);
+    expect(JSON.stringify(product)).toBe(before);
+    const existing = { ...product, description: data.intro.text! };
+    expect((await detailPageData(view({}, existing), existing, locale as keyof typeof lines)).intro.text).toBe(data.intro.text);
+  }
 });

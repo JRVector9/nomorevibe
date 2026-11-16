@@ -1122,3 +1122,11 @@ describe("사실 표 줄 나눔(factRows, 2026-11-08) — 어느 줄에도 빈�
     expect(spans.map(([narrow]) => narrow)).toEqual([6, 6, 6, 6, 6, 6, 12]);
   });
 });
+
+
+it("소개 API의 출처 문자열을 화면에 한 번만 그린다", async () => {
+  const html = await renderIntro();
+  expect(html.split("출처: nomorevibe.com")).toHaveLength(2);
+  const existing = await renderIntro({ product: { ...product, description: `${product.description}\n\n출처: nomorevibe.com` } });
+  expect(existing.split("출처: nomorevibe.com")).toHaveLength(2);
+});

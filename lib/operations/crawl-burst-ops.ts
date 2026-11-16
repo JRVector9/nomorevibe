@@ -1,8 +1,8 @@
 import { isIP } from "node:net";
-import { and, eq, gt, gte, like, sql } from "drizzle-orm";
+import { and, eq, gt, gte, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { operationsAudit, rateLimits } from "@/lib/db/schema";
-import { crawlBurstKey, type CrawlBurstSettings } from "@/lib/http/crawl-burst-policy";
+import { crawlBurstKey, detailBurstKey, detailReadKey, type CrawlBurstSettings, type DetailApiSettings } from "@/lib/http/crawl-burst-policy";
 import { RATE_LIMIT_BLOCKED_COUNT } from "@/lib/rate-limit";
 import { adminAuditRow } from "./admin-log";
 import { readRuntimeSettingsRow, saveRuntimeSettings } from "./runtime-settings";
@@ -15,17 +15,17 @@ import { resolveRuntimeSettings } from "./runtime-settings-schema";
 export const CRAWL_BURST_RELEASE_ACTION = "crawl-burst-release";
 
 /** 지금 설정과 지금 막힌 IP 수·창 안에서 세는 IP 수(읽기 전용) */
-export async function crawlBurstStatus(): Promise<{ settings: CrawlBurstSettings; revision: number; blockedNow: number; countingNow: number }> {
+export async function crawlBurstStatus(): Promise<{ settings: CrawlBurstSettings & DetailApiSettings; revision: number; blockedNow: number; countingNow: number }> {
   const row = await readRuntimeSettingsRow();
-  const { burstLimit, burstWindowSeconds, burstBlockSeconds } = resolveRuntimeSettings(row.values).settings.publicApi;
+  const { burstLimit, burstWindowSeconds, burstBlockSeconds, detailReadLimit, detailReadWindowSeconds, detailBurstLimit, detailBurstWindowSeconds } = resolveRuntimeSettings(row.values).settings.publicApi;
   const burstRows = and(like(rateLimits.key, "burst:%"), gt(rateLimits.resetAt, sql`now()`));
   const [blocked] = await db.select({ n: sql<number>`count(*)::int` }).from(rateLimits).where(and(burstRows, gte(rateLimits.count, RATE_LIMIT_BLOCKED_COUNT)));
   const [counting] = await db.select({ n: sql<number>`count(*)::int` }).from(rateLimits).where(and(burstRows, sql`${rateLimits.count} < ${RATE_LIMIT_BLOCKED_COUNT}`));
-  return { settings: { burstLimit, burstWindowSeconds, burstBlockSeconds }, revision: row.revision, blockedNow: blocked?.n ?? 0, countingNow: counting?.n ?? 0 };
+  return { settings: { burstLimit, burstWindowSeconds, burstBlockSeconds, detailReadLimit, detailReadWindowSeconds, detailBurstLimit, detailBurstWindowSeconds }, revision: row.revision, blockedNow: blocked?.n ?? 0, countingNow: counting?.n ?? 0 };
 }
 
 /** runtime_settings publicApi.burst* 저장 — 검증·revision·operations_audit(runtime-settings-save)는 saveRuntimeSettings 그대로 */
-export async function saveCrawlBurstSettings(patch: Partial<CrawlBurstSettings>, actor: string) {
+export async function saveCrawlBurstSettings(patch: Partial<CrawlBurstSettings & DetailApiSettings>, actor: string) {
   const row = await readRuntimeSettingsRow();
   return saveRuntimeSettings({ publicApi: patch }, actor, { group: "publicApi", expectedRevision: row.revision });
 }
@@ -40,7 +40,7 @@ export async function releaseCrawlBurst(ip: string, actor: string): Promise<{ re
   if (isIP(ip) === 0) throw new Error("ip_required");
   if (!actor.trim()) throw new Error("actor_required");
   return db.transaction(async (tx) => {
-    const deleted = await tx.delete(rateLimits).where(eq(rateLimits.key, crawlBurstKey(ip)))
+    const deleted = await tx.delete(rateLimits).where(or(eq(rateLimits.key, crawlBurstKey(ip)), eq(rateLimits.key, detailBurstKey(ip)), eq(rateLimits.key, detailReadKey(ip))))
       .returning({ count: rateLimits.count, resetAt: rateLimits.resetAt });
     const released = deleted.some((row) => row.count >= RATE_LIMIT_BLOCKED_COUNT && row.resetAt.getTime() > Date.now());
     const target = `crawl_burst:${maskIp(ip)}`;

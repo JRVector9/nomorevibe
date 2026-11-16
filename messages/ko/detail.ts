@@ -99,6 +99,7 @@ export const detail = {
   "relation.repository_link": "저장소에 이 사이트 주소가 있음",
   "relation.maker_reported": "메이커가 알려 줌 · 확인 전",
   "relation.disconnected": "연결이 끊김",
+  "intro.siteSource": "출처: nomorevibe.com",
   "intro.title": "소개",
   "intro.onlyTagline": "메이커가 쓴 소개는 위의 한 줄이 전부입니다.",
   "intro.moreReadme": "더 자세한 내용은 저장소 README에서 읽을 수 있습니다.",

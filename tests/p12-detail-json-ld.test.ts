@@ -13,6 +13,8 @@ describe("상세 구조화 데이터(SEO-06, 2026-11-15 이름·요약만)", () 
     expect(page).toEqual({
       "@context": "https://schema.org", "@type": "WebPage", "@id": `${ORIGIN}/p/infisical`, url: `${ORIGIN}/p/infisical`,
       inLanguage: "ko", name: "Infisical", description: "올인원 신원 보안 플랫폼",
+      isPartOf: { "@type": "WebSite", "@id": "https://nomorevibe.com/#website", name: "nomorevibe", url: "https://nomorevibe.com" },
+      publisher: { "@type": "Organization", "@id": "https://nomorevibe.com/#organization", name: "nomorevibe", url: "https://nomorevibe.com" },
       mainEntity: { "@type": "CreativeWork", name: "Infisical", description: "올인원 신원 보안 플랫폼" },
     });
     expect(serializeJsonLd(productJsonLd(base))).not.toMatch(/aggregateRating|offers|price|ratingValue|review/i);

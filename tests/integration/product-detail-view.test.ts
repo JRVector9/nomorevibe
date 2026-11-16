@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/server", async (original) => ({ ...await original<typeof import("next/server")>(), after: vi.fn() }));
 
 import { db } from "@/lib/db";
 import {
@@ -610,4 +611,17 @@ describe("public product detail read model", () => {
     expect(view?.updates.map((update) => update.title)).toEqual(titles.slice(0, 50));
     expect(view?.updateCounts).toEqual({ total: 62, recent: 52 });
   });
+});
+
+it("상세 API 소개에 언어별 출처 한 번; 저장된 소개는 유지", async () => {
+  const product = await insertProduct("intro-attribution");
+  const { GET } = await import("@/app/api/products/[slug]/details/route");
+  for (const [locale, label] of Object.entries({ ko: "출처", en: "Source", ja: "出典", "zh-Hans": "来源", "zh-Hant": "來源" })) {
+    const response = await GET(new Request(`https://nomorevibe.com/api/products/intro-attribution/details?locale=${locale}`, { headers: { "user-agent": "Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36" } }), { params: Promise.resolve({ slug: product.slug }) });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.intro.text.endsWith(`\n\n${label}: nomorevibe.com`)).toBe(true);
+    expect(data.intro.text.split("nomorevibe.com")).toHaveLength(2);
+  }
+  expect((await db.select().from(products).where(eq(products.id, product.id)))[0].description).toBe(product.description);
 });
