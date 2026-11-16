@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 import { GET } from "@/app/api/products/[slug]/route";
+import { db } from "@/lib/db";
+import { runtimeSettings } from "@/lib/db/operations-schema";
 import * as repo from "@/lib/domain/products/repository";
 import { ensureSchema, resetTables } from "./setup";
 
@@ -14,11 +16,10 @@ import { ensureSchema, resetTables } from "./setup";
 /**
  * 공개 응답에 있어야 하는 필드 — 스킬의 클레임 확인이 이것을 보고 있다.
  * 2026-11-14 외부 수집 방지: 우리 화면은 이 JSON 을 부르지 않으므로 스킬이 보여 주는 이름·소개까지만 남겼다
- * (내부 id·설명·스택·메이커·저장소·출처·시각은 화면 HTML 에서 본다).
+ * 2026-11-16: 모든 세션·관문 모드에서 원래 주소 제외, 주인 없는 제품의 주소 일치 때만 verify 공개.
  */
 const PUBLIC_FIELDS = [
   "slug",
-  "url",
   "name",
   "tagline",
   "category",
@@ -42,37 +43,82 @@ async function seeded(slug = "found-app") {
   });
 }
 
-async function get(slug: string) {
+async function get(slug: string, candidate?: string) {
   // 스킬은 curl 에 자기 이름을 싣는다(skill/SKILL.md) — 이름 없는 curl 은 공개 읽기 관문이 거절한다
-  const response = await GET(new Request(`https://nomorevibe.test/api/products/${slug}`, { headers: { "user-agent": "nomorevibe-skill/1" } }), {
+  const response = await GET(new Request(`https://nomorevibe.test/api/products/${slug}${candidate === undefined ? "" : `?url=${encodeURIComponent(candidate)}`}`, { headers: { "user-agent": "nomorevibe-skill/1" } }), {
     params: Promise.resolve({ slug }),
   } as never);
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  return { response, status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-beforeAll(() => ensureSchema());
-beforeEach(() => resetTables());
+let previousSettings: typeof runtimeSettings.$inferSelect | undefined;
+beforeAll(async () => {
+  ensureSchema();
+  [previousSettings] = await db.select().from(runtimeSettings);
+});
+afterAll(async () => {
+  await db.delete(runtimeSettings);
+  if (previousSettings) await db.insert(runtimeSettings).values(previousSettings);
+});
+beforeEach(async () => {
+  await resetTables();
+  vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://nomorevibe.test");
+  vi.stubEnv("TURNSTILE_SITE_KEY", "");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("GET /api/products/<slug> — 밖으로 나가는 것", () => {
-  it("주인이 없는 제품에는 클레임 안내를 붙여준다", async () => {
-    await seeded();
-
-    const { status, body } = await get("found-app");
-
-    expect(status).toBe(200);
-    // 스킬의 클레임 절이 이 둘을 보고 아직 주인이 없는 제품인지 판단한다
-    expect(body.claimable).toBe(true);
-    expect(body.verify).toMatchObject({
-      file: { path: "/.well-known/nomorevibe.txt", content: "nmv_verify_found-app" },
+  describe.each(["unconfigured", "enforce without session"])("%s", mode => {
+    beforeEach(async () => {
+      if (mode === "enforce without session") {
+        vi.stubEnv("TURNSTILE_SITE_KEY", "test-only-site-key");
+        vi.stubEnv("TURNSTILE_SECRET_KEY", "test-only-turnstile-secret");
+        vi.stubEnv("PUBLIC_API_SESSION_SECRET", "test-only-signing-secret");
+        await db.insert(runtimeSettings).values({ id: 1, updatedBy: "product-api-privacy-test", values: { version: 1, publicApi: { mode: "enforce" } } })
+          .onConflictDoUpdate({ target: runtimeSettings.id, set: { values: { version: 1, publicApi: { mode: "enforce" } } } });
+      }
     });
-    expect(body).toMatchObject({
-      slug: "found-app",
-      name: "FoundApp",
-      url: "https://found-app.test",
-      status: "seeded",
+
+    it.each([
+      [undefined, undefined], ["http://www.found-app.test/?tracking=1#section", true],
+      ["https://github.com/someone/found-app/", true], ["https://different.test", false],
+      ["javascript:alert(1)", false], ["", false],
+    ] as const)("주인 없는 제품 주소 %s — 일치할 때만 verify 공개", async (candidate, matches) => {
+      await seeded();
+      const { status, body, response } = await get("found-app", candidate);
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ slug: "found-app", name: "FoundApp", status: "seeded", claimable: true });
+      expect(body.matches).toBe(matches);
+      expect(Object.keys(body).sort()).toEqual([
+        ...PUBLIC_FIELDS, "claimable", matches ? "verify" : "message",
+        ...(candidate === undefined ? [] : ["matches"]),
+      ].sort());
+      expect(body).not.toHaveProperty("url");
+      expect(body).not.toHaveProperty("repoUrl");
+      if (matches) {
+        expect(body.verify).toMatchObject({
+          file: { path: "/.well-known/nomorevibe.txt", content: "nmv_verify_found-app" },
+        });
+        expect(body).not.toHaveProperty("message");
+      } else {
+        expect(body).not.toHaveProperty("verify");
+        expect(body.message).toBe("최신 스킬(https://nomorevibe.test/skill.md)로 ?url=<내 주소>를 붙여 다시 확인하세요.");
+        expect(JSON.stringify(body)).not.toContain("nmv_verify_found-app");
+      }
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     });
-    expect(body).not.toHaveProperty("id");
-    expect(body).not.toHaveProperty("repoUrl");
+
+    it.each([undefined, "https://mine.test", "https://different.test"])("주인 있는 제품은 주소 %s에도 클레임 필드 없음", async candidate => {
+      await seeded("mine");
+      const product = await repo.findBySlug("mine");
+      await repo.update(product!.id, { source: "skill", status: "verified", verifiedAt: new Date() });
+      const { body } = await get("mine", candidate);
+      expect(Object.keys(body).sort()).toEqual([
+        ...PUBLIC_FIELDS, ...(candidate === undefined ? [] : ["matches"]),
+      ].sort());
+      for (const key of ["claimable", "verify", "message", "url"]) expect(body).not.toHaveProperty(key);
+    });
   });
 
   it("허용 목록에 없는 것은 나가지 않는다 — 운영자가 언제 초대했는지도", async () => {
@@ -87,7 +133,7 @@ describe("GET /api/products/<slug> — 밖으로 나가는 것", () => {
     expect(Object.keys(body)).not.toContain("editTokenHash");
     expect(Object.keys(body)).not.toContain("verifyToken");
     // 컬럼을 더해도 기본은 비공개다 — 새 필드는 여기 목록에 손대야 나간다
-    expect(Object.keys(body).sort()).toEqual([...PUBLIC_FIELDS, "claimable", "verify"].sort());
+    expect(Object.keys(body).sort()).toEqual([...PUBLIC_FIELDS, "claimable", "message"].sort());
   });
 
   it("주인이 있는 제품에는 검증 규약을 다시 주지 않는다", async () => {

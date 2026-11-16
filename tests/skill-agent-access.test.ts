@@ -152,12 +152,15 @@ describe("SKILL.md API contract — enforce without a browser session", () => {
 });
 
 describe("sessionless claim-check response", () => {
-  it.each(["nomorevibe-skill/1", "Mozilla/5.0 Chrome/131.0 Safari/537.36"])("%s receives only identity and public verification instructions", async ua => {
+  it.each(["nomorevibe-skill/1", "Mozilla/5.0 Chrome/131.0 Safari/537.36"])("%s receives identity and a claim retry message", async ua => {
     const response = await product.GET(request(undefined, "GET", undefined, { "user-agent": ua }), ctx);
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(Object.keys(body).sort()).toEqual(["category", "claimable", "name", "slug", "status", "tagline", "verify"]);
-    expect(body).toMatchObject({ slug: fixture.slug, claimable: true, verify: { file: { content: fixture.verifyToken } } });
+    expect(Object.keys(body).sort()).toEqual(["category", "claimable", "message", "name", "slug", "status", "tagline"]);
+    expect(body).toMatchObject({ slug: fixture.slug, claimable: true,
+      message: "최신 스킬(https://nomorevibe.test/skill.md)로 ?url=<내 주소>를 붙여 다시 확인하세요." });
+    expect(body).not.toHaveProperty("verify");
+    expect(body).not.toHaveProperty("matches");
     const serialized = JSON.stringify(body);
     for (const marker of Object.values(MARKERS)) expect(serialized).not.toContain(String(marker));
     expect(response.headers.get("cache-control")).toBe("private, no-store");
@@ -191,16 +194,49 @@ describe("sessionless claim-check response", () => {
     expect(await (await product.GET(request("/api/products/<slug>?url=invalid:input"), ctx)).json()).toMatchObject({ matches: false });
   });
 
-  it.each(["valid session", "observe", "unconfigured"])("%s preserves the existing full body", async mode => {
-    const headers: Record<string, string> = {};
-    if (mode === "observe") mocks.mode.mockResolvedValue("observe");
-    if (mode === "unconfigured") vi.stubEnv("TURNSTILE_SITE_KEY", "");
-    if (mode === "valid session") headers.cookie = `${SESSION_COOKIE}=${issueSession(request(), SIGNING).value}`;
-    const response = await product.GET(request(undefined, "GET", undefined, headers), ctx);
-    const body = await response.json();
-    expect(Object.keys(body).sort()).toEqual(["category", "claimable", "name", "slug", "status", "tagline", "url", "verify"]);
-    expect(body.url).toBe(MARKERS.url);
-    if (mode === "valid session") expect(mocks.rate).toHaveBeenCalledWith(expect.stringContaining("api-session:detail:"), 60, 600000, 1);
+  describe.each(["enforce without session", "valid session", "observe", "unconfigured"])("%s claim privacy", mode => {
+    it.each([
+      [null, undefined], ["http://www.site-link-marker.test/?tracking=1#section", true],
+      [MARKERS.repo + "/?tracking=1", true], ["https://different.test", false],
+      ["javascript:alert(1)", false], ["", false],
+    ] as const)("candidate %s only reveals verify on a match", async (candidate, matches) => {
+      const headers: Record<string, string> = {};
+      if (mode === "observe") mocks.mode.mockResolvedValue("observe");
+      if (mode === "unconfigured") vi.stubEnv("TURNSTILE_SITE_KEY", "");
+      if (mode === "valid session") headers.cookie = `${SESSION_COOKIE}=${issueSession(request(), SIGNING).value}`;
+      const path = `/api/products/<slug>${candidate === null ? "" : `?url=${encodeURIComponent(candidate)}`}`;
+      for (const claimed of [false, true]) {
+        mocks.find.mockResolvedValue(claimed ? { ...fixture, source: "skill", claimedAt: new Date() } : fixture);
+        const response = await product.GET(request(path, "GET", undefined, headers), ctx);
+        const body = await response.json();
+        expect(response.status).toBe(200);
+        expect(Object.keys(body).sort()).toEqual([
+          "category", "name", "slug", "status", "tagline",
+          ...(candidate === null ? [] : ["matches"]),
+          ...(claimed ? [] : ["claimable", matches ? "verify" : "message"]),
+        ].sort());
+        expect(body.matches).toBe(matches);
+        expect(body).not.toHaveProperty("url");
+        expect(body).not.toHaveProperty("repoUrl");
+        for (const marker of Object.values(MARKERS)) expect(JSON.stringify(body)).not.toContain(String(marker));
+        if (!claimed) {
+          expect(body.claimable).toBe(true);
+          if (matches) expect(body.verify).toMatchObject({ file: { content: fixture.verifyToken } });
+          else {
+            expect(body).not.toHaveProperty("verify");
+            expect(body.message).toBe("최신 스킬(https://nomorevibe.test/skill.md)로 ?url=<내 주소>를 붙여 다시 확인하세요.");
+            expect(JSON.stringify(body)).not.toContain(fixture.verifyToken);
+          }
+        } else {
+          expect(body).not.toHaveProperty("claimable");
+          expect(body).not.toHaveProperty("verify");
+          expect(body).not.toHaveProperty("message");
+        }
+        expect(response.headers.get("cache-control")).toBe("private, no-store");
+        expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+      }
+      if (mode === "valid session") expect(mocks.rate).toHaveBeenCalledWith(expect.stringContaining("api-session:detail:"), 60, 600000, 1);
+    });
   });
 
   it("invalid cookies only receive the minimal body", async () => {

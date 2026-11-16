@@ -229,10 +229,12 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
 
 1. **확인**: `GET /api/products/<slug>`를
    `curl -s -A 'nomorevibe-skill/1' --get --data-urlencode 'url=<내 저장소나 사이트 주소>' <API>/api/products/<slug>`로 호출한다.
-   막기 모드에서도 세션 없이 slug·name·tagline·category·status와, 주인 없는 제품의 claimable·verify를 받는다.
+   세션·관문 모드와 무관하게 slug·name·tagline·category·status와, 주인 없는 제품의 `claimable: true`를 받는다.
+   `verify`는 `?url=`로 보낸 주소가 맞을 때(`matches: true`)만 온다.
+   주소가 없거나 맞지 않으면 `verify` 대신 `message`로 최신 스킬과 `?url=<내 주소>` 재확인을 안내한다.
    저장된 사이트·저장소 주소는 돌려주지 않고 `matches: true|false`로 정규화한 주소가 같은지만 알려준다.
    `matches: false`면 중단하고 slug와 입력 주소를 확인한다. true는 주소 일치 확인일 뿐 소유 증명은 아니다.
-   `claimable: true`와 `verify`가 있으면 아직 주인이 없는 제품이다.
+   `claimable: true`면 아직 주인이 없는 제품이다. `matches: true`와 `verify`를 확인한 뒤에만 소유 증명으로 진행한다.
    사용자에게 현재 등록된 이름·소개를 보여주고 본인 제품이 맞는지 묻는다.
 2. **소유 증명**: `verify.file` 정보로 검증 파일을 만든다 (등록 8번과 같은 방식). 재배포를 안내한다.
 3. **가져오기**: `curl -s -X POST <API>/api/products/<slug>/verify`

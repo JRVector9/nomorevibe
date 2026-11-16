@@ -21,6 +21,8 @@
 
 ## 응답 경계와 선택
 
+아래는 PR #971 당시 구현 기록이다. 후속 [PR #975](https://github.com/JRVector9/nomorevibe/pull/975)는 모든 세션·관문 모드에서 `url`을 제거하고, 주인 없는 제품의 `verify`를 `?url=` 일치 때만 공개한다. 주소 없음·불일치는 `claimable: true`와 `message` 재확인 안내를 준다. 과거 실측은 아래에 그대로 보존한다.
+
 UA 예외는 추가하지 않는다. 기존 UA·cross-site·IP·함정 차단을 먼저 통과해야 한다.
 키 없음·observe는 기존 응답, 막기 모드 유효 세션도 기존 응답과 한도 유지.
 세션이 없거나 무효일 때만 최소 응답(slug/name/tagline/category/status)을 주며 주인 없으면 claimable/verify를 더한다.
