@@ -59,7 +59,8 @@ describe("실제 한도 표 — 창·차단·풀림", () => {
     const blocked = await page("/p/app-x");
     expect(blocked.status).toBe(429);
     expect(Number(blocked.headers.get("retry-after"))).toBe(1800);
-    expect(await blocked.text()).toContain(CRAWL_PROHIBITED_MESSAGE);
+    // 문장마다 span 으로 감싼다(줄이 문장 사이에서 끊기게) — 태그를 걷어 낸 글자가 지시 원문 그대로다
+    expect((await blocked.text()).replace(/<[^>]+>/g, "")).toContain(CRAWL_PROHIBITED_MESSAGE);
     const stored = await row();
     expect(stored.count).toBe(RATE_LIMIT_BLOCKED_COUNT);
     expect(stored.resetAt.getTime() - Date.now()).toBeGreaterThan(1_795_000);
