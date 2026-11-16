@@ -262,7 +262,7 @@ describe("public product detail read model", () => {
         facts: { stars: 146, contributors: { count: 12 }, latestRelease: { tagName: "v1.6.0" } },
       },
       license: { state: "matched", label: "GitHub에서 확인", maker: { spdxId: "MIT" }, observed: { spdxId: "MIT" } },
-      media: [{ hash, src: `/api/media/${hash}`, width: 960, height: 600, altText: "제품 근거 대시보드" }],
+      media: [{ hash, src: `/api/media/${hash}?wm=1`, width: 960, height: 600, altText: "제품 근거 대시보드" }],
       updates: [{ title: "메이커 업데이트" }, { title: "v1.6.0 공개" }],
       agents: [{ provider: "OpenAI", evidenceLabel: "메이커 제공" }],
       skills: [{ name: "review", evidenceLabel: "메이커 제공" }],

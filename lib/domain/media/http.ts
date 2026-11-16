@@ -1,3 +1,6 @@
+import sharp from "sharp";
+import { watermarkLayers } from "@/lib/images/watermark";
+
 import type { MediaStorage, MediaVariant } from "./storage";
 
 const HASH = /^[a-f0-9]{64}$/;
@@ -16,13 +19,22 @@ export function createMediaGet(storage: MediaStorage) {
     const variant: MediaVariant = requestedVariant;
     const image = await storage.get(hash, variant);
     if (!image) return new Response("Not found", { status: 404 });
-    return new Response(new Uint8Array(image.data), {
+    let data = image.data;
+    try {
+      const imagePipeline = sharp(data, { pages: 1, limitInputPixels: 40_000_000 });
+      const { width, height } = await imagePipeline.metadata();
+      const layers = await watermarkLayers(width ?? 0, height ?? 0);
+      if (layers.length) data = await imagePipeline.composite(layers).webp({ quality: 82 }).toBuffer();
+    } catch {
+      return new Response("Image unavailable", { status: 422, headers: { "Cache-Control": "private, no-store" } });
+    }
+    return new Response(new Uint8Array(data), {
       status: 200,
       headers: {
         "Content-Type": "image/webp",
         "Cache-Control": "public, max-age=31536000, immutable",
         "X-Content-Type-Options": "nosniff",
-        "Content-Length": String(image.data.length),
+        "Content-Length": String(data.length),
       },
     });
   };

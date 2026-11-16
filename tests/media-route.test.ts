@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { createMediaGet } from "@/lib/domain/media/http";
 import type { MediaStorage } from "@/lib/domain/media/storage";
@@ -15,7 +16,7 @@ describe("GET /api/media/[hash]", () => {
   const hash = "a".repeat(64);
 
   it.each(["web", "thumbnail"] as const)("serves the immutable internal %s variant", async (variant) => {
-    const bytes = Buffer.from(`stored-${variant}`);
+    const bytes = await sharp({ create: { width: 96, height: 96, channels: 3, background: "#ccc" } }).webp().toBuffer();
     const media = storage({
       get: vi.fn(async () => ({ data: bytes, mimeType: "image/webp", size: 999_999 })),
     });

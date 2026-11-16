@@ -1,3 +1,5 @@
+import { isWatermarkIcon } from "@/lib/images/watermark-policy";
+import { watermarkLayers } from "@/lib/images/watermark";
 import { NextResponse } from "next/server";
 import { coverKeyMatches, parseCoverSegment } from "@/lib/domain/products/cover-url";
 import { getProductIdentity } from "@/lib/domain/products/detail-view";
@@ -47,7 +49,8 @@ export const GET = withRoute("og.serve", async (req: Request, { params }: Params
   if (!coverKeyMatches(slug, coverKey) || !(await identityOf(slug))) return missing();
   const url = new URL(req.url);
   const size = variantSize(url.searchParams.get("size"));
-  const key = `preview-v2|${variant ? "webp" : "jpeg"}|${slug}|${variant ? size : 1200}|${url.searchParams.get("v") ?? ""}`;
+  const thumbnail = url.searchParams.get("thumbnail");
+  const key = `preview-v3|${isWatermarkIcon(thumbnail) ? "icon" : "cover"}|${variant ? "webp" : "jpeg"}|${slug}|${variant ? size : 1200}|${url.searchParams.get("v") ?? ""}`;
   const headers = {
     "content-type": variant ? "image/webp" : "image/jpeg",
     "cache-control": VARIANT_CACHE,
@@ -73,11 +76,15 @@ export const GET = withRoute("og.serve", async (req: Request, { params }: Params
     // 첫 프레임만 처리한다. EXIF 방향 적용 뒤 축소하며 출력에 원본 메타데이터를 복사하지 않는다.
     const preview = sharp(cached.data, { pages: 1, limitInputPixels: 16_000_000 })
       .rotate()
-      .resize({ width: variant ? size : 1200, height: 630, fit: "inside", withoutEnlargement: true });
+      .resize({ width: variant ? size : 1200, height: 630, fit: "inside", withoutEnlargement: true })
+      .raw().toBuffer({ resolveWithObject: true });
+    const resized = await preview;
+    const output = sharp(resized.data, { raw: resized.info })
+      .composite(await watermarkLayers(resized.info.width, resized.info.height, thumbnail));
     let data: Buffer | undefined;
     for (const quality of [78, 60]) {
-      const candidate = await (variant ? preview.clone().webp({ quality })
-        : preview.clone().flatten({ background: "#ffffff" }).jpeg({ quality })).toBuffer();
+      const candidate = await (variant ? output.clone().webp({ quality })
+        : output.clone().flatten({ background: "#ffffff" }).jpeg({ quality })).toBuffer();
       if (candidate.length <= 512 * 1024) {
         data = candidate;
         break;

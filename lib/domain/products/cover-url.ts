@@ -1,3 +1,4 @@
+import { watermarkedImageUrl } from "@/lib/images/watermark-policy";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
@@ -53,7 +54,7 @@ export function parseCoverSegment(raw: string): { slug: string; key: string | nu
 
 /**
  * DB 에 둔 표지 주소(`/api/og-cache/<slug>[?…]`)를 보호 주소(`/api/og-cache/<slug>.<열쇠>[?…]`)로 — 같은 출처 API 가 내보낼 때만 쓴다.
- * 우리 사본이 아니면(바깥 주소 등) 그대로, 이미 보호 주소면 그대로, 열쇠를 못 만들면 null.
+ * 우리 사본이 아니면(바깥 주소 등) 그대로, 이미 보호 주소면 열쇠를 보존하고 응답 버전(wm)을 더한다. 열쇠를 못 만들면 null.
  */
 export function protectedCoverUrl(src: string | null | undefined): string | null {
   if (!src) return null;
@@ -61,8 +62,8 @@ export function protectedCoverUrl(src: string | null | undefined): string | null
   const [path, query] = src.split("?", 2);
   const parsed = parseCoverSegment(path.slice(PREFIX.length));
   if (!parsed) return null;
-  if (parsed.key) return src;
+  if (parsed.key) return watermarkedImageUrl(src);
   const key = coverKey(parsed.slug);
   if (!key) return null;
-  return `${PREFIX}${parsed.slug}.${key}${parsed.webp ? ".webp" : ""}${query === undefined ? "" : `?${query}`}`;
+  return watermarkedImageUrl(`${PREFIX}${parsed.slug}.${key}${parsed.webp ? ".webp" : ""}${query === undefined ? "" : `?${query}`}`);
 }
