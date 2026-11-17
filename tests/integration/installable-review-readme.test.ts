@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, operationsAudit } from "@/lib/db/schema";
 import { dequeue, enqueue, getDocument, saveFetchedDocument } from "@/lib/crawl/repository";
 import { crawlFrontier } from "@/lib/db/schema";
 import { loadReviewDocument } from "@/lib/crawl/jobs/review-document";
@@ -9,6 +9,8 @@ import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { ensureSchema } from "./setup";
+import { applyReviewReadmeBackfill, countReviewReadmeBackfill } from "@/lib/crawl/review-readme-backfill";
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { claimFetchFixtureJob } from "./fetch-fixtures";
 
 /**
@@ -105,4 +107,40 @@ it("does not reopen an approved candidate only because a recrawl invalidated its
   // 다시 수집은 README 를 옮겨 오며 판만 지운다(다음 심사에서 다시 받게) — 페이지 내용은 그대로이므로 승인을 new 로 되돌리지 않는다
   expect((await getDocument(repo))?.pageMeta).toEqual({ readmeSample: README, readmeSampleVersion: null });
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidate.id)))[0].state).toBe("approved");
+});
+
+/** 이미 README 없이 보류된 후보: 마지막 1차 시도의 스냅숏 README 가 빈 글자다 */
+async function heldWithoutReadme(repo: string, productUrl: string | null) {
+  const candidate = await saveLikeCrawler(repo, productUrl, productUrl ? { title: "Tool" } : null);
+  const [document] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo));
+  const input = await loadReviewInput(candidate, document, mergeWithDefaults({}));
+  expect(input.snapshot.product.readme).toBe("");
+  await db.insert(crawlReviewAttempts).values({ candidateId: candidate.id, kind: "automatic", state: "succeeded", inputHash: input.inputHash,
+    policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash, snapshot: input.snapshot, source: input.source,
+    promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, attemptNumber: 1, validUntil: input.validUntil,
+    provider: "local-direct", model: "qwen3.8-flash-next", outcome: { decision: "needs_review", reason: "ambiguous" } } as never);
+  await db.update(crawlCandidates).set({ state: "needs_review", reason: "ambiguous", decidedBy: "auto" }).where(eq(crawlCandidates.id, candidate.id));
+}
+
+it("counts held candidates reviewed without README and attaches README only on apply", async () => {
+  await heldWithoutReadme("acme/held-installable", null);
+  await heldWithoutReadme("acme/held-absent", null);
+  await heldWithoutReadme("acme/held-site", "https://held-site.example/");
+  expect(await countReviewReadmeBackfill()).toMatchObject({ installable: 2, withUrl: 1, readmeFetchFailed: 0 });
+  expect(mocks.fetch).not.toHaveBeenCalled();
+  mocks.fetch.mockImplementation(async (repo: string) => repo === "acme/held-absent" ? "" : README);
+  // operations_audit 는 지울 수 없다(append-only) — 이 시험이 쓴 줄만 본다
+  const [{ before }] = await db.select({ before: sql<number>`coalesce(max(${operationsAudit.id}), 0)::int` }).from(operationsAudit);
+  expect(await applyReviewReadmeBackfill({ limit: 10, actor: "jr-claude" }))
+    .toEqual({ examined: 2, attached: 1, absent: 1, failed: 0, changed: 0 });
+  // 기본은 설치형만 — 주소 있는 후보는 --with-url 일 때만
+  expect(mocks.fetch.mock.calls.map(call => call[0]).sort()).toEqual(["acme/held-absent", "acme/held-installable"]);
+  expect((await getDocument("acme/held-installable"))?.pageMeta).toEqual({ readmeSample: README, readmeSampleVersion: README_SAMPLE_VERSION });
+  // README 가 정말 없는 후보는 이제 「없음」으로 적혀 다시 받지 않는다
+  expect(await countReviewReadmeBackfill()).toMatchObject({ installable: 0, withUrl: 1 });
+  const [audit] = await db.select().from(operationsAudit)
+    .where(and(eq(operationsAudit.action, "review-readme-backfill"), gt(operationsAudit.id, before)));
+  expect(audit).toMatchObject({ actor: "jr-claude", detail: { examined: 2, attached: 1, absent: 1, failed: 0, changed: 0, withUrl: false } });
+  // 후보 상태는 건드리지 않는다 — 다시 심사는 1차 틱이 바뀐 입력을 보고 한다
+  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, "acme/held-installable")))[0].state).toBe("needs_review");
 });
