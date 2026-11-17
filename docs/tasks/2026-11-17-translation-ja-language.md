@@ -13,7 +13,7 @@
 - [x] M1Max 수정 후 실측(같은 200개 항목을 새 묶음으로 구성)
 - [x] 운영 장부 errorCode 읽기(읽기 전용)
 - [x] tsc, eslint, 관련 vitest, deploy scope
-- [ ] PR CI check 통과 확인
+- [x] PR CI check 통과 확인(run 44061544751, head 0883d931: check·unit 2·integration 6·integration-ledger·lint·typecheck·build 모두 통과)
 - 막힌 것: 없음.
 - 범위 밖이라 남긴 것:
   - 문제 2(english_uncertain)
