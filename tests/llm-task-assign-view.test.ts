@@ -484,3 +484,31 @@ describe("작업 배정 서랍의 자료", () => {
     expect(llmMetrics.length).toBeGreaterThan(0);
   });
 });
+
+describe("2026-11-17 감사 두 번째 의견 — 2·3순위(같은 모델 재판정 거절 전용)를 실제 적용 설정 뒤에 보이고, 그 호출을 「설정 밖」으로 경고하지 않는다", () => {
+  const qwen: AiCurrentSlot = { task: "audit-second-opinion", slot: 1, source: "기본 Qwen 직접 설정", error: null, skip: null, notes: [],
+    uses: [{ kind: "api", baseUrl: "http://100.77.43.63:8090/v1", cliTool: null, model: "qwen3.8-flash-next", provider: "local-direct", origin: "env", deviceId: "gpu3090-qwen", keyFrom: null }] };
+  const ranks: AiTaskRankRow[] = [{ task: "audit-second-opinion", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {}, enabled: true },
+    { task: "audit-second-opinion", slot: 1, rank: 2, connectionId: MLX, model: "deepseek-v4.1-flash-1017", options: {}, enabled: true }];
+  const metrics = [metric("local-second-opinion", "local-direct", "qwen3.8-flash-next", "gpu3090-qwen", 20),
+    metric("local-second-opinion", "local-direct", "deepseek-v4.1-flash-1017", "m3-mlx", 3)];
+  const facts = { auditRunning: true, connectionsRead: true, recheckRejectsOpen: true } as TaskAssignInput["facts"];
+  it("실제 적용 설정(1) 뒤에 2순위를 싣고, 장부의 DeepSeek 호출은 2순위 몫으로 센다 — 경고 없음", () => {
+    const row = rowOf(buildTaskAssignView(input({ facts, observation: observationWith(metrics),
+      slots: [slotOf("audit-second-opinion", 1, { current: qwen }, ranks)] })), "audit-second-opinion#1");
+    expect(row.mode).toBe("effective");
+    expect(row.choices.map(choice => [choice.position, choice.model])).toEqual([[1, "qwen3.8-flash-next"], [2, "deepseek-v4.1-flash-1017"]]);
+    expect(row.actual.calls.map(call => [call.position, call.model, call.settled])).toEqual([[1, "qwen3.8-flash-next", 20], [2, "deepseek-v4.1-flash-1017", 3]]);
+    expect(row.actual.warnings).toEqual([]);
+  });
+  it("2순위가 없으면 예전 그대로 — DeepSeek 호출은 「실제 적용 설정에 없는 모델」로 경고한다(다른 작업도 그대로)", () => {
+    const row = rowOf(buildTaskAssignView(input({ facts, observation: observationWith(metrics),
+      slots: [slotOf("audit-second-opinion", 1, { current: qwen }, ranks.slice(0, 1))] })), "audit-second-opinion#1");
+    expect(row.choices.map(choice => choice.position)).toEqual([1]);
+    expect(row.actual.warnings).toEqual(["실제 적용 설정에 없는 모델 호출: deepseek-v4.1-flash-1017 3건"]);
+    // 공개분 추가 검수는 순위가 있어도 실제 적용 설정만 보인다(순위를 읽지 않는다)
+    const published = rowOf(buildTaskAssignView(input({ observation: observationWith([]), slots: [slotOf("published-filter", 1, { current: { ...qwen, task: "published-filter" } },
+      [{ ...ranks[1], task: "published-filter" }])] })), "published-filter#1");
+    expect(published.choices.map(choice => [choice.position, choice.model])).toEqual([[1, "qwen3.8-flash-next"]]);
+  });
+});
