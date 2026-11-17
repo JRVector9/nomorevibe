@@ -2,7 +2,7 @@
 
 ## 영어 결과 검사 오판 — 2026-11-17 / PR #986
 
-- PR: https://github.com/JRVector9/nomorevibe/pull/986 (Draft)
+- PR: https://github.com/JRVector9/nomorevibe/pull/986 (착수 시 Draft; 구현·로컬 검증 뒤 Ready for review로 전환해 CI 실행)
 - 범위: `checkProductTranslation`의 en 결과만. 원문 감지와 일본어 묶음/프롬프트는 변경하지 않는다.
 - [x] 최신 origin/main a9c53498에서 전용 브랜치·착수 Draft PR 생성.
 - [x] `detectTranslationSourceLocale`·`hasEnglishEvidence` 및 `englishLang` 호출처 확인, 공유 감지 불변.
@@ -11,9 +11,11 @@
 - [x] 결정: 변경된 라틴 문자 결과를 요청 언어에 근거해 허용. 짧은 영어/제품명 누락을 막고 공유 언어 감지는 보수적으로 유지한다. 스페인어·독일어 등도 통과할 수 있음은 명시적 한계이며 시험으로 고정한다.
 - [x] 운영 `product_translations` 현재 행을 BEGIN READ ONLY / 5초 제한 / ROLLBACK으로 집계. 09:47 UTC english_uncertain 21,287행, not_japanese 0행. 누적 모델 호출 오류율이 아니다.
 - [x] 관련 vitest 17파일 283건·변경 TS eslint 통과. 첫 확장 시험 실패(기대값 1건, 공유 의존성 누락 2건)는 수정·독립 npm ci 뒤 재검증했다.
-- [ ] next typegen 통과, tsc 최종 실행 중. 최초 tsc 의존성 누락 실패는 보존한다.
-- [ ] 변경 커밋·작업 브랜치 push·PR CI check 성공.
-- [ ] deploy scope 기록·PR 본문·개발 보고 완료.
+- [x] next typegen 및 `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit` 통과. 최초 tsc 의존성 누락 실패는 보존한다.
+- [x] 구현 커밋 d1bdfc8d 및 작업 브랜치 push. Draft CI는 저장소 규칙으로 check 실패/검사 생략을 확인했다. 결제 차단이 아니며 Ready 전환이 정식 실행 경로다.
+- CI의 현재·최종 성공 여부는 [PR #986 checks](https://github.com/JRVector9/nomorevibe/pull/986/checks)와 개발사항 완료 보고를 원천으로 확인한다. CI 성공 전에는 완료로 판정하지 않는다.
+- [x] `npm run deploy -- scope --base a9c534981975da2636c2fece03695b58b1009749 --sha d1bdfc8d4193b1639e4870f0ba6390bd63913d19`: trusted=true, full / 전체 18앱. `HEAD` 문자열을 준 최초 조회는 invalid_commit_identity로 분류되어 40자리 SHA로 바로잡아 검증했다.
+- 측정 명령: `node --import tsx /home/ubuntu/.xaegis-hub/data/local-agent/jobs/347992d8-ed0b-4263-b8f8-5771268eaa18/scratch/replay.ts` (기존 검사기 git show 사본과 저장 응답 사용). 결과 및 실패 이력은 PR 본문과 개발사항 보고에 함께 보존한다.
 - 병합·배포·운영 설정 변경·운영 DB 쓰기 금지. 아래는 과거 작업 기록이며 이번 범위를 넓히지 않는다.
 
 
