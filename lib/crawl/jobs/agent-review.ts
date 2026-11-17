@@ -1,6 +1,7 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { loadReviewDocument, reviewReadmeState } from "./review-document";
+import { ensureShellRender } from "./shell-render-document";
 import { getSettings } from "@/lib/crawl/settings";
 import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
@@ -136,7 +137,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       if (!await canStartLegacyAgentReview(lease)) stageBlocked = true;
       return skip(candidate, stageBlocked ? "stage_inactive" : "item_owned");
     }
-    const document = await loadReviewDocument(candidate.repo, lease);
+    let document = await loadReviewDocument(candidate.repo, lease);
     if (!document) return skip(candidate, "document_missing");
     // README 를 받지 못한 후보를 빈 README 로 모델에 보내지 않는다(2026-11-17 설치형 보류 535건). 기다림은 후보 탓이 아니라 세지 않는다 —
     // 횟수를 다 쓰면 까닭을 남긴 채 README 없이 심사한다
@@ -145,6 +146,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       { error: readme.error, attempts: readme.attempts, retryAt: new Date(readme.retryAfter).toISOString() });
     if (readme.kind === "unavailable") ctx.log("crawl.agent_review_readme_unavailable",
       { repo: candidate.repo, error: readme.error, attempts: readme.attempts });
+    // JS 앱 껍데기(제목·로딩 문구뿐)는 화면 서버로 한 번 그려 그린 글로 심사한다(shell-render.ts). 기다림은 후보 탓이 아니라 세지 않는다 —
+    // 두 번 실패하면 지금처럼 수집 본문으로 심사한다
+    const shell = await ensureShellRender(document, { lease, deadlineAt: deadlineAt - 2_000, signal: ctx.signal });
+    if (shell.kind === "wait") return skip(candidate, shell.reason, shell.retryAt ? { retryAt: new Date(shell.retryAt).toISOString() } : {});
+    document = shell.document;
+    if (shell.rendered) ctx.log("crawl.agent_review_shell_render", { repo: candidate.repo, ok: shell.rendered.ok, code: shell.rendered.code ?? null,
+      renderMs: shell.rendered.renderMs, used: shell.state.kind === "rendered" });
     // 입력이 상한보다 큰 후보 하나가 틱 전체를 던지게 두면 커서가 그 후보 앞에 멈춰 뒤의 후보와 새 후보가 모두 굶는다 — 이 후보만 건너뛴다.
     // 같은 후보가 거듭 건너뛰어지면 상한(first-review-skips.ts)이 쪽에서 빼고 사람에게 넘긴다(2차 표·갈림 판가름도 같은 오류를 후보 탓으로 닫는다)
     let input: Awaited<ReturnType<typeof loadReviewInput>>;

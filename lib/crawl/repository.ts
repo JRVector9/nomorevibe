@@ -1,5 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isReviewCandidate, REVIEW_RETRIABLE_REASONS } from "./agent-review-contract";
+import { RENDERED_PAGE_KEY, renderedPageOf, type RenderedPageMeta } from "./shell-render";
 import { and, asc, desc, eq, inArray, lt, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
@@ -493,6 +494,21 @@ export async function setReadmeSample(repo: string, readmeSample: string, expect
 }
 
 /**
+ * JS 앱 껍데기를 브라우저로 그린 기록(성공·실패)을 원본 옆에 둔다(lib/crawl/shell-render.ts). README 와 같은 원본 판 대조(sameDocumentRevision)라
+ * 그리는 사이 다시 수집됐으면 아무것도 쓰지 않고 undefined — 새 원본은 다음 심사에서 다시 그린다.
+ */
+export async function setRenderedPage(expected: CrawlDocument, rendered: RenderedPageMeta, lease?: JobLease): Promise<CrawlDocument | undefined> {
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    const [updated] = await tx.update(crawlDocuments).set({
+      pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify({ [RENDERED_PAGE_KEY]: rendered })}::jsonb`,
+    }).where(sameDocumentRevision(expected)).returning();
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
+    return updated;
+  });
+}
+
+/**
  * README 를 받지 못했음을 원본 옆에 남긴다 — 까닭(readmeFetchError)·횟수·다음 시도 시각. 빈 README 로 조용히 심사하지 않게
  * 1차 심사가 이것을 읽고 기다리거나(readme_wait), 횟수를 다 쓴 뒤에는 까닭을 남긴 채 README 없이 심사한다(review-document.ts).
  */
@@ -708,9 +724,15 @@ export async function saveFetchedDocument(
     const readmeSample = previous?.pageMeta?.readmeSample;
     const carryReadme = typeof readmeSample === "string"
       && typeof doc.pageMeta?.readmeSample !== "string";
+    // 브라우저로 그린 글은 그 껍데기(주소 + 수집 본문)에 묶여 있다 — 다시 받은 본문이 그대로면 옮겨 온다(shell-render.ts). 옮기지 않으면
+    // 다시 수집할 때마다 그린 글이 사라져 심사 입력이 껍데기로 돌아간다. 본문이 바뀌었으면 버린다(지문이 달라 어차피 쓰지 않는다)
+    const renderedPage = previous?.pageMeta?.[RENDERED_PAGE_KEY];
+    const carryRendered = renderedPage !== undefined && doc.pageMeta && !(RENDERED_PAGE_KEY in doc.pageMeta)
+      && renderedPageOf({ repo: doc.repo, productUrl: doc.productUrl, pageMeta: { ...doc.pageMeta, [RENDERED_PAGE_KEY]: renderedPage } }) !== null;
+    const pageMeta = carryRendered ? { ...doc.pageMeta, [RENDERED_PAGE_KEY]: renderedPage } : doc.pageMeta;
     const values = { ...doc, pageMeta: carryReadme
-      ? { ...doc.pageMeta, readmeSample, readmeSampleVersion: null }
-      : doc.pageMeta, fetchedAt: sql`clock_timestamp()` };
+      ? { ...pageMeta, readmeSample, readmeSampleVersion: null }
+      : pageMeta, fetchedAt: sql`clock_timestamp()` };
     const [saved] = await tx.insert(crawlDocuments).values(values)
       .onConflictDoUpdate({ target: crawlDocuments.repo, set: values })
       .returning();
@@ -758,6 +780,8 @@ function judgementPageMeta(meta: CrawlDocument["pageMeta"]) {
   // README 를 받은 판(버전)·받기 실패 기록은 페이지 내용이 아니다. 다시 수집은 README 를 옮겨 오며 판을 null 로 둔다(다시 받게) —
   // 이것을 「원본이 바뀜」으로 세면 README 가 붙은 미발행 승인·보류가 다시 수집될 때마다 new 로 되돌아간다
   for (const key of ["readmeSampleVersion", ...README_FETCH_FAILURE_KEYS, "readmeRetryAfter", "readmeRefreshAttempts", "readmeRefreshError"]) delete relevant[key];
+  // 브라우저로 그린 기록은 수집한 페이지 내용이 아니라 심사 직전에 붙인 것이다 — 껍데기가 그대로면 다시 수집이 옮겨 온다
+  delete relevant[RENDERED_PAGE_KEY];
   return relevant;
 }
 

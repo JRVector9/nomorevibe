@@ -175,8 +175,8 @@ const STUB_SIGNUP = /sign up|signup|register|create (?:an )?account|get started|
 // "be the first to" 는 know·try 만 — 그냥 두면 돌아가는 앱의 빈 목록 안내("Be the first to chirp!")를 집는다(실측 승인 2건)
 const STUB_COMING_SOON = /coming soon|launching soon|wait ?list|notify me|be the first to (?:know|try)|곧 출시|출시 예정|대기자/u;
 
-const stubNormalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
-const stubWords = (value: string) => value.match(STUB_WORD) ?? [];
+export const stubNormalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+export const stubWords = (value: string) => value.match(STUB_WORD) ?? [];
 
 /**
  * 본문이 빈 화면인지 — 걸린 규칙을 모두, 좁은 것부터(가장 넓은 "제목만"이 마지막) 돌려준다. 판정은 첫 것만 쓴다(stubTextHit).
