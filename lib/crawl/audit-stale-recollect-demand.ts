@@ -22,4 +22,3 @@ export function auditRecollectScanDemand(): SQL {
       AND latest.completed_at <= clock_timestamp() - ${AUDIT_RECOLLECT_REFRESH_AGE_MS} * interval '1 millisecond'
   )`;
 }
-
