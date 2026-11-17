@@ -1,7 +1,4 @@
 import "server-only";
-import { sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { crawlCandidates } from "@/lib/db/schema";
 import { sharedStore } from "@/lib/cache/shared";
 import { getSettings } from "@/lib/crawl/settings";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
@@ -14,12 +11,15 @@ import { buildStationLlm, type LlmLegacyPublish } from "./conveyor-llm";
 import { readLlmInputs } from "./conveyor-llm-read";
 import { hourlyThroughput } from "./dashboard";
 import { pipelineFlow } from "./pipeline";
+import { readHoldCounts } from "./review-hold-counts";
 import { readPublicListing } from "./public-listing";
 import { readSearchHealth } from "./search-health-model";
 import { sharedLoader } from "./shared-cache";
 import { sharedHumanQueueOverview } from "./shared-reads";
 import { pipelineThroughput } from "./throughput";
 import { buildWorkerProgress } from "./worker-progress-query";
+
+export { readHoldCounts } from "./review-hold-counts";
 
 /**
  * 전체 흐름(/admin/flow) 한 장의 읽기 — 운영센터가 쓰는 읽기를 그대로 모아 conveyor-model 로 넘긴다.
@@ -43,23 +43,6 @@ const warn = (event: string) => (error: unknown) => {
   logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
   return null;
 };
-
-/** 보류 사유별 수와 거절 누적 — 한 번 훑는다. 24시간은 후보의 마지막 변경 시각 기준(보류로 바뀐 때 갱신된다) */
-export async function readHoldCounts(): Promise<{ holds: { reason: string; count: number; recent24h: number }[]; rejected: number }> {
-  const rows = await db.transaction(async (tx) => {
-    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
-    return tx.execute<{ state: string; reason: string | null; count: number; recent: number }>(sql`
-      SELECT ${crawlCandidates.state} AS state, coalesce(${crawlCandidates.reason}, 'unknown') AS reason, count(*)::int AS count,
-        count(*) FILTER (WHERE ${crawlCandidates.updatedAt} > now() - interval '24 hours')::int AS recent
-      FROM ${crawlCandidates} WHERE ${crawlCandidates.state} IN ('needs_review', 'rejected') GROUP BY 1, 2`);
-  }, { accessMode: "read only" });
-  const list = [...rows];
-  return {
-    holds: list.filter((row) => row.state === "needs_review")
-      .map((row) => ({ reason: row.reason ?? "unknown", count: Number(row.count), recent24h: Number(row.recent) })),
-    rejected: list.filter((row) => row.state === "rejected").reduce((total, row) => total + Number(row.count), 0),
-  };
-}
 
 async function loadConveyor(fresh: boolean): Promise<Conveyor> {
   const settings = await getSettings();
@@ -121,5 +104,5 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
 }
 
 export function readConveyor(fresh = false): Promise<Conveyor> {
-  return conveyorCache("v5", () => loadConveyor(fresh), fresh);
+  return conveyorCache("v6", () => loadConveyor(fresh), fresh);
 }

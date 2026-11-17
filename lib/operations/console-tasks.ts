@@ -530,7 +530,7 @@ export function buildConsoleTasks(inputs: ConsoleTaskInputs): ConsoleTaskBoard {
     const where = hold.station === "human" ? "사람 확인" : inputs.conveyor!.stations.find(station => station.key === hold.station)?.label ?? hold.station;
     const before = hold.count - recent;
     add("odd", {
-      id: `odd:hold:${hold.reason}`, rule: "hold-surge", title: `${where} 보류가 갑자기 늘었습니다`,
+      id: `odd:hold:${hold.reason}`, rule: "hold-surge", title: `${where}${hold.reason === "ai_first_ambiguous" ? " 판단" : ""} 보류가 갑자기 늘었습니다`,
       fact: `${hold.label} · 24시간 +${formatCount(recent)}건 · 누적 ${formatCount(hold.count)}건`,
       why: `${before * 10 <= recent ? "어제까지는 거의 없던 보류입니다." : "누적의 절반 넘게 최근 24시간에 생겼습니다."} 어제 들어간 변경과 나란히 볼 것.`,
       actions: [link("보류 보기", hold.href ?? HOLD_FALLBACK_HREF[hold.station] ?? "/admin/review"), link("기록 보기", "/admin/activity")],
