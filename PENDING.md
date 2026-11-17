@@ -788,5 +788,6 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 - [x] 관측 `{"ranks":1,"unusable.1.capacity":2}`를 실제 관측 파서로 재현. 기존 main에 최종 회귀 시험 적용 시 21개 중 13개 실패·8개 통과(별도 로그 보존).
 - [x] 일시 대기와 모델 없음/사용 불가 분리. 같은 작업에서 회복 가능한 순위가 있으면 대기, 다른 작업의 영구 오류는 멈춤 우선. 분산 모드도 명시적 전체 사용 불가 관측에 한해 같은 기준 적용.
 - [x] 실제 홈·키워드 등록 표 정적 렌더 전후 스크린숏 확인(빨강 설정 필요 → 황색 칸 대기, 상태 설명 잘림 0 → 0). `npx vitest run conveyor` 87/87, 관련 화면·순위 시험 포함 114/114, next typegen·tsc·범위 ESLint·i18n 계약·diff 검사 통과. 초기 tsc의 시험 readonly 배열 오류는 수정하고 재검증. 전체 수동 unit/DB 시험은 정책에 따라 미실행.
-- [ ] 작업 브랜치 push·PR ready·CI check 확인·개발 보고.
+- 코드 개발 남은 일 없음. 작업 브랜치 push·PR ready 후 최신 head의 CI check와 최종 개발 보고는 [PR #984](https://github.com/JRVector9/nomorevibe/pull/984) 및 보고함 기록으로 확인한다(이 문서는 CI 성공 증거가 아님).
+- 전체 SHA 기반 deploy scope: trusted=true, full/18앱. 상세 원인·검증·화면 확인은 [개발 기록](docs/operations/2026-11-17-conveyor-capacity-label.md).
 - 운영 DB/설정 쓰기·병합·배포는 이 작업 범위 밖이다. 마이그레이션 없음.
