@@ -1,6 +1,6 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { loadReviewDocument } from "./review-document";
+import { loadReviewDocument, reviewReadmeState } from "./review-document";
 import { getSettings } from "@/lib/crawl/settings";
 import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
@@ -138,6 +138,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     }
     const document = await loadReviewDocument(candidate.repo, lease);
     if (!document) return skip(candidate, "document_missing");
+    // README 를 받지 못한 후보를 빈 README 로 모델에 보내지 않는다(2026-11-17 설치형 보류 535건). 기다림은 후보 탓이 아니라 세지 않는다 —
+    // 횟수를 다 쓰면 까닭을 남긴 채 README 없이 심사한다
+    const readme = reviewReadmeState(document);
+    if (readme.kind === "waiting") return skip(candidate, "readme_wait",
+      { error: readme.error, attempts: readme.attempts, retryAt: new Date(readme.retryAfter).toISOString() });
+    if (readme.kind === "unavailable") ctx.log("crawl.agent_review_readme_unavailable",
+      { repo: candidate.repo, error: readme.error, attempts: readme.attempts });
     // 입력이 상한보다 큰 후보 하나가 틱 전체를 던지게 두면 커서가 그 후보 앞에 멈춰 뒤의 후보와 새 후보가 모두 굶는다 — 이 후보만 건너뛴다.
     // 같은 후보가 거듭 건너뛰어지면 상한(first-review-skips.ts)이 쪽에서 빼고 사람에게 넘긴다(2차 표·갈림 판가름도 같은 오류를 후보 탓으로 닫는다)
     let input: Awaited<ReturnType<typeof loadReviewInput>>;

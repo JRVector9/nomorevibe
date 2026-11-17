@@ -214,7 +214,7 @@ async function waitForBlockedBy(pid: number) {
 it("runs a normal legacy control through the actual README, claim, model and result paths", async () => {
   const context = await source(false);
   expect(await tick()).toMatchObject({ status: "completed" });
-  expect(transport.readme).toHaveBeenCalledExactlyOnceWith(context.candidate.repo);
+  expect(transport.readme).toHaveBeenCalledExactlyOnceWith(context.candidate.repo, undefined, expect.any(Function));
   expect(transport.cli).toHaveBeenCalledOnce();
   expect(transport.gateway).not.toHaveBeenCalled();
   expect(transport.grok).not.toHaveBeenCalled();
