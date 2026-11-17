@@ -11,6 +11,7 @@ import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 import { modelRequestBudget } from "@/lib/llm/model-registry";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { PRODUCT_TRANSLATION_SELECTION_ROUNDS } from "./translation-rounds";
+import { PRODUCT_TRANSLATION_CANDIDATE_WINDOW, sameLocaleTranslationCandidates } from "./translation-locale-batch";
 
 const JOB = "product-translate";
 
@@ -64,7 +65,8 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
     const takeBatch = (lane: symbol): Promise<ProductTranslationTask[] | null> => {
       const next = selection.then(async () => {
         while (!stopClaims && rounds++ < maxRounds && ctx.hasBudget() && !signal.aborted && !ranks.exhausted) {
-          const tasks = (await pendingProductTranslations(policy.batchMax, { exclude: [...passed, ...scheduled.keys()] }))
+          // 한 묶음 한 언어(sameLocaleTranslationCandidates) — 같은 언어를 채울 수 있게 batchMax 보다 넓게 읽는다
+          const tasks = (await pendingProductTranslations(PRODUCT_TRANSLATION_CANDIDATE_WINDOW, { exclude: [...passed, ...scheduled.keys()] }))
             .filter(task => !passed.has(productTranslationTaskKey(task)) && !scheduled.has(productTranslationTaskKey(task)));
           if (!tasks.length || !ctx.hasBudget() || signal.aborted || stopClaims) return null;
           const retired = tasks.filter((task) => !task.eligible || productTranslationSourceHash(task.source, task.field) !== task.sourceHash
@@ -76,9 +78,9 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
             recorded += retiredStored;
           }
           for (const task of retired) passed.add(productTranslationTaskKey(task));
-          // Long descriptions remain single calls; short fields keep the existing batch bound.
-          const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)
-            && !scheduled.has(productTranslationTaskKey(task)) && !passed.has(productTranslationTaskKey(task))), policy);
+          // Long descriptions remain single calls; short fields keep the existing batch bound. One locale per call (ja never follows zh-Hans).
+          const batch = packProductTranslationBatch(sameLocaleTranslationCandidates(tasks.filter((task) => !retired.includes(task)
+            && !scheduled.has(productTranslationTaskKey(task)) && !passed.has(productTranslationTaskKey(task)))), policy);
           for (const task of batch) scheduled.set(productTranslationTaskKey(task), lane);
           if (batch.length) return batch;
         }
