@@ -107,7 +107,8 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
   const chain = (state: AssignmentState) => {
     const values = state.mode === "workload_pool" ? state.members : state.ranks;
     const parts = values.flatMap((choice, index) => choice ? [`${state.mode === "fallback" ? `${index + 1}. ` : ""}${nameOf(choice)}${choice.reasoningEffort ? ` · 추론 ${choice.reasoningEffort}` : ""}${state.mode === "workload_pool" && features.slotCaps && state.slots?.[index] ? ` ${state.slots[index]}칸` : ""}`] : []);
-    return parts.length ? parts.join(state.mode === "workload_pool" ? " + " : " → ") : "배정 없음";
+    // 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)의 순위는 차례로 넘기는 대체가 아니다 — 화살표 대신 나열한다
+    return parts.length ? parts.join(state.mode === "workload_pool" ? " + " : snapshot?.scope ? " · " : " → ") : "배정 없음";
   };
   const deviceImpact = editableLine && draft && saves.includes("ranks") ? rankDeviceImpact(editor,
     [{ line: editableLine, before: editableLine.saved, after: [...draft.ranks], beforeText: "", afterText: "" }], devices) : [];
@@ -152,15 +153,19 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
           <Link className="ut-btn ut-primary" href={target.href} prefetch={false}>{target.label} →</Link>
           {!!snapshot.saved.length && <p className="ut-help-text">남아 있는 옛 순위는 이 작업의 실행에 사용되지 않습니다.</p>}
         </> : <>
-          <div className="ut-mode-title"><h3>실행 방식</h3></div>
-          <div className="ut-mode-picker" role="group" aria-label="실행 방식"><button type="button" aria-pressed={!pool} disabled={busy || !!locked}
-            onClick={() => setDraft(unifiedTaskSwitchMode(draft, "fallback", snapshot))}>순위대로</button>
-            <button type="button" aria-pressed={!!pool} disabled={busy || !!locked || !supported}
-              title={!supported ? aiTaskWorkloadPoolUnsupportedReason(snapshot.task, snapshot.slot) ?? undefined : undefined}
-              onClick={() => setDraft(unifiedTaskSwitchMode(draft, "workload_pool", snapshot))}>동시에</button></div>
+          {/* 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)은 「동시에」를 받지 않고 순위가 대체 순서도 아니다 — 실행 방식 고르기 대신 순위 제목만 둔다 */}
+          {snapshot.scope ? <div className="ut-mode-title"><h3>순위</h3></div> : <>
+            <div className="ut-mode-title"><h3>실행 방식</h3></div>
+            <div className="ut-mode-picker" role="group" aria-label="실행 방식"><button type="button" aria-pressed={!pool} disabled={busy || !!locked}
+              onClick={() => setDraft(unifiedTaskSwitchMode(draft, "fallback", snapshot))}>순위대로</button>
+              <button type="button" aria-pressed={!!pool} disabled={busy || !!locked || !supported}
+                title={!supported ? aiTaskWorkloadPoolUnsupportedReason(snapshot.task, snapshot.slot) ?? undefined : undefined}
+                onClick={() => setDraft(unifiedTaskSwitchMode(draft, "workload_pool", snapshot))}>동시에</button></div></>}
           <p className="ut-help-text">{pool ? "서로 다른 업무를 모델들에 나눕니다. 모델별 칸 수 안에서 함께 처리합니다."
             : apiOnly ? "현재 기존 CLI 분류를 사용합니다. API·OpenCode 모델을 쓰려면 「동시에」로 전환하세요."
+              : snapshot.scope ? "이 작업은 순위를 차례로 넘기지 않습니다. 순위마다 쓰이는 곳이 아래와 같습니다."
               : "1순위 모델을 먼저 쓰고, 호출할 수 없을 때 다음 순위로 전환합니다."}</p>
+          {!pool && snapshot.scope && <p className="ut-callout ut-scope" data-scope="partial">{snapshot.scope}</p>}
           {pool ? <div className="ut-editor-rows ut-pool-rows" data-caps={features.slotCaps ? "true" : undefined}>
             <RankSelects<AiRankChoice> stage={{ id: `unified-pool-${snapshot.key}`, label: snapshot.label, slots: 4 }} selectionKind="pool" layout="rows"
               value={draft.members} onChange={value => setDraft(unifiedTaskPoolMembers(draft, value, features))} options={unifiedTaskPoolOptions(editor, snapshot)} connections={editor.connections}
@@ -179,7 +184,7 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
             {!features.slotCaps && <p className="ut-help-text">이 작업은 아직 모델별 상한·예비를 따르지 않습니다. 업무마다 모델 하나를 고릅니다.</p>}
             {snapshot.task === "second-review" && <p className="ut-help-text">후보별 모델 하나를 고르며 투표 수는 늘리지 않습니다.</p>}
             {features.reserve && draft.reserve && <details className="ut-archived"><summary>보관된 예비 순위 보기</summary><p>{chain({ ...draft, mode: "fallback" })}</p></details>}
-          </div> : !apiOnly && <div className="ut-editor-rows">
+          </div> : !apiOnly && <div className="ut-editor-rows" data-scope={snapshot.scope ? "partial" : undefined}>
             <RankSelects<AiRankChoice> stage={{ id: `unified-ranks-${snapshot.key}`, label: snapshot.label, slots: 3 }} layout="rows"
               value={draft.ranks} onChange={value => setDraft({ ...draft, ranks: value })} options={snapshot.options} connections={editor.connections}
               slotNames={AI_RANK_SLOT_NAMES} disabled={busy || !!locked} showProvider={false} note={null}
@@ -209,9 +214,10 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
         <div className="ut-home-link"><Link href={unifiedTaskHomeHref(snapshot.task)} prefetch={false} className="ut-text-btn">홈에서 이 작업 보기 ↗</Link></div>
       </>}
       {(step === "confirm" || step === "saving") && <>
-        <div className="ut-preview-chain"><div className="ut-label">지금 · {before.mode === "workload_pool" ? "동시에" : "순위대로"}</div>{chain(before)}</div>
+        <div className="ut-preview-chain"><div className="ut-label">지금 · {before.mode === "workload_pool" ? "동시에" : snapshot.scope ? "순위" : "순위대로"}</div>{chain(before)}</div>
         <div className="ut-confirm-arrow" aria-hidden="true">↓</div>
-        <div className="ut-preview-chain ut-after"><div className="ut-label">변경 후 · {pool ? "동시에" : "순위대로"}</div>{chain(draft)}</div>
+        <div className="ut-preview-chain ut-after"><div className="ut-label">변경 후 · {pool ? "동시에" : snapshot.scope ? "순위" : "순위대로"}</div>{chain(draft)}</div>
+        {!pool && snapshot.scope && <p className="ut-callout ut-scope" data-scope="partial">{snapshot.scope}</p>}
         {resave && !rankChanged && <p className="ut-scope-note">배정은 그대로 두고 빠진 계약·경로·장비를 다시 준비합니다.</p>}
         {pool && <p className="ut-scope-note">{lanes !== null ? <>함께 최대 <b className="ut-num">{fmt(lanes)}건</b>을 처리합니다. </> : "단계·장비 한도 안에서 나눠 처리합니다. "}
           예비 순위 {features.reserve && draft.reserve ? "사용" : "사용 안 함"}.</p>}
@@ -224,7 +230,8 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
         <div className="ut-editor-foot"><p>변경 전·후가 최근 기록에 남습니다.</p><div className="ut-buttons"><button type="button" className="ut-btn" disabled={busy} onClick={() => setStep("edit")}>다시 고르기</button>
           <button type="button" className="ut-btn ut-primary" disabled={busy || !canSave || mustAck && !ack} onClick={submit}>{busy ? "저장 중…" : "변경 저장"}</button></div></div>
       </>}
-      {step === "done" && <UnifiedTaskResult results={results} expected={saves} mode={draft.mode} chain={chain(draft)} homeHref={unifiedTaskHomeHref(snapshot.task)} onClose={close} />}
+      {step === "done" && <UnifiedTaskResult results={results} expected={saves} mode={draft.mode} chain={chain(draft)} homeHref={unifiedTaskHomeHref(snapshot.task)} onClose={close}
+        scope={snapshot.scope ? results.find(result => result.kind === "ranks" && result.ok && result.message)?.message ?? snapshot.scope : null} />}
       </>}
     </div>
   </dialog>;

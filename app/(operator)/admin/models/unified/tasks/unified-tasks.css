@@ -113,6 +113,9 @@
 .admin-prototype .ut-editor-rows .fr-rank-row-effort:not(:has(select)) { text-align: right; }
 .admin-prototype .ut-editor-rows .fr-rank-row-effort:not(:has(select)) > span { display: none; }
 .admin-prototype .ut-editor-rows .fr-rank-row-effort:not(:has(select))::after { content: "대체 순서"; }
+/* 순위 일부만 실행이 읽는 작업(감사 두 번째 의견): 순위는 대체 순서가 아니다 — 1순위는 기본 설정, 2·3순위는 같은 모델 재판정 거절에만 쓴다 */
+.admin-prototype .ut-editor-rows[data-scope="partial"] .fr-rank-row:first-child :is(.fr-rank-row-label[data-rank-effort="no"], .fr-rank-row-effort:not(:has(select)))::after { content: "기본 설정"; }
+.admin-prototype .ut-editor-rows[data-scope="partial"] .fr-rank-row:not(:first-child) :is(.fr-rank-row-label[data-rank-effort="no"], .fr-rank-row-effort:not(:has(select)))::after { content: "재판정 거절만"; }
 .admin-prototype .ut-editor-rows :is(select, input[type="number"]) { width: 100%; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: 4px; padding: calc(7px / .8); background: var(--surface); color: var(--ink); font-size: calc(12px + var(--admin-font-delta, 0px)); line-height: 1.6; }
 .admin-prototype .ut-editor-rows :is(.fr-rank-row-server, [data-rank-observed], [data-model-activity] > span) { color: var(--muted); font-size: calc(10px + var(--admin-font-delta, 0px)); }
 .admin-prototype .ut-editor-rows [data-rank-observed] { display: none; }

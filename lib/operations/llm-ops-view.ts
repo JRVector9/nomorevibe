@@ -1,4 +1,4 @@
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_TASKS, aiCliToolOfProvider, aiTask, aiTaskSlotLabel, isAiAssistTask, RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_TASKS, aiCliToolOfProvider, aiTask, aiTaskRankScopeNote, aiTaskSlotLabel, isAiAssistTask, RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import { aiConnectionLabel, aiConnectionModelIds, aiConnectionModelsMissing, aiModelsErrorText, aiTaskRanksUnread, type AiConnectionView, type AiCurrentSlot,
   type AiTaskRankRow } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
@@ -621,7 +621,9 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     }
     // 순위를 읽지 않는 작업이 실제로 이 서버를 쓰는 곳 — 주소(없으면 장비)로 맞춘다. LLM 보강은 순위가 없을 때만(옛 env 로 돈다)
     if (connection.kind === "api") for (const slot of input.current ?? []) {
-      if (!aiTaskRanksUnread(slot.task) && !(isAiAssistTask(slot.task) && !(input.rows ?? []).some(row => row.task === slot.task))) continue;
+      // 감사 두 번째 의견(순위 일부만 실행이 읽음)도 순위가 없으면 기본 설정의 실제 모델을 보인다 — 순위가 있으면 1순위가 곧 그 모델이다
+      if (!aiTaskRanksUnread(slot.task) && !((isAiAssistTask(slot.task) || aiTaskRankScopeNote(slot.task) !== null)
+        && !(input.rows ?? []).some(row => row.task === slot.task))) continue;
       const task = aiTask(slot.task);
       for (const use of slot.uses) {
         if (use.kind !== "api" || !(use.baseUrl ? use.baseUrl === connection.baseUrl : use.deviceId !== null && use.deviceId === connection.deviceId)) continue;
