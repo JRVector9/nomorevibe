@@ -12,8 +12,8 @@
 - [x] 단위·시험 DB 55435 회귀 시험 및 쿼리 계획 확인
 - [x] DB·로그인 없는 mock 서버 컴포넌트 전후 화면 렌더·Playwright 캡처·기획 검수
 - [x] 변경 범위 vitest·tsc·ESLint, 실제 deploy scope
-- [ ] 의미 단위 커밋·전용 브랜치 push, ready 및 GitHub PR CI 전부 확인
-- [ ] PR 본문·보고함 개발사항·최종 보고
+- [x] 의미 단위 커밋·전용 브랜치 push, ready 및 구현 head GitHub PR CI 전부 확인
+- [x] PR 본문 갱신·보고함/최종 보고용 영수증 준비(실제 접수 결과는 종료 보고에 기록)
 
 ## 결정과 근거
 
@@ -34,7 +34,7 @@
 ### 품질 수치 (추정 아님)
 
 - 같은 DB fixture의 오래된 보류 재집계: **1건 → 0건**. 48시간 전 처음 보류, 1시간 전 재심사·최근 updated_at. 기존 main의 updated_at SQL과 수정 함수를 같은 시험 안에서 비교했다.
-- 명령: `REVIEW_HOLD_METRICS_PATH=<artifacts>/quality.json npm run test:integration -- tests/integration/review-hold-alert-counts.test.ts`.
+- 명령: `REVIEW_HOLD_METRICS_PATH=<artifacts>/quality.json REVIEW_HOLD_PLAN_PATH=<artifacts>/query-plan.json npx vitest run --config vitest.integration.config.ts tests/integration/review-hold-alert-counts.test.ts`.
 - 1440px mock 화면의 수평 넘침 **0px → 0px**, 규칙·AI 보류 표시 묶음 **1개 → 2개**. 실제 데이터가 아닌 문구 구분을 확인하는 고정 fixture다.
 
 ### 실제 실행 결과
@@ -56,10 +56,21 @@
 
 ### 배포 범위 (scope만 실행)
 
-`npm run deploy -- scope --base da81adec3931ff0946ba4db8c5662271f619be52 --sha b10ea744...`의 실제 출력은 보고함 `deploy-scope.txt`에 보존한다. 공유 lib·관리자 TSX 변경으로 **mode=full, 18앱 선택, retained 0**이다. 웹 전용이라고 축소하지 않는다. 병합·배포 및 운영 설정/DB 변경 없음.
+`npm run deploy -- scope --base da81adec3931ff0946ba4db8c5662271f619be52 --sha b10ea74445a8a0c7b39cbd62ec57c5d5b12c0d95`의 실제 출력은 보고함 `deploy-scope.txt`에 보존한다. 공유 lib·관리자 TSX 변경으로 **mode=full, 18앱 선택, retained 0**이다. 웹 전용이라고 축소하지 않는다. 병합·배포 및 운영 설정/DB 변경 없음.
 
 ## GitHub 검증
 
 - Draft 착수의 `check` 실패는 저장소가 의도한 “draft PR — CI not run; mark ready for review”이며 코드 시험을 통과했다는 뜻이 아니다.
-- 구현·로컬 검증이 끝나면 ready로 전환하고, PR 최종 head의 실제 CI 결과를 이 기록과 PR 본문·보고함에 남긴다.
+- Ready 전환 완료. 구현 head `0d8fa5ce55ad6451c027331571984e1caa4dd8e3`는 [CI 44021462201 attempt 2](https://github.com/JRVector9/nomorevibe/actions/runs/44021462201/attempts/2)에서 전체 선택 검사 성공(`check` 포함). 첫 실행 실패는 아래 보존했다.
+- 이 결과를 담는 문서 커밋 뒤에도 최종 head의 실제 CI를 끝까지 확인한다. 최종 head/CI 및 보고함 접수 영수증은 PR 본문과 종료 개발 보고가 정본이다.
 - PR 체크: https://github.com/JRVector9/nomorevibe/pull/982/checks
+
+### 첫 GitHub CI 실패의 분리 확인
+
+- 실행 `44021462201`, attempt 1: `integration (6)`의 기존 `role-worker-db-terminate-process.test.ts` 두 번째 시험이 240초 timeout. 같은 묶음의 나머지 733시험은 통과했고 다른 선택 검사 잡은 통과했다. `check`는 이 실패를 받아 실패했다. 저장소는 PUBLIC이었고 결제 차단은 아니었다.
+- 해당 워커·시험 파일은 변경하지 않았다. 원인을 확정하지 않는다.
+- `timeout 360s npx vitest run --config vitest.integration.config.ts tests/integration/role-worker-db-terminate-process.test.ts`를 55435에서 단독 실행: **2시험 모두 통과**, 84.74초(시험 본문 81.81초).
+- 같은 head의 실패 잡만 `gh run rerun 44021462201 --repo JRVector9/nomorevibe --failed`로 재실행했다. 제한 시간·시험 기대·워커 코드를 완화하지 않았다. 첫 실패 발췌와 단독 실행 로그는 보고함 첨부에 보존한다.
+
+- Attempt 2는 실패 묶음과 `check`가 실제 통과해 실행 전체 **SUCCESS**. `refresh-caches`와 PR에서 실행하지 않는 publish 잡은 **SKIPPED**이며 통과했다고 세지 않는다. 이전에 통과한 변경 없는 잡은 GitHub의 failed-only 재실행 결과로 보존된다.
+- `origin/main`은 재확인 시에도 `da81adec`였고 병합하지 않았다. 작업 브랜치 이외 push·기록 고쳐 쓰기 없음. 배포할 코드는 PR에 준비되어 있으나 승인된 범위는 PR CI 확인까지이며 병합·배포하지 않았다.
