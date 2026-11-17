@@ -134,6 +134,18 @@ export function productTranslationProtectedTokens(text: string): string[] {
   return [...new Set(text.match(/\b(?:[A-Z]{2,}[A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*)\b/g) ?? [])];
 }
 
+/**
+ * Result validation has a known requested language; source detection does not.
+ * Accept changed Latin prose without requiring English function words (short
+ * taglines and names such as Pokémon often lack that evidence). This is a script
+ * guard, not a detector for other Latin languages such as Spanish or German.
+ * Keep this fallback out of source readiness and display language inference.
+ */
+function hasEnglishResultEvidence(prose: string, text: string, original: string): boolean {
+  const normalize = (value: string) => value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
+  return hasEnglishEvidence(prose) || normalize(text) !== normalize(original);
+}
+
 export function checkProductTranslation(
   output: string, source: ProductTranslationSource, locale: ProductTranslationLocale, field: ProductTranslationField,
 ): ProductTranslationCheck {
@@ -151,8 +163,9 @@ export function checkProductTranslation(
   if (!tokensPreserved(original, text, URL) || !tokensPreserved(original, text, QUOTE)) return { ok: false, reason: "citation_changed" };
   const prose = text.replaceAll(source.name, "").replace(URL, "").replace(QUOTE, "");
   if (locale === "en") {
-    if (!/[A-Za-z]{2,}/.test(prose) || /[가-힣㐀-䶿一-鿿぀-ヿ]/u.test(prose)) return { ok: false, reason: "not_english" };
-    if (detectTranslationSourceLocale(prose) !== "en") return { ok: false, reason: "english_uncertain" };
+    if (!/[A-Za-z]{2,}/.test(prose)
+      || (prose.match(/\p{L}/gu) ?? []).some((letter) => !/\p{Script=Latin}/u.test(letter))) return { ok: false, reason: "not_english" };
+    if (!hasEnglishResultEvidence(prose, text, original)) return { ok: false, reason: "english_uncertain" };
   } else if (locale === "ja") {
     if (!/[ぁ-ゖァ-ヺ]/u.test(prose) || /[가-힣]/u.test(prose)) return { ok: false, reason: "not_japanese" };
   } else {

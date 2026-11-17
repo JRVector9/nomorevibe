@@ -1,5 +1,22 @@
 # 번역·후처리 차선 남은 일 목록
 
+## 영어 결과 검사 오판 — 2026-11-17 / PR #986
+
+- PR: https://github.com/JRVector9/nomorevibe/pull/986 (Draft)
+- 범위: `checkProductTranslation`의 en 결과만. 원문 감지와 일본어 묶음/프롬프트는 변경하지 않는다.
+- [x] 최신 origin/main a9c53498에서 전용 브랜치·착수 Draft PR 생성.
+- [x] `detectTranslationSourceLocale`·`hasEnglishEvidence` 및 `englishLang` 호출처 확인, 공유 감지 불변.
+- [x] 저장된 en 67건을 시험 fixture로 보존. 실제 이전 검사기와 새 검사기 재판정: 43/67 → 66/67. 오판 23건 0/23 → 23/23, 나머지 44건 43/44 → 43/44 (묶음 파싱 실패 1건 유지).
+- [x] `tests/translation-english-check.test.ts`: 23건·기존 통과·혼합 문자·원문 반복·원문 감지/준비 상태 회귀 검증.
+- [x] 결정: 변경된 라틴 문자 결과를 요청 언어에 근거해 허용. 짧은 영어/제품명 누락을 막고 공유 언어 감지는 보수적으로 유지한다. 스페인어·독일어 등도 통과할 수 있음은 명시적 한계이며 시험으로 고정한다.
+- [x] 운영 `product_translations` 현재 행을 BEGIN READ ONLY / 5초 제한 / ROLLBACK으로 집계. 09:47 UTC english_uncertain 21,287행, not_japanese 0행. 누적 모델 호출 오류율이 아니다.
+- [x] 관련 vitest 17파일 283건·변경 TS eslint 통과. 첫 확장 시험 실패(기대값 1건, 공유 의존성 누락 2건)는 수정·독립 npm ci 뒤 재검증했다.
+- [ ] next typegen 통과, tsc 최종 실행 중. 최초 tsc 의존성 누락 실패는 보존한다.
+- [ ] 변경 커밋·작업 브랜치 push·PR CI check 성공.
+- [ ] deploy scope 기록·PR 본문·개발 보고 완료.
+- 병합·배포·운영 설정 변경·운영 DB 쓰기 금지. 아래는 과거 작업 기록이며 이번 범위를 넓히지 않는다.
+
+
 이 차선은 코드와 시험만 다룬다. 운영 DB 쓰기·원격 SSH·배포·push는 하지 않는다.
 근거는 `docs/CODEX_HANDOFF.md`의 2026-10-27 23:07 KST 관측이다.
 
