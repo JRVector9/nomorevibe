@@ -6,6 +6,8 @@
  *   node --import tsx scripts/ops/ai-task-ranks.ts apply --hash=<64hex> --operator=<이름>  계획 hash 가 같을 때만 적용(경고는 stderr 「경고 …」 줄)
  *   node --import tsx scripts/ops/ai-task-ranks.ts resave --operator=<이름> [--task=a,b]  저장된 순위를 그대로 다시 저장(빠진 계약·정책 route·장비를 만든다)
  *   node --import tsx scripts/ops/ai-task-ranks.ts set --operator=<이름> --task=<작업> [--slot=N] --rank1='<연결 이름>|<모델>' [--rank2=…]  한 칸을 화면처럼 저장
+ *     감사 두 번째 의견(--task=audit-second-opinion): 1순위는 기본 Qwen 직접 설정과 같아야 하고(아니면 거절), 2·3순위는 변경 재판정 거절을 1순위와 같은
+ *     모델이 냈을 때만 그 항목의 두 번째 의견에 쓴다 — 결과 JSON 의 scope 와 stderr 「범위 …」 줄이 이것을 적는다. 되돌리기는 --rank1 만 다시 저장한다.
  *
  * DATABASE_URL 은 앱과 같은 것을 쓴다(웹·워커가 읽는 env 로 「지금 실제로 쓰는 모델」을 판정하므로 운영 컨테이너 안에서 돌린다).
  * 가져오기는 키가 필요한 새 연결의 키를 옮길 수 없어도(이 컨테이너에 키 암호화 설정 NMV_SECRET_BOX_KEY 가 없거나 그 키를 읽지 못함) 멈추지 않는다 —
@@ -99,6 +101,9 @@ export async function runAiTaskRanks(argv: readonly string[]): Promise<number> {
     });
     const result = await saveAiTaskRanks({ task: slot.task.id, slot: slot.slot, revision: slot.revision, ranks }, args.operator);
     console.log(JSON.stringify({ task: slot.task.id, slot: slot.slot, ...result }));
+    // stdout 은 결과 JSON 한 줄 그대로 — 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)은 이 저장이 실행에 하는 일을 사람이 보도록 stderr 에 한 줄
+    if (result.ok && result.scope) console.error(`범위 ${result.scope}`);
+    if (result.ok) for (const warning of result.warnings) console.error(`경고 ${warning}`);
     return result.ok ? 0 : 1;
   }
   console.error("usage: status|preview|apply|resave|set (scripts/ops/ai-task-ranks.ts 머리 주석)");

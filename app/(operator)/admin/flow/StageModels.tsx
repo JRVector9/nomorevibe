@@ -169,6 +169,7 @@ function ModelLine({ line, showLabel, title, flowLine, editor, context, lockReas
     {line.archived && step === "view" && <p className="sp-note">{line.reserve ? "예비로 쓰는 순위(묶음이 모두 서면)" : "보관된 순위(지금은 쓰지 않음)"}: {line.archived}</p>}
     {locked && <p className="sp-note" role="note">{locked}{!flowLine && <> <Link prefetch={false} href="/admin/models#tasks">작업 배정 →</Link></>}</p>}
     {elsewhere && <p className="sp-note">실행 쪽은 이 순위를 읽지 않습니다 — <Link prefetch={false} href={elsewhere.href}>{elsewhere.label} →</Link></p>}
+    {flowLine?.scope && !flowLine.live && <p className="sp-note" data-scope="partial">{flowLine.scope}</p>}
     {lockReason && canEdit && <p className="sp-note" role="note">{lockReason}</p>}
 
     {step === "edit" && flowLine && editor && <div className="sp-edit">

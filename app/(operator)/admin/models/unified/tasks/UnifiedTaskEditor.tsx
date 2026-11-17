@@ -160,7 +160,9 @@ function TaskEditor({ editor, devices, lockReason, poolHelp, onClose, row = null
               onClick={() => setDraft(unifiedTaskSwitchMode(draft, "workload_pool", snapshot))}>동시에</button></div>
           <p className="ut-help-text">{pool ? "서로 다른 업무를 모델들에 나눕니다. 모델별 칸 수 안에서 함께 처리합니다."
             : apiOnly ? "현재 기존 CLI 분류를 사용합니다. API·OpenCode 모델을 쓰려면 「동시에」로 전환하세요."
+              : snapshot.scope ? "이 작업은 순위를 차례로 넘기지 않습니다. 순위마다 쓰이는 곳이 아래와 같습니다."
               : "1순위 모델을 먼저 쓰고, 호출할 수 없을 때 다음 순위로 전환합니다."}</p>
+          {!pool && snapshot.scope && <p className="ut-callout ut-scope" data-scope="partial">{snapshot.scope}</p>}
           {pool ? <div className="ut-editor-rows ut-pool-rows" data-caps={features.slotCaps ? "true" : undefined}>
             <RankSelects<AiRankChoice> stage={{ id: `unified-pool-${snapshot.key}`, label: snapshot.label, slots: 4 }} selectionKind="pool" layout="rows"
               value={draft.members} onChange={value => setDraft(unifiedTaskPoolMembers(draft, value, features))} options={unifiedTaskPoolOptions(editor, snapshot)} connections={editor.connections}
