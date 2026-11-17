@@ -214,7 +214,7 @@
 .cv-llmd-note{color:var(--color-fg-2);font-size:calc(12.5px + var(--admin-content-growth,0px))}
 .cv-llmd-state{display:inline-block;padding:0 7px;border-radius:999px;font-size:calc(11.5px + var(--admin-content-growth,0px));font-weight:700;line-height:1.6;color:var(--color-fg-3);background:color-mix(in srgb,var(--color-fg-3) 12%,transparent)}
 .cv-llmd-state[data-state=none],.cv-llmd-state[data-state=stuck]{color:var(--cv-bad);background:color-mix(in srgb,var(--cv-bad) 13%,transparent)}
-.cv-llmd-state[data-state=fallback],.cv-llmd-state[data-state=other]{color:var(--cv-warn);background:color-mix(in srgb,var(--cv-warn) 14%,transparent)}
+.cv-llmd-state[data-state=fallback],.cv-llmd-state[data-state=other],.cv-llmd-state[data-state=waiting]{color:var(--cv-warn);background:color-mix(in srgb,var(--cv-warn) 14%,transparent)}
 /* ③ 처리량 — 다섯 칸 같은 폭. 라벨이 두 줄이 돼도 숫자 기준선이 맞게 숫자를 아래로 붙인다 */
 .cv-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px 16px;margin:0}
 .cv-kpis>div{display:flex;flex-direction:column;justify-content:space-between;gap:2px;min-width:0}
