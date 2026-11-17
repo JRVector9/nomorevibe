@@ -10,9 +10,12 @@ PR: https://github.com/JRVector9/nomorevibe/pull/988
 - [x] 운영 읽기 전용 확인: 2026-11-17 11:40:17Z 캠페인 7 미결 거절 32건, 모두 local-direct / qwen3.8-flash-next
 - [x] 작업 전용 Postgres 범위 통합 시험
 - [x] next typegen·tsc 통과
-- [ ] 최종 lint·배포 scope 확인
-- [ ] 전용 브랜치 커밋·push·최종 CI check 확인
-- [ ] PR 본문·개발 보고함 최종 보고
+- [x] 최종 lint·배포 scope 확인
+- [x] 전용 브랜치 커밋·push·구현 CI check 확인
+- [x] PR 본문 검증 결과 반영·최종 개발 보고 증거 준비
+
+개발 잔여 항목은 없다. 이 완료 기록을 포함한 최종 머리의 CI 결과와 보고함 영수증은 PR 본문·개발 보고를 확정본으로 삼는다.
+병합·운영 적용·독립 모델 순위 추가는 이번 작업에서 수행하지 않는다.
 
 ## 선택과 이유
 
@@ -42,6 +45,19 @@ PR: https://github.com/JRVector9/nomorevibe/pull/988
   `NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit` 순서로 통과했다.
 - 첫 scope는 Git 별칭을 인자로 주어 `invalid_commit_identity`로 보수적 전체 분류됐다. 커밋 후 정확한 SHA로 다시 측정한다.
 - 공유 `reviewCandidatePredicate`·replay 권한 프로필은 변경하지 않았다. 선택 SQL은 기존 감사 표만 사용한다.
+
+## 확정 검증·배포 범위
+
+- `npm run lint`: 종료 0, 오류 0·기존 다른 파일 경고 4·변경 파일 경고 0.
+- 구현 커밋 `53289cdb5ab2d37cf561f238dd6651a0b3a903cc`의 [전체 CI 44078317366](https://github.com/JRVector9/nomorevibe/actions/runs/44078317366):
+  **SUCCESS**. typecheck·lint·build·unit 2묶음·integration 6묶음·integration-ledger·PR 이미지 2개·최종 check가 모두 통과했다.
+- 초기 Draft 실행은 저장소 정책상 scope skip·check 실패였다(44075853363, 44078152901). 구현·로컬 검증 후 Ready 전환으로 실제 CI를 실행했다.
+  결제 차단이 아니며 저장소는 PUBLIC이었다. 저장소 공개 범위·접근 권한은 변경하지 않았다.
+- 배포 범위 명령:
+  `npm run deploy -- scope --base a9c534981975da2636c2fece03695b58b1009749 --sha 53289cdb5ab2d37cf561f238dd6651a0b3a903cc`
+  → `trusted:true`, `deployment-scope-v2`, `mode:full`, 전체 **18개 앱**. 공통 lib 변경의 기존 분류다.
+- 구현 CI 통과 후 `origin/main`을 다시 fetch했고 base는 동일한 `a9c53498`이었다. 이 완료 기록 외에 검증 뒤 구현 변경은 없다.
+- 이 문서의 최종 갱신은 기록만 바꾸므로 로컬 검증을 재실행하지 않는다. 최종 머리의 GitHub CI 결과는 PR 본문에 별도로 기록한다.
 
 ## 적용·되돌리기
 
