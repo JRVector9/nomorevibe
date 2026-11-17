@@ -13,13 +13,14 @@ export type RejudgeOpinionModel = Readonly<{ config: QwenDirectConfig; servingRe
 const TASK = "audit-second-opinion";
 
 /** Only this task's saved ranks can supply an independent opinion. Admission still belongs to model capacity. */
-export async function rejudgeSecondOpinionModels(primary: string): Promise<RejudgeOpinionModel[]> {
+export async function rejudgeSecondOpinionModels(primary: string, options?: { sameModelRecheck: true }): Promise<RejudgeOpinionModel[]> {
   await ensureAiTaskModels();
   const models: RejudgeOpinionModel[] = [];
   for (const rank of taskModels(TASK)) {
     const connection = rank.connection;
     if (!rank.enabled || !connection.enabled || !aiConnectionTaskAllowed(TASK, connection) || connection.keyUnreadable
-      || !connection.baseUrl || bareModelName(rank.model) === bareModelName(primary)
+      || !connection.baseUrl || (options?.sameModelRecheck
+        ? bareModelName(rank.model) !== bareModelName(primary) : bareModelName(rank.model) === bareModelName(primary))
       || models.some(row => bareModelName(row.config.model) === bareModelName(rank.model))) continue;
     try {
       const baseUrl = connection.baseUrl.replace(/\/+$/, "");

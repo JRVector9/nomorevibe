@@ -1,3 +1,4 @@
+import { sameModelRecheckField, type SameModelRecheckView } from "./same-model-recheck-repository";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, operationsAudit, products, productAuditAttempts, productAuditCampaigns, productAuditItems,
@@ -535,6 +536,7 @@ export type AuditFindingRow = {
   heldAt: Date | null;
   /** 다른 모델의 두 번째 의견(audit-second-opinions.ts) — 출처·사유까지(엇갈림의 까닭을 줄에서 본다). 없으면 빈 목록 */
   second: SecondOpinionView[];
+  sameModelRecheck?: SameModelRecheckView | null;
   /** 이 답을 낸 제공자(0112) — 비어 있으면 그 감사가 시작할 때의 심사자다. 남은 감사 모델 바꾸기 뒤의 답을 화면이 가른다 */
   aiProvider: string | null;
   /** 수집 본문 글자 수(원본 없으면 null)·화면 판정이 있는가·엇갈림(m1 과 다른 모델이 반대) — audit-text-gate.ts */
@@ -555,6 +557,7 @@ const findingColumns = {
   owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql, { reasons: true }), aiProvider: productAuditItems.aiProvider,
   textLength: pageTextLengthSql(sql`${products.id}`), screenJudged: screenJudgedSql(itemIdSql), m1Split: m1SplitSql(itemIdSql),
   changeSummary: productAuditItems.changeSummary,
+  sameModelRecheck: sameModelRecheckField(itemIdSql),
 };
 
 /** Qwen-v2 자동 의견 단계가 켜져 있는가 — 꺼져 있으면 그 거절은 '두 모델 모두 거절'·묶어 내리기의 까닭이 아니다(holdGates 와 같다) */

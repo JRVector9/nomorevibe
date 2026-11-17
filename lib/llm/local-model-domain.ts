@@ -63,7 +63,7 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
 
 /** proveLocalModelDomain 과 같은 증명 — 통과면 null, 거절이면 처음 걸린 검사(검사 차례와 잠금 차례는 예전 그대로다) */
 export async function localModelDomainRefusal(tx: ProductTransaction, target: LocalModelTarget, input: LocalModelInput,
-  job: JobLease, role: RoleLease, model: string, requestId?: string, screenProof?: LocalModelScreenProof): Promise<LocalModelDomainRefusal | null> {
+  job: JobLease, role: RoleLease, model: string, requestId?: string, screenProof?: LocalModelScreenProof, promptVersion?: string): Promise<LocalModelDomainRefusal | null> {
   const refuse = (check: LocalModelDomainCheck, validUntil?: Date): LocalModelDomainRefusal =>
     validUntil ? { check, validUntil: validUntil.toISOString() } : { check };
   if (job.name !== localModelJob(target) || role.role !== "reviewer") return refuse("job_mismatch");
@@ -144,6 +144,15 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
       if (!(target.purpose === "screen" ? current.settings.qwenAuto.screenReview.enabled
         : current.settings.qwenAuto.auditSecondOpinion.enabled)) return refuse("step_disabled");
       valid = item.aiDecision === "reject" && item.humanDecision === null;
+      // Same-model admission is an explicit advisory exception, identified by its own prompt version.
+      const { SAME_MODEL_RECHECK_PROMPT_VERSION, sameModelRecheckModel, sameModelRecheckWanted } = await import("@/lib/crawl/same-model-recheck-policy");
+      if (promptVersion === SAME_MODEL_RECHECK_PROMPT_VERSION) {
+        if (target.purpose !== "second_opinion" || !current.settings.qwenAuto.sameModelRecheck.enabled) return refuse("step_disabled");
+        if (!await sameModelRecheckModel(model)) return refuse("target_not_open");
+        const { sql } = await import("drizzle-orm");
+        valid = valid && Boolean((await tx.execute(sql`select i.id from product_audit_items i, products p
+          where i.id = ${target.itemId} and ${sameModelRecheckWanted(model)}`)).length);
+      }
     }
   } else if (target.kind === "published") {
     const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, target.secondReviewId)).for("update");
