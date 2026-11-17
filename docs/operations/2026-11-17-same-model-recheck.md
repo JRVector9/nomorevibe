@@ -57,15 +57,24 @@ Drizzle은 마지막 적용 시각보다 앞선 마이그레이션을 나중에 
 - [x] 격리 브랜치·빈 시작 커밋·Draft PR #989 확인
 - [x] 별도 기록·기본 꺼짐·틱당 상한·기존 순위/용량 경로 구현
 - [x] 반대 입장 프롬프트·사람 확인 유지 권고·거절 미반영 구현
-- [x] 전용 단위 `tests/same-model-recheck.test.ts` 14건 포함 관련 단위 183건 통과(13파일)
+- [x] 전용 단위 `tests/same-model-recheck.test.ts` 14건 포함 관련 단위 193건 통과(14파일)
 - [x] 작업 전용 PostgreSQL(55509) 통합 58건 통과(5파일, 새 통합 8건)
 - [x] `npx next typegen`, `NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit`, 변경 영역 ESLint 통과
 - [x] 실제 앱 `/admin/audit?tab=recheck`에서 1440/1024px 표시·사유 펼침/접기·권고 1개/재거절 표시 없음 검수
 - [x] 실제 스크린샷 확인: 권고 영역 가로 넘침 0px(566/566), 접은 사유 36px(행높이 18.15px), 브라우저 오류 0건
-- [ ] task 브랜치 push 및 최신 머리 CI `check` 확인 후 PR 본문/개발 보고에 영수증 기록
+- [x] 구현·운영 안내·시험 fixture 수정 커밋을 task 브랜치에만 push
+- [x] CI 실패 로그의 `split-jobs` tally fixture 누락을 타입/재검토 진행 단언으로 수정(81193da2), 로컬 193건·tsc·lint 통과
+- [ ] 최신 머리 CI `check` 통과 — **외부 차단**: 저장소 PUBLIC→PRIVATE, Actions 결제/한도로 잡 시작 불가
+- [ ] 위 차단 해소 뒤 최신 머리에 `gh workflow run ci.yml --repo JRVector9/nomorevibe --ref feat/same-model-recheck-20261117` 실행·전체 검사/check 확인
+
+수정 머리 `81193da2114a56117c652922c095d414b337c93e`의 CI [44098447670](https://github.com/JRVector9/nomorevibe/actions/runs/44098447670)은
+scope/check가 러너·단계 없이(`steps: []`) 실패했다. 실제 annotation: "The job was not started because recent account payments have failed or your spending limit needs to be increased."
+13:53Z PUBLIC, 14:00Z 이후 PRIVATE임을 실제 확인했다. 공개 범위·결제·권한은 이 작업 승인에 포함되지 않아 변경하지 않았다.
+사람 결정 요청 `q-986f1c2a-833`: 소유자가 PUBLIC 복원 또는 Actions 결제/한도 해결 후 재개(추천), 또는 이 작업에서 PUBLIC 복원을 명시 승인.
+Draft 상태는 유지했다. Draft PR 이벤트의 의도적 실패와 실제 workflow_dispatch 실행 결과를 구분한다.
 
 초기 실패도 보존한다: 처음 tsc는 새 설정 fixture 누락 1건(추가 후 통과), 새 통합 재실행은 이전 입력기한 관측과 RESTART IDENTITY가 충돌해 4/7 실패했다.
-시험에서 이 전용 관측을 매번 비우도록 고쳐 8건 모두 통과했다. 무관한 기존 실패는 관측하지 않았다.
+시험에서 이 전용 관측을 매번 비우도록 고쳐 8건 모두 통과했다. 첫 CI [44097071002](https://github.com/JRVector9/nomorevibe/actions/runs/44097071002)는 완료됐다. 빌드·typecheck·lint·unit (1)·integration 6개 묶음·integration-ledger는 모두 성공했다. `split-jobs` fixture가 새 집계를 빠뜨려 unit (2) 1건과 최종 check는 실패했으며 위 수정으로 로컬 통과했다. 무관한 기존 실패는 관측하지 않았다.
 첫 scope는 `HEAD` 문자열을 받아 `invalid_commit_identity/trusted:false`였고 실제 40자리 SHA로 다시 실행해 위 결과를 얻었다.
 수동 전체 unit/DB/종합 검사는 PR별로 반복하지 않는다. GitHub 필수 CI는 저장소 workflow 그대로 실행한다.
 
