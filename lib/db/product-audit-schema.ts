@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, real, boolean, jsonb, index, uniqueIndex, check } from "drizzle-orm/pg-core";
 import type { ReviewOutcome, ReviewSource } from "@/lib/crawl/agent-review-contract";
 import type { AuditProvider } from "@/lib/crawl/product-audit-reviewer";
+import type { ProjectActivity } from "@/lib/crawl/audit-project-activity";
 
 /**
  * 발행분 감사 — 이미 공개된 제품을 지금의 1차 심사 글로 한 번 더 본다.
@@ -226,6 +227,11 @@ export const productAuditRecollects = pgTable("product_audit_recollects", {
   afterFetchedAt: timestamp("after_fetched_at", { precision: 3 }),
   afterDigest: jsonb("after_digest").$type<Record<string, string>>(),
   changedFields: jsonb("changed_fields").$type<string[]>(),
+  /** 프로젝트 활동 묶음(lib/crawl/audit-project-activity.ts) — 요청 때(감사가 본 옛 원본)·끝났을 때(다시 받은 원본) */
+  beforeActivity: jsonb("before_activity").$type<ProjectActivity>(),
+  afterActivity: jsonb("after_activity").$type<ProjectActivity>(),
+  /** 감사 때와 지금의 차이를 사람이 읽는 짧은 글들("사이트 404 → 200", "마지막 push 9/02 → 11/10", "페이지 본문 바뀜") — 감사 화면 항목 한 줄 */
+  changeSummary: jsonb("change_summary").$type<string[]>(),
   sourceChanged: boolean("source_changed"),
   /** 다시 받은 원본의 README 를 README 잡이 다시 받았나 — false 면 옮겨 둔 옛 README 로 물었다(README 변화는 모른다) */
   readmeRefreshed: boolean("readme_refreshed"),

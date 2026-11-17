@@ -10,6 +10,8 @@ import { auditSourceHash, loadAuditInput } from "./product-audit";
 import { EMPTY_DETAIL, GONE_DETAIL, lockFrontierIdentity, SKIP_EMPTY_REPOSITORY, SKIP_NOT_FOUND } from "./repository";
 import type { CrawlSettings } from "./settings-schema";
 import { AUDIT_RECOLLECT_REFRESH_AGE_MS } from "./audit-stale-recollect-demand";
+import { recollectChangeSummary, type ProjectActivity } from "./audit-project-activity";
+import type { AuditRecollectFailure } from "./audit-recollect-view";
 
 export { AUDIT_RECOLLECT_REFRESH_AGE_MS, auditRecollectScanDemand } from "./audit-stale-recollect-demand";
 
@@ -29,14 +31,16 @@ export { AUDIT_RECOLLECT_REFRESH_AGE_MS, auditRecollectScanDemand } from "./audi
  *  - 입력이 다시 새로워졌으면 done — 근거(감사 입력의 product 칸)마다의 짧은 해시를 견줘 바뀐 칸(changed_fields)·근거가 바뀌었는지(source_changed)를 남긴다.
  *    두 번째 의견은 다음 틱부터 그 항목을 보통처럼 묻는다(새 입력으로).
  *  - 수집이 요청 뒤에 실패로 끝났으면(저장소 404·빈 저장소·이름 바뀜·재시도 소진) failed — 사유를 남기고 사람 몫으로 둔다. 다시 고르지 않는다.
- *  - AUDIT_RECOLLECT_WAIT_MS 안에 새로워지지 않으면 failed(recollect_timeout).
+ *  - 요청 뒤 AUDIT_RECOLLECT_WAIT_MS 안에 다시 받지 못하면 failed(refetch_not_received_48h).
+ * 나이 기준은 없다(2026-11-17 사람 지시 "기간 상관없이 다시 살펴보고 진행중인 프로젝트인지 보게"): 근거가 몇 달·몇 년 됐든 다시 받아 묻는다.
+ * 사람 몫(failed)이 되는 것은 모두 '다시 받지 못해서'다 — 시간 재기는 근거의 나이가 아니라 다시 받기 요청부터 잰다(waitedMs).
  *  - 그 사이 사람이 정했거나 제품이 내려갔으면 dropped.
  * waiting·failed·dropped 항목은 두 번째 의견이 고르지 않는다(auditRecollectBlocksSql).
  */
 
 /** 동시에 다시 받는 중(waiting)인 항목의 상한 — 수집·스캔 줄에 한꺼번에 몰리지 않게 */
 export const AUDIT_RECOLLECT_MAX_WAITING = 20;
-/** 다시 받기를 기다리는 최대 시간 — 넘으면 실패(recollect_timeout)로 사람 몫이다. 스캔 줄이 붐벼도 하루면 돈다 */
+/** 다시 받기 요청부터 기다리는 최대 시간(근거 나이가 아니다) — 넘으면 실패(refetch_not_received_48h)로 사람 몫이다. 스캔 줄이 붐벼도 하루면 돈다 */
 export const AUDIT_RECOLLECT_WAIT_MS = 48 * 3600_000;
 /**
  * 다시 받은 원본의 README 를 기다리는 최대 시간(요청부터). 수집(saveFetchedDocument)은 README 를 받지 않고 옛 README 를 판 없음(null)으로 옮겨 두고,
@@ -51,8 +55,7 @@ const SETTLE_BATCH = 40;
 /** 수집 신호 — 1차 심사의 원본 재수집과 같다(발견 수로 세지 않는다) */
 const REFRESH_SIGNAL = "review-source-refresh";
 
-export type AuditRecollectFailure = "no_source" | "repo_deleted" | "repo_empty" | "repo_renamed" | "source_refresh_failed"
-  | "recollect_timeout" | "recollect_repeated" | "input_error";
+export { AUDIT_RECOLLECT_FAILURE_SHORT, type AuditRecollectFailure } from "./audit-recollect-view";
 
 /** 실패 사유의 사람용 글 — 감사 화면·작업 기록이 그대로 보인다 */
 export const AUDIT_RECOLLECT_FAILURE_LABELS: Readonly<Record<AuditRecollectFailure, string>> = {
@@ -61,16 +64,11 @@ export const AUDIT_RECOLLECT_FAILURE_LABELS: Readonly<Record<AuditRecollectFailu
   repo_empty: EMPTY_DETAIL,
   repo_renamed: "저장소 이름이 바뀌어(다른 이름의 같은 저장소가 이미 있음) 이 원본을 다시 받지 못했습니다.",
   source_refresh_failed: "GitHub 원본 재수집이 재시도를 다 쓰고 실패했습니다.",
-  recollect_timeout: "정한 시간 안에 원본·스캔이 새로워지지 않았습니다.",
-  recollect_repeated: "다시 받은 뒤에도 두 번째 의견을 묻기 전에 입력 기한이 거듭 지났습니다.",
+  refetch_not_received_48h: "다시 받기를 요청하고 48시간 안에 원본·스캔을 다시 받지 못했습니다(근거 나이 때문이 아닙니다).",
+  refetch_expired_before_ask: "원본을 3번 다시 받았지만 그때마다 두 번째 의견을 묻기 전에 받은 근거의 기한(받은 뒤 24시간)이 지났습니다(근거 나이 때문이 아닙니다).",
   input_error: "다시 받은 원본으로 심사 입력을 만들지 못했습니다.",
 };
 
-/** 실패 사유의 짧은 이름 — 감사 화면의 상태 줄 */
-export const AUDIT_RECOLLECT_FAILURE_SHORT: Readonly<Record<AuditRecollectFailure, string>> = {
-  no_source: "원본 없음", repo_deleted: "저장소 없음(404)", repo_empty: "빈 저장소", repo_renamed: "이름 바뀜", source_refresh_failed: "수집 실패",
-  recollect_timeout: "시간 넘김", recollect_repeated: "기한 거듭 지남", input_error: "입력 오류",
-};
 
 /** 근거(감사 입력의 product 칸)마다 짧은 해시 — 어떤 칸이 바뀌었는지만 가른다(내용은 남기지 않는다) */
 export type RecollectDigest = Record<string, string>;
@@ -122,7 +120,7 @@ export function settleRecollectVerdict(input: { open: boolean; sourceFound: bool
   const failure = recollectFrontierFailure(input.frontier);
   if (failure) return { kind: "failed", ...failure };
   if (input.waitedMs > AUDIT_RECOLLECT_WAIT_MS) {
-    return { kind: "failed", code: "recollect_timeout", detail: `${AUDIT_RECOLLECT_FAILURE_LABELS.recollect_timeout} ${input.refetched
+    return { kind: "failed", code: "refetch_not_received_48h", detail: `${AUDIT_RECOLLECT_FAILURE_LABELS.refetch_not_received_48h} ${input.refetched
       ? "원본은 다시 받았지만 저장소 스캔이 24시간 안의 것이 되지 않았습니다." : "원본을 다시 받지 못했습니다."}` };
   }
   return { kind: "waiting" };
@@ -157,7 +155,7 @@ export async function requestAuditRecollect(lease: JobLease, target: AuditRecoll
     if (!candidate) return fail("no_source", AUDIT_RECOLLECT_FAILURE_LABELS.no_source, "");
     if (existing && existing.state !== "done") return { result: "skipped", reason: existing.state };
     if (existing && existing.requests >= AUDIT_RECOLLECT_MAX_REQUESTS) {
-      return fail("recollect_repeated", AUDIT_RECOLLECT_FAILURE_LABELS.recollect_repeated, candidate.repo);
+      return fail("refetch_expired_before_ask", AUDIT_RECOLLECT_FAILURE_LABELS.refetch_expired_before_ask, candidate.repo);
     }
     const [document] = await tx.select({ fetchedOld: sql<boolean>`${crawlDocuments.fetchedAt} <= clock_timestamp()
         - ${AUDIT_RECOLLECT_REFRESH_AGE_MS} * interval '1 millisecond'` }).from(crawlDocuments)
@@ -199,7 +197,9 @@ async function upsert(tx: ProductTransaction, target: AuditRecollectTarget, repo
     beforeFetchedAt: stale ? new Date(stale.source.documentFetchedAt) : null,
     beforeScanCompletedAt: stale?.source.scanCompletedAt ? new Date(stale.source.scanCompletedAt) : null,
     beforeDigest: stale ? recollectDigest(stale.snapshot.product) : null,
-    afterFetchedAt: null, afterDigest: null, changedFields: null, sourceChanged: null, readmeRefreshed: null,
+    // 감사가 본 옛 원본의 활동(보관·마지막 push·릴리스·사이트 응답) — 끝날 때 다시 받은 원본의 것과 견줘 사람이 읽는 차이를 남긴다
+    beforeActivity: stale?.snapshot.projectActivity ?? null,
+    afterFetchedAt: null, afterDigest: null, changedFields: null, afterActivity: null, changeSummary: null, sourceChanged: null, readmeRefreshed: null,
     failureCode: next.failureCode, failureDetail: next.failureDetail,
     settledAt: next.state === "waiting" ? null : sql`clock_timestamp()`,
   };
@@ -211,7 +211,7 @@ export type AuditRecollectSettled = { done: number; changed: number; failed: num
 
 type WaitingRow = {
   item_id: number; product_id: number; slug: string | null; repo: string; open: boolean; source_hash: string | null;
-  before_digest: RecollectDigest | null; waited_ms: number; refetched: boolean | null; readme_pending: boolean | null; readme_current: boolean | null;
+  before_digest: RecollectDigest | null; before_activity: ProjectActivity | null; waited_ms: number; refetched: boolean | null; readme_pending: boolean | null; readme_current: boolean | null;
   frontier_state: string | null; frontier_error: string | null; frontier_alias: string | null; frontier_after: boolean | null;
 };
 
@@ -224,7 +224,7 @@ export async function settleAuditRecollects(lease: JobLease, settings: CrawlSett
   limit = SETTLE_BATCH): Promise<AuditRecollectSettled> {
   const settled: AuditRecollectSettled = { done: 0, changed: 0, failed: 0, dropped: 0, waiting: 0 };
   const rows = await db.execute<WaitingRow>(sql`
-    select r.item_id, r.product_id, p.slug, r.repo, r.before_digest, i.source_hash,
+    select r.item_id, r.product_id, p.slug, r.repo, r.before_digest, r.before_activity, i.source_hash,
       (i.ai_decision = 'reject' and i.human_decision is null and coalesce(p.status in ('seeded', 'verified'), false)) as open,
       (extract(epoch from clock_timestamp() - r.requested_at) * 1000)::float8 as waited_ms,
       (d.fetched_at > r.requested_at) as refetched,
@@ -239,13 +239,14 @@ export async function settleAuditRecollects(lease: JobLease, settings: CrawlSett
       left join crawl_frontier f on f.repo = r.repo
      where r.state = 'waiting' order by r.requested_at, r.item_id limit ${limit}`);
   type Update = { itemId: number; state: ProductAuditRecollectState; afterFetchedAt?: Date | null; afterDigest?: RecollectDigest | null;
-    changedFields?: string[] | null; sourceChanged?: boolean | null; readmeRefreshed?: boolean | null; failureCode?: string | null; failureDetail?: string | null };
+    changedFields?: string[] | null; afterActivity?: ProjectActivity | null; changeSummary?: string[] | null; sourceChanged?: boolean | null; readmeRefreshed?: boolean | null; failureCode?: string | null; failureDetail?: string | null };
   const updates: Update[] = [];
   for (const row of rows) {
     let input: ReviewInput | null = null;
     let inputError = false;
     if (row.open && row.slug) {
-      try { input = await loadAuditInput(row.slug, settings); } catch { inputError = true; }
+      // 두 번째 의견이 물을 그 입력(프로젝트 활동 묶음 포함)으로 새로워졌는지·무엇이 바뀌었는지 본다
+      try { input = await loadAuditInput(row.slug, settings, { projectActivity: true }); } catch { inputError = true; }
     }
     const verdict = settleRecollectVerdict({ open: Boolean(row.open && row.slug), sourceFound: inputError || Boolean(input), inputError,
       inputFresh: Boolean(input && input.validUntil.getTime() - Date.now() >= freshMarginMs),
@@ -262,8 +263,10 @@ export async function settleAuditRecollects(lease: JobLease, settings: CrawlSett
     const changedFields = recollectChangedFields(row.before_digest, after);
     // 감사가 적어 둔 페이지 해시가 있으면 그것으로 가른다(사람이 연 감사). 옮겨 적은 감사(캠페인 6 grok)는 해시가 없어 요청 때의 칸 해시와 견준다
     const sourceChanged = row.source_hash ? auditSourceHash(input!) !== row.source_hash : changedFields.length > 0;
+    const afterActivity = input!.snapshot.projectActivity ?? null;
     updates.push({ itemId: row.item_id, state: "done", afterFetchedAt: new Date(input!.source.documentFetchedAt), afterDigest: after,
-      changedFields, sourceChanged, readmeRefreshed: Boolean(row.refetched && row.readme_current) });
+      changedFields, afterActivity, changeSummary: recollectChangeSummary(row.before_activity, afterActivity, changedFields),
+      sourceChanged, readmeRefreshed: Boolean(row.refetched && row.readme_current) });
   }
   await withJobLeaseWrite(lease, async (tx) => {
     for (const update of updates) {

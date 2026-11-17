@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({
   observation: null as unknown, asked: [] as string[], written: [] as string[], queries: [] as SQL[],
   recollects: new Map<number, Recollect>(), frontiers: new Map<number, NonNullable<RecollectFrontierView>>(),
   requested: [] as number[], fetchQueue: [] as number[],
+  /** 감사 입력을 읽을 때의 선택(프로젝트 활동 묶음)·물을 때의 글 판 */
+  loadOptions: [] as unknown[], promptVersions: [] as (string | undefined)[],
 }));
 
 vi.mock("server-only", () => ({}));
@@ -49,7 +51,8 @@ vi.mock("@/lib/jobs/control", async (load) => ({ ...await load<typeof import("@/
   withJobLeaseWrite: async (_lease: unknown, write: (tx: unknown) => Promise<unknown>) => write({ insert: () => ({ values: (value: { value: unknown }) => ({
     onConflictDoUpdate: async () => { state.observation = structuredClone(value.value); } }) }) }) }));
 vi.mock("@/lib/crawl/product-audit", async (load) => ({ ...await load<typeof import("@/lib/crawl/product-audit")>(),
-  loadAuditInput: async (slug: string) => {
+  loadAuditInput: async (slug: string, _settings: unknown, options?: unknown) => {
+    state.loadOptions.push(options);
     const input = state.inputs.get(slug);
     return input ? { ...input, source: { documentFetchedAt: new Date().toISOString(), scanCompletedAt: null },
       snapshot: { product: { name: slug, description: "", pageText: "", readme: input.readme, url: "https://fixture.test" } } } : null;
@@ -59,8 +62,9 @@ vi.mock("@/lib/crawl/qwen-endpoint-backoff", () => ({ qwenEndpointBackingOff: ()
   readQwenEndpointBackoff: async () => null }));
 vi.mock("@/lib/crawl/qwen-direct-review", async (load) => ({ ...await load<typeof import("@/lib/crawl/qwen-direct-review")>(),
   qwenDirectConfig: () => ({ model: "qwen3.8-flash-next", baseUrl: "http://fixture.invalid/v1", apiKey: null }),
-  reviewWithQwenDirect: async (input: { inputHash: string }) => {
+  reviewWithQwenDirect: async (input: { inputHash: string }, options?: { promptVersion?: string }) => {
     state.asked.push(input.inputHash);
+    state.promptVersions.push(options?.promptVersion);
     return { model: "qwen3.8-flash-next", promptVersion: "2026-10-21.v2", latencyMs: 1,
       outcome: { decision: "approve", confidence: 0.95, reason: "다시 받은 원본으로 보면 쓸 수 있다", evidenceIds: ["product"] } };
   } }));
@@ -160,6 +164,7 @@ const selectSql = () => new PgDialect().sqlToQuery(state.queries.find((query) =>
 beforeEach(() => {
   state.auditRows.length = 0; state.inputs.clear(); state.observation = null; state.asked.length = 0; state.written.length = 0;
   state.queries.length = 0; state.recollects.clear(); state.frontiers.clear(); state.requested.length = 0; state.fetchQueue.length = 0;
+  state.loadOptions.length = 0; state.promptVersions.length = 0;
 });
 
 describe("input_stale → 원본 다시 받기 → 두 번째 의견", () => {
@@ -275,7 +280,7 @@ describe("마무리의 가름(settleRecollectVerdict)", () => {
     expect(settleRecollectVerdict({ ...base, frontier: { state: "failed", lastError: "old", aliasOf: null, updatedAfterRequest: false } }))
       .toEqual({ kind: "waiting" });
     expect(settleRecollectVerdict({ ...base, waitedMs: AUDIT_RECOLLECT_WAIT_MS + 1, refetched: true }))
-      .toMatchObject({ kind: "failed", code: "recollect_timeout", detail: expect.stringContaining("스캔") });
+      .toMatchObject({ kind: "failed", code: "refetch_not_received_48h", detail: expect.stringContaining("스캔") });
     expect(settleRecollectVerdict(base)).toEqual({ kind: "waiting" });
   });
 
@@ -311,5 +316,209 @@ describe("수집 길 재사용 — 스캔 수요와 고르는 규칙", () => {
   it("두 번째 의견은 끝남(done)이 아닌 다시 받기 줄이 있는 항목을 고르지 않는다", () => {
     const text = new PgDialect().sqlToQuery(auditRecollectBlocksSql()).sql;
     expect(text).toMatch(/not exists \(select 1 from "product_audit_recollects" recollect where recollect\.item_id = i\.id and recollect\.state <> 'done'\)/);
+  });
+});
+
+// ─────────────────────────── 사람 추가 지시(2026-11-17): "기간 상관없이 다시 살펴보고 진행중인 프로젝트인지 보게" ───────────────────────────
+
+const activityModule = await import("@/lib/crawl/audit-project-activity");
+const { attachProjectActivity, projectActivityFrom, recollectChangeSummary } = activityModule;
+const { auditRecollectLine, AUDIT_RECOLLECT_FAILURE_SHORT } = await import("@/lib/crawl/audit-recollect-view");
+const contract = await import("@/lib/crawl/agent-review-contract");
+const { auditSourceHash } = await import("@/lib/crawl/product-audit");
+const { auditOpinionWanted, promptFor } = await import("@/lib/crawl/audit-second-opinion-auto");
+const qwen = await vi.importActual<typeof import("@/lib/crawl/qwen-direct-review")>("@/lib/crawl/qwen-direct-review");
+const DAY = 24 * HOUR;
+
+/** 감사가 본 공개 제품의 수집 원본(맞춤 값만 바꾼다) */
+function fixture(overrides: { fetchedAt?: Date; scanCompletedAt?: Date; pageStatus?: number | null; finalUrl?: string; pushedAt?: string;
+  archived?: boolean } = {}) {
+  const fetchedAt = overrides.fetchedAt ?? new Date(Date.now() - HOUR);
+  const candidate = { id: 7, repo: "owner/app", productUrl: "https://app.example", state: "published", decidedBy: "auto", publishedSlug: "app",
+    judgedAt: new Date("2026-08-29T00:00:00Z"), updatedAt: fetchedAt } as never;
+  const document = { id: 9, repo: "owner/app", productUrl: "https://app.example", fetchedAt, pageStatus: overrides.pageStatus === undefined ? 200 : overrides.pageStatus,
+    repoMeta: { description: "A useful service", topics: ["productivity"], stargazers_count: 12, archived: overrides.archived ?? false,
+      pushed_at: overrides.pushedAt ?? "2026-09-02T10:00:00Z", created_at: "2025-01-01T00:00:00Z" },
+    pageMeta: { title: "App", description: "A useful service", textSample: "Sign up and start using App today.", readmeSample: "App README",
+      ...(overrides.finalUrl ? { finalUrl: overrides.finalUrl } : {}) } } as never;
+  const scan = { id: 3, startedAt: fetchedAt, completedAt: overrides.scanCompletedAt ?? fetchedAt, state: "complete",
+    detectorVersion: DEFAULT_CRAWL_SETTINGS.agentEvidence.detectorVersion, lastErrorCode: null, commitSha: "a".repeat(40) } as never;
+  return { candidate, document, scan };
+}
+function auditInput(overrides: Parameters<typeof fixture>[0] = {}, now = new Date()) {
+  const { candidate, document, scan } = fixture(overrides);
+  return contract.createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, { scan, observations: [] }, now);
+}
+
+describe("1. 나이 기준 없음 — 근거가 오래됐다는 것만으로 사람 몫(failed)이 되지 않는다", () => {
+  it("근거가 50일·400일·5년 묵었어도 실패로 쉬지 않고 다시 받게 하고, 받으면 묻는다", async () => {
+    for (const [itemId, ageDays] of [[1, 50], [2, 400], [3, 5 * 365]] as const) {
+      audit(itemId, new Date(Date.now() - ageDays * DAY + 24 * HOUR));
+    }
+    const first = await runQwenSecondOpinions(context(), settings(3));
+    expect(first.audit).toMatchObject({ recollectRequested: 3, recollectRejected: 0, recollectFailed: 0 });
+    expect([...state.recollects.values()].every((row) => row.state === "waiting")).toBe(true);
+    for (const itemId of [1, 2, 3]) collected(itemId);
+    const second = await runQwenSecondOpinions(context(), settings(3));
+    expect(second.audit).toMatchObject({ recollectDone: 3, recollectFailed: 0, asked: 3 });
+    expect(state.asked.sort()).toEqual(["a:1", "a:2", "a:3"]);
+  });
+
+  it("마무리의 가름은 근거 나이를 받지 않는다 — 시간은 다시 받기 요청부터만 잰다", () => {
+    const base = { open: true, sourceFound: true, frontier: null, refetched: true };
+    // 입력이 다시 새로워졌으면 요청 뒤 몇 시간이 지났든 끝남, 아직이면 48시간까지 기다림 — 근거가 몇 년 묵었는지는 입력에 없다
+    expect(settleRecollectVerdict({ ...base, inputFresh: true, waitedMs: 47 * HOUR })).toEqual({ kind: "done" });
+    expect(settleRecollectVerdict({ ...base, inputFresh: false, waitedMs: 47 * HOUR })).toEqual({ kind: "waiting" });
+    expect(AUDIT_RECOLLECT_WAIT_MS).toBe(48 * HOUR);
+  });
+
+  it("사람 몫 사유는 모두 '다시 받지 못해서'다 — 나이·오래됨을 이름으로 가진 사유가 없고 시간 사유의 글은 나이 때문이 아님을 적는다", () => {
+    const codes = Object.keys(recollect.AUDIT_RECOLLECT_FAILURE_LABELS).sort();
+    expect(codes).toEqual(["input_error", "no_source", "refetch_expired_before_ask", "refetch_not_received_48h", "repo_deleted", "repo_empty",
+      "repo_renamed", "source_refresh_failed"]);
+    expect(codes.some((code) => /stale|age|old|timeout|repeated/.test(code))).toBe(false);
+    expect(Object.keys(AUDIT_RECOLLECT_FAILURE_SHORT).sort()).toEqual(codes);
+    for (const code of ["refetch_not_received_48h", "refetch_expired_before_ask"] as const) {
+      expect(recollect.AUDIT_RECOLLECT_FAILURE_LABELS[code]).toContain("근거 나이 때문이 아닙니다");
+    }
+    expect(auditRecollectLine({ state: "failed", failureCode: "refetch_not_received_48h", summary: null, sourceChanged: null,
+      requestedOn: "2026-11-17", settledOn: "2026-11-19" })).toEqual({ label: "다시 받지 못함", warn: true,
+      text: "48시간 안에 못 받음 — 사람 몫(근거 나이 때문이 아니라 다시 받지 못해서)" });
+  });
+
+  it("두 번째 의견을 고르는 SQL 에 근거 나이 조건(수집·스캔 시각)이 없다", () => {
+    const text = new PgDialect().sqlToQuery(auditOpinionWanted("all", { minConfidence: 0.9 }, "qwen3.8-flash-next", [])).sql;
+    expect(text).not.toMatch(/fetched_at|completed_at|reviewed_at|interval/);
+    const hold = new PgDialect().sqlToQuery(auditOpinionWanted("hold", { minConfidence: 0.9 }, "qwen3.8-flash-next", [])).sql;
+    expect(hold).not.toMatch(/fetched_at|completed_at/);
+  });
+});
+
+describe("2. 프로젝트 활동 근거 — 두 번째 의견 입력의 projectActivity", () => {
+  it("이미 받은 값(저장소 메타·수집 응답·리다이렉트·연결 확인·릴리스)으로 묶음을 만든다 — 관측 시각은 싣지 않는다", () => {
+    const { document } = fixture({ pageStatus: 200, finalUrl: "https://www.app.example/home", pushedAt: "2026-11-10T08:00:00Z", archived: true });
+    const activity = projectActivityFrom({ document, release: { title: "v1.2.0", publishedAt: "2026-11-03T00:00:00Z" },
+      health: { status: 200, failures: 0 } });
+    expect(activity).toEqual({ archived: true, lastPushAt: "2026-11-10", latestRelease: { name: "v1.2.0", publishedAt: "2026-11-03" },
+      site: { status: 200, finalUrl: "https://www.app.example/home", uptimeStatus: 200, uptimeDown: false } });
+    // 연 주소와 같은 끝 주소는 리다이렉트가 아니다, 연속 3번 실패면 내려감, 기록이 없으면 null
+    const same = projectActivityFrom({ document: fixture({ finalUrl: "https://APP.example/" }).document, release: null, health: { status: 0, failures: 3 } });
+    expect(same.site).toEqual({ status: 200, finalUrl: null, uptimeStatus: 0, uptimeDown: true });
+    expect(projectActivityFrom({ document: fixture({ pageStatus: null }).document, release: null, health: null }).site)
+      .toEqual({ status: null, finalUrl: null, uptimeStatus: null, uptimeDown: null });
+    expect(JSON.stringify(activity)).not.toMatch(/fetchedAt|checkedAt|observedAt/);
+  });
+
+  it("묶음은 product 밖에 실린다 — 원본 해시(auditSourceHash)는 그대로, 입력 해시는 같은 셈(reviewInputHash)으로 바뀐다", () => {
+    const input = auditInput();
+    const activity = projectActivityFrom({ document: fixture().document, release: null, health: { status: 200, failures: 0 } });
+    const withActivity = attachProjectActivity(input, activity);
+    expect(withActivity.snapshot.projectActivity).toEqual(activity);
+    expect(withActivity.snapshot.product).toEqual(input.snapshot.product);
+    expect(auditSourceHash(withActivity)).toBe(auditSourceHash(input));
+    expect(withActivity.inputHash).not.toBe(input.inputHash);
+    expect(withActivity.inputHash).toBe(contract.reviewInputHash(withActivity.snapshot, input.policyHash));
+    // 묶음이 없는 입력(1차·2차·감사 본심사)의 해시는 예전 셈 그대로다
+    expect(contract.reviewInputHash(input.snapshot, input.policyHash)).toBe(input.inputHash);
+    expect(withActivity.validUntil).toEqual(input.validUntil);
+    expect(withActivity.sourceRevisionHash).toBe(input.sourceRevisionHash);
+    expect(input.snapshot).not.toHaveProperty("projectActivity");
+  });
+
+  it("두 번째 의견은 감사 거절의 입력을 활동 묶음과 함께 읽는다", async () => {
+    audit(11, fresh());
+    await runQwenSecondOpinions(context(), settings(1));
+    expect(state.asked).toEqual(["a:11"]);
+    expect(state.loadOptions).toContainEqual({ projectActivity: true });
+  });
+});
+
+describe("3. 감사 때와 지금 차이 — 사람이 읽는 요약", () => {
+  const before = projectActivityFrom({ document: fixture({ pageStatus: 404, pushedAt: "2026-09-02T00:00:00Z", archived: false }).document,
+    release: null, health: { status: 404, failures: 5 } });
+  const after = projectActivityFrom({ document: fixture({ pageStatus: 200, pushedAt: "2026-11-10T00:00:00Z", archived: true,
+    finalUrl: "https://app.example/start" }).document, release: { title: "v2.0", publishedAt: "2026-11-03T00:00:00Z" }, health: { status: 200, failures: 0 } });
+
+  it("사이트 응답·리다이렉트·마지막 push·보관·새 릴리스·바뀐 칸을 짧은 글로 적는다", () => {
+    expect(recollectChangeSummary(before, after, ["pageText", "readme"])).toEqual([
+      "사이트 404 → 200", "리다이렉트 → app.example/start", "마지막 push 9/02 → 11/10", "보관 아님 → 보관됨(archived)", "새 릴리스 v2.0 (2026/11/03)",
+      "페이지 본문·README 바뀜"]);
+    expect(recollectChangeSummary(before, before, [])).toEqual([]);
+    // 해가 다르면 해를 붙인다, 닿지 않음은 0 대신 말로
+    const old = projectActivityFrom({ document: fixture({ pageStatus: 0, pushedAt: "2024-03-05T00:00:00Z" }).document, release: null, health: null });
+    expect(recollectChangeSummary(old, after, [])).toContain("마지막 push 2024/3/05 → 2026/11/10");
+    expect(recollectChangeSummary(old, after, [])).toContain("사이트 닿지 않음 → 200");
+    // 옛 줄(활동 없음)은 칸 이름만
+    expect(recollectChangeSummary(null, after, ["name"])).toEqual(["이름 바뀜"]);
+  });
+
+  it("감사 화면 한 줄 — 끝남은 '감사 때 → 지금' 차이, 바뀐 것이 없으면 그렇게, 받는 중은 요청한 날, 사람이 정한 것은 없음", () => {
+    const view = { failureCode: null, sourceChanged: true, requestedOn: "2026-11-17", settledOn: "2026-11-18" };
+    expect(auditRecollectLine({ ...view, state: "done", summary: ["사이트 404 → 200", "마지막 push 9/02 → 11/10"] }))
+      .toEqual({ label: "감사 때 → 지금", text: "사이트 404 → 200 · 마지막 push 9/02 → 11/10", warn: false });
+    expect(auditRecollectLine({ ...view, state: "done", summary: [] })?.text).toBe("바뀐 것 없음(11/18 다시 받아 확인)");
+    expect(auditRecollectLine({ ...view, state: "waiting", summary: null, settledOn: null })?.label).toBe("원본 다시 받는 중");
+    expect(auditRecollectLine({ ...view, state: "dropped", summary: null })).toBeNull();
+    expect(auditRecollectLine(null)).toBeNull();
+  });
+});
+
+describe("4. 오래됨 편향 방지 — 감사 두 번째 의견 전용 글", () => {
+  it("v2 덧붙임은 한 바이트도 그대로이고, 감사 전용 판은 그 뒤 메모 두 줄만 더한다(고정 sha)", () => {
+    expect(createHash("sha256").update(qwen.QWEN_V2_ADDENDUM).digest("hex")).toBe(qwen.QWEN_V2_ADDENDUM_SHA256);
+    expect(qwen.QWEN_V2_PROMPT_VERSION).toBe("2026-10-21.v2");
+    expect(createHash("sha256").update(qwen.QWEN_V2_AUDIT_ADDENDUM).digest("hex")).toBe(qwen.QWEN_V2_AUDIT_ADDENDUM_SHA256);
+    const returnLine = "Return one JSON object with decision, reason, evidenceIds, confidence.";
+    expect(qwen.QWEN_V2_AUDIT_ADDENDUM).toBe(qwen.QWEN_V2_ADDENDUM.replace(returnLine, `${qwen.QWEN_AUDIT_RECHECK_NOTES}${returnLine}`));
+    expect(qwen.QWEN_AUDIT_RECHECK_NOTES).toContain("Age is not a reason");
+    expect(qwen.QWEN_AUDIT_RECHECK_NOTES).toContain("stays eligible even if development has stopped or the repository is archived");
+    expect(qwen.QWEN_AUDIT_RECHECK_NOTES).toContain("cite it as product");
+    // 감사 전용 판은 v2 자동 의견과 같은 출처·같은 기록 모델 이름이다 — 같은 (항목, 모델) 한 줄, 같은 답으로 닫기
+    expect(qwen.qwenPromptConfig(qwen.QWEN_V2_AUDIT_PROMPT_VERSION)).toMatchObject({ source: qwen.QWEN_V2_AUTO_SOURCE, modelSuffix: "" });
+    expect(qwen.AUDIT_OPINION_PROMPT_VERSIONS).toEqual([qwen.QWEN_V2_PROMPT_VERSION, qwen.QWEN_V2_AUDIT_PROMPT_VERSION]);
+  });
+
+  it("감사 거절만 감사 전용 판으로 묻고 공개분 2차는 v2 그대로다 — 이미 받은 v2 감사 의견은 끝난 것으로 센다", async () => {
+    expect(promptFor({ kind: "audit" })).toBe(qwen.QWEN_V2_AUDIT_PROMPT_VERSION);
+    expect(promptFor({ kind: "published" })).toBe(qwen.QWEN_V2_PROMPT_VERSION);
+    audit(21, fresh());
+    await runQwenSecondOpinions(context(), settings(1));
+    expect(state.promptVersions).toEqual([qwen.QWEN_V2_AUDIT_PROMPT_VERSION]);
+    const text = new PgDialect().sqlToQuery(auditOpinionWanted("all", { minConfidence: 0.9 }, "m", [])).sql;
+    expect(text).toMatch(/o\.prompt_version in \(\$\d+, \$\d+\)/);
+  });
+
+  it("오래됨만 다른 같은 원본은 같은 판정 입력(입력 해시·보내는 글)과 같은 결과를 낸다", async () => {
+    const now = new Date();
+    // 같은 원본을 1시간 전·20시간 전에 받았고 스캔도 다른 때 끝났다(둘 다 24시간 안 — 물을 수 있다). 연결 확인도 다른 때 했다
+    const recent = fixture({ fetchedAt: new Date(now.getTime() - HOUR), scanCompletedAt: new Date(now.getTime() - 2 * HOUR) });
+    const older = fixture({ fetchedAt: new Date(now.getTime() - 20 * HOUR), scanCompletedAt: new Date(now.getTime() - 23 * HOUR) });
+    const build = (source: typeof recent) => attachProjectActivity(
+      contract.createReviewInput(source.candidate, source.document, DEFAULT_CRAWL_SETTINGS, { scan: source.scan, observations: [] }, now),
+      projectActivityFrom({ document: source.document, release: { title: "v1", publishedAt: "2026-06-01T00:00:00Z" }, health: { status: 200, failures: 0 } }));
+    const a = build(recent), b = build(older);
+    expect(a.validUntil.getTime()).not.toBe(b.validUntil.getTime());
+    expect(a.sourceRevisionHash).not.toBe(b.sourceRevisionHash);
+    expect(b.snapshot).toEqual(a.snapshot);
+    expect(b.inputHash).toBe(a.inputHash);
+    // 실제 Qwen 직접 호출 길(reviewWithQwenDirect → reviewWithGateway)로 보내는 글을 잡는다 — 가짜 모델은 받은 글로만 정한다
+    const wires: string[] = [];
+    const model = (async (_url: unknown, init?: { body?: unknown }) => {
+      const body = String(init?.body);
+      wires.push(body);
+      const decision = createHash("sha256").update(body).digest()[0] % 2 ? "approve" : "reject";
+      return new Response(JSON.stringify({ model: qwen.QWEN_DIRECT_DEFAULT_MODEL, choices: [{ finish_reason: "stop", message: { content: JSON.stringify({
+        decision, reason: "지금 근거로 판단", evidenceIds: ["product"], confidence: 0.9 }) } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const ask = (input: typeof a) => qwen.reviewWithQwenDirect(input, { request: model, env: {}, promptVersion: qwen.QWEN_V2_AUDIT_PROMPT_VERSION });
+    const [first, second] = [await ask(a), await ask(b)];
+    expect(wires).toHaveLength(2);
+    expect(wires[1]).toBe(wires[0]);
+    expect(wires[0]).toContain("Age is not a reason");
+    expect(wires[0]).toContain("projectActivity");
+    expect(second.outcome).toEqual(first.outcome);
+    // 의견 행에 적는 판정 입력 해시는 input.inputHash 다(writeAudit) — 위에서 같음을 봤다. review.inputHash 는 v2 밖의 판에서 원본 위치(source)까지
+    // 묶은 캐시 열쇠라 받은 때가 다르면 다르다(판정 입력이 아니다)
+    expect(second.promptVersion).toBe(qwen.QWEN_V2_AUDIT_PROMPT_VERSION);
   });
 });

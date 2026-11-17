@@ -16,6 +16,7 @@ import { classifyAuditReason } from "./audit-reason-category";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { loadReviewInput } from "./agent-review-repository";
 import { attachProjectActivity, loadProjectActivity } from "./audit-project-activity";
+import { auditRecollectField, type AuditRecollectView } from "./audit-recollect-view";
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
 import { auditReviewer, auditReviewerLabel, QWEN_AUDIT_PROVIDER, sameAuditReviewer, type AuditReviewer } from "./product-audit-reviewer";
@@ -546,6 +547,8 @@ export type AuditFindingRow = {
   textLength: number | null; screenJudged: boolean; m1Split: boolean;
   /** 공개분 변경 재판정(0171)가 무엇이 바뀌어 다시 올렸나(published-recheck-change.ts). 사람이 연 감사의 항목은 null */
   changeSummary: Record<string, unknown> | null;
+  /** 입력 기한이 지나 원본을 다시 받은 줄(audit-recollect-view.ts, 0188) — 받는 중·감사 때와 지금의 차이·다시 받지 못한 사유. 없으면 null */
+  recollect: AuditRecollectView | null;
 };
 
 /** 감사 항목 id·감사 사유 — 두 번째 의견 조건이 바깥 항목을 가리킨다(모델별 거절 규칙이 사유를 본다) */
@@ -560,6 +563,7 @@ const findingColumns = {
   owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql, { reasons: true }), aiProvider: productAuditItems.aiProvider,
   textLength: pageTextLengthSql(sql`${products.id}`), screenJudged: screenJudgedSql(itemIdSql), m1Split: m1SplitSql(itemIdSql),
   changeSummary: productAuditItems.changeSummary,
+  recollect: auditRecollectField(itemIdSql),
 };
 
 /** Qwen-v2 자동 의견 단계가 켜져 있는가 — 꺼져 있으면 그 거절은 '두 모델 모두 거절'·묶어 내리기의 까닭이 아니다(holdGates 와 같다) */

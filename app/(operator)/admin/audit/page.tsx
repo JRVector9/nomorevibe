@@ -10,7 +10,8 @@ import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupA
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { SECOND_OPINION_FILTERS, type SecondOpinionFilter } from "@/lib/crawl/audit-second-opinions";
 import { qwenSecondOpinionStatus, type QwenAutoStatus } from "@/lib/crawl/audit-second-opinion-auto";
-import { AUDIT_RECOLLECT_FAILURE_SHORT, AUDIT_RECOLLECT_MAX_WAITING, type AuditRecollectFailure } from "@/lib/crawl/audit-stale-recollect";
+import { AUDIT_RECOLLECT_MAX_WAITING } from "@/lib/crawl/audit-stale-recollect";
+import { AUDIT_RECOLLECT_FAILURE_SHORT, auditRecollectLine, type AuditRecollectFailure } from "@/lib/crawl/audit-recollect-view";
 import { qwenDirectServerLabel } from "@/lib/crawl/qwen-direct-review";
 import { AUDIT_RECOLLECT_MAX_PER_TICK, QWEN_AUTO_MAX_PER_TICK } from "@/lib/crawl/settings-schema";
 import { QwenAutoStepSwitch } from "../components/QwenAutoStepSwitch";
@@ -295,7 +296,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                       answeredBy: finding.aiProvider === QWEN_AUDIT_PROVIDER ? auditReviewerLabel({ provider: finding.aiProvider, model: "" }) : null,
                       reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null,
                       waitDays: finding.reviewedAt ? Math.max(0, Math.floor((now.getTime() - finding.reviewedAt.getTime()) / 86_400_000)) : null,
-                      heldAt: finding.heldAt ? formatListTime(finding.heldAt, now) : null }} />
+                      heldAt: finding.heldAt ? formatListTime(finding.heldAt, now) : null, recollect: auditRecollectLine(finding.recollect) }} />
                   ))}
                 </tbody>
               </table>
@@ -356,7 +357,7 @@ async function RecheckTab({ now }: { now: Date }) {
               </tr></thead>
               <tbody>{rows.map((finding) => (
                 <AuditFinding key={finding.id} finding={{ ...finding, reasonKo: finding.reason ? korean.get(finding.reason) ?? null : null,
-                  reasonCategory: AUDIT_REASON_CATEGORIES[classifyAuditReason(finding.reason)].label, changed: recheckChangeText(finding.changeSummary),
+                  reasonCategory: AUDIT_REASON_CATEGORIES[classifyAuditReason(finding.reason)].label, changed: recheckChangeText(finding.changeSummary), recollect: auditRecollectLine(finding.recollect),
                   answeredBy: finding.aiProvider ? auditReviewerLabel({ provider: finding.aiProvider, model: "" }) || finding.aiProvider : null,
                   reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null,
                   waitDays: finding.reviewedAt ? Math.max(0, Math.floor((now.getTime() - finding.reviewedAt.getTime()) / 86_400_000)) : null,
@@ -642,7 +643,7 @@ function HoldPanel({ overview, heldReasons, qwen, screen, now }: {
             hold.secondOpinionReject ? "답으로 닫기가 꺼져 있으면 승인은 그 항목의 보류를 풀고, 거절은 두 번째 모델 거절로 보류의 까닭이 됩니다 — 카탈로그·디렉터리 같은 것은 빼고."
               : "답으로 닫기가 꺼져 있으면 승인은 그 항목의 보류를 풀고, 거절은 기록만 남습니다(두 번째 모델 거절로 보류가 꺼져 있음).",
             "감사 답을 같은 Qwen 이 낸 항목은 묻지 않습니다.",
-            `원본 다시 받기: 입력 기한(수집·스캔 뒤 24시간)이 지나 묻지 못한 감사 거절은 틱마다 정한 수까지(동시에 ${AUDIT_RECOLLECT_MAX_WAITING}건까지) 기존 수집 길로 저장소·사이트·스캔을 다시 받은 뒤 묻습니다 — 한 건에 GitHub 요청 약 13회. 다시 받지 못한 것(저장소 없음 등)은 사유를 남겨 사람 몫으로 둡니다.`]} />
+            `원본 다시 받기: 근거가 언제 것이든(나이 기준 없음) 입력 기한(수집·스캔 뒤 24시간)이 지나 묻지 못한 감사 거절은 틱마다 정한 수까지(동시에 ${AUDIT_RECOLLECT_MAX_WAITING}건까지) 기존 수집 길로 저장소·사이트·스캔을 다시 받은 뒤 프로젝트 활동(보관·마지막 push·릴리스·사이트 응답)과 함께 묻습니다 — 한 건에 GitHub 요청 약 13회. 오래됐다는 것만으로는 사람 몫이 되지 않고, 다시 받지 못한 것(저장소 없음·48시간 안에 못 받음 등)만 사유를 남겨 사람 몫으로 둡니다.`]} />
         <QwenAutoStepSwitch key={`p:${JSON.stringify(overview.qwenAuto.publishedFilter)}`} step="publishedFilter"
           value={overview.qwenAuto.publishedFilter} title="Qwen-v2 공개분 2차 거르기" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
           enableNotes={["공개분 2차가 사람 확인으로 넘긴 행을 Qwen-v2 로 한 번 더 봅니다(감사 잡).",
@@ -673,7 +674,7 @@ function RecollectStatus({ recollect, perTick }: { recollect: NonNullable<QwenAu
   return (
     <p><b className="font-semibold">원본 다시 받기</b> {perTick > 0 ? `틱마다 ${count(perTick)}건` : "새 요청 멈춤"} ·
       받는 중 {count(recollect.waiting)} · 끝남 {count(recollect.done)}(근거 바뀜 {count(recollect.changed)}) ·
-      사람 몫 <b className={`font-semibold ${recollect.failed > 0 ? "text-warn" : ""}`}>{count(recollect.failed)}</b>
+      다시 받지 못해 사람 몫 <b className={`font-semibold ${recollect.failed > 0 ? "text-warn" : ""}`}>{count(recollect.failed)}</b>
       {reasons.length > 0 && ` (${reasons.join(" · ")})`}</p>
   );
 }

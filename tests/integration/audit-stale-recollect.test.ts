@@ -7,7 +7,10 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings, saveSettings, setQwenAutoStep } from "@/lib/crawl/settings";
 import { QWEN_AUTO_OBSERVATION, qwenSecondOpinionStatus } from "@/lib/crawl/audit-second-opinion-auto";
 import { auditRecollectScanDemand, AUDIT_RECOLLECT_WAIT_MS } from "@/lib/crawl/audit-stale-recollect";
-import { startProductAudit } from "@/lib/crawl/product-audit";
+import { listAuditFindings, startProductAudit } from "@/lib/crawl/product-audit";
+import { auditRecollectLine } from "@/lib/crawl/audit-recollect-view";
+import { QWEN_V2_AUDIT_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
+import { productHealth, productUpdates } from "@/lib/db/schema";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
@@ -25,12 +28,14 @@ vi.mock("server-only", () => ({}));
  * 덮어쓴 뒤의 틱에서 끝남(바뀐 근거 칸)으로 적고 새 입력으로 묻는다. 수집이 404 로 끝나면 사람 몫(failed)으로 두고 다시 고르지 않는다.
  * 스캔은 스캔 줄 채우기(fillAgentScanQueue)가 1차 심사 몫 우선순위로 올린다. 모델(gpu3090 Qwen)만 가짜다.
  */
-const server = vi.hoisted(() => ({ calls: [] as { repo: string; readme: string }[] }));
+const server = vi.hoisted(() => ({ calls: [] as { repo: string; readme: string }[], activity: [] as unknown[], systems: [] as string[] }));
 async function fakeQwen(_url: string | URL | Request, init?: RequestInit): Promise<Response> {
   const body = JSON.parse(String(init?.body));
   const user: string = body.messages[1].content;
   const product = JSON.parse(user.slice(user.indexOf("\n") + 1, user.lastIndexOf("\n"))).product;
   server.calls.push({ repo: product.repo, readme: product.readme });
+  server.activity.push(JSON.parse(user.slice(user.indexOf("\n") + 1, user.lastIndexOf("\n"))).projectActivity ?? null);
+  server.systems.push(body.messages[0].content);
   const content = JSON.stringify({ decision: "approve", reason: "Usable product.", evidenceIds: ["product"], confidence: 0.95 });
   return new Response(JSON.stringify({ model: "qwen3.8-flash-next", choices: [{ finish_reason: "stop", message: { content } }],
     usage: { prompt_tokens: 5_000, completion_tokens: 120 } }), { status: 200 });
@@ -42,7 +47,7 @@ beforeEach(async () => {
     agentRepositoryClaims]) await db.delete(table);
   await db.delete(operationsObservations).where(eq(operationsObservations.key, QWEN_AUTO_OBSERVATION));
   await resetTables();
-  server.calls.length = 0;
+  server.calls.length = 0; server.activity.length = 0; server.systems.length = 0;
   resetQwenAuditBackoff();
   vi.stubGlobal("fetch", vi.fn(fakeQwen));
   await saveSettings({ enabled: true, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" }, reviewConcurrency: 1 }, "test");
@@ -179,12 +184,13 @@ describe("다시 받기 실패 → 사람 몫", () => {
     expect(await frontierOf("r/broken")).toMatchObject({ state: "failed", lastError: "GitHub 500" });
   });
 
-  it("정한 시간 안에 새로워지지 않으면 recollect_timeout 으로 사람 몫이다", async () => {
+  it("요청하고 48시간 안에 다시 받지 못하면 refetch_not_received_48h(다시 못 받아서) 로 사람 몫이다", async () => {
     await judged(["r/slow"]);
     await opinion();
     await db.update(productAuditRecollects).set({ requestedAt: sql`clock_timestamp() - ${AUDIT_RECOLLECT_WAIT_MS + 60_000} * interval '1 millisecond'` });
     await opinion();
-    expect(await recollectOf("slow")).toMatchObject({ state: "failed", failureCode: "recollect_timeout" });
+    expect(await recollectOf("slow")).toMatchObject({ state: "failed", failureCode: "refetch_not_received_48h",
+      failureDetail: expect.stringContaining("근거 나이 때문이 아닙니다") });
   });
 
   it("그 사이 사람이 정한 항목은 dropped 로 닫는다(스캔 수요에서도 빠진다)", async () => {
@@ -225,5 +231,58 @@ describe("스캔은 기존 스캔 줄(claims)로", () => {
     expect(await recollectOf("scanned")).toMatchObject({ state: "done", sourceChanged: false, changedFields: [], readmeRefreshed: true });
     expect(server.calls.map((call) => call.repo)).toEqual(["r/scanned"]);
     expect((await db.execute(sql`select * from ${auditRecollectScanDemand()} demand`)).length).toBe(0);
+  });
+});
+
+describe("사람 추가 지시(11-17) — 나이 무관·프로젝트 활동·감사 때와 지금 차이", () => {
+  it("근거가 3년 묵었어도 사람 몫이 아니라 다시 받기로 간다", async () => {
+    await judged(["r/ancient"]);
+    await db.update(crawlDocuments).set({ fetchedAt: sql`now() - interval '3 years'` }).where(eq(crawlDocuments.repo, "r/ancient"));
+    await db.update(crawlFrontier).set({ updatedAt: sql`now() - interval '3 years'` }).where(eq(crawlFrontier.repo, "r/ancient"));
+    await opinion();
+    expect(await recollectOf("ancient")).toMatchObject({ state: "waiting", failureCode: null, requests: 1 });
+    expect(await frontierOf("r/ancient")).toMatchObject({ state: "pending" });
+  });
+
+  it("다시 받은 원본으로 활동 묶음과 감사 전용 글로 묻고, 감사 때와 지금 차이를 사람이 읽는 글로 남겨 감사 목록 한 줄에 보인다", async () => {
+    await judged(["r/revived"]);
+    // 감사가 본 옛 원본: 사이트 404, 마지막 push 9/02, 보관 아님
+    const [old] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, "r/revived"));
+    await db.update(crawlDocuments).set({ pageStatus: 404, repoMeta: { ...old.repoMeta, pushed_at: "2026-09-02T09:00:00Z", archived: false } })
+      .where(eq(crawlDocuments.repo, "r/revived"));
+    await db.insert(productHealth).values({ slug: "revived", status: 200, failures: 0, checkedAt: sql`now() - interval '5 minutes'` });
+    await opinion();
+    const waiting = await recollectOf("revived");
+    expect(waiting.beforeActivity).toMatchObject({ archived: false, lastPushAt: "2026-09-02", site: { status: 404 } });
+    const [list] = await db.select().from(productAuditCampaigns);
+    expect(auditRecollectLine((await listAuditFindings(list.id, "reject", { limit: 10, offset: 0 }))[0].recollect))
+      .toMatchObject({ label: "원본 다시 받는 중" });
+
+    // 수집이 다시 받았다: 사이트 200, 마지막 push 11/10, 새 릴리스(기존 릴리스 수집이 적은 것)
+    await fetched("r/revived");
+    const [now] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, "r/revived"));
+    await db.update(crawlDocuments).set({ pageStatus: 200, repoMeta: { ...now.repoMeta, pushed_at: "2026-11-10T09:00:00Z" } })
+      .where(eq(crawlDocuments.repo, "r/revived"));
+    await db.insert(productUpdates).values({ slug: "revived", sourceKind: "github_release", dedupeKey: "release:v2", title: "v2.0",
+      publishedAt: new Date("2026-11-03T00:00:00Z"), observedAt: new Date("2026-11-03T01:00:00Z") });
+    await readmeRefreshed("r/revived", "옛 README — 설치 안내만");
+    await opinion();
+
+    const done = await recollectOf("revived");
+    expect(done).toMatchObject({ state: "done", afterActivity: { lastPushAt: "2026-11-10", site: { status: 200, uptimeStatus: 200 },
+      latestRelease: { name: "v2.0", publishedAt: "2026-11-03" } } });
+    expect(done.changeSummary).toEqual(["사이트 404 → 200", "마지막 push 9/02 → 11/10", "새 릴리스 v2.0 (2026/11/03)"]);
+    // 모델은 활동 묶음을 받았고(실제 호출 직전 증명을 지났다), 감사 전용 글(오래됨만으로 거절 금지)로 물었다
+    expect(server.activity).toEqual([done.afterActivity]);
+    expect(server.systems[0]).toContain("Age is not a reason");
+    const [row] = await db.select().from(productAuditSecondOpinions);
+    expect(row).toMatchObject({ source: "qwen-v2-auto", promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION });
+    // 감사 화면의 그 항목 한 줄
+    const [finding] = await listAuditFindings(list.id, "reject", { limit: 10, offset: 0 });
+    expect(auditRecollectLine(finding.recollect)).toEqual({ label: "감사 때 → 지금", warn: false,
+      text: "사이트 404 → 200 · 마지막 push 9/02 → 11/10 · 새 릴리스 v2.0 (2026/11/03)" });
+    // 이미 감사 전용 판으로 답한 항목은 다시 묻지 않는다
+    await opinion();
+    expect(server.calls).toHaveLength(1);
   });
 });

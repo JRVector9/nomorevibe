@@ -2,6 +2,8 @@
 -- 감사 거절 항목마다 한 줄(lib/crawl/audit-stale-recollect.ts). 기존 수집 경로(crawl_frontier → crawl-fetch, 스캔 claim)로 원본을 다시 받게 하고
 -- 그 결과(끝남·실패 사유·근거가 바뀐 칸)를 남긴다. 새 표만 만든다 — 옛 코드는 이 표를 읽지 않는다. 기존 표의 CHECK·열을 바꾸지 않아 DRAIN 이 필요 없다
 -- (product_audit_items 로의 외래 키는 그 표에 SHARE ROW EXCLUSIVE 를 잠깐 잡는다 — lock_timeout 5s).
+-- before_activity·after_activity 는 프로젝트 활동 묶음(audit-project-activity.ts — 보관·마지막 push·최근 릴리스·사이트 응답), change_summary 는
+-- 감사 때와 지금의 차이를 사람이 읽는 짧은 글 목록("사이트 404 → 200" 등)이다(2026-11-17 사람 추가 지시, 배포 전이라 같은 마이그레이션에 넣었다).
 SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint
 CREATE TABLE product_audit_recollects (
@@ -17,6 +19,9 @@ CREATE TABLE product_audit_recollects (
   after_fetched_at timestamp(3),
   after_digest jsonb,
   changed_fields jsonb,
+  before_activity jsonb,
+  after_activity jsonb,
+  change_summary jsonb,
   source_changed boolean,
   readme_refreshed boolean,
   failure_code varchar(40),
