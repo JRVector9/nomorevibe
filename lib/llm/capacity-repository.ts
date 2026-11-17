@@ -557,7 +557,7 @@ export async function dispatchLocalModelCapacity(value: {
       || row.logicalWorkKey !== binding.logicalWorkKey || row.epoch !== state.epoch || row.revision !== state.revision
       || row.policyHash !== state.policyHash || await localModelFence(tx, binding.logicalWorkKey, row.requestId)) return null;
     const { localModelDomainRefusal } = await import("./local-model-domain");
-    const refusal = await localModelDomainRefusal(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId, value.screenProof);
+    const refusal = await localModelDomainRefusal(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId, value.screenProof, binding.promptVersion);
     if (refusal) {
       // 증명이 거절한 예약은 같은 TX 에서 물리고 어느 검사인지 evidence 에 남긴다(2026-11-03 — 예전에는 호출자 정리가 evidence 없이 물렸다)
       const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })

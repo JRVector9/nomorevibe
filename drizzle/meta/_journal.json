@@ -1282,6 +1282,13 @@
       "when": 1794700800001,
       "tag": "0187_db_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1794873600002,
+      "tag": "0189_same_model_recheck",
+      "breakpoints": true
     }
   ]
 }

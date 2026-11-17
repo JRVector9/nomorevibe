@@ -1,3 +1,4 @@
+import { runSameModelRechecks, type SameModelRecheckTally } from "./same-model-recheck";
 import { withAdminModelStage } from "@/lib/llm/admin-model-pools";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { bareModelName } from "./review-model-identity";
@@ -113,6 +114,7 @@ export type QwenAutoObservation = {
 };
 
 export type QwenAutoTally = {
+  sameModelRecheck: SameModelRecheckTally;
   audit: { asked: number; approve: number; reject: number; needsReview: number; released: number; skipped: number;
     /** 답으로 닫은 것(audit-auto-close.ts) — 유지·숨김. caughtUp 은 그중 이미 받아 둔 답으로 닫은 것(모델을 부르지 않음) */
     autoKept: number; autoHeld: number; caughtUp: number;
@@ -124,7 +126,7 @@ export type QwenAutoTally = {
   inputStale: number;
 };
 
-const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0,
+const emptyTally = (): QwenAutoTally => ({ sameModelRecheck: { asked: 0, recommended: 0, failed: 0, inputStale: 0 }, audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0,
   leftThin: 0, leftSplit: 0 },
   published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null, inputStale: 0 });
 
@@ -279,11 +281,17 @@ export async function runQwenSecondOpinions(ctx: JobContext<null>, settings: Cra
   const tally = emptyTally();
   try {
     if (settings.stageModelPools?.["audit-second-opinion"]?.length || settings.stageModelPools?.["published-filter"]?.length) {
-      await withAdminModelStage("audit-second-opinion", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
-        publishedFilter: { ...settings.qwenAuto.publishedFilter, enabled: false } } }, tally));
+      await withAdminModelStage("audit-second-opinion", async () => {
+        await runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
+          publishedFilter: { ...settings.qwenAuto.publishedFilter, enabled: false } } }, tally);
+        tally.sameModelRecheck = await runSameModelRechecks(ctx, settings);
+      });
       await withAdminModelStage("published-filter", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
         auditSecondOpinion: { ...settings.qwenAuto.auditSecondOpinion, enabled: false } } }, tally));
-    } else await runStep(ctx, settings, tally);
+    } else {
+      await runStep(ctx, settings, tally);
+      tally.sameModelRecheck = await runSameModelRechecks(ctx, settings);
+    }
   } catch (error) {
     const code = error instanceof Error ? error.name === "Error" ? error.message.slice(0, 80) : error.name : "unknown";
     logger.error("qwen_second_opinion.failed", { code });
