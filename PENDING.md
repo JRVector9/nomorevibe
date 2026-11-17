@@ -1,5 +1,17 @@
 # 남은 작업
 
+## 오래된 감사 거절의 원본 다시 받기(PR #987) — 2026-11-17, 운영 미적용(코드·단위·작업 전용 DB 시험만)
+
+- 고침: 입력 기한(min(수집, 스캔)+24h)이 지나 두 번째 의견을 못 묻던 감사 거절(11/01 grok 캠페인 6 의 538건)을 기존 수집 길(프론티어·스캔 claim·README 잡)로
+  다시 받게 한 뒤 묻는다. 틱당 `qwenAuto.auditSecondOpinion.recollectPerTick`(기본 1)·동시 20. 실패는 `product_audit_recollects`(0188) 에 사유와 함께 사람 몫.
+  자세한 것·예상·되돌리기: `docs/operations/2026-11-17-audit-stale-recollect.md`.
+- **배포 뒤(대표, READ ONLY)**:
+  1. 진행 — `select state, failure_code, source_changed, readme_refreshed, count(*) from product_audit_recollects group by 1,2,3,4 order by 5 desc;`
+  2. 두 번째 의견이 다시 묻는지 — `select count(*) from product_audit_second_opinions o join product_audit_items i on i.id=o.item_id where i.campaign_id=6 and o.source='qwen-v2-auto' and o.created_at > now() - interval '6 hours';`
+  3. 수집·스캔이 몰리지 않는지 — `select state, count(*) from crawl_frontier where state in ('pending','fetching') group by 1;` · `select priority, count(*) from agent_repository_claims where state='active' and due_at <= now() group by 1;` · GitHub core 여유(`agent_evidence.github_headroom_low` 로그)
+  4. 사람 몫 — `select failure_code, count(*) from product_audit_recollects where state='failed' group by 1;`
+- 남은 일: 효과(538건 중 자동 유지·숨김 수)는 관측 뒤에만 적는다. 예상치는 문서의 추정이다.
+
 ## 1차 근거 대기·승인 잇기(PR #954) — 2026-11-14, 운영 미적용(코드·단위·작업 전용 DB 시험만)
 
 - 고침: 준비된 1차 대기열이 AI 제작 근거 스캔이 자리 잡을 때까지(스캔 대기열에 있는 저장소만, 원본을 본 뒤 최대 6시간) 기다리고,
