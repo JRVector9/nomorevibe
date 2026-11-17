@@ -1,4 +1,4 @@
-import { HOLD_LABELS } from "@/lib/operations/conveyor-model";
+import { HOLD_LABELS, holdHref } from "@/lib/operations/conveyor-model";
 import { DELEGATE_CONFIDENCE_THRESHOLD_TEXT, delegateGroupHref, type DelegateGroup } from "./delegate-groups";
 import type { HumanQueueOverview } from "./human-queue";
 
@@ -66,7 +66,7 @@ export const humanBatchAnchor = (key: HumanBatchKey) => `batch-${key}`;
 export const HUMAN_BATCH_LOG_ANCHOR = "batch-log";
 export const HUMAN_BATCH_THRESHOLD_ANCHOR = "threshold";
 /** 기존 목록(하나씩 보기)에서 한 보류 사유만 — 심사 큐의 ?reason= 거르기(가볍다. ?cause= 는 보류 전부를 다시 판정한다) */
-export const holdListHref = (reason: string) => `/admin/review?tab=all&state=needs_review&reason=${encodeURIComponent(reason)}#review-list`;
+export const holdListHref = (reason: string) => (reason === "ai_first_ambiguous" ? holdHref(reason) : null) ?? `/admin/review?tab=all&state=needs_review&reason=${encodeURIComponent(reason)}#review-list`;
 /** 후보 한 건을 기존 상세로 연다 */
 export const candidateHref = (id: number) => `/admin/review?tab=all&focus=${id}`;
 /** 지금 사람 확인 목록(하나씩 보기) */

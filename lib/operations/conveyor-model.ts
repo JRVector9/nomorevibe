@@ -106,7 +106,7 @@ export type ConveyorInputs = {
   human: HumanQueueOverview | null;
   progress: { stages: Pick<StageProgress, "stage" | "reason" | "alarm">[]; liveness: { role: string; reason: string; alarm: boolean }[] } | null;
   search: SearchHealth | null;
-  /** 보류(needs_review) 사유별 수와 그중 24시간 안에 바뀐 것 */
+  /** 보류(needs_review) 사유별 수와 그중 최근 24시간에 처음 보류된 것(이력 없는 규칙은 판단 시각) */
   holds: { reason: string; count: number; recent24h: number }[] | null;
   /** 거절 누적(rejected) */
   rejected: number | null;
@@ -123,6 +123,7 @@ export const HOLD_STATION: Readonly<Record<string, StationKey>> = {
   source_refresh_failed: "fetch",
   repo_deleted: "fetch",
   ambiguous: "judge",
+  ai_first_ambiguous: "first",
   suspected_spam: "judge",
   ai_evidence_pending: "judge",
   ai_evidence_insufficient: "judge",
@@ -142,6 +143,7 @@ export const HOLD_LABELS: Readonly<Record<string, string>> = {
   source_refresh_failed: "원본 재수집 실패",
   repo_deleted: "저장소 삭제됨",
   ambiguous: "규칙으로 못 가름",
+  ai_first_ambiguous: "AI 1차 판단 보류",
   suspected_spam: "스팸·악성 의심",
   ai_evidence_pending: "AI 개발 근거 대기",
   ai_evidence_insufficient: "AI 개발 근거 부족",
@@ -159,7 +161,8 @@ export const HOLD_LABELS: Readonly<Record<string, string>> = {
 /** 심사 큐가 갈래(?cause=)로 거를 수 있는 사유 — app/(operator)/admin/review/causes.ts 의 CAUSE_GUIDE 열쇠 */
 const REVIEW_CAUSES = new Set(["second_review_split", "no_description", "ai_review_exhausted", "ai_review_skip_exhausted", "source_refresh_failed", "repo_deleted", "suspected_spam",
   "review_approval_changed"]);
-export const holdHref = (reason: string) => REVIEW_CAUSES.has(reason) ? `/admin/review?cause=${reason}#review-list` : null;
+export const holdHref = (reason: string) => reason === "ai_first_ambiguous" ? "/admin/review?tab=all&state=needs_review&reason=ambiguous&ai=needs_review#review-list"
+  : REVIEW_CAUSES.has(reason) ? `/admin/review?cause=${reason}#review-list` : null;
 
 const PROGRESS_TEXT: Partial<Record<ProgressReason, string>> = {
   worker_missing: "워커가 응답하지 않습니다", no_progress: "대기가 있는데 처리가 없습니다", upstream_stalled: "같은 오류가 반복됩니다",
