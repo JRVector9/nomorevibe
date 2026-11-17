@@ -227,6 +227,8 @@ export const productAuditRecollects = pgTable("product_audit_recollects", {
   afterDigest: jsonb("after_digest").$type<Record<string, string>>(),
   changedFields: jsonb("changed_fields").$type<string[]>(),
   sourceChanged: boolean("source_changed"),
+  /** 다시 받은 원본의 README 를 README 잡이 다시 받았나 — false 면 옮겨 둔 옛 README 로 물었다(README 변화는 모른다) */
+  readmeRefreshed: boolean("readme_refreshed"),
   failureCode: varchar("failure_code", { length: 40 }),
   failureDetail: varchar("failure_detail", { length: 400 }),
   settledAt: timestamp("settled_at", { precision: 3 }),

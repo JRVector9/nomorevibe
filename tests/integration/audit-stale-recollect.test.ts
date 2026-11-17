@@ -8,6 +8,7 @@ import { getSettings, saveSettings, setQwenAutoStep } from "@/lib/crawl/settings
 import { QWEN_AUTO_OBSERVATION, qwenSecondOpinionStatus } from "@/lib/crawl/audit-second-opinion-auto";
 import { auditRecollectScanDemand, AUDIT_RECOLLECT_WAIT_MS } from "@/lib/crawl/audit-stale-recollect";
 import { startProductAudit } from "@/lib/crawl/product-audit";
+import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
 import { AGENT_SCAN_PRIORITY, fillAgentScanQueue } from "@/lib/domain/evidence/agents/claims";
@@ -76,12 +77,21 @@ async function judged(repos: string[]) {
   }
   await db.update(productAuditCampaigns).set({ status: "done" });
 }
-/** 기존 수집 길의 끝 — crawl-fetch 가 원본을 받아 덮어쓴 것처럼(saveFetchedDocument 와 같은 칸: fetched_at = clock_timestamp(), 프론티어 done) */
-async function fetched(repo: string, readme: string) {
+/**
+ * 기존 수집 길의 끝 — crawl-fetch 가 원본을 받아 덮어쓴 것처럼(saveFetchedDocument 와 같은 칸: fetched_at = clock_timestamp(), 프론티어 done).
+ * 수집은 README 를 받지 않고 옛 README 를 판 없음(null)으로 옮겨 둔다 — 공개 제품의 README 는 README 잡이 다시 받는다(readmeRefreshed)
+ */
+async function fetched(repo: string) {
   const [document] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo));
-  await db.update(crawlDocuments).set({ pageMeta: { ...document.pageMeta, readmeSample: readme }, fetchedAt: sql`clock_timestamp()` })
+  await db.update(crawlDocuments).set({ pageMeta: { ...document.pageMeta, readmeSampleVersion: null }, fetchedAt: sql`clock_timestamp()` })
     .where(eq(crawlDocuments.repo, repo));
   await db.update(crawlFrontier).set({ state: "done", updatedAt: sql`clock_timestamp()` }).where(eq(crawlFrontier.repo, repo));
+}
+/** README 잡(product-readme-refresh, recordPublishedReadme)이 다시 받은 README 를 적은 것처럼 — fetched_at 은 그대로다 */
+async function readmeRefreshed(repo: string, readme: string) {
+  const [document] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo));
+  await db.update(crawlDocuments).set({ pageMeta: { ...document.pageMeta, readmeSample: readme, readmeSampleVersion: README_SAMPLE_VERSION,
+    readmeRefreshAttempts: 0, readmeRefreshError: null } }).where(eq(crawlDocuments.repo, repo));
 }
 const opinion = () => runJob("audit-second-opinion", reviewAuditSecondOpinions,
   { budgetMs: jobRunOptions("audit-second-opinion", { requestedOnly: true }).budgetMs });
@@ -109,10 +119,15 @@ describe("input_stale → 원본 다시 받기 → 두 번째 의견", () => {
     const [observation] = await db.select().from(operationsObservations).where(eq(operationsObservations.key, QWEN_AUTO_OBSERVATION));
     expect(Object.keys((observation?.value as { failures?: object } | undefined)?.failures ?? {})).toEqual([]);
 
-    await fetched("r/stale-app", "새 README — 브라우저에서 바로 쓰는 앱");
+    await fetched("r/stale-app");
+    // 원본은 새로워졌지만 README 잡이 README 를 아직 다시 받지 않았다 — 끝남으로 적지 않고 기다린다(옛 README 로 묻지 않는다)
+    expect(await opinion()).toMatchObject({ status: "completed" });
+    expect(await recollectOf("stale-app")).toMatchObject({ state: "waiting" });
+    expect(server.calls).toEqual([]);
+    await readmeRefreshed("r/stale-app", "새 README — 브라우저에서 바로 쓰는 앱");
     expect(await opinion()).toMatchObject({ status: "completed" });
     const done = await recollectOf("stale-app");
-    expect(done).toMatchObject({ state: "done", sourceChanged: true, changedFields: ["readme"] });
+    expect(done).toMatchObject({ state: "done", sourceChanged: true, changedFields: ["readme"], readmeRefreshed: true });
     expect(done.afterFetchedAt!.getTime()).toBeGreaterThan(done.beforeFetchedAt!.getTime());
     expect(server.calls).toEqual([{ repo: "r/stale-app", readme: "새 README — 브라우저에서 바로 쓰는 앱" }]);
     const rows = await db.select().from(productAuditSecondOpinions).orderBy(asc(productAuditSecondOpinions.id));
@@ -199,14 +214,15 @@ describe("스캔은 기존 스캔 줄(claims)로", () => {
     expect(claim.dueAt.getTime()).toBeLessThanOrEqual(Date.now());
 
     // 원본만 다시 받았다 — 스캔이 오래돼 아직 묻지 않는다(기다림)
-    await fetched("r/scanned", "옛 README — 설치 안내만");
+    await fetched("r/scanned");
+    await readmeRefreshed("r/scanned", "옛 README — 설치 안내만");
     await opinion();
     expect(await recollectOf("scanned")).toMatchObject({ state: "waiting" });
     expect(server.calls).toEqual([]);
     // 스캔 줄이 새 스캔을 끝냈다 — 끝남으로 적고 묻는다. 근거 칸은 그대로다
     await db.update(agentRepositoryScans).set({ completedAt: sql`clock_timestamp()`, startedAt: sql`clock_timestamp()` });
     await opinion();
-    expect(await recollectOf("scanned")).toMatchObject({ state: "done", sourceChanged: false, changedFields: [] });
+    expect(await recollectOf("scanned")).toMatchObject({ state: "done", sourceChanged: false, changedFields: [], readmeRefreshed: true });
     expect(server.calls.map((call) => call.repo)).toEqual(["r/scanned"]);
     expect((await db.execute(sql`select * from ${auditRecollectScanDemand()} demand`)).length).toBe(0);
   });

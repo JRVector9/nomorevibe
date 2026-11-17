@@ -18,6 +18,7 @@ CREATE TABLE product_audit_recollects (
   after_digest jsonb,
   changed_fields jsonb,
   source_changed boolean,
+  readme_refreshed boolean,
   failure_code varchar(40),
   failure_detail varchar(400),
   settled_at timestamp(3),

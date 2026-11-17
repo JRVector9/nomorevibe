@@ -10,8 +10,9 @@ import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupA
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { SECOND_OPINION_FILTERS, type SecondOpinionFilter } from "@/lib/crawl/audit-second-opinions";
 import { qwenSecondOpinionStatus, type QwenAutoStatus } from "@/lib/crawl/audit-second-opinion-auto";
+import { AUDIT_RECOLLECT_FAILURE_SHORT, AUDIT_RECOLLECT_MAX_WAITING, type AuditRecollectFailure } from "@/lib/crawl/audit-stale-recollect";
 import { qwenDirectServerLabel } from "@/lib/crawl/qwen-direct-review";
-import { QWEN_AUTO_MAX_PER_TICK } from "@/lib/crawl/settings-schema";
+import { AUDIT_RECOLLECT_MAX_PER_TICK, QWEN_AUTO_MAX_PER_TICK } from "@/lib/crawl/settings-schema";
 import { QwenAutoStepSwitch } from "../components/QwenAutoStepSwitch";
 import { ScreenReviewPanel } from "./ScreenReviewPanel";
 import { screenReviewStatus, type ScreenReviewStatus } from "@/lib/screen-review/job";
@@ -634,12 +635,14 @@ function HoldPanel({ overview, heldReasons, qwen, screen, now }: {
           choices={[{ name: "scope", label: "묻는 범위", widens: "all",
             options: [{ value: "all", label: "열린 거절 전부" }, { value: "hold", label: "보류 후보만" }] }]}
           toggles={[{ name: "autoClose", label: "답으로 닫기(승인 유지·거절 숨김)" }]}
+          extra={{ name: "recollectPerTick", label: "원본 다시 받기", unit: "건/틱", min: 0, max: AUDIT_RECOLLECT_MAX_PER_TICK }}
           enableNotes={[`${qwenDirectServerLabel()} Qwen-v2 의 두 번째 의견을 받아 적습니다(감사 잡, 출처 qwen-v2-auto) — 범위가 '열린 거절 전부'면 지금 감사의 열린 거절 모두(확신·주인과 상관없이), '보류 후보만'이면 보류 후보.`,
             `답으로 닫기: 승인(확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상, 다른 모델 거절 없음)은 유지 ${AUTO_CLOSE_KEEP_DAYS}일로 닫고, 주인 없는 제품의 거절(확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상, 다른 모델 승인 없음)은 숨깁니다(보류). 내리지 않습니다 — 정책 처리 탭의 'm1 자동 …' 실행으로 되돌립니다.`,
             `수집한 페이지 글이 ${THIN_PAGE_TEXT_CHARS}자 아래면 글만 본 m1 의 답은 의견으로만 남고 닫지도 보류를 걸거나 풀지도 않습니다(화면 판별 대기). 다른 모델과 반대로 정한 것은 엇갈림으로 열어 둡니다.`,
             hold.secondOpinionReject ? "답으로 닫기가 꺼져 있으면 승인은 그 항목의 보류를 풀고, 거절은 두 번째 모델 거절로 보류의 까닭이 됩니다 — 카탈로그·디렉터리 같은 것은 빼고."
               : "답으로 닫기가 꺼져 있으면 승인은 그 항목의 보류를 풀고, 거절은 기록만 남습니다(두 번째 모델 거절로 보류가 꺼져 있음).",
-            "감사 답을 같은 Qwen 이 낸 항목은 묻지 않습니다."]} />
+            "감사 답을 같은 Qwen 이 낸 항목은 묻지 않습니다.",
+            `원본 다시 받기: 입력 기한(수집·스캔 뒤 24시간)이 지나 묻지 못한 감사 거절은 틱마다 정한 수까지(동시에 ${AUDIT_RECOLLECT_MAX_WAITING}건까지) 기존 수집 길로 저장소·사이트·스캔을 다시 받은 뒤 묻습니다 — 한 건에 GitHub 요청 약 13회. 다시 받지 못한 것(저장소 없음 등)은 사유를 남겨 사람 몫으로 둡니다.`]} />
         <QwenAutoStepSwitch key={`p:${JSON.stringify(overview.qwenAuto.publishedFilter)}`} step="publishedFilter"
           value={overview.qwenAuto.publishedFilter} title="Qwen-v2 공개분 2차 거르기" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
           enableNotes={["공개분 2차가 사람 확인으로 넘긴 행을 Qwen-v2 로 한 번 더 봅니다(감사 잡).",
@@ -661,6 +664,21 @@ function HoldPanel({ overview, heldReasons, qwen, screen, now }: {
 const ERROR_TARGET = { audit: "감사 두 번째 의견", published: "공개분 2차 거르기" } as const;
 
 /**
+ * 원본 다시 받기(audit-stale-recollect.ts) — 입력 기한이 지난 감사 거절의 저장소·사이트·스캔을 다시 받는 중·끝남(그중 근거가 바뀐 것)·사람 몫(사유별).
+ * 사람 몫은 감사 거절 목록에 그대로 열려 있다 — 두 번째 의견이 다시 고르지 않을 뿐이다
+ */
+function RecollectStatus({ recollect, perTick }: { recollect: NonNullable<QwenAutoStatus["recollect"]>; perTick: number }) {
+  const reasons = Object.entries(recollect.failures).sort((a, b) => b[1] - a[1])
+    .map(([code, n]) => `${AUDIT_RECOLLECT_FAILURE_SHORT[code as AuditRecollectFailure] ?? code} ${count(n)}`);
+  return (
+    <p><b className="font-semibold">원본 다시 받기</b> {perTick > 0 ? `틱마다 ${count(perTick)}건` : "새 요청 멈춤"} ·
+      받는 중 {count(recollect.waiting)} · 끝남 {count(recollect.done)}(근거 바뀜 {count(recollect.changed)}) ·
+      사람 몫 <b className={`font-semibold ${recollect.failed > 0 ? "text-warn" : ""}`}>{count(recollect.failed)}</b>
+      {reasons.length > 0 && ` (${reasons.join(" · ")})`}</p>
+  );
+}
+
+/**
  * Qwen-v2 자동 단계(audit-second-opinion-auto.ts) — Qwen 직접 서버를 바로 불러 감사 거절에 두 번째 의견을 적고, 공개분 2차의 사람 확인 행을 한 번 더 본다.
  * 서버 이름은 설정에서 읽는다(qwenDirectServerLabel — AUDIT_SECOND_OPINION_LABEL 또는 주소의 호스트).
  * 켬/끔·틱당 수, 지난 1시간·24시간에 적은 수(공개분은 그중 유지로 닫은 수), 남은 것, 마지막 오류
@@ -676,6 +694,7 @@ function QwenStatus({ status, now }: { status: QwenAutoStatus; now: Date }) {
       <p><b className="font-semibold">Qwen-v2 두 번째 의견</b> {onOff(audit.enabled)} 틱마다 {count(audit.perTick)}건 ·
         {audit.scope === "all" ? " 열린 거절 전부" : " 보류 후보만"} ·
         지난 1시간 {count(audit.lastHour)} · 24시간 {count(audit.lastDay)} · 남은 것 <b className="font-semibold">{count(audit.remaining)}</b></p>
+      {status.recollect && <RecollectStatus recollect={status.recollect} perTick={audit.recollectPerTick} />}
       <p><b className="font-semibold">답으로 닫기</b> {onOff(audit.enabled && audit.autoClose)} 오늘({autoClose.day} UTC) 자동 유지 {count(autoClose.kept)} ·
         자동 숨김 {count(autoClose.held)}{autoClose.undone > 0 && ` · 그중 되돌림 ${count(autoClose.undone)}`} — 확신 {autoClose.minConfidence.toFixed(2)} 이상만 ·
         {" "}<Link href="/admin/audit?tab=policy" className="text-accent hover:underline">실행·되돌리기 →</Link></p>

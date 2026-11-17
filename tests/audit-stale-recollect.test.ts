@@ -125,7 +125,7 @@ vi.mock("@/lib/crawl/audit-stale-recollect", async (load) => {
 
 const { runQwenSecondOpinions } = await import("@/lib/crawl/audit-second-opinion-auto");
 const recollect = await import("@/lib/crawl/audit-stale-recollect");
-const { AUDIT_RECOLLECT_MAX_WAITING, AUDIT_RECOLLECT_WAIT_MS, auditRecollectBlocksSql, auditRecollectScanDemand, recollectChangedFields,
+const { AUDIT_RECOLLECT_MAX_WAITING, AUDIT_RECOLLECT_README_WAIT_MS, AUDIT_RECOLLECT_WAIT_MS, auditRecollectBlocksSql, auditRecollectScanDemand, recollectChangedFields,
   recollectDigest, settleRecollectVerdict } = recollect;
 
 const HOUR = 3600_000;
@@ -277,6 +277,13 @@ describe("마무리의 가름(settleRecollectVerdict)", () => {
     expect(settleRecollectVerdict({ ...base, waitedMs: AUDIT_RECOLLECT_WAIT_MS + 1, refetched: true }))
       .toMatchObject({ kind: "failed", code: "recollect_timeout", detail: expect.stringContaining("스캔") });
     expect(settleRecollectVerdict(base)).toEqual({ kind: "waiting" });
+  });
+
+  it("입력이 새로워져도 README 잡이 README 를 다시 받는 중이면 기다리고, 정한 시간을 넘기면 옮겨 둔 README 로 끝낸다", () => {
+    expect(settleRecollectVerdict({ ...base, inputFresh: true, refetched: true, readmePending: true })).toEqual({ kind: "waiting" });
+    expect(settleRecollectVerdict({ ...base, inputFresh: true, refetched: true, readmePending: true, waitedMs: AUDIT_RECOLLECT_README_WAIT_MS + 1 }))
+      .toEqual({ kind: "done" });
+    expect(settleRecollectVerdict({ ...base, inputFresh: true, refetched: true, readmePending: false })).toEqual({ kind: "done" });
   });
 });
 

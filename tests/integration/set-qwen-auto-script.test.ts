@@ -123,8 +123,12 @@ describe("set-qwen-auto", () => {
     expect(() => parseSetQwenAutoArgs(["--step=splitTiebreak", "--enable", "--per-tick=-1"])).toThrow("qwen_auto_invalid_number");
     expect(() => parseSetQwenAutoArgs(["--step=splitTiebreak", "--enable", "--by=a b"])).toThrow("qwen_auto_invalid_by");
     expect(parseSetQwenAutoArgs(["--step=publishedFilter", "--per-tick=4"], { USER: "jr" }))
-      .toEqual({ step: "publishedFilter", enable: null, perTick: 4, budgetSeconds: null, dailyRejectCap: null, scope: null, autoClose: null, reason: null,
-        by: "jr", dryRun: false });
+      .toEqual({ step: "publishedFilter", enable: null, perTick: 4, budgetSeconds: null, dailyRejectCap: null, scope: null, autoClose: null,
+        recollectPerTick: null, reason: null, by: "jr", dryRun: false });
+    // 원본 다시 받기 틱당 상한은 감사 두 번째 의견에만(2026-11-17) — 그 수만 바꿔도 된다
+    expect(() => parseSetQwenAutoArgs(["--step=publishedFilter", "--recollect-per-tick=2"])).toThrow("qwen_auto_usage");
+    expect(parseSetQwenAutoArgs(["--step=auditSecondOpinion", "--recollect-per-tick=0"], { USER: "jr" }))
+      .toMatchObject({ enable: null, perTick: null, recollectPerTick: 0 });
     // 범위·답으로 닫기는 감사 두 번째 의견에만, 정한 값만
     expect(() => parseSetQwenAutoArgs(["--step=publishedFilter", "--scope=all"])).toThrow("qwen_auto_usage");
     expect(() => parseSetQwenAutoArgs(["--step=auditSecondOpinion", "--scope=everything"])).toThrow("qwen_auto_usage");
