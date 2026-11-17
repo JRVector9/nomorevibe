@@ -462,14 +462,52 @@ export async function markFailed(claim: FetchClaim, error: string, options: { no
  *
  * 본문만 덮는다 — 제목·소개는 발행 시점의 것이 남아야 한다.
  */
+/**
+ * 읽어 둔 원본(expected)이 아직 그대로인가 — README 를 붙이는 쓰기의 대조 조건.
+ *
+ * fetched_at 은 원본 저장(saveFetchedDocument)이 clock_timestamp() 로 쓰므로 마이크로초까지 있다. 읽어 온 JS Date 는 밀리초까지라
+ * `fetched_at = 읽은 값`은 마이크로초가 0 이 아닌 거의 모든 원본에서 거짓이었다 — 2026-10-16(#436) 뒤 README 쓰기가 0행으로 끝나
+ * 1차 심사 스냅숏의 README 가 99.8% 빈 글자였다(2026-11-17). 그래서 밀리초로 잘라 대조한다. 같은 밀리초 안의 다시 수집은 page_meta 대조가 받친다.
+ */
+function sameDocumentRevision(expected: CrawlDocument) {
+  return and(eq(crawlDocuments.id, expected.id), eq(crawlDocuments.repo, expected.repo),
+    sql`date_trunc('milliseconds', ${crawlDocuments.fetchedAt}) = date_trunc('milliseconds', ${expected.fetchedAt.toISOString()}::timestamp)`,
+    sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${expected.pageMeta === null ? null : JSON.stringify(expected.pageMeta)}::jsonb`);
+}
+
+/** README 를 받지 못한 기록(readme-fetch-state.ts) — 성공하면 지운다 */
+const README_FETCH_FAILURE_KEYS = ["readmeFetchError", "readmeFetchAttempts", "readmeFetchRetryAfter"] as const;
+
 /** AI 심사 입력용 README 앞부분을 원본 옆에 둔다. "" 은 없음 표시 — 다시 찾지 않는다 */
 export async function setReadmeSample(repo: string, readmeSample: string, expected: CrawlDocument, lease?: JobLease): Promise<CrawlDocument | undefined> {
+  if (repo !== expected.repo) return undefined;
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    const cleared = README_FETCH_FAILURE_KEYS.reduce((meta, key) => sql`(${meta} - ${key}::text)`, sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb)`);
+    const [updated] = await tx.update(crawlDocuments).set({
+      pageMeta: sql`${cleared} || ${JSON.stringify({ readmeSample, readmeSampleVersion: README_SAMPLE_VERSION })}::jsonb`,
+    }).where(sameDocumentRevision(expected)).returning();
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
+    return updated;
+  });
+}
+
+/**
+ * README 를 받지 못했음을 원본 옆에 남긴다 — 까닭(readmeFetchError)·횟수·다음 시도 시각. 빈 README 로 조용히 심사하지 않게
+ * 1차 심사가 이것을 읽고 기다리거나(readme_wait), 횟수를 다 쓴 뒤에는 까닭을 남긴 채 README 없이 심사한다(review-document.ts).
+ */
+export async function recordReadmeFetchFailure(expected: CrawlDocument, failure: { error: string; retryAfter: number | null },
+  lease?: JobLease, now = Date.now()): Promise<CrawlDocument | undefined> {
+  const prior = expected.pageMeta?.readmeFetchAttempts;
+  const attempts = typeof prior === "number" && Number.isSafeInteger(prior) && prior >= 0 ? Math.min(prior + 1, 12) : 1;
+  const backoff = Math.min(24 * 60, 15 * 2 ** (attempts - 1)) * 60_000;
+  const metadata = { readmeFetchError: failure.error.slice(0, 100), readmeFetchAttempts: attempts,
+    readmeFetchRetryAfter: Math.max(failure.retryAfter ?? 0, now + backoff) };
   return db.transaction(async tx => {
     await lockPipelineInputStages(tx);
     const [updated] = await tx.update(crawlDocuments).set({
-    pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify({ readmeSample, readmeSampleVersion: README_SAMPLE_VERSION })}::jsonb`,
-  }).where(and(eq(crawlDocuments.repo, repo), eq(crawlDocuments.id, expected.id), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
-    sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${expected.pageMeta === null ? null : JSON.stringify(expected.pageMeta)}::jsonb`)).returning();
+      pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify(metadata)}::jsonb`,
+    }).where(sameDocumentRevision(expected)).returning();
     if (lease) await assertJobLeaseAtWallTime(tx, lease);
     return updated;
   });
@@ -498,8 +536,7 @@ export async function recordPublishedReadme(expected: CrawlDocument, lease: JobL
     await lockPipelineInputStages(tx);
     const rows = await tx.update(crawlDocuments).set({
       pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify(metadata)}::jsonb`,
-    }).where(and(eq(crawlDocuments.id, expected.id), eq(crawlDocuments.repo, expected.repo), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
-      sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${JSON.stringify(expected.pageMeta)}::jsonb`)).returning({ id: crawlDocuments.id });
+    }).where(sameDocumentRevision(expected)).returning({ id: crawlDocuments.id });
     await assertJobLeaseAtWallTime(tx, lease);
     return rows.length > 0;
   });
@@ -718,6 +755,9 @@ function judgementPageMeta(meta: CrawlDocument["pageMeta"]) {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return meta;
   const relevant = { ...meta };
   delete relevant.thumbnailHints;
+  // README 를 받은 판(버전)·받기 실패 기록은 페이지 내용이 아니다. 다시 수집은 README 를 옮겨 오며 판을 null 로 둔다(다시 받게) —
+  // 이것을 「원본이 바뀜」으로 세면 README 가 붙은 미발행 승인·보류가 다시 수집될 때마다 new 로 되돌아간다
+  for (const key of ["readmeSampleVersion", ...README_FETCH_FAILURE_KEYS, "readmeRetryAfter", "readmeRefreshAttempts", "readmeRefreshError"]) delete relevant[key];
   return relevant;
 }
 
