@@ -11,6 +11,7 @@ import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { auditSettings, lockAuditDispatchItem } from "@/lib/crawl/product-audit";
+import { attachProjectActivity, loadProjectActivity } from "@/lib/crawl/audit-project-activity";
 import { auditReviewer } from "@/lib/crawl/product-audit-reviewer";
 import { isAssistCapacityInput, type LocalModelInput } from "./local-model-input";
 import { freshLocalModelScreenProof, localModelJob, type LocalModelScreenProof, type LocalModelTarget } from "./local-model-capacity-contract";
@@ -105,6 +106,10 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
   if (current.input.sourceRevisionHash !== input.sourceRevisionHash) return refuse("source_changed");
   let expected = target.kind === "audit"
     ? await loadReviewInput(current.candidate, current.document, auditSettings(current.settings), tx) : current.input;
+  // 감사 거절의 두 번째 의견은 프로젝트 활동 묶음을 싣는다(loadAuditInput projectActivity) — 같은 원본·같은 트랜잭션으로 다시 만들어 견준다
+  if (target.kind === "audit" && target.purpose === "second_opinion") {
+    expected = attachProjectActivity(expected, await loadProjectActivity(target.slug, current.document, tx));
+  }
   let splitFirstAttemptId: number | null = null;
   if (target.kind === "split") {
     const { currentGate } = await import("@/lib/crawl/gate-split-tiebreak");

@@ -11,7 +11,7 @@ import { auditReasonCategorySql, catalogLikeReasonSql } from "@/lib/crawl/audit-
 import { QWEN_AUTO_CALL_TIMEOUT_MS, QWEN_AUTO_MIN_START_MS, QWEN_AUTO_OBSERVATION, qwenSecondOpinionStatus, readQwenAutoObservation } from "@/lib/crawl/audit-second-opinion-auto";
 import { auditRemovalGroups, listAuditFindings, removeAuditedProducts, startProductAudit, switchAuditReviewer } from "@/lib/crawl/product-audit";
 import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
-import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
+import { QWEN_V2_ADDENDUM, QWEN_V2_AUDIT_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { catalogLikeAuditReason } from "@/lib/crawl/second-opinion-rules";
 import { publishedInputHash, publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
@@ -26,9 +26,10 @@ vi.mock("server-only", () => ({}));
 const inputFails = vi.hoisted(() => new Set<string>());
 vi.mock("@/lib/crawl/product-audit", async (original) => {
   const actual = await original<typeof import("@/lib/crawl/product-audit")>();
-  return { ...actual, loadAuditInput: async (slug: string, settings: Parameters<typeof actual.loadAuditInput>[1]) => {
+  return { ...actual, loadAuditInput: async (slug: string, settings: Parameters<typeof actual.loadAuditInput>[1],
+    options?: Parameters<typeof actual.loadAuditInput>[2]) => {
     if (inputFails.has(slug)) throw new Error("review_input_too_large");
-    return actual.loadAuditInput(slug, settings);
+    return actual.loadAuditInput(slug, settings, options);
   } };
 });
 
@@ -164,12 +165,14 @@ describe("감사 두 번째 의견", () => {
     expect(call.url).toBe("http://100.77.43.63:8090/v1/chat/completions");
     expect(call.headers).toEqual({ "Content-Type": "application/json" });
     expect(call.body.model).toBe("qwen3.8-flash-next");
-    expect(call.body.messages[0].content).toBe(REVIEW_SYSTEM_PROMPT + QWEN_V2_ADDENDUM);
+    // 감사 거절은 감사 전용 판(v2 덧붙임 + 감사 재확인 메모 — 오래됨만으로 거절하지 않음)으로 묻고 프로젝트 활동 묶음을 함께 보낸다(2026-11-17)
+    expect(call.body.messages[0].content).toBe(REVIEW_SYSTEM_PROMPT + QWEN_V2_AUDIT_ADDENDUM);
+    expect(call.body.messages[1].content).toContain('"projectActivity"');
 
     const rows = await opinions();
     expect(rows.map((row) => [row.itemId, row.model, row.decision, row.confidence, row.source, row.promptVersion])).toEqual([
-      [(await item("company")).id, "qwen3.8-flash-next", "approve", 1, "qwen-v2-auto", "2026-10-21.v2"],
-      [(await item("content")).id, "qwen3.8-flash-next", "reject", 0.95, "qwen-v2-auto", "2026-10-21.v2"],
+      [(await item("company")).id, "qwen3.8-flash-next", "approve", 1, "qwen-v2-auto", "2026-11-17.v2-audit"],
+      [(await item("content")).id, "qwen3.8-flash-next", "reject", 0.95, "qwen-v2-auto", "2026-11-17.v2-audit"],
     ]);
     expect(rows[1].reason).toBe("Only documentation.");
     expect(rows.every((row) => /^[0-9a-f]{64}$/.test(row.inputHash ?? ""))).toBe(true);
@@ -210,7 +213,17 @@ describe("감사 두 번째 의견", () => {
     const grokked = (await item("grokked")).id, stale = (await item("stale")).id;
     expect(rows.filter((row) => row.itemId === same.id)).toEqual([]);
     expect(rows.filter((row) => row.itemId === grokked).map((row) => row.model).sort()).toEqual(["grok-4.7", "qwen3.8-flash-next"]);
-    expect(rows.filter((row) => row.itemId === stale).map((row) => [row.decision, row.promptVersion])).toEqual([["reject", "2026-10-21.v2"]]);
+    expect(rows.filter((row) => row.itemId === stale).map((row) => [row.decision, row.promptVersion])).toEqual([["reject", "2026-11-17.v2-audit"]]);
+  });
+
+  it("감사 전용 판(2026-11-17)으로 바꿔도 이미 받은 v2 의견은 끝난 것으로 센다 — 운영의 v2 자동 의견을 다시 묻지 않는다", async () => {
+    await judged([{ repo: "v/old-v2", reason: CONTENT }, { repo: "v/new", reason: CONTENT }]);
+    await vote("old-v2", "qwen3.8-flash-next", "reject", QWEN_V2_PROMPT_VERSION);
+    await tick();
+    expect(askedRepos()).toEqual(["v/new"]);
+    const rows = await opinions(), oldId = (await item("old-v2")).id;
+    expect(rows.filter((row) => row.itemId === oldId).map((row) => row.promptVersion)).toEqual([QWEN_V2_PROMPT_VERSION]);
+    expect((await qwenSecondOpinionStatus(await getSettings())).audit.remaining).toBe(0);
   });
 
   it("카탈로그 예외 — Qwen 거절은 카탈로그·디렉터리 같은 항목에서 보류의 까닭이 되지 않고 '갈림'·'Qwen 거절(카탈로그 제외)'에 든다. grok 거절은 건다", async () => {

@@ -1,7 +1,7 @@
 import { withAdminModelStage } from "@/lib/llm/admin-model-pools";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { bareModelName } from "./review-model-identity";
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { LocalModelDomainRefusedError, type LocalModelDomainCheck } from "@/lib/llm/local-model-domain-refusal";
@@ -27,7 +27,7 @@ import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qw
   withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { loadAuditInput } from "./product-audit";
 import { applyPublishedAutoOpinion, type PublishedAutoResult } from "./published-second-review";
-import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, reviewWithQwenDirect,
+import { AUDIT_OPINION_PROMPT_VERSIONS, QWEN_V2_AUDIT_PROMPT_VERSION, QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, reviewWithQwenDirect,
   type QwenDirectReview } from "./qwen-direct-review";
 import { lockedSettings, type AuditHoldSettings } from "./settings";
 import type { AuditOpinionScope, CrawlSettings } from "./settings-schema";
@@ -151,14 +151,22 @@ function auditScope(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "min
     : sql`(i.product_id = p.id and ${openAuditRejectUniverse(latestCampaign)})`;
 }
 
+/** 감사 의견을 이미 받은 것으로 세는 판(옛 v2 + 감사 전용 판) — qwen-direct-review.ts AUDIT_OPINION_PROMPT_VERSIONS */
+const auditOpinionVersionsSql = sql.join(AUDIT_OPINION_PROMPT_VERSIONS.map((version) => sql`${version}`), sql`, `);
+/**
+ * 대상마다 쓰는 글의 판 — 감사 거절은 감사 전용 판(오래됨만으로 거절하지 말고 지금 활동·사용 가능성을 보라), 공개분 2차는 v2 그대로.
+ * v2 를 올리지 않는 까닭은 QWEN_V2_AUDIT_PROMPT_VERSION 주석
+ */
+export const promptFor = (target: Pick<Target, "kind">) => target.kind === "audit" ? QWEN_V2_AUDIT_PROMPT_VERSION : QWEN_V2_PROMPT_VERSION;
+
 /**
  * 물을 감사 항목 — 범위(auditScope)에 들고, 이 모델·이 판의 의견이 없고, 감사 답을 낸 심사자·시도가 같은 모델이 아니며(같은 모델 규칙),
  * 수집 원본이 있고(loadAuditInput 이 입력을 만들 수 있다), 원본을 다시 받는 중이거나 다시 받지 못한 것(사람 몫)이 아니다(audit-stale-recollect.ts)
  */
-function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">, model: string, skip: readonly number[]): SQL {
+export function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">, model: string, skip: readonly number[]): SQL {
   return sql`${auditScope(scope, hold)}
     and not exists (select 1 from ${productAuditSecondOpinions} o where o.item_id = i.id and o.model = ${model}
-      and o.prompt_version = ${QWEN_V2_PROMPT_VERSION})
+      and o.prompt_version in (${auditOpinionVersionsSql}))
     and coalesce(i.ai_provider, '') <> ${QWEN_AUDIT_PROVIDER} and ${bareModel(auditItemModel("i"))} <> ${bareModelValue(model)}
     and not exists (select 1 from ${productAuditAttempts} a where a.item_id = i.id and a.outcome is not null
       and ${bareModel(sql`a.model`)} = ${bareModelValue(model)})
@@ -386,7 +394,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     // 입력을 만들다 실패한 항목(입력 상한 초과 등)은 그 항목의 실패로 적고 넘어간다 — 한 항목이 단계를 막거나 틱마다 같은 자리에서 멈추지 않게
     let input: ReviewInput | null;
     try {
-      input = target.kind === "audit" ? await loadAuditInput(target.slug, settings) : await publishedInput(target, settings);
+      // 감사 거절은 프로젝트 활동 묶음을 싣는다(audit-project-activity.ts) — 진행 중인 프로젝트인지·지금 쓸 수 있는지를 함께 본다
+      input = target.kind === "audit" ? await loadAuditInput(target.slug, settings, { projectActivity: true }) : await publishedInput(target, settings);
     } catch (error) {
       const code = error instanceof Error && /^[a-z0-9_]{3,60}$/.test(error.message) ? error.message : "input_error";
       failItem(target, code);
@@ -417,8 +426,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
         return withLocalModelCapacity({ target: target.kind === "audit"
           ? { kind: "audit", purpose: "second_opinion", itemId: target.itemId, slug: target.slug }
           : { kind: "published", purpose: "published_filter", secondReviewId: target.id, slug: target.slug },
-        input, lease, promptVersion: QWEN_V2_PROMPT_VERSION },
-        request => reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal, request }));
+        input, lease, promptVersion: promptFor(target) },
+        request => reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal, request, promptVersion: promptFor(target) }));
       });
     } catch (error) {
       // 호출 직전 증명이 거절했다 — 그 예약은 dispatch 가 이미 물렸다(evidence 에 검사). 항목 하나의 일이면 넘기고 다음 대상으로 간다
@@ -512,7 +521,7 @@ async function catchUpAutoClose(ctx: JobContext<null>, lease: JobLease, settings
     select i.id as item_id, p.id as product_id, p.slug, o.model, o.decision, o.confidence, o.prompt_version
       from ${productAuditItems} i, ${products} p, ${productAuditSecondOpinions} o
      where ${auditScope(step.scope, settings.auditHold)} and o.item_id = i.id and o.source = ${QWEN_V2_AUTO_SOURCE} and o.model = ${model}
-       and o.prompt_version = ${QWEN_V2_PROMPT_VERSION} and ${autoClosableSql(settings.auditHold.enabled)}
+       and o.prompt_version in (${auditOpinionVersionsSql}) and ${autoClosableSql(settings.auditHold.enabled)}
        -- 운영자가 되돌린 것(자동 실행이든 정책 실행이든)은 다시 닫지 않는다 — 되돌림은 '사람이 본다'는 뜻이다. 자동 실행이 이미 손댄 항목도
        -- 다시 고르지 않는다(같은 날 같은 실행에 두 번 적을 수 없어 틱마다 같은 자리에 걸린다)
        and not exists (select 1 from ${productAuditPolicyRunItems} ri join ${productAuditPolicyRuns} r on r.id = ri.run_id where ri.item_id = i.id
@@ -587,7 +596,7 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
       hour: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours')::int`,
     }).from(productAuditSecondOpinions).where(and(eq(productAuditSecondOpinions.source, QWEN_V2_AUTO_SOURCE),
-      eq(productAuditSecondOpinions.model, model), eq(productAuditSecondOpinions.promptVersion, QWEN_V2_PROMPT_VERSION))),
+      eq(productAuditSecondOpinions.model, model), inArray(productAuditSecondOpinions.promptVersion, [...AUDIT_OPINION_PROMPT_VERSIONS]))),
     db.select({
       hour: sql<number>`count(*) filter (where (${secondReviews.autoOpinion}->>'at')::timestamptz > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where (${secondReviews.autoOpinion}->>'at')::timestamptz > now() - interval '24 hours')::int`,
