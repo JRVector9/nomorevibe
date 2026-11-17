@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null, input:
   candidate: null as CrawlCandidate | null, document: null as CrawlDocument | null, row: null as SecondReview | null,
   recordFirst: vi.fn(), recordSecond: vi.fn(), external: vi.fn(), claim: vi.fn(), admitSecond: vi.fn() }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
-vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: async () => mocks.document }));
+vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: async () => mocks.document, reviewReadmeState: () => ({ kind: "ready" }) }));
 vi.mock("@/lib/domain/products/repository", () => ({ findRepositoryProduct: async () => null }));
 vi.mock("@/lib/crawl/repository", () => ({ holdSuspectedSpam: vi.fn() }));
 // 1차 잡은 늘 순위 고르기다(PR C1): 자기 대기 행·풀 쪽(keyset)·후보별 고르기·막힌 모델 읽기를 경계 mock 으로 둔다

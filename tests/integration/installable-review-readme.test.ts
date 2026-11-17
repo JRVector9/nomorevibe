@@ -82,6 +82,17 @@ it("still refuses to attach a README to a document recrawled while the README wa
   expect((await loadReviewDocument("acme/racing"))?.pageMeta).toEqual({ title: "new website" });
 });
 
+it("records a README fetch failure on the document instead of silently reviewing as if there were no README", async () => {
+  await saveLikeCrawler("acme/limited", null, null);
+  mocks.fetch.mockImplementation(async (_repo: string, _request: unknown, report?: (error: string) => void) => { report?.("http_429"); return null; });
+  const document = await loadReviewDocument("acme/limited");
+  expect(document?.pageMeta).toMatchObject({ readmeFetchError: "http_429", readmeFetchAttempts: 1 });
+  expect(document?.pageMeta?.readmeSample).toBeUndefined();
+  // 기다릴 시각 전에는 다시 받지 않는다
+  await loadReviewDocument("acme/limited");
+  expect(mocks.fetch).toHaveBeenCalledTimes(1);
+});
+
 it("does not reopen an approved candidate only because a recrawl invalidated its README version", async () => {
   const repo = "acme/approved-tool";
   const candidate = await saveLikeCrawler(repo, null, { readmeSample: README, readmeSampleVersion: README_SAMPLE_VERSION });
