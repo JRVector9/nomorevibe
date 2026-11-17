@@ -397,7 +397,7 @@ export function qwenAutoWidens(before: Record<string, unknown>, after: Record<st
   const added = Array.isArray(after.reasons) && Array.isArray(before.reasons)
     && after.reasons.some((reason) => !(before.reasons as unknown[]).includes(reason));
   const wider = (after.scope === "all" && before.scope !== "all") || (after.autoClose === true && before.autoClose !== true);
-  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || added || wider;
+  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || raised("recollectPerTick") || added || wider;
 }
 
 /**

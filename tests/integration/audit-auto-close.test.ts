@@ -328,7 +328,7 @@ describe("답으로 닫기", () => {
   it("운영 행에 범위·닫기 칸이 없으면 새 기본값(열린 거절 전부·닫기 켬)으로 돈다 — 배포만으로 켜진다", async () => {
     await judged([{ repo: "d/low", confidence: 0.6, reason: CONTENT }]);
     await db.execute(sql`update crawl_settings set values = jsonb_set(values, '{qwenAuto,auditSecondOpinion}', '{"enabled": true, "perTick": 10}') where id = 1`);
-    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true });
+    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 });
     server.answers.set("d/low", { decision: "reject", confidence: 0.97 });
     await tick();
     expect(server.calls).toEqual(["d/low"]);

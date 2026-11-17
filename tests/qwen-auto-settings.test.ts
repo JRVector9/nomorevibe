@@ -9,7 +9,7 @@ import * as originMain from "./fixtures/settings-schema-55389b48";
  * 읽고 쓰는 배포·되돌림에서 감사 보류가 깨지지 않고, 옛 코드가 지운 자동 단계가 켬으로 되살아나지 않는다.
  */
 const enabledEverywhere: QwenAutoSettings = {
-  auditSecondOpinion: { enabled: true, perTick: 7, scope: "hold", autoClose: false }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
+  auditSecondOpinion: { enabled: true, perTick: 7, scope: "hold", autoClose: false, recollectPerTick: 3 }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
   heldRetry: { enabled: true, perTick: 4, budgetSeconds: 30, reasons: ["ambiguous"] }, screenReview: { enabled: true, perTick: 3, autoClose: false },
 };
 /**
@@ -88,16 +88,16 @@ describe("storedQwenAuto — 없거나 깨지면 그 단계만 꺼짐", () => {
 
 describe("감사 두 번째 의견의 범위·답으로 닫기(2026-10-22)", () => {
   it("기본은 열린 거절 전부·답으로 닫기 켬 — 단계 자체는 꺼짐", () => {
-    expect(DEFAULT_QWEN_AUTO.auditSecondOpinion).toEqual({ enabled: false, perTick: 10, scope: "all", autoClose: true });
+    expect(DEFAULT_QWEN_AUTO.auditSecondOpinion).toEqual({ enabled: false, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 });
   });
 
   it("빠진 범위·닫기 칸은 새 기본값으로 읽는다 — 운영 행({enabled, perTick})이 배포만으로 새 기본을 탄다(켬·틱당 수는 그대로)", () => {
     expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 10 } } }).auditSecondOpinion)
-      .toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true });
+      .toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 });
     expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 4, scope: "hold" } } }).auditSecondOpinion)
-      .toEqual({ enabled: true, perTick: 4, scope: "hold", autoClose: true });
+      .toEqual({ enabled: true, perTick: 4, scope: "hold", autoClose: true, recollectPerTick: 1 });
     expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 4, autoClose: false } } }).auditSecondOpinion)
-      .toEqual({ enabled: true, perTick: 4, scope: "all", autoClose: false });
+      .toEqual({ enabled: true, perTick: 4, scope: "all", autoClose: false, recollectPerTick: 1 });
   });
 
   it("범위·닫기 칸이 깨지면 그 단계만 꺼진다", () => {
@@ -120,6 +120,24 @@ describe("감사 두 번째 의견의 범위·답으로 닫기(2026-10-22)", () 
     expect(qwenAutoWidens(on, { ...on, perTick: 5 })).toBe(false);
     // 끄는 바꿈은 넓히지 않는다
     expect(qwenAutoWidens(on, { ...on, enabled: false, scope: "all", autoClose: true })).toBe(false);
+  });
+});
+
+describe("감사 거절의 원본 다시 받기 틱당 상한(recollectPerTick, 2026-11-17)", () => {
+  it("빠지면 기본 1로 읽고 0(새 요청 멈춤)~10 만 받는다 — 벗어나면 그 단계만 꺼진다", () => {
+    expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 10 } } }).auditSecondOpinion.recollectPerTick).toBe(1);
+    expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 10, recollectPerTick: 0 } } }).auditSecondOpinion)
+      .toMatchObject({ enabled: true, recollectPerTick: 0 });
+    for (const broken of [-1, 11, 1.5]) {
+      expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 10, recollectPerTick: broken } } }).auditSecondOpinion.enabled,
+        String(broken)).toBe(false);
+    }
+  });
+
+  it("상한을 올리는 바꿈은 넓히는 바꿈이다(까닭을 받는다) — 내리는 바꿈은 아니다", () => {
+    const on = { enabled: true, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 };
+    expect(qwenAutoWidens(on, { ...on, recollectPerTick: 3 })).toBe(true);
+    expect(qwenAutoWidens(on, { ...on, recollectPerTick: 0 })).toBe(false);
   });
 });
 

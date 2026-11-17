@@ -190,7 +190,8 @@ describe("감사 두 번째 의견", () => {
     expect(hold.metadata).toMatchObject({ category: "content", byCategory: false, bySecondOpinion: true });
 
     const status = await readStatus();
-    expect(status.audit).toEqual({ enabled: true, perTick: 10, lastHour: 2, lastDay: 2, remaining: 0, scope: "hold", autoClose: false });
+    expect(status.audit).toEqual({ enabled: true, perTick: 10, lastHour: 2, lastDay: 2, remaining: 0, scope: "hold", autoClose: false,
+      recollectPerTick: 1 });
     expect(status).toMatchObject({ model: "qwen3.8-flash-next", url: "http://100.77.43.63:8090/v1", promptVersion: "2026-10-21.v2", lastError: null });
   });
 

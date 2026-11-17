@@ -33,6 +33,8 @@ import { lockedSettings, type AuditHoldSettings } from "./settings";
 import type { AuditOpinionScope, CrawlSettings } from "./settings-schema";
 import { thinPageTextSql } from "./audit-text-gate";
 import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-review";
+import { AUDIT_RECOLLECT_MAX_WAITING, auditRecollectBlocksSql, auditRecollectStatus, requestAuditRecollect, settleAuditRecollects,
+  type AuditRecollectStatus } from "./audit-stale-recollect";
 
 /**
  * Qwen-v2 자동 단계(2026-10-21) — 자기 잡 audit-second-opinion(jobs/audit-second-opinion.ts, 전용 줄 audit-opinion)이 틱마다 한 번 돈다
@@ -69,6 +71,12 @@ import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-revi
  * 시도 횟수에 세지 않는다). 그 대상은 INPUT_STALE_RETRY_MS 동안 고르지 않고, 그 뒤 원본이 다시 수집됐으면 다시 묻는다. 증명이 같은 까닭이나
  * 대상이 닫혀서 거절한 것(LocalModelDomainRefusedError)도 그 항목만 넘기고 같은 틱의 다음 대상으로 간다. 장부의 일시 거절(자리 경합·정책·
  * 예약 만료)은 예전처럼 이 틱을 멈추고 다음 틱에 다시 본다.
+ *
+ * 원본 다시 받기(2026-11-17, audit-stale-recollect.ts): 쉬었다 다시 골라도 원본을 다시 받는 곳이 없어 오래된 감사 거절(11/01 grok 감사 538건)은
+ * 영원히 input_stale 로 끝났다. 이제 기한 지난 감사 거절은 틱마다 recollectPerTick 건까지(다시 받는 중인 것은 AUDIT_RECOLLECT_MAX_WAITING 까지)
+ * 기존 수집 길로 원본·스캔을 다시 받게 하고, 그동안(waiting)과 다시 받지 못한 것(failed — 사람 몫)은 고르지 않는다. 틱 앞머리의 마무리
+ * (settleAuditRecollects)가 입력이 새로워진 것을 끝남으로 적으면(바뀐 근거 칸도 함께) 다음부터 보통처럼 묻는다. 상한을 넘긴 나머지와
+ * 공개분 2차 행은 예전처럼 쉬었다 다시 고른다.
  */
 export const QWEN_AUTO_OBSERVATION = "qwen-second-opinion";
 export const QWEN_V2_AUTO_ACTOR = QWEN_V2_AUTO_SOURCE;
@@ -114,7 +122,9 @@ export type QwenAutoTally = {
     /** 답으로 닫은 것(audit-auto-close.ts) — 유지·숨김. caughtUp 은 그중 이미 받아 둔 답으로 닫은 것(모델을 부르지 않음) */
     autoKept: number; autoHeld: number; caughtUp: number;
     /** 답으로 닫지 않고 열어 둔 것 중 글이 적은 페이지(화면 판별 대기)·엇갈림(다른 모델이 반대) */
-    leftThin: number; leftSplit: number };
+    leftThin: number; leftSplit: number;
+    /** 원본 다시 받기(audit-stale-recollect.ts) — 이 틱에 요청한 것·요청이 바로 실패(사람 몫)한 것, 틱 앞머리 마무리의 끝남·그중 근거 바뀜·실패 */
+    recollectRequested: number; recollectRejected: number; recollectDone: number; recollectChanged: number; recollectFailed: number };
   published: { asked: number; kept: number; noted: number; skipped: number };
   failed: number; endpointError: string | null;
   /** 입력 유효 기한이 지나 자리를 잡지 않고 건너뛴 대상 */
@@ -122,7 +132,7 @@ export type QwenAutoTally = {
 };
 
 const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0,
-  leftThin: 0, leftSplit: 0 },
+  leftThin: 0, leftSplit: 0, recollectRequested: 0, recollectRejected: 0, recollectDone: 0, recollectChanged: 0, recollectFailed: 0 },
   published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null, inputStale: 0 });
 
 /** 앞의 게이트웨이 자리 표시('[gpu3090] ')와 배포자 접두어('Inferact/')를 뗀 소문자 모델 이름 — review-model-identity.ts bareModelName 과 같다 */
@@ -143,7 +153,7 @@ function auditScope(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "min
 
 /**
  * 물을 감사 항목 — 범위(auditScope)에 들고, 이 모델·이 판의 의견이 없고, 감사 답을 낸 심사자·시도가 같은 모델이 아니며(같은 모델 규칙),
- * 수집 원본이 있다(loadAuditInput 이 입력을 만들 수 있다)
+ * 수집 원본이 있고(loadAuditInput 이 입력을 만들 수 있다), 원본을 다시 받는 중이거나 다시 받지 못한 것(사람 몫)이 아니다(audit-stale-recollect.ts)
  */
 function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">, model: string, skip: readonly number[]): SQL {
   return sql`${auditScope(scope, hold)}
@@ -153,6 +163,7 @@ function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettin
     and not exists (select 1 from ${productAuditAttempts} a where a.item_id = i.id and a.outcome is not null
       and ${bareModel(sql`a.model`)} = ${bareModelValue(model)})
     and exists (select 1 from ${crawlCandidates} c join ${crawlDocuments} d on d.repo = c.repo where c.published_slug = p.slug)
+    and ${auditRecollectBlocksSql(sql`i.id`)}
     ${skip.length ? sql`and i.id not in (${sql.join(skip.map((id) => sql`${id}`), sql`, `)})` : sql``}`;
 }
 
@@ -313,6 +324,21 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       logger.error("qwen_second_opinion.catch_up_failed", { code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
     }
   }
+  // 원본 다시 받기의 마무리 — 모델을 부르지 않는다. 입력이 새로워진 것을 끝남으로 적어 아래에서 고르게 하고, 다시 받는 중인 수로 새 요청의 몫을 잰다.
+  // 마무리의 뜻밖의 오류는 남기고 새 요청만 이 틱에 하지 않는다(묻기는 막지 않는다). lease 잃음·fence 는 묻기의 쓰기도 같은 까닭으로 멈춘다
+  let recollectRoom = 0;
+  if (audit.enabled) {
+    try {
+      const settled = await settleAuditRecollects(lease, settings, INPUT_FRESH_MARGIN_MS);
+      tally.audit.recollectDone += settled.done;
+      tally.audit.recollectChanged += settled.changed;
+      tally.audit.recollectFailed += settled.failed;
+      recollectRoom = Math.max(0, Math.min(audit.recollectPerTick, AUDIT_RECOLLECT_MAX_WAITING - settled.waiting));
+    } catch (error) {
+      if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+      logger.error("qwen_second_opinion.recollect_settle_failed", { code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
+    }
+  }
   const startedAt = Date.now();
   // 고르지 않는 것 — 항목 실패로 그만 물은 것과 입력 기한이 지나 잠시 쉬는 것
   const given = (prefix: "a:" | "p:") => [...givenUp(observation, prefix), ...staleCooling(observation, prefix, startedAt)];
@@ -336,6 +362,24 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     observation.failures[target.key] = { code: QWEN_AUTO_INPUT_STALE, count: observation.failures[target.key]?.count ?? 0, at: now(),
       ...(validUntil ? { validUntil } : {}) };
   };
+  // 입력 기한이 지난 감사 거절 — 이 틱의 몫(recollectRoom)이 남았으면 원본을 다시 받게 하고(그동안 고르지 않는다), 아니면 예전처럼 쉰다
+  const staleTarget = async (target: Target, input: ReviewInput, validUntil: string | undefined) => {
+    if (target.kind !== "audit" || recollectRoom <= 0) { noteStale(target, validUntil); return; }
+    let request: Awaited<ReturnType<typeof requestAuditRecollect>>;
+    try {
+      request = await requestAuditRecollect(lease, target, input);
+    } catch (error) {
+      if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+      logger.error("qwen_second_opinion.recollect_request_failed", { item: target.itemId, code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
+      noteStale(target, validUntil);
+      return;
+    }
+    if (request.result === "skipped") { noteStale(target, validUntil); return; }
+    tally.inputStale += 1;
+    delete observation.failures[target.key];
+    if (request.result === "requested") { recollectRoom -= 1; tally.audit.recollectRequested += 1; }
+    else tally.audit.recollectRejected += 1;
+  };
   let ran = false;
   for (const target of queue) {
     if (!canStart()) break;
@@ -353,7 +397,7 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     if (!input) { failItem(target, "no_source"); ran = true; continue; }
     // 입력 유효 기한이 지났으면(곧 지나면) 호출 직전 증명이 늘 거절한다 — 자리를 잡지 않고 다음 대상으로(줄 머리가 막히지 않게)
     if (input.validUntil.getTime() - Date.now() < INPUT_FRESH_MARGIN_MS) {
-      noteStale(target, input.validUntil.toISOString());
+      await staleTarget(target, input, input.validUntil.toISOString());
       ran = true;
       continue;
     }
@@ -380,7 +424,7 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       // 호출 직전 증명이 거절했다 — 그 예약은 dispatch 가 이미 물렸다(evidence 에 검사). 항목 하나의 일이면 넘기고 다음 대상으로 간다
       if (error instanceof LocalModelDomainRefusedError) {
         ctx.log("qwen_auto.domain_refused", { check: error.check });
-        if (error.check === "input_expired") { noteStale(target, error.refusal.validUntil); continue; }
+        if (error.check === "input_expired") { await staleTarget(target, input, error.refusal.validUntil); continue; }
         if (STEP_WIDE_REFUSALS.has(error.check)) break;
         failItem(target, error.check === "target_not_open" ? "not_open" : error.check);
         continue;
@@ -417,6 +461,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   if (!ran) return;
   ctx.log("qwen_second_opinion.ran", { auditAsked: tally.audit.asked, auditReleased: tally.audit.released, auditKept: tally.audit.autoKept,
     auditHeld: tally.audit.autoHeld, auditCaughtUp: tally.audit.caughtUp, auditLeftThin: tally.audit.leftThin, auditLeftSplit: tally.audit.leftSplit,
+    recollectRequested: tally.audit.recollectRequested, recollectRejected: tally.audit.recollectRejected, recollectDone: tally.audit.recollectDone,
+    recollectChanged: tally.audit.recollectChanged, recollectFailed: tally.audit.recollectFailed,
     publishedAsked: tally.published.asked,
     publishedKept: tally.published.kept, failed: tally.failed, inputStale: tally.inputStale, endpointError: tally.endpointError !== null });
   await saveObservation(lease, { ...observation, lastRunAt: now() });
@@ -511,7 +557,11 @@ async function writePublished(target: PublishedTarget, review: QwenDirectReview,
 
 export type QwenAutoStatus = {
   model: string | null; url: string | null; promptVersion: string;
-  audit: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; remaining: number; scope: AuditOpinionScope; autoClose: boolean };
+  audit: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; remaining: number; scope: AuditOpinionScope; autoClose: boolean;
+    /** 원본 다시 받기의 틱당 요청 상한(0 이면 새로 요청하지 않는다) */
+    recollectPerTick: number };
+  /** 입력 기한이 지난 감사 거절의 원본 다시 받기(audit-stale-recollect.ts) — 다시 받는 중·끝남(근거 바뀜)·실패(사람 몫). 못 읽으면 null */
+  recollect: AuditRecollectStatus | null;
   /** 오늘(UTC) 답으로 닫은 수(audit-auto-close.ts) — 유지·숨김(되돌린 것 포함)·되돌린 수, 그 확신 하한 */
   autoClose: AutoCloseToday & { minConfidence: number };
   /** 답으로 닫지 않고 열어 둔 무리 — 화면 판별 대기(글이 적은 페이지)·엇갈림(audit-screen-review.ts). 못 읽으면 null */
@@ -532,7 +582,7 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
   const model = config?.model ?? "";
   const observation = await readQwenAutoObservation(model);
   const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
-  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff, today, screen] = await Promise.all([
+  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff, today, screen, recollect] = await Promise.all([
     db.select({
       hour: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours')::int`,
@@ -554,12 +604,15 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
     // 일지(0116)를 못 읽어도 상태 칸은 그린다
     autoCloseToday().catch(() => ({ day: utcDay(), kept: 0, held: 0, undone: 0 })),
     screenReviewCounts().catch(() => null),
+    // 표(0188)가 아직 없는 DB(배포 순서)에서도 상태 칸은 그린다
+    auditRecollectStatus().catch(() => null),
   ]);
   return {
     model: config?.model ?? null, url: config?.baseUrl ?? null, promptVersion: QWEN_V2_PROMPT_VERSION,
     audit: { enabled: steps.auditSecondOpinion.enabled, perTick: steps.auditSecondOpinion.perTick, lastHour: auditRow?.hour ?? 0, lastDay: auditRow?.day ?? 0,
-      remaining: auditLeft?.count ?? 0, scope: steps.auditSecondOpinion.scope, autoClose: steps.auditSecondOpinion.autoClose },
-    autoClose: { ...today, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE }, screen,
+      remaining: auditLeft?.count ?? 0, scope: steps.auditSecondOpinion.scope, autoClose: steps.auditSecondOpinion.autoClose,
+      recollectPerTick: steps.auditSecondOpinion.recollectPerTick },
+    autoClose: { ...today, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE }, screen, recollect,
     published: { enabled: steps.publishedFilter.enabled, perTick: steps.publishedFilter.perTick, lastHour: publishedRow?.hour ?? 0,
       lastDay: publishedRow?.day ?? 0, keptHour: publishedRow?.keptHour ?? 0, keptDay: publishedRow?.keptDay ?? 0, remaining: publishedLeft?.count ?? 0 },
     lastRunAt: observation.lastRunAt, lastSuccessAt: observation.lastSuccessAt, lastError: observation.lastError,

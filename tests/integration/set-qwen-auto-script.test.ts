@@ -138,13 +138,13 @@ describe("set-qwen-auto", () => {
 
   it("감사 두 번째 의견의 범위·답으로 닫기 — 끄고 좁히는 것은 까닭 없이, 넓히는 것은 까닭을 받는다", async () => {
     expect((await run(["--step=auditSecondOpinion", "--enable", "--reason=적체 회복"])).code).toBe(0);
-    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true });
+    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 });
     const narrowed = await run(["--step=auditSecondOpinion", "--scope=hold", "--auto-close=off"]);
     expect(narrowed.code).toBe(0);
     expect(narrowed.json).toMatchObject({ ok: true, before: { scope: "all", autoClose: true }, after: { scope: "hold", autoClose: false } });
     expect((await run(["--step=auditSecondOpinion", "--auto-close=on"])).code).toBe(1);
     expect((await run(["--step=auditSecondOpinion", "--scope=all"])).code).toBe(1);
     expect((await run(["--step=auditSecondOpinion", "--scope=all", "--auto-close=on", "--reason=사용자 결정"])).code).toBe(0);
-    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true });
+    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 });
   });
 });

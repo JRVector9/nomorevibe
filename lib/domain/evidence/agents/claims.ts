@@ -8,6 +8,7 @@ import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { reviewHash } from '@/lib/crawl/agent-review-contract';
 import { reviewCandidatePredicate } from '@/lib/crawl/agent-review-repository';
 import { staleSecondReviewScanDemand } from '@/lib/crawl/second-review-stale';
+import { auditRecollectScanDemand } from '@/lib/crawl/audit-stale-recollect-demand';
 import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { mergeWithDefaults } from '@/lib/crawl/settings';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
@@ -272,6 +273,8 @@ export async function fillAgentScanQueue(input: { settings: CrawlSettings; lease
     const [row] = await tx.execute<AgentScanQueueFill>(sql`
       WITH clock AS MATERIALIZED (SELECT clock_timestamp() AT TIME ZONE 'UTC' AS at),
       second_review AS ${staleSecondReviewScanDemand(settings.agentEvidence.detectorVersion, settings.secondReview.enabled)},
+      -- 입력 기한이 지나 원본을 다시 받는 감사 거절(0188, lib/crawl/audit-stale-recollect.ts) — 2차 대기처럼 매일 볼 수요·1차 심사 몫 우선순위로 올린다
+      audit_recollect AS ${auditRecollectScanDemand()},
       inputs AS (
         SELECT lower(regexp_replace(repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1')) AS repository_key,
           status NOT IN ('seeded', 'verified') AS requires_daily, CASE WHEN status IN ('seeded', 'verified') THEN created_at END AS public_created_at
@@ -280,6 +283,8 @@ export async function fillAgentScanQueue(input: { settings: CrawlSettings; lease
         SELECT lower(repo), true, NULL FROM crawl_candidates WHERE state IN ('new', 'needs_review', 'approved')
         UNION ALL
         SELECT repository_key, true, NULL FROM second_review
+        UNION ALL
+        SELECT repository_key, true, NULL FROM audit_recollect
       ),
       demand AS (
         SELECT repository_key, bool_or(requires_daily) AS requires_daily, min(public_created_at) AS public_created_at FROM inputs
@@ -299,6 +304,8 @@ export async function fillAgentScanQueue(input: { settings: CrawlSettings; lease
         WHERE ${reviewCandidatePredicate(settings, { staleScanOnly: true })}
         UNION
         SELECT repository_key FROM second_review
+        UNION
+        SELECT repository_key FROM audit_recollect
       ),
       computed AS (
         SELECT d.repository_key, d.requires_daily,

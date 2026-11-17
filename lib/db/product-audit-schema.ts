@@ -199,6 +199,44 @@ export const productAuditSecondOpinions = pgTable("product_audit_second_opinions
 ]);
 
 /**
+ * 입력 기한이 지난 감사 거절의 원본 다시 받기(0188, 2026-11-17) — 항목마다 한 줄(lib/crawl/audit-stale-recollect.ts).
+ *
+ * 두 번째 의견(qwen-v2-auto)은 입력 유효 기한(min(수집, 스캔) + 24시간)이 지난 감사 거절을 묻지 못한다. 11/01 grok 감사(캠페인 6)의 열린 거절 538건은
+ * 원본이 8~9월에 수집돼 한 시간마다 다시 골라도 늘 input_stale 로 끝났다. 그런 항목은 기존 수집 경로(crawl_frontier → crawl-fetch, 스캔은
+ * agent_repository_claims 의 1차 심사 몫 우선순위)로 원본을 다시 받게 하고, 입력이 새로워지면 이 줄을 끝냄(done)으로 적어 두 번째 의견이 묻게 한다.
+ * state: waiting(다시 받는 중 — 두 번째 의견이 고르지 않는다) · done(입력이 새로워짐) · failed(다시 받지 못함 — 사람 몫, 다시 고르지 않는다) ·
+ * dropped(그 사이 사람이 정했거나 내려가 열린 거절이 아니다).
+ * before_digest·after_digest 는 감사 입력의 product 칸(이름·소개·본문·README·주소…)마다의 짧은 해시, changed_fields 는 바뀐 칸 이름이다 —
+ * 원래 감사 판정의 근거가 바뀌었는지(source_changed)를 남긴다.
+ */
+export type ProductAuditRecollectState = "waiting" | "done" | "failed" | "dropped";
+
+export const productAuditRecollects = pgTable("product_audit_recollects", {
+  itemId: integer("item_id").primaryKey().references(() => productAuditItems.id, { onDelete: "cascade" }),
+  productId: integer("product_id").notNull(),
+  repo: varchar("repo", { length: 200 }).notNull(),
+  state: varchar("state", { length: 16 }).$type<ProductAuditRecollectState>().notNull().default("waiting"),
+  /** 다시 받기를 요청한 횟수 — done 뒤 입력이 또 기한을 넘기면 한 번 더 요청한다(상한 lib/crawl/audit-stale-recollect.ts) */
+  requests: integer("requests").notNull().default(1),
+  requestedAt: timestamp("requested_at", { precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  /** 요청할 때의 원본 수집 시각·스캔 완료 시각 — 감사가 본 근거의 나이 */
+  beforeFetchedAt: timestamp("before_fetched_at", { precision: 3 }),
+  beforeScanCompletedAt: timestamp("before_scan_completed_at", { precision: 3 }),
+  beforeDigest: jsonb("before_digest").$type<Record<string, string>>(),
+  afterFetchedAt: timestamp("after_fetched_at", { precision: 3 }),
+  afterDigest: jsonb("after_digest").$type<Record<string, string>>(),
+  changedFields: jsonb("changed_fields").$type<string[]>(),
+  sourceChanged: boolean("source_changed"),
+  failureCode: varchar("failure_code", { length: 40 }),
+  failureDetail: varchar("failure_detail", { length: 400 }),
+  settledAt: timestamp("settled_at", { precision: 3 }),
+}, (table) => [
+  index("product_audit_recollects_waiting_idx").on(table.requestedAt).where(sql`${table.state} = 'waiting'`),
+  check("product_audit_recollects_state_check", sql`${table.state} in ('waiting', 'done', 'failed', 'dropped')`),
+  check("product_audit_recollects_failure_check", sql`(${table.state} = 'failed') = (${table.failureCode} is not null)`),
+]);
+
+/**
  * 감사 정책 처리(0116, 2026-10-22) — 운영자가 거르기로 고른 감사 항목을 한 번에 닫는 실행 한 번(lib/crawl/audit-policy.ts).
  *
  * kind: close(열린 거절을 내리기·유지·보류 풀기) · import(두 번째 의견 파일 올리기) · extend(곧 끝나는 유지 연장).
@@ -300,3 +338,4 @@ export type ProductAuditItem = typeof productAuditItems.$inferSelect;
 export type ProductAuditSecondOpinion = typeof productAuditSecondOpinions.$inferSelect;
 export type ProductAuditPolicyRun = typeof productAuditPolicyRuns.$inferSelect;
 export type ProductAuditPolicyRunItem = typeof productAuditPolicyRunItems.$inferSelect;
+export type ProductAuditRecollect = typeof productAuditRecollects.$inferSelect;
