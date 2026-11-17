@@ -25,9 +25,11 @@ it('does not fetch a current sample again, including known absence', async () =>
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
 it('retains the previous sample without falsely upgrading its version on transient failure', async () => {
-  await document({readmeSample: 'old'}); mocks.fetch.mockResolvedValue(null);
-  expect((await loadReviewDocument('acme/readme'))?.pageMeta).toEqual({readmeSample: 'old'});
-  expect((await getDocument('acme/readme'))?.pageMeta).toEqual({readmeSample: 'old'});
+  await document({readmeSample: 'old'}); mocks.fetch.mockImplementation(async (_repo: string, _request: unknown, report?: (error: string) => void) => {report?.('timeout'); return null;});
+  const result = await loadReviewDocument('acme/readme');
+  expect(result?.pageMeta).toMatchObject({readmeSample: 'old', readmeFetchError: 'timeout', readmeFetchAttempts: 1});
+  expect(result?.pageMeta?.readmeSampleVersion).toBeUndefined();
+  expect((await getDocument('acme/readme'))?.pageMeta).toEqual(result?.pageMeta);
 });
 it('does not attach a fetched README to a document that changed during the request', async () => {
   await document({readmeSample: 'old'});

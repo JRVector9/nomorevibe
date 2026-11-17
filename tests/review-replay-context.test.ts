@@ -155,6 +155,6 @@ it("retains ordinary README fetching outside replay", async () => {
   boundary.fetch.mockResolvedValue("stored sample");
   boundary.save.mockResolvedValue(document());
   expect(await loadReviewDocument(candidate.repo)).toEqual(document());
-  expect(boundary.fetch).toHaveBeenCalledWith(candidate.repo);
+  expect(boundary.fetch).toHaveBeenCalledWith(candidate.repo, undefined, expect.any(Function));
   expect(boundary.save).toHaveBeenCalledTimes(1);
 });
