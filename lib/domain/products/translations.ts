@@ -146,6 +146,7 @@ const MEMBER_KEY = sql`('product-translate:' || ${t.productId} || ':' || ${t.loc
  * 예전에는 같은 맨 앞 묶음을 매 틱 다시 골라 장부 fence 에 미뤄지며 경로 전체가 무진척이었다. keepOwn: 이 boot 의 대기·예약 요청 멤버는
  * 빼지 않는다 — 조정기가 그 요청을 이어받거나(복구 먼저) 지운다. `exclude` 는 이 틱에 이미 시도해 넘긴 멤버(잡이 다음 수요로 고른다).
  * 재시도 간격(retry_at)·최대 시도(maxAttempts)가 그대로 조절판이다.
+ * 상한 16: 잡은 한 묶음에 한 언어만 담으려고 batchMax 보다 넓게 읽는다(lib/jobs/products/translation-locale-batch.ts).
  */
 export async function pendingProductTranslations(limit = 4, options: { owner?: CapacityOwner; exclude?: readonly string[] } = {}):
   Promise<ProductTranslationTask[]> {
@@ -158,7 +159,7 @@ export async function pendingProductTranslations(limit = 4, options: { owner?: C
       sql`(${t.retryAt} is null or ${t.retryAt} <= now())`,
       sql`${MEMBER_KEY} NOT IN (${busyMemberKeysSql(`${PRODUCT_TRANSLATION_JOB}:`, { owner, keepOwn: true })})`,
       exclude.length ? sql`${MEMBER_KEY} NOT IN (${sql.join(exclude.map(key => sql`${key}`), sql`, `)})` : undefined))
-    .orderBy(asc(t.updatedAt), asc(t.productId), asc(t.locale), asc(t.field)).limit(Math.max(1, Math.min(8, limit)));
+    .orderBy(asc(t.updatedAt), asc(t.productId), asc(t.locale), asc(t.field)).limit(Math.max(1, Math.min(16, limit)));
   return rows;
 }
 

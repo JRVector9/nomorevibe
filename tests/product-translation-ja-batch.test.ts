@@ -97,6 +97,6 @@ it("no dispatched batch ever mixes locales across a whole simulated queue", () =
   }
   expect(batches.every(batch => new Set(batch).size === 1)).toBe(true);
   expect(batches.flat()).toHaveLength(30);
-  // 창 8건이면 한 언어가 2~3건 — 첫 묶음은 맨 앞 en 과 같은 언어
-  expect(batches[0]).toEqual(["en", "en", "en"]);
+  // 창 16건이면 en 이 6건 — 첫 묶음은 맨 앞 en 과 같은 언어로 4건을 채운다
+  expect(batches[0]).toEqual(["en", "en", "en", "en"]);
 });
