@@ -63,3 +63,77 @@ PR: https://github.com/JRVector9/nomorevibe/pull/988
 
 마이그레이션·CHECK 재구성은 없다. 코드 되돌림은 이 PR 구현 커밋의 revert 후 기존 배포 절차를 따른다.
 일반 모델 호출 앱 교체의 DRAIN은 기존 배포 정책대로 하며, 이 작업은 배포하지 않는다.
+
+## 이어서(2026-11-17): 2순위 DeepSeek 저장 경로
+
+사람 지시: 「deepseek 2순위로 넣어」. 감사 두 번째 의견의 2순위에 `m3-deepseek · deepseek-v4.1-flash-1017`(M3 :8010, 키 없음)을
+넣을 수 있게 한다. 이번 작업은 코드·PR·CI까지다. 병합·배포·운영 설정 저장·운영 DB 쓰기는 하지 않았다.
+
+### 완료·남은 일
+
+- [x] 막힌 점 확인: `saveAiTaskRanks`가 `isAiLiveTask`에 없는 작업을 거절했다. 그래서 화면·CLI로 이 작업의 순위를 저장할 수 없었다.
+- [x] 저장 가능하게 함. `isAiLiveTask`는 그대로 두었다.
+  - 순위 일부만 실행이 읽는 작업을 새로 둔다: `aiTaskRankScopeNote` / `isAiRankSavableTask`, 감사 두 번째 의견 하나.
+  - 공개분 추가 검수 등 다른 작업의 live 여부·저장 거절은 바뀌지 않는다. 시험으로 고정했다.
+- [x] 1순위 규칙: 기본 Qwen 직접 설정(`qwenDirectConfig`)과 서버·모델이 같아야 한다. 다르면 **거절**한다.
+  - 이유: 실행은 1순위를 이 순위가 아니라 기본 설정에서 읽는다. 다르게 저장하면 실행이 바뀐다고 오해하게 된다.
+  - 기본 설정을 못 읽으면 저장을 거절한다.
+- [x] 2·3순위 규칙: 기본 모델과 같은 모델(다른 서버라도)이면 거절한다.
+  - 저장할 때 같은 주소·모델의 로컬 계약을 다시 쓰고 `local-second-opinion` 정책 route만 덧붙인다.
+  - 계약이 없으면 readback과 1토큰 시험을 거쳐 새로 만든다.
+- [x] 저장 결과의 `scope` 문장에 범위를 적는다.
+  - 1순위는 실행을 바꾸지 않는다.
+  - 2·3순위는 같은 모델이 낸 재판정 거절의 두 번째 의견에만 쓴다.
+  - 이 문장은 화면 저장 결과와 CLI(stdout JSON, stderr `범위 …`)에 같이 나온다.
+- [x] 관리 화면(/admin/models 작업 배정)
+  - 순위 편집기를 열고 설명을 보인다.
+  - 순위 줄 표시는 「대체 순서」 대신 「기본 설정」·「재판정 거절만」이다.
+  - 쓸 일 없는 「순위대로/동시에」 고르기는 숨긴다.
+  - 확인·저장 결과 단계에 설명이 나온다.
+  - 작업 표는 실제 적용 설정 뒤에 2·3순위를 보인다. 그 모델의 장부 호출은 「설정에 없는 모델」로 경고하지 않는다.
+- [x] 범위 시험·정적 검사·화면 확인(아래)
+- [ ] (사람) 병합·배포 뒤 아래 명령으로 순위 저장
+
+### 검증(실제 실행)
+
+- 새 단위 시험 `tests/audit-second-opinion-rank-save.test.ts`
+  - 수정 전 6/14, 수정 후 14/14.
+- 새 통합 시험 `tests/integration/audit-second-opinion-rank-save.test.ts`(자기 DB)
+  - 수정 전 0/3, 수정 후 3/3.
+  - 운영 명령 그대로 `set` 하면 2순위 계약·route가 생기고, PR #988의 `rejudgeSecondOpinionModels`가 DeepSeek를 고른다.
+  - `verifiedLocalModelContract`·`localModelRouteIdReady` 통과를 실제로 확인했다.
+  - `--rank1`만 다시 저장하면 되돌아간다.
+- 관련 단위 75파일 1188건 통과.
+- 관련 통합 7파일 94건 통과.
+  - 전용 Postgres 컨테이너에서 돌렸다. 공유 시험 DB(55435)는 다른 작업과 동시에 돌아 deadlock 40P01이 났다. 환경 문제다.
+- `npx next typegen`, `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit -p .` 통과.
+- 변경 파일 eslint 오류 0, `git diff --check` 통과.
+- 화면: 로컬 일회용 DB(docker)에 연결 2개·계약·정책을 심고, `ADMIN_LOCAL_LOGIN=1 next dev`에서 Playwright로 열었다.
+  - 1440·390 폭에서 설명 칸이 잘리지 않았다(scrollWidth = clientWidth). 가로 넘침 0, 페이지 오류 0.
+  - 2순위 고르기 → 확인 → 저장까지 눌러 보았다.
+
+### 배포 범위·적용 명령(실행하지 않음)
+
+`npm run deploy -- scope --base a9c53498 --sha <머리>` → `trusted:true`, `deployment-scope-v2`, `mode:full`, 18개 앱이다.
+공통 lib·스타일시트 변경의 기존 분류다.
+
+병합·배포 뒤 웹 또는 reviewer 컨테이너에서 실행한다. 기본 Qwen 직접 설정 env가 실행 쪽과 같은 곳이어야 한다. `--operator`가 없으면 사용법 오류(2)로 끝난다.
+
+```
+node --import tsx scripts/ops/ai-task-ranks.ts set --operator=<이름> --task=audit-second-opinion --slot=1 \
+  '--rank1=gpu3090-qwen|qwen3.8-flash-next' '--rank2=m3-deepseek|deepseek-v4.1-flash-1017'
+```
+
+되돌리기는 1순위만 다시 저장한다. 2순위가 빠지면 실행 쪽은 다른 모델을 고르지 않는다. 덧붙인 정책 route·계약은 남지만 쓰이지 않는다.
+
+```
+node --import tsx scripts/ops/ai-task-ranks.ts set --operator=<이름> --task=audit-second-opinion --slot=1 \
+  '--rank1=gpu3090-qwen|qwen3.8-flash-next'
+```
+
+### 적용 전 확인할 것(운영 읽기, 이번 작업에서 하지 않음)
+
+- 연결 이름이 정확히 `gpu3090-qwen`·`m3-deepseek`인지 확인한다. `status`로 본다.
+- 웹 프로세스가 M3 DeepSeek 계약을 읽을 수 있는지 확인한다. 관리 표의 계약 또는 웹 env의 `LOCAL_MODEL_SERVING_CONTRACTS`면 된다.
+  - 계약이 워커 env에만 있으면 저장이 「같은 서버인지 모른다」로 거절한다. 같은 주소·모델의 표 행을 새로 만들어 다른 단계의 경로를 닫지 않게 하기 위해서다.
+- `m3-deepseek` 연결의 장비 이름과 그 계약의 `physicalGroup`이 같은지 확인한다.
