@@ -523,7 +523,9 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const textLocalDirectTail = `) OR (${events ? textLocalDirectEventTerminalSql : textLocalDirectTerminalSql})`;
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
-      let full = new PgDialect().sqlToQuery(check.value).sql;
+      // Compare the historical expression before 0190 widened the websearch locale list.
+      let full = new PgDialect().sqlToQuery(check.value).sql.replaceAll(
+        "sourceLocale' IN ('ko','zh-Hans','zh-Hant','ja','han')", "sourceLocale' IN ('ko','zh-Hans','zh-Hant')");
       // 0184 appends Japanese after the complete 0174 predecessor on both terminal CHECKs.
       const japaneseTail = `) OR (${events ? japaneseProductEventSql : japaneseProductTerminalSql})`;
       expect(full.startsWith("(") && full.endsWith(japaneseTail), `${name}: 0184 tail present`).toBe(true);
@@ -713,7 +715,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(current0174[name].split(`(${pair[0]})`), `${name}: the applied 0168 leaf occurs once before 0175`).toHaveLength(2);
       expect(current0175[name], `${name}: 0168 leaf replaced in place by the corrected twin`).toBe(current0174[name].replace(`(${pair[0]})`, () => `(${pair[1]})`));
     }
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    await migrateThrough(184);
     const current0184 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const japanese: Record<string, string> = { model_capacity_requests_logical_check: japaneseProductLogicalSql,
       model_capacity_requests_members_check: japaneseProductMembersSql, model_capacity_requests_dispatch_check: japaneseProductDispatchSql,
@@ -723,6 +725,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(current0184[name], `${name}: 0184 preserves every earlier ordinal`).toBe(branch
         ? `CHECK (${inner(current0175[name])} OR (${branch}))` : current0175[name]);
     }
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);

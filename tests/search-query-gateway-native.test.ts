@@ -33,7 +33,7 @@ function pinDirect(auth: ServingContractAuth = "none", apiKey: string | null = n
   setServingContractSnapshotForTest([{ routeId: "search-query-translate", model, contract: {}, auth, apiKey, transport }]);
 }
 /** The legacy gateway leaf no longer sends anything: no_key without touching its injected request. 순위 범위 안에서만 모델을 읽는다. */
-async function legacyLeaf(input: WebsearchQueryGatewayInput) {
+async function legacyLeaf(input: Extract<WebsearchQueryGatewayInput, { promptVersion?: never }>) {
   const request = vi.fn(async () => new Response(JSON.stringify(envelope())));
   const result = await inTextRank("search-query-translate", model, () => input.sourceLocale === "ko"
     ? translateQueryToEnglish(input.query, 1000, request as unknown as typeof fetch)

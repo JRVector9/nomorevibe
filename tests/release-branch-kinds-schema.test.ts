@@ -100,7 +100,9 @@ it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the co
     }
     if (name === "model_capacity_requests_dispatch_check") {
       // 0161 stores the text local-direct branch as the next rules ordinal. The TypeScript check() still ends with (0158 predicate) OR (text branches): strip that wrap first.
-      const textTail = `) OR (${textLocalDirectDispatchSql})`;
+      const widened = textLocalDirectDispatchSql.replaceAll("sourceLocale' IN ('ko','zh-Hans','zh-Hant')",
+        "sourceLocale' IN ('ko','zh-Hans','zh-Hant','ja','han')");
+      const textTail = `) OR (${widened})`;
       expect(expression.startsWith("(") && expression.endsWith(textTail), `${name}: 0161 tail present`).toBe(true);
       expression = expression.slice(1, -textTail.length);
     }

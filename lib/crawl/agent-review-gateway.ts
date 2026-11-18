@@ -1332,10 +1332,11 @@ import { websearchQueryModelDispatchSchema, websearchQueryGatewayTerminalEvidenc
   type WebsearchQueryGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { websearchQueryServingContractHash, websearchQueryServingContractSchema, websearchQueryRouteServingContractSchema,
   resolveWebsearchQueryServingContract, type WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
+import { MULTILINGUAL_QUERY_PROMPT_VERSION } from "@/lib/domain/products/search-query-language";
 import { parseQueryTranslation, websearchQueryGatewayWire, type WebsearchQueryGatewayInput } from "./translate";
 
 export type PreparedWebsearchQueryGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
-  servingContractHash: string; totalTokenBound: number; model: string; queryHash: string; sourceLocale: WebsearchQueryGatewayInput["sourceLocale"] }>;
+  servingContractHash: string; totalTokenBound: number; model: string; queryHash: string; sourceLocale: WebsearchQueryGatewayInput["sourceLocale"]; multilingual: boolean }>;
 export type WebsearchQueryGatewayTerminal = Readonly<{ kind: "websearch_query_gateway_terminal" }>;
 export type WebsearchQueryGatewayResult = { ok: true; keywords: string } | { ok: false; error: string };
 const websearchQueryCalls = new WeakMap<PreparedWebsearchQueryGatewayCall, { wire: string;
@@ -1344,8 +1345,11 @@ const websearchQueryTerminals = new WeakMap<WebsearchQueryGatewayTerminal, Webse
 function validWebsearchQueryInput(value: unknown): value is WebsearchQueryGatewayInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
-  return Object.keys(row).sort().join(",") === "query,sourceLocale" && typeof row.query === "string" && !!row.query
-    && row.query === row.query.trim() && ["ko", "zh-Hans", "zh-Hant"].includes(String(row.sourceLocale));
+  if (typeof row.query !== "string" || !row.query || row.query !== row.query.trim() || typeof row.sourceLocale !== "string") return false;
+  const keys = Object.keys(row).sort().join(",");
+  if (keys === "query,sourceLocale") return ["ko", "zh-Hans", "zh-Hant"].includes(row.sourceLocale);
+  return keys === "promptVersion,query,sourceLocale" && row.promptVersion === MULTILINGUAL_QUERY_PROMPT_VERSION
+    && ["zh-Hans", "zh-Hant", "ja", "han"].includes(row.sourceLocale);
 }
 /** One physical query POST per preparation; a caller descriptor never enables a deployment. */
 export function prepareWebsearchQueryGatewayCall(input: WebsearchQueryGatewayInput, options: TextPrepareOptions):
@@ -1361,7 +1365,7 @@ export function prepareWebsearchQueryGatewayCall(input: WebsearchQueryGatewayInp
   if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
   const wire = textWireFor(contract, model, engine => websearchQueryGatewayWire(snapshot, engine));
   const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire), servingContractHash: websearchQueryServingContractHash(contract),
-    totalTokenBound: contract.totalTokenBound, model, queryHash: sha(snapshot.query), sourceLocale: snapshot.sourceLocale });
+    totalTokenBound: contract.totalTokenBound, model, queryHash: sha(snapshot.query), sourceLocale: snapshot.sourceLocale, multilingual: snapshot.promptVersion !== undefined });
   websearchQueryCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
   return call;
 }
@@ -1381,6 +1385,7 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   const owned = checked.data, binding = owned.binding;
   if (textWireFor(state.contract, call.model, engine => websearchQueryGatewayWire(snapshot, engine)) !== state.wire || sha(snapshot.query) !== call.queryHash
     || binding.member.queryHash !== call.queryHash || binding.member.sourceLocale !== snapshot.sourceLocale
+    || (call.multilingual && binding.member.promptVersion !== snapshot.promptVersion)
     || snapshot.sourceLocale !== call.sourceLocale || binding.model !== call.model || binding.wireHash !== call.wireHash
     || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
