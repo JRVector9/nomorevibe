@@ -451,12 +451,21 @@ export type AuditOpinionScope = (typeof AUDIT_OPINION_SCOPES)[number];
  * 켬/끔·틱당 수가 없거나 깨지면 그 단계는 꺼짐이다(다른 단계와 같다). scope·autoClose 는 없으면 기본값(all·켬)으로 읽는다 — 사용자 결정(2026-10-22)으로
  * 이 칸 전의 운영 행이 배포만으로 새 기본값을 탄다. 이 칸을 모르는 옛 코드(strict)는 이 칸이 저장된 행을 깨진 단계(꺼짐)로 읽는다 — 안전한 쪽이다
  */
+/** 감사 거절의 원본 다시 받기 — 틱당 요청 상한의 최댓값(recollectPerTick) */
+export const AUDIT_RECOLLECT_MAX_PER_TICK = 10;
 export const auditSecondOpinionSchema = z.object({
   enabled: z.boolean(),
   perTick: z.number().int().min(1).max(QWEN_AUTO_MAX_PER_TICK),
   scope: z.enum(AUDIT_OPINION_SCOPES).default("all"),
   /** 답으로 닫는다 — 승인(확신 0.90 이상·다른 모델 거절 없음)은 유지, 거절(확신 0.90 이상·주인 없음)은 숨김(보류). 내리지는 않는다 */
   autoClose: z.boolean().default(true),
+  /**
+   * 입력 기한(min(수집, 스캔) + 24시간)이 지나 묻지 못한 감사 거절의 원본을 한 틱에 몇 건까지 다시 받게 하나(lib/crawl/audit-stale-recollect.ts, 0188).
+   * 0 이면 새로 요청하지 않는다(이미 요청한 것의 마무리만 한다). 한 건이 GitHub core 요청 약 13회(저장소 1~2 + 스캔 9~12)라 기본 1(틱 1분 →
+   * 시간당 최대 60건·약 780회)로 보수적으로 둔다. 동시에 다시 받는 중인 것은 AUDIT_RECOLLECT_MAX_WAITING 을 넘지 않는다.
+   * 없으면 기본값으로 읽는다 — 이 칸을 모르는 옛 코드(strict)는 이 칸이 저장된 행을 깨진 단계(꺼짐)로 읽는다(scope·autoClose 와 같다, 안전한 쪽)
+   */
+  recollectPerTick: z.number().int().min(0).max(AUDIT_RECOLLECT_MAX_PER_TICK).default(1),
 }).strict();
 export type AuditSecondOpinionSettings = z.infer<typeof auditSecondOpinionSchema>;
 
@@ -502,7 +511,7 @@ export type QwenAutoStep = keyof QwenAutoSettings;
 export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview", "sameModelRecheck"] as const satisfies readonly QwenAutoStep[];
 /** 모두 꺼짐 — 칸이 없는 행·깨진 단계도 이 값으로 읽는다 */
 export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
-  auditSecondOpinion: { enabled: false, perTick: 10, scope: "all", autoClose: true }, publishedFilter: { enabled: false, perTick: 10 },
+  auditSecondOpinion: { enabled: false, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 }, publishedFilter: { enabled: false, perTick: 10 },
   splitTiebreak: { enabled: false, perTick: 10, dailyRejectCap: SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP }, heldRetry: DEFAULT_HELD_QWEN_RETRY,
   screenReview: { enabled: false, perTick: 2, autoClose: true },
   sameModelRecheck: { enabled: false, perTick: 1 },

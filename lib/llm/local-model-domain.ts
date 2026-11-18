@@ -11,6 +11,7 @@ import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { auditSettings, lockAuditDispatchItem } from "@/lib/crawl/product-audit";
+import { attachProjectActivity, loadProjectActivity } from "@/lib/crawl/audit-project-activity";
 import { auditReviewer } from "@/lib/crawl/product-audit-reviewer";
 import { isAssistCapacityInput, type LocalModelInput } from "./local-model-input";
 import { freshLocalModelScreenProof, localModelJob, type LocalModelScreenProof, type LocalModelTarget } from "./local-model-capacity-contract";
@@ -19,7 +20,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewEvidenceAge } f
 import { deepseekActor } from "@/lib/crawl/deepseek-review-policy";
 import { heldQwenActor, heldQwenConcluded, heldQwenOwns } from "@/lib/crawl/held-qwen-retry-policy";
 import { inputDelegatedAttempts } from "@/lib/crawl/held-qwen-handoff";
-import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
+import { QWEN_V2_AUDIT_PROMPT_VERSION, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import type { LocalModelDomainCheck, LocalModelDomainRefusal } from "./local-model-domain-refusal";
 
 /** 관리자 재판정 loader는 발행 후보를 거절한다. direct 감사에는 발행 원본도 잠가야 한다. */
@@ -105,6 +106,12 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
   if (current.input.sourceRevisionHash !== input.sourceRevisionHash) return refuse("source_changed");
   let expected = target.kind === "audit"
     ? await loadReviewInput(current.candidate, current.document, auditSettings(current.settings), tx) : current.input;
+  // 감사 거절의 두 번째 의견(감사 전용 판 QWEN_V2_AUDIT_PROMPT_VERSION — 기본 모델이든 순위의 다른 모델이든)은 프로젝트 활동 묶음을 싣는다
+  // (loadAuditInput projectActivity) — 같은 원본·같은 트랜잭션으로 다시 만들어 견준다. 같은 자리(second_opinion)를 쓰는 같은 모델 재검토(#989,
+  // SAME_MODEL_RECHECK_PROMPT_VERSION)는 묶음 없이 입력을 만들므로 묶음을 붙이지 않고 그대로 견준다 — 판은 binding 에 굳어 있어 호출자가 고를 수 없다
+  if (target.kind === "audit" && target.purpose === "second_opinion" && promptVersion === QWEN_V2_AUDIT_PROMPT_VERSION) {
+    expected = attachProjectActivity(expected, await loadProjectActivity(target.slug, current.document, tx));
+  }
   let splitFirstAttemptId: number | null = null;
   if (target.kind === "split") {
     const { currentGate } = await import("@/lib/crawl/gate-split-tiebreak");

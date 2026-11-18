@@ -16,6 +16,8 @@ import { firstReviewer } from "./agent-review";
 import { classifyAuditReason } from "./audit-reason-category";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { loadReviewInput } from "./agent-review-repository";
+import { attachProjectActivity, loadProjectActivity } from "./audit-project-activity";
+import { auditRecollectField, type AuditRecollectView } from "./audit-recollect-view";
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
 import { auditReviewer, auditReviewerLabel, QWEN_AUDIT_PROVIDER, sameAuditReviewer, type AuditReviewer } from "./product-audit-reviewer";
@@ -308,11 +310,15 @@ export async function pendingAuditItems(campaignId: number, limit: number) {
  * 발행 문과 같은 입력(createReviewInput)을 만든다. 수집 원본이 없으면 null — 메이커가 직접 등록한 것.
  * 한 제품에 후보가 여럿이면(별칭) 가장 작은 id 의 후보다 — 공개분 변경 재판정의 쓸기(published-recheck.ts)가 같은 후보로 지금 내용을 만든다
  */
-export async function loadAuditInput(slug: string, settings: CrawlSettings): Promise<ReviewInput | null> {
+export async function loadAuditInput(slug: string, settings: CrawlSettings,
+  /** projectActivity: 프로젝트 활동 묶음(audit-project-activity.ts)을 싣는다 — 감사 거절의 두 번째 의견과 그 원본 다시 받기만 쓴다 */
+  options: { projectActivity?: boolean } = {}): Promise<ReviewInput | null> {
   const [row] = await db.select({ candidate: crawlCandidates, document: crawlDocuments }).from(crawlCandidates)
     .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
     .where(eq(crawlCandidates.publishedSlug, slug)).orderBy(asc(crawlCandidates.id)).limit(1);
-  return row ? loadReviewInput(row.candidate, row.document, auditSettings(settings)) : null;
+  if (!row) return null;
+  const input = await loadReviewInput(row.candidate, row.document, auditSettings(settings));
+  return options.projectActivity ? attachProjectActivity(input, await loadProjectActivity(slug, row.document)) : input;
 }
 
 export async function markAuditNoSource(itemId: number, lease: JobLease): Promise<void> {
@@ -543,6 +549,8 @@ export type AuditFindingRow = {
   textLength: number | null; screenJudged: boolean; m1Split: boolean;
   /** 공개분 변경 재판정(0171)가 무엇이 바뀌어 다시 올렸나(published-recheck-change.ts). 사람이 연 감사의 항목은 null */
   changeSummary: Record<string, unknown> | null;
+  /** 입력 기한이 지나 원본을 다시 받은 줄(audit-recollect-view.ts, 0188) — 받는 중·감사 때와 지금의 차이·다시 받지 못한 사유. 없으면 null */
+  recollect: AuditRecollectView | null;
 };
 
 /** 감사 항목 id·감사 사유 — 두 번째 의견 조건이 바깥 항목을 가리킨다(모델별 거절 규칙이 사유를 본다) */
@@ -557,6 +565,7 @@ const findingColumns = {
   owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql, { reasons: true }), aiProvider: productAuditItems.aiProvider,
   textLength: pageTextLengthSql(sql`${products.id}`), screenJudged: screenJudgedSql(itemIdSql), m1Split: m1SplitSql(itemIdSql),
   changeSummary: productAuditItems.changeSummary,
+  recollect: auditRecollectField(itemIdSql),
   sameModelRecheck: sameModelRecheckField(itemIdSql),
 };
 

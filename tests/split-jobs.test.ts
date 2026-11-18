@@ -37,7 +37,8 @@ const context = (name: string, over: Partial<JobContext<null>> = {}): JobContext
   deadlineAt: Date.now() + 110_000, log: vi.fn(), lease: { name, token: "t", requestedVersion: 1 }, ...over });
 const tally = (audit: Partial<{ asked: number; caughtUp: number }> = {}, published = 0, rechecks = 0): QwenAutoTally => ({
   sameModelRecheck: { asked: rechecks, recommended: 0, failed: 0, inputStale: 0 },
-  audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0, leftThin: 0, leftSplit: 0, ...audit },
+  audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0, leftThin: 0, leftSplit: 0,
+    recollectRequested: 0, recollectRejected: 0, recollectDone: 0, recollectChanged: 0, recollectFailed: 0, ...audit },
   published: { asked: published, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null, inputStale: 0 });
 
 beforeEach(() => {
