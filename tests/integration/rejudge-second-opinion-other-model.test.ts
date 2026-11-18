@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { aiConnections, aiTaskModels, crawlCandidates, crawlDocuments, crawlSettings, jobs, modelServingContracts, productAuditAttempts, productAuditCampaigns,
-  productAuditItems, productAuditSecondOpinions, products, roleLeases } from "@/lib/db/schema";
+  productAuditItems, productAuditRecollects, productAuditSecondOpinions, products, roleLeases } from "@/lib/db/schema";
 import { putDocument } from "@/lib/crawl/repository";
 import { loadAuditInput } from "@/lib/crawl/product-audit";
 import { getSettings, saveSettings, setQwenAutoStep } from "@/lib/crawl/settings";
@@ -13,6 +13,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-r
 import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
 import { resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { qwenSecondOpinionStatus } from "@/lib/crawl/audit-second-opinion-auto";
+import { QWEN_V2_AUDIT_PROMPT_VERSION, QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { runJob } from "@/lib/jobs/runner";
 import { releaseRole, renewRole, tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
@@ -161,11 +162,15 @@ describe("재판정 거절의 다른 모델 두 번째 의견", () => {
     expect(observed[0].auth).toBe("Bearer fixture-key");
     expect(observed[0].body).toMatchObject({ model: MODEL, stream: false, chat_template_kwargs: { enable_thinking: false } });
     expect((observed[0].body.messages as { content: string }[])[0].content).toContain("SECOND-OPINION NOTES");
-    expect(await opinions()).toMatchObject([{ itemId: item.id, model: MODEL, decision: "approve", promptVersion: "2026-10-21.v2" }]);
+    // #987 과 합친 뒤(2026-11-18): 다른 순위 모델도 감사 전용 판(오래됨만으로 거절 말기)과 프로젝트 활동 묶음으로 묻는다
+    expect((observed[0].body.messages as { content: string }[])[0].content).toContain("AUDIT RECHECK NOTES");
+    expect((observed[0].body.messages as { content: string }[])[1].content).toContain("projectActivity");
+    expect(await opinions()).toMatchObject([{ itemId: item.id, model: MODEL, decision: "approve", promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION }]);
     expect((await qwenSecondOpinionStatus(await getSettings())).audit).toMatchObject({ remaining: 0, lastDay: 1 });
+    // 판은 binding 에만 있고 route·계약 키에는 없다 — 순위 저장이 만든 local-second-opinion route 그대로 호출 직전 증명을 지난다
     expect(await ledger()).toMatchObject([{ state: "settled", route_id: "local-second-opinion", model: MODEL,
       logical_work_key: `direct:audit:${item.id}:second_opinion`, dispatch_binding: { job: { name: "audit-second-opinion" },
-        target: { kind: "audit", purpose: "second_opinion", itemId: item.id } } }]);
+        promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION, target: { kind: "audit", purpose: "second_opinion", itemId: item.id } } }]);
     // 같은 판의 의견을 이미 받았다면 다음 틱에 다시 부르지 않는다.
     await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "audit-second-opinion"));
     await tick(); expect(observed).toHaveLength(1);
@@ -212,5 +217,51 @@ describe("재판정 거절의 다른 모델 두 번째 의견", () => {
     const unmapped = { ...policy, routes: policy.routes.map(row => ({ ...row, routeId: "local-audit" })) };
     await admin`UPDATE model_capacity_control SET policy=${JSON.stringify(unmapped)}::text::jsonb,policy_hash=${modelCapacityPolicyHash(unmapped)} WHERE id=1`;
     await tick(); expect(observed).toEqual([]); expect(await opinions()).toEqual([]);
+  });
+});
+
+/**
+ * #987(감사 거절 원본 다시 받기·감사 전용 판)과 #988(재판정 거절의 다른 순위 모델)이 만나는 자리 — 2026-11-18 main 병합 때 고정.
+ * 다른 순위 모델도 (1) 옛 v2 판 의견을 끝난 것으로 세고 (2) 입력 기한이 지나면 부르지 않고 원본 다시 받기를 걸며 (3) 다시 받는 동안 고르지 않고
+ * (4) 다시 받은 뒤 한 번만 묻는다
+ */
+describe("감사 전용 판·원본 다시 받기와 다른 순위 모델", () => {
+  it("다른 모델이 옛 v2 판으로 이미 답했으면 감사 전용 판으로 다시 부르지 않는다(이중 호출 없음)", async () => {
+    const { item, product } = await recheckItem();
+    await db.insert(productAuditSecondOpinions).values({ itemId: item.id, productId: product.id, model: MODEL, decision: "reject", confidence: 0.6,
+      reason: "An earlier v2 answer", source: QWEN_V2_AUTO_SOURCE, promptVersion: QWEN_V2_PROMPT_VERSION });
+    expect((await qwenSecondOpinionStatus(await getSettings())).audit.remaining).toBe(0);
+    await tick();
+    expect(observed).toEqual([]); expect(await ledger()).toEqual([]);
+    expect(await opinions()).toMatchObject([{ itemId: item.id, model: MODEL, promptVersion: QWEN_V2_PROMPT_VERSION, reason: "An earlier v2 answer" }]);
+  });
+  it("다른 모델 차례의 입력 기한이 지났으면 부르지 않고 원본 다시 받기를 한 번 걸며, 기다리는 동안 다시 고르지 않는다", async () => {
+    const { item } = await recheckItem(3);
+    await tick();
+    expect(observed).toEqual([]); expect(await ledger()).toEqual([]); expect(await opinions()).toEqual([]);
+    expect(await db.select().from(productAuditRecollects)).toMatchObject([{ itemId: item.id, state: "waiting", requests: 1 }]);
+    expect((await qwenSecondOpinionStatus(await getSettings())).audit.remaining).toBe(0);
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "audit-second-opinion"));
+    await tick();
+    expect(observed).toEqual([]); expect(await ledger()).toEqual([]);
+    expect(await db.select().from(productAuditRecollects)).toMatchObject([{ itemId: item.id, state: "waiting", requests: 1 }]);
+  });
+  it("원본을 다시 받은 뒤에는 다른 모델에 감사 전용 판으로 한 번만 묻고, 그 뒤로는 고르지 않는다", async () => {
+    const { item } = await recheckItem(3);
+    await tick();
+    expect(await db.select().from(productAuditRecollects)).toMatchObject([{ itemId: item.id, state: "waiting" }]);
+    // 수집이 원본을 새로 받고 마무리가 끝남으로 적은 상태(audit-stale-recollect.test 가 마무리 자체를 잰다)
+    await db.update(crawlDocuments).set({ fetchedAt: new Date() }).where(eq(crawlDocuments.repo, `${prefix}/${item.slug}`));
+    await db.update(productAuditRecollects).set({ state: "done", settledAt: new Date() }).where(eq(productAuditRecollects.itemId, item.id));
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "audit-second-opinion"));
+    await tick();
+    expect(observed).toHaveLength(1); expect(observed[0].body.model).toBe(MODEL);
+    expect((observed[0].body.messages as { content: string }[])[0].content).toContain("AUDIT RECHECK NOTES");
+    expect(await opinions()).toMatchObject([{ itemId: item.id, model: MODEL, promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION }]);
+    expect(await ledger()).toMatchObject([{ state: "settled", route_id: "local-second-opinion", dispatch_binding: { promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION } }]);
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "audit-second-opinion"));
+    await tick();
+    expect(observed).toHaveLength(1);
+    expect((await qwenSecondOpinionStatus(await getSettings())).audit.remaining).toBe(0);
   });
 });
