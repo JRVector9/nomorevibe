@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CANDIDATES, fuseRanks, rankSearch, rerankDocuments, RERANK_TOP, type RankDependencies } from "@/lib/domain/products/hybrid-search";
+import { CANDIDATES, fuseRanks, rankMultilingualSearch, rankSearch, rerankDocuments, RERANK_TOP, type RankDependencies } from "@/lib/domain/products/hybrid-search";
 import { searchRelevance, withPrimaryFallback } from "@/lib/domain/products/relevance";
 
 const slugs = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
@@ -133,5 +133,81 @@ describe("처음 들어온 한국어 문장", () => {
     const none = vi.fn().mockResolvedValue(empty);
     await searchRelevance("asdfgh", { queries: ["asdfgh"], translated: null }, {}, translate, none);
     expect(translate).not.toHaveBeenCalled();
+  });
+});
+
+describe("expanded relevance ranking", () => {
+  it.each([-0.1, 0, 0.1])("preserves the original leader only at scores of zero or higher (%s)", async (score) => {
+    const fetchNative = vi.fn(async () => ["native-first", "native-second"]);
+    const rerank = vi.fn(async (query: string, docs: string[]) => docs.map((doc) =>
+      query === "原文" ? doc.startsWith("native") ? score : score - 1 : doc.startsWith("x") ? 10 : 1));
+    const d = deps({ rerank });
+    const result = await rankMultilingualSearch("原文", "english", d, fetchNative);
+    expect(result.head[0]).toBe(score < 0 ? "x" : "native-first");
+    expect(result.total).toBe(score < 0 ? 4 : 5);
+    expect(result.head).not.toContain("native-second");
+    expect(d.documents).toHaveBeenCalledTimes(1);
+    expect(d.embed).toHaveBeenCalledTimes(2);
+    expect(d.nearestSlugs).toHaveBeenCalledTimes(2);
+    expect(rerank.mock.calls.map(([query]) => query)).toEqual(["原文 / english", "原文"]);
+  });
+
+  it("can preserve the original leader even when the expanded candidate list is empty", async () => {
+    const d = deps({ ftsSlugs: async () => [], ftsCount: async () => 0, nearestSlugs: async () => [] });
+    expect(await rankMultilingualSearch("原文", "english", d, async () => ["legacy-only"]))
+      .toMatchObject({ head: ["legacy-only"], total: 1, reranked: true, modelWork: { rerankCalls: 1 } });
+  });
+
+  it("reuses the lexical ranking after an extra embedding fails before the deadline", async () => {
+    const embed = vi.fn(async (text: string) => {
+      if (text === "english") throw new Error("unavailable");
+      return [0.1, 0.2];
+    });
+    const d = deps({ embed, rerank: vi.fn(async (_q: string, docs: string[]) => docs.map((_, index) => index)) });
+    const native = async () => ["unrelated"];
+    const result = await rankMultilingualSearch("原文", "english", d, native);
+    expect(result).toMatchObject({ head: ["x", "b", "a", "c"], total: 4, reranked: true,
+      modelWork: { embeddingCalls: 2, rerankCalls: 1, embeddingTimedOut: false, fallback: true } });
+    expect(d.rerank).toHaveBeenCalledWith("原文", expect.any(Array));
+  });
+
+  it("uses the original vector already received when the second embedding times out", async () => {
+    const embed = vi.fn(async (text: string) => text === "english" ? new Promise<number[]>(() => {}) : [0.1, 0.2]);
+    const d = deps({ embed });
+    const result = await rankMultilingualSearch("原文", "english", d, async () => ["legacy-only"]);
+    expect(result).toMatchObject({ head: ["c", "a", "b", "x"], total: 4, semantic: true, reranked: false,
+      modelWork: { embeddingTimedOut: true, rerankCalls: 0, fallback: true } });
+    expect(d.rerank).not.toHaveBeenCalled();
+  });
+
+  it("does not start a third rerank after a failure and only uses complete original scores", async () => {
+    const rerank = vi.fn(async (text: string, docs: string[]) => {
+      if (text.includes(" / ")) throw new Error("unavailable");
+      return docs.map((_, index) => index);
+    });
+    const d = deps({ rerank });
+    const result = await rankMultilingualSearch("原文", "english", d, async () => ["a", "b", "c"]);
+    expect(result).toMatchObject({ head: ["x", "b", "a", "c"], total: 4, reranked: true,
+      modelWork: { rerankCalls: 2, fallback: true } });
+    const incomplete = await rankMultilingualSearch("原文", "english", d, async () => ["legacy-only"]);
+    expect(incomplete).toMatchObject({ head: ["c", "a", "b", "x"], total: 4, reranked: false,
+      modelWork: { rerankCalls: 2, fallback: true } });
+  });
+
+  it("drops the translated vector on rerank timeout and sends at most 30 pairs per call", async () => {
+    const fts = slugs("f", 40);
+    const rerank = vi.fn(async (text: string, docs: string[]) => text.includes(" / ")
+      ? new Promise<number[]>(() => {}) : docs.map(() => 0));
+    const d = deps({
+      ftsSlugs: async () => fts, ftsCount: async () => fts.length,
+      embed: async (text) => [text === "english" ? 1 : 0],
+      nearestSlugs: async ([vector]) => vector ? ["translated-only"] : ["native-vector"],
+      rerank,
+    });
+    const result = await rankMultilingualSearch("原文", "english", d, async () => fts);
+    expect(result).toMatchObject({ head: fuseRanks([fts, ["native-vector"]]), total: 41, reranked: false,
+      modelWork: { rerankCalls: 2, rerankTimedOut: true, fallback: true } });
+    expect(rerank.mock.calls.map(([, docs]) => docs.length)).toEqual([30, 30]);
+    expect(d.documents).toHaveBeenCalledTimes(1);
   });
 });

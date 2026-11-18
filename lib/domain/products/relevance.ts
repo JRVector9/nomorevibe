@@ -6,7 +6,7 @@
 import type { Category } from "./schema";
 import type { SearchQuery } from "./search";
 import type { ResolvedSearch } from "./search-translation";
-import { rankSearch, type RankDependencies, type RankedSearch } from "./hybrid-search";
+import { rankMultilingualSearch, rankSearch, type RankDependencies, type RankedSearch } from "./hybrid-search";
 import { countProducts, listProductSlugs, nearestProductSlugs, productDocuments, type ListOptions } from "./repository";
 import { onPrimary } from "@/lib/db";
 import { logger } from "@/lib/observability/logger";
@@ -36,16 +36,23 @@ const scope = (filters: RelevanceFilters) => ({ statuses: ["verified" as const, 
  * raw 는 사람이 친 말 그대로(임베딩·재정렬이 읽는다 — bge-m3 는 한국어 문장을 영어 소개와 바로 잰다),
  * plan 은 낱말 검색 계획(번역이 붙었으면 함께).
  */
-export function rankRelevance(raw: string, plan: SearchQuery, filters: RelevanceFilters, deps: Partial<RankDependencies> = {}): Promise<RankedSearch> {
+type MultilingualRanking = { translated: string; nativeQueries: SearchQuery };
+
+export function rankRelevance(raw: string, plan: SearchQuery, filters: RelevanceFilters, deps: Partial<RankDependencies> = {},
+  multilingual?: MultilingualRanking): Promise<RankedSearch> {
   const base = scope(filters);
-  return rankSearch(raw, {
-    ftsSlugs: (limit) => listProductSlugs({ ...base, query: plan, sort: "relevance", limit }),
+  const ftsSlugs = (query: SearchQuery, limit: number) => listProductSlugs({ ...base, query, sort: "relevance", limit });
+  const dependencies: RankDependencies = {
+    ftsSlugs: (limit) => ftsSlugs(plan, limit),
     ftsCount: () => countProducts({ ...base, query: plan }),
     ftsMatching: (slugs) => listProductSlugs({ ...base, query: plan, slugs, limit: slugs.length }),
     nearestSlugs: (vector, limit, minSimilarity) => withPrimaryFallback(() => nearestProductSlugs(vector, base, limit, minSimilarity)),
     documents: productDocuments,
     ...deps,
-  });
+  };
+  if (multilingual) return rankMultilingualSearch(raw, multilingual.translated, dependencies,
+    (limit) => ftsSlugs(multilingual.nativeQueries, limit));
+  return rankSearch(raw, dependencies);
 }
 
 export type RelevanceResult = RankedSearch & {
@@ -65,7 +72,9 @@ export async function searchRelevance(
   translate: () => Promise<ResolvedSearch>,
   rank: typeof rankRelevance = rankRelevance,
 ): Promise<RelevanceResult> {
-  const ranked = await rank(raw, resolved.queries, filters);
+  const ranked = await (resolved.translated && resolved.nativeQueries
+    ? rank(raw, resolved.queries, filters, undefined, { translated: resolved.translated, nativeQueries: resolved.nativeQueries })
+    : rank(raw, resolved.queries, filters));
   if (ranked.total > 0 || !resolved.translationPending || resolved.multilingualSource) return { ...ranked, plan: resolved.queries, translated: resolved.translated };
   const waited = await translate();
   if (!waited.translated) return { ...ranked, plan: resolved.queries, translated: null };

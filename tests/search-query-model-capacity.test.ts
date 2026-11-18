@@ -201,7 +201,7 @@ it("cancels only the reservation when reserved reentry changes and never POSTs",
 
 it("serves a cold kana query immediately and uses cached phrases after a separate warmup", async () => {
   const japanese = "ひらがな カタカナ";
-  const options = { multilingual: true };
+  const options = { mode: "lexical" as const };
   const cold = await resolveSearchQuery(japanese, { ...options, waitForTranslation: true });
   expect(cold).toMatchObject({
     queries: { texts: [japanese], groups: [0] },
@@ -223,7 +223,7 @@ it("serves a cold kana query immediately and uses cached phrases after a separat
 
 it("keeps the original result and model route when multilingual translation fails or the ledger is disabled", async () => {
   const japanese = "翻訳ツール";
-  const options = { multilingual: true };
+  const options = { mode: "lexical" as const };
   mocks.cacheRead.mockRejectedValue(new Error("read unavailable"));
   expect(await resolveSearchQuery(japanese, options)).toMatchObject({ translated: null, translationPending: true });
   mocks.cacheRead.mockResolvedValue([]);
@@ -236,6 +236,6 @@ it("keeps the original result and model route when multilingual translation fail
 });
 
 it.each(["English project", "문서 정리"])("keeps the original resolved plan for %s", async (text) => {
-  expect(await resolveSearchQuery(text, { waitForTranslation: false, multilingual: true }))
+  expect(await resolveSearchQuery(text, { waitForTranslation: false, mode: "lexical" as const }))
     .toEqual(await resolveSearchQuery(text, { waitForTranslation: false }));
 });
