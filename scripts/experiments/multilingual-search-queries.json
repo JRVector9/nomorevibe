@@ -1,0 +1,545 @@
+{
+ "about": "4-language search evaluation set (2026-11-18). Each tuple is one judged query from scripts/search-judged.ts (key = the judged query and its key in scripts/search-judgments.json) plus its versions in the other three languages. All four versions reuse the key's judgments. zh is Simplified Chinese. The new versions were written by Claude Opus 5.5 as natural search phrasing, not literal translations, and were not reviewed by native speakers.",
+ "tuples": [
+  {
+   "key": "grocery shopping list offline",
+   "slug": "coche",
+   "source": "en",
+   "en": "grocery shopping list offline",
+   "ko": "오프라인 장보기 목록",
+   "zh": "离线购物清单",
+   "ja": "オフライン 買い物リスト"
+  },
+  {
+   "key": "장보기 목록 앱",
+   "slug": "coche",
+   "source": "ko",
+   "en": "grocery list app",
+   "ko": "장보기 목록 앱",
+   "zh": "买菜清单应用",
+   "ja": "買い物リスト アプリ"
+  },
+  {
+   "key": "accessible public toilet map",
+   "slug": "restroom-map",
+   "source": "en",
+   "en": "accessible public toilet map",
+   "ko": "장애인 공중화장실 지도",
+   "zh": "无障碍公共厕所地图",
+   "ja": "バリアフリー トイレ マップ"
+  },
+  {
+   "key": "휠체어 화장실 지도",
+   "slug": "restroom-map",
+   "source": "ko",
+   "en": "wheelchair toilet map",
+   "ko": "휠체어 화장실 지도",
+   "zh": "轮椅厕所地图",
+   "ja": "車椅子 トイレ マップ"
+  },
+  {
+   "key": "plant disease detection",
+   "slug": "smartspray",
+   "source": "en",
+   "en": "plant disease detection",
+   "ko": "식물 병해 감지",
+   "zh": "植物病害检测",
+   "ja": "植物 病気 検出"
+  },
+  {
+   "key": "식물 병 진단",
+   "slug": "smartspray",
+   "source": "ko",
+   "en": "plant disease diagnosis",
+   "ko": "식물 병 진단",
+   "zh": "植物病害诊断",
+   "ja": "植物 病気 診断"
+  },
+  {
+   "key": "japanese vocabulary flashcards",
+   "slug": "product-589",
+   "source": "en",
+   "en": "japanese vocabulary flashcards",
+   "ko": "일본어 단어 플래시카드",
+   "zh": "日语单词闪卡",
+   "ja": "日本語 単語カード"
+  },
+  {
+   "key": "일본어 단어장",
+   "slug": "product-589",
+   "source": "ko",
+   "en": "japanese vocabulary book",
+   "ko": "일본어 단어장",
+   "zh": "日语单词本",
+   "ja": "日本語 単語帳"
+  },
+  {
+   "key": "gym workout log",
+   "slug": "opengym",
+   "source": "en",
+   "en": "gym workout log",
+   "ko": "헬스장 운동 일지",
+   "zh": "健身房训练记录",
+   "ja": "ジム トレーニング 記録"
+  },
+  {
+   "key": "헬스 운동 기록",
+   "slug": "opengym",
+   "source": "ko",
+   "en": "fitness workout log",
+   "ko": "헬스 운동 기록",
+   "zh": "健身记录",
+   "ja": "筋トレ 記録"
+  },
+  {
+   "key": "internship certificate management",
+   "slug": "web-portal",
+   "source": "en",
+   "en": "internship certificate management",
+   "ko": "인턴십 수료증 관리",
+   "zh": "实习证明管理",
+   "ja": "インターンシップ 修了証 管理"
+  },
+  {
+   "key": "인턴십 관리",
+   "slug": "web-portal",
+   "source": "ko",
+   "en": "internship management",
+   "ko": "인턴십 관리",
+   "zh": "实习管理",
+   "ja": "インターンシップ 管理"
+  },
+  {
+   "key": "coding agent cost tracking",
+   "slug": "agentacct",
+   "source": "en",
+   "en": "coding agent cost tracking",
+   "ko": "코딩 에이전트 비용 추적",
+   "zh": "编程智能体成本追踪",
+   "ja": "コーディングエージェント コスト 追跡"
+  },
+  {
+   "key": "코딩 에이전트 비용 추적",
+   "slug": "agentacct",
+   "source": "ko",
+   "en": "coding agent cost tracking",
+   "ko": "코딩 에이전트 비용 추적",
+   "zh": "编程智能体费用跟踪",
+   "ja": "コーディングエージェント 費用 管理"
+  },
+  {
+   "key": "python sdk image video generation api",
+   "slug": "venice-ai-python-sdk",
+   "source": "en",
+   "en": "python sdk image video generation api",
+   "ko": "이미지 영상 생성 API 파이썬 SDK",
+   "zh": "图片视频生成API的Python SDK",
+   "ja": "画像 動画 生成 API Python SDK"
+  },
+  {
+   "key": "multi agent orchestration cli",
+   "slug": "cascade-cloud",
+   "source": "en",
+   "en": "multi agent orchestration cli",
+   "ko": "멀티 에이전트 오케스트레이션 CLI",
+   "zh": "多智能体编排命令行工具",
+   "ja": "マルチエージェント オーケストレーション CLI"
+  },
+  {
+   "key": "grinding wheel compatibility check",
+   "slug": "wheelmatch-ai",
+   "source": "en",
+   "en": "grinding wheel compatibility check",
+   "ko": "연삭 숫돌 호환성 확인",
+   "zh": "砂轮兼容性检查",
+   "ja": "研削砥石 適合 チェック"
+  },
+  {
+   "key": "숫돌 호환 확인",
+   "slug": "wheelmatch-ai",
+   "source": "ko",
+   "en": "whetstone compatibility check",
+   "ko": "숫돌 호환 확인",
+   "zh": "砂轮适配查询",
+   "ja": "砥石 互換性 確認"
+  },
+  {
+   "key": "supply chain risk monitoring",
+   "slug": "chainsilience-ai",
+   "source": "en",
+   "en": "supply chain risk monitoring",
+   "ko": "공급망 리스크 모니터링",
+   "zh": "供应链风险监控",
+   "ja": "サプライチェーン リスク 監視"
+  },
+  {
+   "key": "공급망 위험 모니터링",
+   "slug": "chainsilience-ai",
+   "source": "ko",
+   "en": "supply chain risk monitoring",
+   "ko": "공급망 위험 모니터링",
+   "zh": "供应链风险监测",
+   "ja": "サプライチェーン リスク モニタリング"
+  },
+  {
+   "key": "adopt a rescued dog",
+   "slug": "hope-for-strays",
+   "source": "en",
+   "en": "adopt a rescued dog",
+   "ko": "구조견 입양",
+   "zh": "领养救助犬",
+   "ja": "保護犬 里親"
+  },
+  {
+   "key": "유기견 입양",
+   "slug": "hope-for-strays",
+   "source": "ko",
+   "en": "stray dog adoption",
+   "ko": "유기견 입양",
+   "zh": "流浪狗领养",
+   "ja": "保護犬 譲渡"
+  },
+  {
+   "key": "inspect mcp traffic in vscode",
+   "slug": "mcp-shark-viewer-vscode",
+   "source": "en",
+   "en": "inspect mcp traffic in vscode",
+   "ko": "VS Code에서 MCP 트래픽 보기",
+   "zh": "在VS Code里查看MCP流量",
+   "ja": "VS Code MCP 通信 確認"
+  },
+  {
+   "key": "MCP 트래픽 확인",
+   "slug": "mcp-shark-viewer-vscode",
+   "source": "ko",
+   "en": "check mcp traffic",
+   "ko": "MCP 트래픽 확인",
+   "zh": "查看MCP流量",
+   "ja": "MCP 通信 確認"
+  },
+  {
+   "key": "imdb tv show ratings history",
+   "slug": "tv-shows-chart",
+   "source": "en",
+   "en": "imdb tv show ratings history",
+   "ko": "IMDb 드라마 평점 추이",
+   "zh": "IMDb电视剧评分历史",
+   "ja": "IMDb ドラマ 評価 推移"
+  },
+  {
+   "key": "드라마 평점 차트",
+   "slug": "tv-shows-chart",
+   "source": "ko",
+   "en": "tv drama ratings chart",
+   "ko": "드라마 평점 차트",
+   "zh": "电视剧评分图表",
+   "ja": "ドラマ 評価 チャート"
+  },
+  {
+   "key": "whois dns lookup",
+   "slug": "whodis",
+   "source": "en",
+   "en": "whois dns lookup",
+   "ko": "WHOIS DNS 조회",
+   "zh": "WHOIS DNS查询",
+   "ja": "WHOIS DNS 検索"
+  },
+  {
+   "key": "도메인 조회",
+   "slug": "whodis",
+   "source": "ko",
+   "en": "domain lookup",
+   "ko": "도메인 조회",
+   "zh": "域名查询",
+   "ja": "ドメイン 検索"
+  },
+  {
+   "key": "algorithmic copy trading",
+   "slug": "w2w",
+   "source": "en",
+   "en": "algorithmic copy trading",
+   "ko": "알고리즘 카피 트레이딩",
+   "zh": "算法跟单交易",
+   "ja": "アルゴリズム コピートレード"
+  },
+  {
+   "key": "open banking claude mcp",
+   "slug": "bankmcp-2",
+   "source": "en",
+   "en": "open banking claude mcp",
+   "ko": "오픈뱅킹 Claude MCP",
+   "zh": "开放银行 Claude MCP",
+   "ja": "オープンバンキング Claude MCP"
+  },
+  {
+   "key": "은행 잔액 확인 AI",
+   "slug": "bankmcp-2",
+   "source": "ko",
+   "en": "ai bank balance check",
+   "ko": "은행 잔액 확인 AI",
+   "zh": "AI查询银行余额",
+   "ja": "AI 銀行残高 確認"
+  },
+  {
+   "key": "dhikr counter",
+   "slug": "zikirci",
+   "source": "en",
+   "en": "dhikr counter",
+   "ko": "디크르 카운터",
+   "zh": "伊斯兰赞念计数器",
+   "ja": "ズィクル カウンター"
+  },
+  {
+   "key": "이슬람 기도 카운터",
+   "slug": "zikirci",
+   "source": "ko",
+   "en": "islamic prayer counter",
+   "ko": "이슬람 기도 카운터",
+   "zh": "伊斯兰祈祷计数器",
+   "ja": "イスラム 祈り カウンター"
+  },
+  {
+   "key": "tech job search",
+   "slug": "freehire",
+   "source": "en",
+   "en": "tech job search",
+   "ko": "IT 채용 검색",
+   "zh": "科技行业求职",
+   "ja": "IT 求人 検索"
+  },
+  {
+   "key": "개발자 채용 공고 검색",
+   "slug": "freehire",
+   "source": "ko",
+   "en": "developer job postings search",
+   "ko": "개발자 채용 공고 검색",
+   "zh": "程序员招聘信息搜索",
+   "ja": "エンジニア 求人 検索"
+  },
+  {
+   "key": "post to x from coding agent",
+   "slug": "capx-cafe",
+   "source": "en",
+   "en": "post to x from coding agent",
+   "ko": "코딩 에이전트에서 X에 글 올리기",
+   "zh": "用编程智能体发帖到X",
+   "ja": "コーディングエージェント X 投稿"
+  },
+  {
+   "key": "트위터 자동 게시",
+   "slug": "capx-cafe",
+   "source": "ko",
+   "en": "twitter auto posting",
+   "ko": "트위터 자동 게시",
+   "zh": "推特自动发帖",
+   "ja": "ツイッター 自動投稿"
+  },
+  {
+   "key": "order from local farms",
+   "slug": "farmerzone",
+   "source": "en",
+   "en": "order from local farms",
+   "ko": "지역 농장 주문",
+   "zh": "从本地农场订购",
+   "ja": "地元 農家 注文"
+  },
+  {
+   "key": "농산물 직거래",
+   "slug": "farmerzone",
+   "source": "ko",
+   "en": "buy produce direct from farmers",
+   "ko": "농산물 직거래",
+   "zh": "农产品直销",
+   "ja": "農産物 産地直送"
+  },
+  {
+   "key": "slack bot node",
+   "slug": "node-slack-sdk",
+   "source": "en",
+   "en": "slack bot node",
+   "ko": "Node 슬랙 봇",
+   "zh": "Node Slack机器人",
+   "ja": "Node Slack ボット"
+  },
+  {
+   "key": "슬랙 봇 만들기",
+   "slug": "node-slack-sdk",
+   "source": "ko",
+   "en": "build a slack bot",
+   "ko": "슬랙 봇 만들기",
+   "zh": "制作Slack机器人",
+   "ja": "Slack ボット 作り方"
+  },
+  {
+   "key": "commercial filming middle east",
+   "slug": "film-video-production-egypt",
+   "source": "en",
+   "en": "commercial filming middle east",
+   "ko": "중동 광고 촬영",
+   "zh": "中东商业拍摄",
+   "ja": "中東 商業撮影"
+  },
+  {
+   "key": "provision grafana cloud stacks",
+   "slug": "grafana-cloud-vending-machine",
+   "source": "en",
+   "en": "provision grafana cloud stacks",
+   "ko": "Grafana Cloud 스택 프로비저닝",
+   "zh": "Grafana Cloud堆栈自动创建",
+   "ja": "Grafana Cloud スタック プロビジョニング"
+  },
+  {
+   "key": "korea study abroad visa",
+   "slug": "product-35",
+   "source": "en",
+   "en": "korea study abroad visa",
+   "ko": "한국 유학 비자",
+   "zh": "韩国留学签证",
+   "ja": "韓国 留学 ビザ"
+  },
+  {
+   "key": "한국 유학 준비",
+   "slug": "product-35",
+   "source": "ko",
+   "en": "prepare to study in korea",
+   "ko": "한국 유학 준비",
+   "zh": "韩国留学准备",
+   "ja": "韓国留学 準備"
+  },
+  {
+   "key": "short form video trends",
+   "slug": "pulse",
+   "source": "en",
+   "en": "short form video trends",
+   "ko": "숏폼 영상 트렌드",
+   "zh": "短视频趋势",
+   "ja": "ショート動画 トレンド"
+  },
+  {
+   "key": "숏폼 트렌드",
+   "slug": "pulse",
+   "source": "ko",
+   "en": "short form trends",
+   "ko": "숏폼 트렌드",
+   "zh": "短视频热门趋势",
+   "ja": "ショート動画 流行"
+  },
+  {
+   "key": "football club manager game",
+   "slug": "club-season",
+   "source": "en",
+   "en": "football club manager game",
+   "ko": "축구 구단 경영 게임",
+   "zh": "足球俱乐部经理游戏",
+   "ja": "サッカー クラブ 監督 ゲーム"
+  },
+  {
+   "key": "축구 매니저 게임",
+   "slug": "club-season",
+   "source": "ko",
+   "en": "football manager game",
+   "ko": "축구 매니저 게임",
+   "zh": "足球经理游戏",
+   "ja": "サッカー 監督 ゲーム"
+  },
+  {
+   "key": "interior design quote comparison",
+   "slug": "product-63",
+   "source": "en",
+   "en": "interior design quote comparison",
+   "ko": "인테리어 견적 비교",
+   "zh": "装修报价对比",
+   "ja": "リフォーム 見積もり 比較"
+  },
+  {
+   "key": "인테리어 견적",
+   "slug": "product-63",
+   "source": "ko",
+   "en": "interior design quote",
+   "ko": "인테리어 견적",
+   "zh": "装修报价",
+   "ja": "内装 見積もり"
+  },
+  {
+   "key": "medicine side effects lookup",
+   "slug": "yoyak",
+   "source": "en",
+   "en": "medicine side effects lookup",
+   "ko": "약 부작용 조회",
+   "zh": "药物副作用查询",
+   "ja": "薬 副作用 検索"
+  },
+  {
+   "key": "약 부작용 확인",
+   "slug": "yoyak",
+   "source": "ko",
+   "en": "check drug side effects",
+   "ko": "약 부작용 확인",
+   "zh": "查询药品副作用",
+   "ja": "薬 副作用 確認"
+  },
+  {
+   "key": "algorithm study group",
+   "slug": "ssafy-16-4",
+   "source": "en",
+   "en": "algorithm study group",
+   "ko": "알고리즘 스터디",
+   "zh": "算法学习小组",
+   "ja": "アルゴリズム 勉強会"
+  },
+  {
+   "key": "chess roguelike",
+   "slug": "rookies-revenge",
+   "source": "en",
+   "en": "chess roguelike",
+   "ko": "체스 로그라이크",
+   "zh": "国际象棋肉鸽游戏",
+   "ja": "チェス ローグライク"
+  },
+  {
+   "key": "체스 게임",
+   "slug": "rookies-revenge",
+   "source": "ko",
+   "en": "chess game",
+   "ko": "체스 게임",
+   "zh": "国际象棋游戏",
+   "ja": "チェス ゲーム"
+  },
+  {
+   "key": "lab results pdf",
+   "slug": "labledger",
+   "source": "en",
+   "en": "lab results pdf",
+   "ko": "검사 결과 PDF",
+   "zh": "化验单PDF",
+   "ja": "検査結果 PDF"
+  },
+  {
+   "key": "daycare management",
+   "slug": "daycare-portal",
+   "source": "en",
+   "en": "daycare management",
+   "ko": "어린이집 운영 관리",
+   "zh": "托儿所管理",
+   "ja": "保育園 管理"
+  },
+  {
+   "key": "어린이집 관리",
+   "slug": "daycare-portal",
+   "source": "ko",
+   "en": "childcare center management",
+   "ko": "어린이집 관리",
+   "zh": "托育中心管理",
+   "ja": "保育所 管理"
+  },
+  {
+   "key": "focus app task world",
+   "slug": "lorestead",
+   "source": "en",
+   "en": "focus app task world",
+   "ko": "할 일 세계 집중 앱",
+   "zh": "专注应用 任务 世界",
+   "ja": "集中アプリ タスク 世界"
+  }
+ ]
+}
