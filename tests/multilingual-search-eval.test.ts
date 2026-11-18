@@ -42,6 +42,22 @@ describe("4-language search evaluation set", () => {
   });
 });
 
+describe("blind supplementary judgments", () => {
+  it("only add 0/1/2 grades for evaluation keys and never override the base judgments", () => {
+    const extra: Record<string, Record<string, number>> = JSON.parse(
+      readFileSync(path.join(__dirname, "..", "scripts", "experiments", "multilingual-search-judgments-extra.json"), "utf8"),
+    ).judgments;
+    const keys = new Set(loadTuples().map((tuple) => tuple.key));
+    for (const [key, grades] of Object.entries(extra)) {
+      expect(keys.has(key), key).toBe(true);
+      for (const [slug, grade] of Object.entries(grades)) {
+        expect([0, 1, 2]).toContain(grade);
+        expect(slug in (judgments[key] ?? {}), `${key} / ${slug}`).toBe(false);
+      }
+    }
+  });
+});
+
 describe("cjkQuery", () => {
   it("takes Chinese and Japanese, including kanji-only Japanese, and leaves Korean and English alone", () => {
     expect(cjkQuery("家計簿アプリ")).toBe(true);

@@ -19,6 +19,7 @@
  *
  *   NMV_ML_SEARCH_DB_URL=... tsx scripts/experiments/multilingual-search-eval.ts run --scratch=DIR --out=runs.json [--arms=a,b] [--langs=ko,zh]
  *   tsx scripts/experiments/multilingual-search-eval.ts pool --runs=runs.json --out=pool.json --map=pool-map.json   (DB 필요)
+ *   tsx scripts/experiments/multilingual-search-eval.ts merge --grades=a.json,b.json --map=pool-map.json --out=scripts/experiments/multilingual-search-judgments-extra.json
  *   tsx scripts/experiments/multilingual-search-eval.ts score --runs=runs.json [--extra=judgments-extra.json] --out=score.json
  */
 import { execFileSync } from "node:child_process";
@@ -284,6 +285,33 @@ async function poolCommand(values: Record<string, string | boolean | undefined>)
   }
 }
 
+/** 블라인드 채점 파일들 + ID 대응표 → 질의 → 제품 → 등급. ID 는 한 파일에 한 번씩, 모음의 모든 ID 가 있어야 한다 */
+function mergeCommand(values: Record<string, string | boolean | undefined>) {
+  if (typeof values.grades !== "string" || typeof values.map !== "string" || typeof values.out !== "string") throw new Error("pass --grades --map --out");
+  const map: Record<string, { key: string; slug: string }> = JSON.parse(readFileSync(values.map, "utf8"));
+  const seen = new Map<string, number>();
+  for (const file of values.grades.split(",")) {
+    const { judgments } = JSON.parse(readFileSync(file, "utf8")) as { judgments: { id: string; grade: number }[] };
+    for (const { id, grade } of judgments) {
+      if (!(id in map)) throw new Error(`unknown id ${id} in ${file}`);
+      if (seen.has(id)) throw new Error(`id ${id} graded twice`);
+      if (![0, 1, 2].includes(grade)) throw new Error(`bad grade for ${id}`);
+      seen.set(id, grade);
+    }
+  }
+  const missing = Object.keys(map).filter((id) => !seen.has(id));
+  if (missing.length) throw new Error(`${missing.length} pooled ids are not graded`);
+  const previous: Judgments = existsSync(values.out) ? JSON.parse(readFileSync(values.out, "utf8")).judgments : {};
+  const judgments: Judgments = structuredClone(previous);
+  for (const [id, grade] of seen) {
+    const { key, slug } = map[id];
+    (judgments[key] ??= {})[slug] = grade;
+  }
+  const about = "Blind supplementary judgments for the 4-language search experiment (scripts/experiments/multilingual-search-grading.md). Keys are judged queries from scripts/search-judged.ts; merged on top of scripts/search-judgments.json.";
+  writeFileSync(values.out, JSON.stringify({ about, judgments }, null, 1) + "\n");
+  console.log(`${seen.size} grades merged; ${Object.values(judgments).reduce((sum, row) => sum + Object.keys(row).length, 0)} extra judgments in total`);
+}
+
 // ---------- 점수 ----------
 
 
@@ -379,12 +407,13 @@ async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const { values } = parseArgs({
     args: rest,
-    options: { smoke: { type: "boolean" }, scratch: { type: "string" }, out: { type: "string" }, arms: { type: "string" }, langs: { type: "string" }, runs: { type: "string" }, map: { type: "string" }, extra: { type: "string" } },
+    options: { smoke: { type: "boolean" }, scratch: { type: "string" }, out: { type: "string" }, arms: { type: "string" }, langs: { type: "string" }, runs: { type: "string" }, map: { type: "string" }, extra: { type: "string" }, grades: { type: "string" } },
   });
   if (command === "run") await runCommand(values);
   else if (command === "pool") await poolCommand(values);
+  else if (command === "merge") mergeCommand(values);
   else if (command === "score") scoreCommand(values);
-  else throw new Error("command: run | pool | score");
+  else throw new Error("command: run | pool | merge | score");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)) {
