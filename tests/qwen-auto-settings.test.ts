@@ -9,6 +9,7 @@ import * as originMain from "./fixtures/settings-schema-55389b48";
  * 읽고 쓰는 배포·되돌림에서 감사 보류가 깨지지 않고, 옛 코드가 지운 자동 단계가 켬으로 되살아나지 않는다.
  */
 const enabledEverywhere: QwenAutoSettings = {
+  sameModelRecheck: { enabled: true, perTick: 1 },
   auditSecondOpinion: { enabled: true, perTick: 7, scope: "hold", autoClose: false, recollectPerTick: 3 }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
   heldRetry: { enabled: true, perTick: 4, budgetSeconds: 30, reasons: ["ambiguous"] }, screenReview: { enabled: true, perTick: 3, autoClose: false },
 };
@@ -23,7 +24,7 @@ const writtenByNewCode = crawlSettingsSchema.parse({ ...DEFAULT_CRAWL_SETTINGS, 
 
 describe("기본값", () => {
   it("자동 단계(화면 판별 포함)는 모두 꺼짐으로 나간다 — 칸이 없는 행(첫 배포)도 꺼짐이다", () => {
-    expect(QWEN_AUTO_STEPS).toEqual(["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview"]);
+    expect(QWEN_AUTO_STEPS).toEqual(["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview", "sameModelRecheck"]);
     for (const step of QWEN_AUTO_STEPS) {
       expect(DEFAULT_QWEN_AUTO[step].enabled, step).toBe(false);
       expect(DEFAULT_CRAWL_SETTINGS.qwenAuto[step].enabled, step).toBe(false);

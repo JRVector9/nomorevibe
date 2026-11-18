@@ -302,13 +302,15 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   endpoint?: { baseUrl: string; apiKey: string | null };
   /** 정책 글 뒤에 붙일 글 — 주지 않으면 GATEWAY_SYSTEM_SUFFIX. 정책 글 자체는 늘 그대로다 */
   systemSuffix?: string;
+  /** Extra context stays inside the escaped untrusted evidence envelope. */
+  sameModelRecheck?: Readonly<{ initialRejectReason: string | null }>;
 }): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
   const model = gatewayModel(options.model);
   if (!options.endpoint || !model) return { ok: false, error: "not_configured" };
   const key = options.endpoint.apiKey?.trim() || null;
   const url = `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`;
-  const serialized = JSON.stringify(input.snapshot);
+  const serialized = JSON.stringify(options.sameModelRecheck ? { ...input.snapshot, sameModelRecheck: options.sameModelRecheck } : input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
 
   const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model)));

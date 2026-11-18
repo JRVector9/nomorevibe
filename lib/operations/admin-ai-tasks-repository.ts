@@ -6,7 +6,9 @@ import { db, onPrimary } from "@/lib/db";
 import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, aiTaskPoolMembers, modelCapacityControl, modelHelperAssignments, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
-import { AI_TASK_SLOT_MAX, AI_TEXT_TASK_IDS, aiTask, aiTaskReadsRanks, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, isRetiredAiTask, RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_TASK_SLOT_MAX, AI_TEXT_TASK_IDS, AUDIT_SECOND_OPINION_TASK, aiTask, aiTaskReadsRanks, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiRankSavableTask, isAiReviewTask, isRetiredAiTask,
+  RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { qwenDirectConfig } from "@/lib/crawl/qwen-direct-review";
 import { cliDbContract } from "@/lib/llm/cli-db-contracts";
 import { CLI_DB_CONTRACT_ROUTES, type CliProvider } from "@/lib/llm/cli-serving-contract";
 import { textRankStatusFromCounts, textRankUnusableText, textTaskRankStatus, type TextRankStatus } from "@/lib/llm/ai-task-resolver";
@@ -42,6 +44,7 @@ import { aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision } from "@/lib
 import { cliEngineBearer } from "@/lib/llm/cli-engine-auth";
 import { readAdminCliCatalog } from "./admin-cli-catalog";
 import { saveLocalContract } from "./admin-cli-stage-resources";
+import { auditSecondOpinionRankIssues, auditSecondOpinionSavedScope } from "./audit-second-opinion-ranks";
 import { validateCliHostTarget } from "./cli-host-target";
 
 /**
@@ -610,7 +613,9 @@ export async function deleteAiConnection(id: string, expectedVersion: number, ac
 
 // ── 순위 저장 ───────────────────────────────────────────────────────────────────────────────────────────
 
-export type SaveAiTaskRanksResult = { ok: true; revision: string; warnings: string[]; created: { devices: string[]; contracts: string[]; routes: string[] } }
+export type SaveAiTaskRanksResult = { ok: true; revision: string; warnings: string[]; created: { devices: string[]; contracts: string[]; routes: string[] };
+  /** 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)의 「이 저장이 실행에 하는 일」 — 화면 결과·CLI 출력에 싣는다 */
+  scope?: string }
   | { ok: false; issues: string[] };
 
 /**
@@ -624,7 +629,7 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
   const task = aiTask(input.task);
   if (!task) return { ok: false, issues: ["ai_task_invalid:task"] };
-  if (!isAiLiveTask(task.id)) {
+  if (!isAiRankSavableTask(task.id)) {
     const target = aiTaskEditTarget(task.id);
     return { ok: false, issues: [`${task.label}의 모델 순위는 지금 실행 쪽이 읽지 않아 저장해도 동작이 바뀌지 않습니다 — 실제 적용 설정에서 바꾸세요: ${target?.href ?? "/admin/models/advanced#model-settings"}`] };
   }
@@ -653,6 +658,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     if (task.id === 'publish-classify' && ranks.some(rank => rank && connections.find(connection => connection.id === rank.provider)?.kind === 'api'))
       return { ok: false, issues: ['ai_task_publish_api_pool_only'] };
     const issues = validateAiTaskRanks(task.id, input.slot, ranks, { connections, rows });
+    // 감사 두 번째 의견: 1순위 = 기본 Qwen 직접 설정(실행이 읽는 값), 2·3순위 = 다른 모델(같은 모델 재판정 거절의 두 번째 의견)
+    if (task.id === AUDIT_SECOND_OPINION_TASK) issues.push(...auditSecondOpinionRankIssues(ranks, connections, qwenDirectConfig()));
     if (issues.length) return { ok: false, issues };
     const chosen = ranks.flatMap((row, index) => row ? [{ rank: index + 1, row, connection: connections.find(entry => entry.id === row.provider)! }] : []);
     // OpenCode 순위의 연결 버전은 위에서 호스트에서 방금 읽은 값이다 — 계약 버전이 다르면 그 값으로 계약을 맞춘다(기록된 옛 버전은 쓰지 않는다)
@@ -695,7 +702,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
       return { revision, created: { devices: madeDevices, contracts: madeContracts, routes: madeRoutes } };
     }));
     logger.info("ai_tasks.ranks_saved", { actor, task: task.id, slot: input.slot, ranks: chosen.length, ...result.created });
-    return { ok: true, revision: result.revision, warnings, created: result.created };
+    const scope = auditSecondOpinionSavedScope(task.id, ranks, connections);
+    return { ok: true, revision: result.revision, warnings, created: result.created, ...(scope ? { scope } : {}) };
   } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
 }
 
@@ -1003,7 +1011,8 @@ export async function saveAiTaskServingResources(tx: ProductTransaction, task: A
   const { contracts, cliContracts, localContracts = [] } = resources;
   const madeContracts: string[] = [];
   for (const contract of localContracts) {
-    const saved = await saveLocalContract(tx, contract, actor, `작업 ↔ 모델 저장(${task.label}) · ${task.wiring === "assist-direct" ? "LLM 보강 경로" : "감사 직접 경로"}`);
+    const saved = await saveLocalContract(tx, contract, actor, `작업 ↔ 모델 저장(${task.label}) · ${task.wiring === "assist-direct" ? "LLM 보강 경로"
+      : task.wiring === "local-direct" ? "두 번째 의견 경로" : "감사 직접 경로"}`);
     if (saved) madeContracts.push(`${saved.routeId} · ${contract.model} 로컬 계약 (#${saved.id})`);
   }
   for (const entry of contracts) {

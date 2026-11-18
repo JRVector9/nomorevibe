@@ -41,6 +41,9 @@ export const AI_TASK_KIND_LABELS: Readonly<Record<AiTaskKind, string>> = Object.
 export type AiTaskApiWiring = "engine-route" | "review-ai1" | "review-ai2" | "local-direct" | "uncapped" | "deferred" | "audit-direct" | "assist-direct";
 /** 「발행분 감사 · 변경 재판정」의 API 순위가 쓰는 감사 직접 경로(장부 route — local-model-capacity-contract.ts localModelRoute 의 audit 목적) */
 export const AUDIT_DIRECT_ROUTE = "local-audit";
+/** 감사 두 번째 의견(작업 id)과 그 장부 route — 2·3순위는 이 route 의 로컬 계약·정책 route 를 저장이 둔다(PR #988) */
+export const AUDIT_SECOND_OPINION_TASK = "audit-second-opinion";
+export const AUDIT_SECOND_OPINION_ROUTE = "local-second-opinion";
 /**
  * LLM 보강의 장부 route(local-model-capacity-contract.ts localModelRoute 의 assist 갈래와 같은 꼴) — 보강 일 × 로컬 계약 backend 마다 하나다.
  * 한 AI 작업(assist-review·assist-audit)이 여러 route 를 갖는다: 화면은 aiTaskOwnsLedgerRoute 로 장부 줄을 작업에 모은다.
@@ -198,6 +201,21 @@ export const isAiLiveTask = (id: string): boolean => isAiTextTask(id) || isAiRev
  * 화면은 이것이 false 면 「실제 적용 설정」(지금 실제로 쓰는 모델)을 보인다.
  */
 export const aiTaskReadsRanks = (id: string, hasRanks: boolean): boolean => isAiLiveTask(id) && (!isAiAssistTask(id) || hasRanks);
+/**
+ * 순위의 일부만 실행 쪽이 읽는 작업(2026-11-17, PR #988) — 화면·CLI 저장은 받지만 isAiLiveTask(1순위부터 실행이 읽음)는 아니다.
+ * 감사 두 번째 의견: 1순위는 실행 쪽이 이 순위가 아니라 기본 Qwen 직접 설정(lib/crawl/qwen-direct-review.ts qwenDirectConfig)에서 읽어서,
+ * 저장은 1순위가 그 설정과 같을 때만 받는다(다르게 저장하면 실행 모델이 바뀐다고 오해하게 된다). 2·3순위는 변경 재판정 거절을 1순위와 같은 모델이
+ * 냈을 때 그 항목의 두 번째 의견에만 쓴다(lib/crawl/rejudge-second-opinion-models.ts). 공개분 추가 검수·감사 캠페인 의견은 그대로 기본 설정을 쓴다.
+ */
+export const AI_TASK_RANK_SCOPE_NOTES: Readonly<Record<string, string>> = Object.freeze({
+  "audit-second-opinion": "1순위는 기본 Qwen 직접 설정과 같아야 하며, 저장해도 실행 모델은 바뀌지 않습니다. "
+    + "2·3순위는 변경 재판정 거절을 1순위와 같은 모델이 냈을 때 그 항목의 두 번째 의견에만 씁니다. 공개분 추가 검수와 다른 감사 의견은 그대로입니다.",
+});
+/** 순위 일부만 실행이 읽는 작업의 설명(아니면 null) */
+export const aiTaskRankScopeNote = (id: string): string | null =>
+  Object.prototype.hasOwnProperty.call(AI_TASK_RANK_SCOPE_NOTES, id) ? AI_TASK_RANK_SCOPE_NOTES[id] : null;
+/** 화면·CLI가 순위를 저장받는 작업 — 실행이 순위를 읽는 작업(isAiLiveTask)과 순위 일부만 읽는 작업 */
+export const isAiRankSavableTask = (id: string): boolean => isAiLiveTask(id) || aiTaskRankScopeNote(id) !== null;
 /** 장부 route 가 이 작업의 것인가 — 작업의 route id 그대로이거나, LLM 보강이면 그 보강 일의 local-assist-<일>-<backend> */
 export const aiTaskOwnsLedgerRoute = (row: Pick<AiTaskDef, "routeId" | "assistWork">, routeId: string): boolean =>
   row.routeId === routeId || row.assistWork.some(work => {

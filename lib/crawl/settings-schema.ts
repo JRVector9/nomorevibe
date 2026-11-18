@@ -501,18 +501,20 @@ export type ScreenReviewSettings = z.infer<typeof screenReviewSchema>;
 export const qwenAutoSchema = z.object({
   auditSecondOpinion: auditSecondOpinionSchema,
   publishedFilter: qwenAutoStepSchema,
+  sameModelRecheck: qwenAutoStepSchema.default({ enabled: false, perTick: 1 }),
   splitTiebreak: splitTiebreakSchema,
   heldRetry: heldQwenRetrySchema,
   screenReview: screenReviewSchema,
 }).strict();
 export type QwenAutoSettings = z.infer<typeof qwenAutoSchema>;
 export type QwenAutoStep = keyof QwenAutoSettings;
-export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview"] as const satisfies readonly QwenAutoStep[];
+export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview", "sameModelRecheck"] as const satisfies readonly QwenAutoStep[];
 /** 모두 꺼짐 — 칸이 없는 행·깨진 단계도 이 값으로 읽는다 */
 export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
   auditSecondOpinion: { enabled: false, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 }, publishedFilter: { enabled: false, perTick: 10 },
   splitTiebreak: { enabled: false, perTick: 10, dailyRejectCap: SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP }, heldRetry: DEFAULT_HELD_QWEN_RETRY,
   screenReview: { enabled: false, perTick: 2, autoClose: true },
+  sameModelRecheck: { enabled: false, perTick: 1 },
 };
 
 /**

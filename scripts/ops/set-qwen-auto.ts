@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { QwenAutoStep } from "@/lib/crawl/settings-schema";
 
-const STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview"] as const satisfies readonly QwenAutoStep[];
+const STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview", "sameModelRecheck"] as const satisfies readonly QwenAutoStep[];
 const OVERRIDES = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS"] as const;
 
 export type SetQwenAutoCommand = { step: QwenAutoStep; enable: boolean | null; perTick: number | null; budgetSeconds: number | null;

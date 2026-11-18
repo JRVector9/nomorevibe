@@ -166,10 +166,12 @@ export async function reviewWithQwenDirect(input: ReviewInput, opts: {
   /** 시험의 가짜 서버 */
   request?: typeof fetch;
   env?: Readonly<Record<string, string | undefined>>;
+  /** A saved task rank, admitted through withLocalModelCapacity by the caller. */
+  config?: QwenDirectConfig;
   /** 기존 자동 경로는 생략하여 v2를 유지한다. v3는 평가 호출에서만 명시 선택한다. */
   promptVersion?: QwenPromptVersion;
 } = {}): Promise<QwenDirectReview> {
-  const config = qwenDirectConfig(opts.env);
+  const config = opts.config ?? qwenDirectConfig(opts.env);
   const prompt = qwenPromptConfig(opts.promptVersion);
   if (!config || !prompt || !gatewayModel(`${config.model}${prompt.modelSuffix}`)) throw new QwenDirectError("qwen_not_configured");
   // 답의 HTTP 상태 — reviewWithGateway 는 상태를 갈래(auth·rate_limited…)로만 돌려준다
