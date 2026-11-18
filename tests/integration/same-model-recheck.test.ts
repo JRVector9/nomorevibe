@@ -12,6 +12,11 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-r
 import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
 import { resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { qwenSecondOpinionStatus } from "@/lib/crawl/audit-second-opinion-auto";
+import { loadAuditInput } from "@/lib/crawl/product-audit";
+import { QWEN_V2_AUDIT_PROMPT_VERSION, QWEN_V2_AUTO_SOURCE, reviewWithQwenDirect } from "@/lib/crawl/qwen-direct-review";
+import { SAME_MODEL_RECHECK_PROMPT_VERSION } from "@/lib/crawl/same-model-recheck-policy";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { LocalModelDomainRefusedError } from "@/lib/llm/local-model-domain-refusal";
 import { runJob } from "@/lib/jobs/runner";
 import { releaseRole, renewRole, tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
@@ -171,6 +176,9 @@ describe("같은 모델 재검토의 실제 SQL·HTTP·장부·쓰기는 권고�
     expect(observed).toHaveLength(1);
     expect((observed[0].body.messages as {content: string}[])[0].content).toContain("SAME-MODEL RECHECK");
     expect((observed[0].body.messages as {content: string}[])[1].content).toContain("A company website");
+    // #987 과 합친 뒤에도(2026-11-18) 재검토의 입력은 #989 그대로 — 프로젝트 활동 묶음·감사 전용 판 메모를 싣지 않는다
+    expect((observed[0].body.messages as {content: string}[])[1].content).not.toContain("projectActivity");
+    expect((observed[0].body.messages as {content: string}[])[0].content).not.toContain("AUDIT RECHECK NOTES");
     expect(await rechecks()).toMatchObject([{ itemId: item.id, decision: "approve", source: "same-model-recheck", actor: "same-model-recheck", model: MODEL }]);
     expect(await opinions()).toEqual([]);
     expect((await qwenSecondOpinionStatus(await getSettings())).audit).toMatchObject({ lastDay: 0, remaining: 0 });
@@ -235,5 +243,48 @@ describe("같은 모델 재검토의 실제 SQL·HTTP·장부·쓰기는 권고�
     const { item, product } = await recheckItem(2); await tick();
     expect(observed).toEqual([]); expect(await ledger()).toEqual([]); expect(await rechecks()).toEqual([]);
     await unchanged(item.id, product.id);
+  });
+});
+
+/**
+ * #987(감사 전용 판 + 프로젝트 활동 묶음)과 합친 뒤의 호출 직전 증명 — 같은 자리(second_opinion)를 쓰는 두 판이 서로의 입력 모양을 빌리지 못한다.
+ * 묶음은 binding 의 판이 감사 전용 판일 때만 붙여 견주므로, 재검토(#989)는 묶음 없이 지나고 감사 전용 판은 묶음 없이 지나지 못한다(2026-11-18 병합 때 고정)
+ */
+describe("감사 전용 판과 같은 모델 재검토가 한 자리를 나눠 쓴다", () => {
+  it("다른 모델의 감사 전용 판 의견이 이미 있으면 재검토하지 않고 의견 집계에도 섞지 않는다", async () => {
+    const { item, product } = await recheckItem();
+    await db.insert(productAuditSecondOpinions).values({ itemId: item.id, productId: product.id, model: OTHER_MODEL, decision: "reject", confidence: 0.8,
+      reason: "An independent audit-only answer", source: QWEN_V2_AUTO_SOURCE, promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION });
+    await tick();
+    expect(observed).toEqual([]); expect(await ledger()).toEqual([]); expect(await rechecks()).toEqual([]);
+    expect(await opinions()).toMatchObject([{ itemId: item.id, model: OTHER_MODEL, promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION }]);
+    await unchanged(item.id, product.id);
+  });
+  it("판과 입력 모양이 어긋나면 증명이 input_changed 로 거절하고 HTTP 를 보내지 않는다", async () => {
+    const { item } = await recheckItem();
+    const settings = await getSettings();
+    const plain = (await loadAuditInput(item.slug, settings))!;
+    const withActivity = (await loadAuditInput(item.slug, settings, { projectActivity: true }))!;
+    expect(plain.inputHash).not.toBe(withActivity.inputHash);
+    const config = { baseUrl, model: MODEL, apiKey: "fixture-key" };
+    const refusals: string[] = [];
+    for (const [input, promptVersion] of [[plain, QWEN_V2_AUDIT_PROMPT_VERSION], [withActivity, SAME_MODEL_RECHECK_PROMPT_VERSION]] as const) {
+      await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "audit-second-opinion"));
+      await runJob("audit-second-opinion", async (ctx) => {
+        try {
+          await withLocalModelCapacity({ target: { kind: "audit", purpose: "second_opinion", itemId: item.id, slug: item.slug }, input, lease: ctx.lease!,
+            promptVersion, servingRevision: null, allowLegacy: false },
+          request => reviewWithQwenDirect(input, { request, config, timeoutMs: 10_000,
+            ...(promptVersion === QWEN_V2_AUDIT_PROMPT_VERSION ? { promptVersion } : {}) }));
+          refusals.push("passed");
+        } catch (error) {
+          refusals.push(error instanceof LocalModelDomainRefusedError ? error.check : `other:${error instanceof Error ? error.message : String(error)}`);
+        }
+        return { done: true };
+      }, { budgetMs: jobRunOptions("audit-second-opinion", { requestedOnly: true }).budgetMs });
+    }
+    expect(refusals).toEqual(["input_changed", "input_changed"]);
+    expect(observed).toEqual([]);
+    expect((await ledger()).filter(row => row.state === "settled")).toEqual([]);
   });
 });
