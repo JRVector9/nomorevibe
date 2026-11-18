@@ -2,6 +2,8 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { searchQueries } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import type { QuerySourceLocale } from "./search-query-language";
+import type { MultilingualSearchMode } from "./search-translation";
 import { normalizeQuery } from "./search-translation";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { webWritable } from "@/lib/operations/dr/web-gate";
@@ -40,6 +42,18 @@ export async function recordSearch(entry: {
     // 기록을 못 남겼다고 검색이 실패하면 안 된다
     logger.warn("search.log_failed", { error });
   }
+}
+
+export function recordMultilingualSearch(entry: {
+  sourceLocale: QuerySourceLocale;
+  mode: MultilingualSearchMode;
+  translationPending: boolean;
+  translated: boolean;
+  results: number;
+  startedAt: Date;
+}): void {
+  const { startedAt, ...fields } = entry;
+  logger.info("search.multilingual", { ...fields, durationMs: Date.now() - startedAt.getTime() });
 }
 
 /** 오래된 기록은 지운다. 며칠짜리 흐름을 보는 표라 영원히 둘 이유가 없다 */
