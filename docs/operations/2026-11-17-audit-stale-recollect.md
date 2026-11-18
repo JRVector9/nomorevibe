@@ -80,7 +80,51 @@
 3. 다시 받기 waiting·failed 항목을 두 번째 의견에 다시 돌리려면(사람 결정): `delete from product_audit_recollects where state in ('waiting','failed')` — 운영 쓰기라 별도 승인.
 4. 감사 전용 글 판만 되돌리기: `audit-second-opinion-auto.ts` 의 `promptFor` 가 감사도 v2 를 돌려주게 고치고 배포. 감사 전용 판으로 받은 의견(prompt_version `2026-11-17.v2-audit`)은
    `AUDIT_OPINION_PROMPT_VERSIONS` 에 남겨 두면 다시 묻지 않는다(빼면 그 항목들을 v2 로 다시 묻는다). 활동 묶음만 끄려면 `loadAuditInput(…, { projectActivity: true })` 와
-   호출 직전 증명의 second_opinion 묶음을 함께 뺀다(한쪽만 빼면 증명이 input_changed 로 거절).
+   호출 직전 증명의 묶음(`local-model-domain.ts` — second_opinion 이고 판이 `QWEN_V2_AUDIT_PROMPT_VERSION` 일 때)을 함께 뺀다(한쪽만 빼면 증명이 input_changed 로 거절).
+5. #988·#989 와 합친 뒤(2026-11-18)의 되돌리기: 이 PR 의 병합 커밋을 `git revert -m 1 <병합 커밋>` 로 되돌리면 #988·#989 는 main 에 그대로 남는다.
+   그때 `local-model-domain.ts` 의 판 조건도 함께 사라져 #989 이전처럼 묶음을 붙이지 않는다(#989 재검토는 그대로 지난다). 0189 표는 #989 것이라 남는다.
+
+## main 병합 — #988(다른 순위 모델)·#989(같은 모델 재검토)와 합침 (2026-11-18)
+
+사람 지시(11/18): "#987 CI·검토 통과면 병합하고 #987·#989 함께 18앱 배포". 이 PR 의 몫은 병합 가능 상태까지다(병합·배포·운영 쓰기 안 함).
+
+- **병합**: origin/main `391e6615`(#988 `887ba8ba` + #989)를 merge 커밋 `35b92ab6` 로 합쳤다(rebase·force push 없음).
+- **충돌 4곳 — 두 쪽 의도를 모두 남김**
+  - `drizzle/meta/_journal.json`: `0188_audit_stale_recollect`(when 1794873600000) → `0189_same_model_recheck`(when 1794873600002) 차례로 둘 다.
+  - `lib/crawl/audit-second-opinion-auto.ts`: import 둘 다 · `emptyTally` 에 `sameModelRecheck` 와 `recollect*` 둘 다 ·
+    `auditOpinionWanted` 는 main 의 `model: string | SQL`·`otherRank` 인자 + #987 의 `prompt_version in AUDIT_OPINION_PROMPT_VERSIONS` ·
+    호출부는 #987 `promptFor(target)` + main 의 대체 모델 `servingRevision`/`allowLegacy:false`/`config` ·
+    받은 의견 수는 main 의 `auditModels` 목록 + #987 의 판 목록.
+  - `lib/crawl/product-audit.ts`: `findingColumns` 에 `recollect`·`sameModelRecheck` 둘 다.
+  - `tests/qwen-auto-settings.test.ts`: `sameModelRecheck` 와 `recollectPerTick` 둘 다.
+  - 충돌 표시는 없었지만 tsc 가 잡은 main 쪽 시험 고정값(새 칸 모름)도 병합 커밋에서 맞췄다(`tests/split-jobs.test.ts`, rejudge·same-model 통합 시험 설정의 `recollectPerTick` 기본 1).
+- **마이그레이션**: 0188(새 표 `product_audit_recollects`)·0189(새 표 `product_audit_same_model_rechecks`) 둘 다 새 표만 만든다.
+  기존 표의 CHECK 재구성이 없어 **DRAIN 불필요**. 번호 겹침 없음(0186 은 원래 없음). 이 저장소의 `drizzle/meta/*_snapshot.json` 은 0052 까지만 있어
+  0188·0189 에는 스냅숏 체인(prevId)이 없다(그 뒤 마이그레이션 모두 같다). 별도 drizzle 검사 스크립트는 없고, 통합 시험 global-setup 의 `scripts/migrate.mjs` 가 0189 까지 적용했다.
+
+### 의미 충돌 확인 결과
+1. **#988 다른 순위 모델 × #987 감사 전용 판 — 2순위 route 재저장 불필요.**
+   감사 두 번째 의견의 route id 는 대상에서만 정해진다(`localModelRoute` → `local-second-opinion`). 계약은 주소·모델·리비전으로 고른다(`verifiedLocalModelContract`).
+   글 판(`2026-11-17.v2-audit`)은 dispatch binding 의 `promptVersion` 에만 들어가고 route·계약 키에는 들어가지 않는다. 그래서 운영에 저장된 2순위 route
+   ("local-second-opinion / local-direct / deepseek-v4.1-flash-1017 → m3-mlx")는 그대로 유효하다. DB 의 CHECK 도 판 값을 묶지 않는다.
+   통합 시험이 고정한다: 다른 순위 모델이 감사 전용 판·활동 묶음으로 `local-second-opinion` 장부를 지나 settled, binding 판 = v2-audit.
+2. **#989 같은 모델 재검토 × #987 활동 묶음 — 실제 충돌이 있었고 코드로 고쳤다(`89b4e743`).**
+   #987 은 호출 직전 증명이 second_opinion 이면 늘 활동 묶음을 붙여 견줬다. #989 재검토는 같은 자리(second_opinion)를 쓰지만 묶음 없이 입력을 만든다.
+   그래서 병합만 하면 재검토가 모두 `input_changed` 로 거절됐다(same-model-recheck 통합 8건 중 5건 실패).
+   이제 증명은 binding 의 판이 `QWEN_V2_AUDIT_PROMPT_VERSION` 일 때만 묶음을 붙인다. 판은 binding 에 굳어 있어 호출자가 가벼운 모양을 고를 수 없다
+   (감사 전용 판 + 묶음 없음, 재검토 판 + 묶음 있음 둘 다 input_changed — 새 통합 시험). #989 의 입력·글·기록은 바뀌지 않았다.
+   #989 분기 확인(통합): 다른 모델 있으면 안 탐 · 스위치 꺼짐이면 사람 몫 · 켜짐+유지 → 사람 확인 표시 · 켜짐+거절 → 변화 없음 · 두 번째 의견 집계에 안 섞임 ·
+   다른 모델의 감사 전용 판 의견이 있으면 재검토 대상 아님.
+3. **이미 받은 v2 의견을 끝난 것으로 세는 규칙 × #988 다른 모델 의견 — 이중 호출·영원한 재선택 없음.**
+   고르기(`auditOpinionWanted`)는 고른 모델(대체 모델 SQL)의 의견을 `prompt_version in (v2, v2-audit)` 로 찾는다. 따라잡기·상태 수도 같은 판 목록이다.
+   통합 시험: 다른 모델의 옛 v2 의견이 있으면 부르지 않음 · 다른 모델 차례의 입력이 지났으면 부르지 않고 다시 받기 한 번(기다리는 동안 다시 안 고름) ·
+   다시 받은 뒤 감사 전용 판으로 한 번만 묻고 그 뒤로 안 고름.
+4. 공유 선택식(`reviewCandidatePredicate`)·replay 권한 프로필은 건드리지 않았다. pipeline-replay-* 통합 시험이 42501 없이 지난다(아래 시험).
+
+### 배포 범위 (병합 뒤)
+- `npm run deploy -- scope --base 391e6615… --sha 07c1518c…` → **full(18앱 전부)**, `trusted: true`, 사유 `no_runtime_change`·`unclassified_runtime_change`, 바뀐 파일 30.
+  그 뒤는 문서 커밋만이다. 운영 baseline 이 #988·#989 앞이면 실제 대상은 `plan` 이 정한다(#987·#989 함께 배포 지시).
+- 마이그레이션은 0188 → 0189 차례(둘 다 새 표, DRAIN 불필요).
 
 ## 사람 추가 지시(11-17) 반영
 
@@ -133,5 +177,6 @@
 
 - [x] 원인 확인·재현 시험(`tests/audit-stale-recollect.test.ts`, 통합 `tests/integration/audit-stale-recollect.test.ts`)
 - [x] 기존 수집 길 재사용(프론티어·스캔 claim·README 잡), 틱 상한·동시 상한, 실패 → 사람 몫, 근거 바뀜 기록, 감사 화면 상태 줄
-- [ ] 운영 배포·관측(이 PR 범위 밖 — 병합·배포 금지). 관측 SQL 은 PENDING.md
+- [x] origin/main(#988·#989) 병합·충돌 4곳 해결·의미 충돌(같은 모델 재검토 input_changed) 수정·통합 시험 고정 (2026-11-18)
+- [ ] 병합·운영 배포·관측(이 PR 범위 밖 — 대표가 병합·18앱 배포). 관측 SQL 은 PENDING.md
 - [ ] 공개분 2차 행(published-filter)의 기한 지남은 그대로 쉰다(이 PR 범위 밖)
