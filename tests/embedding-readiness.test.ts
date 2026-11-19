@@ -132,9 +132,31 @@ describe("degraded 면 서버를 부르지 않는다", () => {
       ftsSlugs: async () => ["a", "b"], ftsCount: async () => 2, ftsMatching: async () => [], nearestSlugs,
       documents: async () => new Map(),
     });
-    expect(result).toMatchObject({ head: ["a", "b"], total: 2, semantic: false, reranked: false });
+    expect(result).toMatchObject({
+      head: ["a", "b"], total: 2, semantic: false, reranked: false,
+      modelWork: { embeddingCalls: 0, rerankCalls: 0, embeddingTimedOut: false, rerankTimedOut: false, fallback: true },
+    });
     expect(nearestSlugs).not.toHaveBeenCalled();
     expect(network).not.toHaveBeenCalled();
+  });
+
+  it("실제로 요청한 임베딩과 재정렬을 각각 한 번 센다", async () => {
+    vi.stubEnv("EMBEDDING_SERVING_PROFILE", profile());
+    vi.stubEnv("EMBEDDING_URL", "http://oracle:18081");
+    vi.stubEnv("RERANK_URL", "http://rerank:18082");
+    const network = vi.fn()
+      .mockImplementationOnce(vectorReply())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{ index: 0, relevance_score: 1 }] })));
+    vi.stubGlobal("fetch", network);
+
+    const result = await rankSearch("메모 앱", {
+      ftsSlugs: async () => ["notes"], ftsCount: async () => 1, ftsMatching: async () => [],
+      nearestSlugs: async () => ["notes"], documents: async () => new Map(),
+    });
+    expect(result.modelWork).toEqual({
+      embeddingCalls: 1, rerankCalls: 1, embeddingTimedOut: false, rerankTimedOut: false, fallback: false,
+    });
+    expect(network).toHaveBeenCalledTimes(2);
   });
 
   it("운영센터는 degraded 이유를 그대로 보이고 임베딩 서버는 묻지 않는다", async () => {
