@@ -8,7 +8,7 @@ import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
-import { MULTILINGUAL_QUERY_PROMPT_VERSION, legacyQuerySourceLocale, multilingualQuerySourceLocale } from "./search-query-language";
+import { MULTILINGUAL_QUERY_PROMPT_VERSION, legacyQuerySourceLocale, multilingualQuerySourceLocale, type QuerySourceLocale } from "./search-query-language";
 import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
@@ -44,7 +44,16 @@ export type ResolvedSearch = {
   translated: string | null;
   /** 기다리지 않아서 아직 옮기지 못했다 — 응답 뒤에 옮겨 캐시에 둔다(warmQueryTranslation) */
   translationPending?: boolean;
+  /** Expanded Chinese/Japanese searches only warm translation after the response. */
+  multilingualSource?: QuerySourceLocale;
 };
+
+export type SearchQueryOptions = { waitForTranslation?: boolean; multilingual?: boolean };
+export type MultilingualSearchMode = "off" | "lexical";
+
+export function multilingualSearchMode(value = process.env.SEARCH_MULTILINGUAL_MODE): MultilingualSearchMode {
+  return value === "lexical" ? value : "off";
+}
 
 /** 같은 뜻인데 공백·대소문자만 다른 말을 따로 옮기지 않는다 */
 export function normalizeQuery(query: string): string {
@@ -136,11 +145,12 @@ function noteQueryRanksUnusable(code: string): void {
   logger.warn("search.translate_ranks_unusable", { code });
 }
 
-async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
+async function translateDetectedQuery(raw: string, multilingualTarget?: WebsearchQueryTarget): Promise<QueryTranslation> {
   const sourceLocale = searchQuerySourceLocale(raw);
-  if (!sourceLocale) return { kind: "unavailable" };
+  const requestSource = multilingualTarget?.sourceLocale ?? sourceLocale;
+  if (!requestSource) return { kind: "unavailable" };
   try {
-    const hash = queryTranslationKey(raw);
+    const hash = multilingualTarget?.cacheKey ?? queryTranslationKey(raw);
     const cached = await cachedTranslation(hash);
     if (cached) return { kind: "translated", text: cached };
 
@@ -156,7 +166,7 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
     // 공통 슬롯이 켜져 있으면 그 길로만 부른다(장부·캐시 기록은 그 안에서 주 DB 로). 꺼져 있으면 legacy — 아래 원래 길 그대로다
     const { prompt, glossary } = queryTranslationPolicy(raw, sourceLocale);
     const timeoutMs = searchQueryTranslateTimeoutMs();
-    const target: WebsearchQueryTarget = { query: raw, sourceLocale, cacheKey: hash, promptVersion: prompt, glossaryVersion: glossary };
+    const target: WebsearchQueryTarget = multilingualTarget ?? { query: raw, sourceLocale: requestSource, cacheKey: hash, promptVersion: prompt, glossaryVersion: glossary };
     const attempt = await (async () => {
       let prefer: string | null = null;
       if (ranks.mode === "workload_pool") {
@@ -170,11 +180,13 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
       return ranks.run(async (): Promise<QueryTranslation | { kind: "result"; result: Awaited<ReturnType<typeof translateQueryToEnglish>> }> => {
         const reserved = await translateQueryWithModelCapacity(target, timeoutMs);
         if (reserved.kind === "cached") return { kind: "translated", text: reserved.text };
-        const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, timeoutMs)
+        // New translations use the capacity-backed route exclusively. The legacy transport has been retired.
+        if (reserved.kind === "result") return reserved;
+        if (multilingualTarget || !sourceLocale) return { kind: "unavailable" };
+        const result = sourceLocale === "ko" ? await translateQueryToEnglish(raw, timeoutMs)
           : await translateChineseQueryToEnglish(raw, sourceLocale, timeoutMs);
         // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
-        // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
-        if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(
+        await onPrimary(() => recordTranslations(
           [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
           textTaskModel("search-query-translate"),
           "en",
@@ -192,15 +204,15 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
     if (attempt.value.kind !== "result") return attempt.value;
     const result = attempt.value.result;
     if (!result.ok) {
-      logger.warn("search.translate_failed", { error: result.error });
+      logger.warn("search.translate_failed", { error: result.error, ...(multilingualTarget ? { sourceLocale: requestSource } : {}) });
       return { kind: "unavailable" };
     }
-    logger.info("search.translated", { keywords: result.keywords });
+    logger.info("search.translated", multilingualTarget ? { sourceLocale: requestSource } : { keywords: result.keywords });
     return { kind: "translated", text: result.keywords };
   } catch (error) {
     if (error instanceof ModelCapacityDeferredError) return { kind: "deferred" };
     // 번역은 덤이다 — 번역 쪽이 죽어도 검색은 사용자가 친 말로 그대로 돈다
-    logger.warn("search.translate_unavailable", { error });
+    logger.warn("search.translate_unavailable", multilingualTarget ? { sourceLocale: requestSource } : { error });
     return { kind: "unavailable" };
   }
 }
@@ -210,40 +222,60 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
  * 관련도순 검색은 번역을 기다리지 않는다(2026-10-07): 의미 검색·재정렬이 한국어 문장을 영어 소개와 바로 재서,
  * 번역 없이도 nDCG 0.824(번역을 붙이면 0.832)다. 처음 들어온 한국어 문장의 게이트웨이 대기(약 3초)를 없앤다.
  */
-export async function warmQueryTranslation(query: string): Promise<void> {
+export async function warmQueryTranslation(query: string, options: Pick<SearchQueryOptions, "multilingual"> = {}): Promise<void> {
   const raw = query.trim();
-  if (raw && searchQuerySourceLocale(raw)) await translateDetectedQuery(raw);
+  if (!raw) return;
+  const target = options.multilingual ? multilingualQueryTranslationTarget(raw) : null;
+  if (target || searchQuerySourceLocale(raw)) await translateDetectedQuery(raw, target ?? undefined);
 }
 
 /** 캐시에만 묻는다 — 없으면 null. 캐시가 죽어도 검색은 돈다 */
-async function storedTranslation(raw: string): Promise<string | null> {
+async function storedTranslation(hash: string): Promise<string | null> {
   try {
-    return await cachedTranslation(queryTranslationKey(raw));
-  } catch (error) {
-    logger.warn("search.translate_unavailable", { error });
+    return await cachedTranslation(hash);
+  } catch {
+    logger.warn("search.translate_cache_unavailable");
     return null;
   }
 }
 
-export async function resolveSearchQuery(query: string | undefined, options: { waitForTranslation?: boolean } = {}): Promise<ResolvedSearch> {
+async function planWithPhrases(raw: string, phrases: string[]): Promise<SearchQuery> {
+  const texts = [raw, ...phrases];
+  try {
+    // 번역 표현들은 같은 뜻이라 한 묶음이다 — 원문(0)과 번역(1)
+    return { ...await planSearch(texts), groups: texts.map((_, index) => (index === 0 ? 0 : 1)) };
+  } catch (error) {
+    logger.warn("search.plan_failed", { error });
+    return texts;
+  }
+}
+
+export async function resolveSearchQuery(query: string | undefined, options: SearchQueryOptions = {}): Promise<ResolvedSearch> {
   const raw = query?.trim() ?? "";
   if (!raw) return { queries: [], translated: null };
+
+  const target = options.multilingual ? multilingualQueryTranslationTarget(raw) : null;
+  if (target) {
+    const stored = await storedTranslation(target.cacheKey);
+    const phrases = stored ? [...new Set(queryTranslationPhrases(stored))].slice(0, 2) : [];
+    return {
+      queries: await planWithPhrases(raw, phrases),
+      translated: phrases.length ? phrases.join(" / ") : null,
+      multilingualSource: target.sourceLocale,
+      translationPending: phrases.length === 0,
+    };
+  }
+
   const wait = options.waitForTranslation ?? true;
   const sourceLocale = searchQuerySourceLocale(raw);
   const result = sourceLocale && wait ? await translateDetectedQuery(raw) : null;
-  const stored = !sourceLocale ? null : wait ? result?.kind === "translated" ? result.text : null : await storedTranslation(raw);
+  const stored = !sourceLocale ? null : wait ? result?.kind === "translated" ? result.text : null : await storedTranslation(queryTranslationKey(raw));
   const translationPending = result?.kind === "deferred" || !wait && sourceLocale !== null && stored === null;
   // 영어로 옮기면 엉뚱한 것이 걸리는 한국식 영어는 정해 둔 영어 말로도 찾는다(translate.ts QUERY_EXPANSIONS)
   const phrases = [...new Set([...(stored ? queryTranslationPhrases(stored) : []), ...(sourceLocale === "ko" ? queryExpansions(raw) : [])])];
-  const translated = phrases.length ? phrases.join(" / ") : null;
-  const texts = [raw, ...phrases];
-  const pending = translationPending ? { translationPending } : {};
-  try {
-    // 번역 표현들은 같은 뜻이라 한 묶음이다 — 원문(0)과 번역(1)
-    return { queries: { ...await planSearch(texts), groups: texts.map((_, index) => (index === 0 ? 0 : 1)) }, translated, ...pending };
-  } catch (error) {
-    // 짜지 못해도 검색은 돈다 — 예전처럼 모든 낱말로 찾는다
-    logger.warn("search.plan_failed", { error });
-    return { queries: texts, translated, ...pending };
-  }
+  return {
+    queries: await planWithPhrases(raw, phrases),
+    translated: phrases.length ? phrases.join(" / ") : null,
+    ...(translationPending ? { translationPending } : {}),
+  };
 }

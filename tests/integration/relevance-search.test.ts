@@ -88,3 +88,25 @@ describe("관련도순 검색", () => {
     expect(await nearestProductSlugs(QUERY, { statuses: ["seeded", "verified"], excludeDown: true }, 10, 0.5)).toEqual([]);
   });
 });
+
+it("serves zero results immediately on a cold multilingual query and uses cached English terms on the next search", async () => {
+  const raw = "音声認識";
+  const english = "speech recognition";
+  await product("speech-app", english, null);
+  const { resolveSearchQuery, multilingualQueryTranslationTarget } = await import("@/lib/domain/products/search-translation");
+  const { searchRelevance } = await import("@/lib/domain/products/relevance");
+  const { textTranslations } = await import("@/lib/db/schema");
+  const options = { waitForTranslation: false, multilingual: true };
+  const translate = vi.fn(async () => { throw new Error("unexpected translation wait"); });
+  const rank: typeof rankRelevance = (query, plan, filters) => rankRelevance(query, plan, filters, servers);
+
+  expect(await searchRelevance(raw, await resolveSearchQuery(raw, options), {}, translate, rank)).toMatchObject({ total: 0, translated: null });
+  expect(translate).not.toHaveBeenCalled();
+  const { cacheKey } = multilingualQueryTranslationTarget(raw)!;
+  await db.insert(textTranslations).values({ sourceHash: cacheKey, targetLang: "en", status: "done", translated: english, model: "fixture" });
+  expect(await searchRelevance(raw, await resolveSearchQuery(raw, options), {}, translate, rank))
+    .toMatchObject({ head: ["speech-app"], total: 1, translated: english });
+  expect(translate).not.toHaveBeenCalled();
+  expect(servers.embed.mock.calls).toHaveLength(2);
+  expect(servers.rerank.mock.calls[0]?.[0]).toBe(raw);
+});

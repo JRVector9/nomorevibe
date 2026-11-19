@@ -66,7 +66,7 @@ export async function searchRelevance(
   rank: typeof rankRelevance = rankRelevance,
 ): Promise<RelevanceResult> {
   const ranked = await rank(raw, resolved.queries, filters);
-  if (ranked.total > 0 || !resolved.translationPending) return { ...ranked, plan: resolved.queries, translated: resolved.translated };
+  if (ranked.total > 0 || !resolved.translationPending || resolved.multilingualSource) return { ...ranked, plan: resolved.queries, translated: resolved.translated };
   const waited = await translate();
   if (!waited.translated) return { ...ranked, plan: resolved.queries, translated: null };
   return { ...await rank(raw, waited.queries, filters), plan: waited.queries, translated: waited.translated };

@@ -59,10 +59,12 @@ vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mock
 vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage }));
 vi.mock("@/lib/domain/products/repository", () => ({ aiLevelCounts, categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
 // 0건 화면의 추천 검색어는 검색 기록(DB)에서 읽는다 — 화면 조합만 본다
-vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), popularSearches }));
+vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), recordMultilingualSearch: vi.fn(), popularSearches }));
 // 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
 vi.mock("@/lib/domain/products/search-translation", () => ({
   resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
+  multilingualSearchMode: () => process.env.SEARCH_MULTILINGUAL_MODE ?? "off",
+  MULTILINGUAL_SEARCH_RANKING_VERSION: 1,
   normalizeQuery: (query: string) => query.trim().toLowerCase(),
 }));
 // 관련도순 검색(섞기·재정렬)은 모델 서버와 DB 를 부른다 — 화면 조합만 본다
