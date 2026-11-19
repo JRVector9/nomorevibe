@@ -29,7 +29,8 @@ describe("관련도순 검색", () => {
   it("의미 검색만으로 걸린 것을 더해 섞고, 전체 수에 더한다", async () => {
     const d = deps();
     const result = await rankSearch("회의록 정리", d);
-    expect(result).toEqual({ head: ["c", "a", "b", "x"], total: 4, semantic: true, reranked: true });
+    expect(result).toMatchObject({ head: ["c", "a", "b", "x"], total: 4, semantic: true, reranked: true,
+      modelWork: { embeddingCalls: 1, rerankCalls: 1, embeddingTimedOut: false, rerankTimedOut: false, fallback: false } });
     expect(d.embed).toHaveBeenCalledWith("회의록 정리");
     // 낱말 검색이 다 들어왔으면(200 미만) 뒤에서 겹칠 것이 없다
     expect(d.ftsMatching).not.toHaveBeenCalled();
@@ -63,19 +64,26 @@ describe("관련도순 검색", () => {
     ]) {
       const rerank = vi.fn(async (_q: string, docs: string[]) => docs.map((_, i) => i));
       const result = await rankSearch("q", deps({ ...failing, rerank }));
-      expect(result).toEqual({ head: ["c", "b", "a"], total: 3, semantic: false, reranked: true });
+      expect(result).toMatchObject({ head: ["c", "b", "a"], total: 3, semantic: false, reranked: true });
     }
   });
 
   it("재정렬이 실패하면 섞은 순서로 낸다", async () => {
     const result = await rankSearch("q", deps({ rerank: vi.fn(async () => { throw new Error("rerank_http_503"); }) }));
-    expect(result).toEqual({ head: ["c", "a", "b", "x"], total: 4, semantic: true, reranked: false });
+    expect(result).toMatchObject({ head: ["c", "a", "b", "x"], total: 4, semantic: true, reranked: false });
   });
 
   it("아무것도 걸리지 않으면 재정렬을 부르지 않는다", async () => {
     const d = deps({ ftsSlugs: vi.fn(async () => []), ftsCount: vi.fn(async () => 0), nearestSlugs: vi.fn(async () => []) });
-    expect(await rankSearch("asdfgh", d)).toEqual({ head: [], total: 0, semantic: true, reranked: false });
+    expect(await rankSearch("asdfgh", d)).toMatchObject({ head: [], total: 0, semantic: true, reranked: false,
+      modelWork: { embeddingCalls: 1, rerankCalls: 0 } });
     expect(d.rerank).not.toHaveBeenCalled();
+  });
+
+  it("records model timeouts for the original ranking path", async () => {
+    const d = deps({ embed: () => new Promise(() => {}), rerank: () => new Promise(() => {}) });
+    expect(await rankSearch("q", d)).toMatchObject({ head: ["a", "b", "c"], total: 3, semantic: false, reranked: false,
+      modelWork: { embeddingCalls: 1, rerankCalls: 1, embeddingTimedOut: true, rerankTimedOut: true, fallback: true } });
   });
 });
 
@@ -119,10 +127,14 @@ describe("처음 들어온 한국어 문장", () => {
   const found = { head: ["tv-shows-chart"], total: 1, semantic: true, reranked: true };
 
   it("원문으로 0건이면 그때만 번역을 기다려 다시 찾는다", async () => {
-    const rank = vi.fn().mockResolvedValueOnce(empty).mockResolvedValueOnce(found);
+    const work = { embeddingCalls: 1, rerankCalls: 0, embeddingTimedOut: true, rerankTimedOut: false, fallback: true };
+    const rank = vi.fn().mockResolvedValueOnce({ ...empty, modelWork: work }).mockResolvedValueOnce({
+      ...found, modelWork: { ...work, rerankCalls: 1, embeddingTimedOut: false, fallback: false },
+    });
     const translate = vi.fn(async () => ({ queries: ["드라마 평점 차트", "tv show ratings"], translated: "tv show ratings" }));
     const result = await searchRelevance("드라마 평점 차트", { queries: ["드라마 평점 차트"], translated: null, translationPending: true }, {}, translate, rank);
-    expect(result).toEqual({ ...found, plan: ["드라마 평점 차트", "tv show ratings"], translated: "tv show ratings" });
+    expect(result).toEqual({ ...found, plan: ["드라마 평점 차트", "tv show ratings"], translated: "tv show ratings",
+      modelWork: { ...work, embeddingCalls: 2, rerankCalls: 1 } });
     expect(rank).toHaveBeenLastCalledWith("드라마 평점 차트", ["드라마 평점 차트", "tv show ratings"], {});
   });
 
@@ -178,6 +190,19 @@ describe("expanded relevance ranking", () => {
     expect(result).toMatchObject({ head: ["c", "a", "b", "x"], total: 4, semantic: true, reranked: false,
       modelWork: { embeddingTimedOut: true, rerankCalls: 0, fallback: true } });
     expect(d.rerank).not.toHaveBeenCalled();
+  });
+
+  it("keeps database deadlines out of the model timeout counts", async () => {
+    const vectors = deps({ nearestSlugs: () => new Promise(() => {}) });
+    expect(await rankMultilingualSearch("原文", "english", vectors, async () => ["a"]))
+      .toMatchObject({ head: ["a", "b", "c"], modelWork: {
+        embeddingCalls: 2, embeddingTimedOut: false, rerankCalls: 0, rerankTimedOut: false, fallback: true,
+      } });
+    const documents = deps({ documents: () => new Promise(() => {}) });
+    expect(await rankMultilingualSearch("原文", "english", documents, async () => ["a"]))
+      .toMatchObject({ head: ["c", "a", "b", "x"], modelWork: {
+        embeddingCalls: 2, embeddingTimedOut: false, rerankCalls: 0, rerankTimedOut: false, fallback: true,
+      } });
   });
 
   it("does not start a third rerank after a failure and only uses complete original scores", async () => {

@@ -47,17 +47,19 @@ export async function recordSearch(entry: {
 
 /** Request-level timing only. Model work is measured where the shared rank is computed. */
 export function recordMultilingualSearch(entry: {
-  sourceLocale: QuerySourceLocale;
+  sourceLocale: QuerySourceLocale | "en" | "und";
   mode: MultilingualSearchMode;
+  translationCache: "hit" | "miss" | "not_applicable";
   translationPending: boolean;
   translated: boolean;
   results: number;
   startedAt: Date;
   ranked: RankedSearch | null;
 }): void {
-  const { sourceLocale, mode, translationPending, translated, results, startedAt, ranked } = entry;
+  const { sourceLocale, mode, translationCache, translationPending, translated, results, startedAt, ranked } = entry;
   logger.info("search.multilingual", {
-    sourceLocale, mode, translationPending, translated, results, durationMs: Date.now() - startedAt.getTime(),
+    sourceLocale, mode, translationCache, translationPending, translated, results, zeroResults: results === 0,
+    durationMs: Date.now() - startedAt.getTime(),
     semantic: ranked?.semantic, reranked: ranked?.reranked, fallback: ranked?.modelWork?.fallback,
   });
 }

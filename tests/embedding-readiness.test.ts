@@ -132,7 +132,7 @@ describe("degraded 면 서버를 부르지 않는다", () => {
       ftsSlugs: async () => ["a", "b"], ftsCount: async () => 2, ftsMatching: async () => [], nearestSlugs,
       documents: async () => new Map(),
     });
-    expect(result).toEqual({ head: ["a", "b"], total: 2, semantic: false, reranked: false });
+    expect(result).toMatchObject({ head: ["a", "b"], total: 2, semantic: false, reranked: false });
     expect(nearestSlugs).not.toHaveBeenCalled();
     expect(network).not.toHaveBeenCalled();
   });

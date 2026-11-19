@@ -33,6 +33,31 @@ const EMBED_TIMEOUT_MS = 500;
 /** 재정렬 30쌍 — 평소 0.3초, 붐비면 0.5초 남짓. 넘기면 섞은 순서로 낸다 */
 const RERANK_TIMEOUT_MS = 1_500;
 
+type ModelWork = {
+  embeddingCalls: number;
+  rerankCalls: number;
+  embeddingTimedOut: boolean;
+  rerankTimedOut: boolean;
+  fallback: boolean;
+};
+
+function searchModelWork(): ModelWork {
+  return { embeddingCalls: 0, rerankCalls: 0, embeddingTimedOut: false, rerankTimedOut: false, fallback: false };
+}
+
+async function trackModelCall<T>(
+  work: ModelWork, phase: "embedding" | "rerank", deadline: AbortSignal, load: () => Promise<T>,
+): Promise<T> {
+  deadline.throwIfAborted();
+  work[`${phase}Calls`]++;
+  try {
+    return await withinSearchModelDeadline(load(), deadline);
+  } catch (error) {
+    work[`${phase}TimedOut`] ||= deadline.aborted;
+    throw error;
+  }
+}
+
 export type RankedSearch = {
   /** 앞쪽 — 섞고 재정렬한 순서(낱말 검색 앞 200 + 의미 검색만으로 걸린 것) */
   head: string[];
@@ -41,13 +66,7 @@ export type RankedSearch = {
   /** 무엇이 실제로 돌았나 — 검색 기록과 점검에 남긴다 */
   semantic: boolean;
   reranked: boolean;
-  modelWork?: {
-    embeddingCalls: number;
-    rerankCalls: number;
-    embeddingTimedOut: boolean;
-    rerankTimedOut: boolean;
-    fallback: boolean;
-  };
+  modelWork?: ModelWork;
 };
 
 export type RankDependencies = {
@@ -86,10 +105,11 @@ function scoredHead(top: string[], scores: number[]) {
 }
 
 export async function rankSearch(query: string, deps: RankDependencies): Promise<RankedSearch> {
-  const embed = deps.embed ?? embedQuery;
-  const rerank = deps.rerank ?? rerankDocuments;
+  const modelWork = searchModelWork();
+  const embeddingDeadline = AbortSignal.timeout(EMBED_TIMEOUT_MS);
   // 임베딩 서버든 벡터 조회든(복제본에 pgvector 가 없을 때 등) 실패하면 낱말 검색만으로 간다
-  const vectorLoad = embed(query)
+  const vectorLoad = trackModelCall(modelWork, "embedding", embeddingDeadline,
+    () => deps.embed ? deps.embed(query) : embedQuery(query, embeddingDeadline))
     .then((vector) => deps.nearestSlugs(vector, CANDIDATES, MIN_SIMILARITY))
     .catch((error: unknown) => { logger.warn("search.semantic_unavailable", { error }); return null; });
   const [fts, ftsTotal, nearest] = await Promise.all([deps.ftsSlugs(CANDIDATES), deps.ftsCount(), vectorLoad]);
@@ -97,18 +117,23 @@ export async function rankSearch(query: string, deps: RankDependencies): Promise
   const fused = nearest ? fuseRanks([fts, nearest]) : fts;
   const total = await resultCount(fused, fts, ftsTotal, deps);
   const semantic = nearest !== null;
-  if (fused.length === 0) return { head: [], total, semantic, reranked: false };
+  modelWork.fallback = !semantic;
+  if (fused.length === 0) return { head: [], total, semantic, reranked: false, modelWork };
 
   // 임베딩 서버가 쉬어도 재정렬은 낱말 검색 순서에 그대로 건다
   const top = fused.slice(0, RERANK_TOP);
   try {
     const texts = await deps.documents(top);
-    const scores = await rerank(query, top.map((slug) => texts.get(slug) ?? slug));
+    const inputs = top.map((slug) => texts.get(slug) ?? slug);
+    const deadline = AbortSignal.timeout(RERANK_TIMEOUT_MS);
+    const scores = await trackModelCall(modelWork, "rerank", deadline,
+      () => deps.rerank ? deps.rerank(query, inputs) : rerankDocuments(query, inputs, { signal: deadline }));
     const order = scoredHead(top, scores).map((row) => row.slug);
-    return { head: [...order, ...fused.slice(RERANK_TOP)], total, semantic, reranked: true };
+    return { head: [...order, ...fused.slice(RERANK_TOP)], total, semantic, reranked: true, modelWork };
   } catch (error) {
     logger.warn("search.rerank_unavailable", { error });
-    return { head: fused, total, semantic, reranked: false };
+    modelWork.fallback = true;
+    return { head: fused, total, semantic, reranked: false, modelWork };
   }
 }
 
@@ -119,18 +144,17 @@ export async function rankSearch(query: string, deps: RankDependencies): Promise
 export async function rankMultilingualSearch(
   raw: string, translated: string, deps: RankDependencies, nativeFtsSlugs: RankDependencies["ftsSlugs"],
 ): Promise<RankedSearch> {
-  const modelWork = { embeddingCalls: 0, rerankCalls: 0, embeddingTimedOut: false, rerankTimedOut: false, fallback: false };
+  const modelWork = searchModelWork();
   const embeddingDeadline = AbortSignal.timeout(EMBED_TIMEOUT_MS);
+  let nearestTimedOut = false;
   const nearest = async (query: string): Promise<string[] | null> => {
     try {
-      modelWork.embeddingCalls++;
-      return await withinSearchModelDeadline((async () => {
-        const vector = await (deps.embed ? deps.embed(query) : embedQuery(query, embeddingDeadline));
-        embeddingDeadline.throwIfAborted();
-        return deps.nearestSlugs(vector, CANDIDATES, MIN_SIMILARITY);
-      })(), embeddingDeadline);
+      const vector = await trackModelCall(modelWork, "embedding", embeddingDeadline,
+        () => deps.embed ? deps.embed(query) : embedQuery(query, embeddingDeadline));
+      embeddingDeadline.throwIfAborted();
+      return await withinSearchModelDeadline(deps.nearestSlugs(vector, CANDIDATES, MIN_SIMILARITY), embeddingDeadline);
     } catch {
-      modelWork.embeddingTimedOut ||= embeddingDeadline.aborted;
+      nearestTimedOut ||= embeddingDeadline.aborted;
       return null;
     }
   };
@@ -147,7 +171,7 @@ export async function rankMultilingualSearch(
   const bilingual = expanded ? fuseRanks([fts, rawNearest, translatedNearest]) : lexical;
   const native = expanded ? fuseRanks([nativeFts, rawNearest]) : [];
 
-  let head = modelWork.embeddingTimedOut ? lexical : bilingual;
+  let head = bilingual;
   let reranked = false;
   const fallback = () => {
     head = lexical;
@@ -155,7 +179,7 @@ export async function rankMultilingualSearch(
   };
   if (!expanded) fallback();
 
-  if (!modelWork.embeddingTimedOut && (head.length > 0 || native.length > 0)) {
+  if (!nearestTimedOut && (head.length > 0 || native.length > 0)) {
     const rerankDeadline = AbortSignal.timeout(RERANK_TIMEOUT_MS);
     const searchTop = head.slice(0, RERANK_TOP);
     const nativeTop = native.slice(0, RERANK_TOP);
@@ -164,12 +188,10 @@ export async function rankMultilingualSearch(
       const rerank = async (query: string, slugs: string[]): Promise<number[] | null> => {
         if (!slugs.length) return [];
         try {
-          rerankDeadline.throwIfAborted();
           const inputs = slugs.map((slug) => docs.get(slug) ?? slug);
-          modelWork.rerankCalls++;
-          const scores = await withinSearchModelDeadline(deps.rerank
+          const scores = await trackModelCall(modelWork, "rerank", rerankDeadline, () => deps.rerank
             ? deps.rerank(query, inputs)
-            : rerankDocuments(query, inputs, { signal: rerankDeadline }), rerankDeadline);
+            : rerankDocuments(query, inputs, { signal: rerankDeadline }));
           return scores.length === slugs.length && scores.every(Number.isFinite) ? scores : null;
         } catch {
           return null;
@@ -179,8 +201,7 @@ export async function rankMultilingualSearch(
         rerank(expanded ? `${raw} / ${translated}` : raw, searchTop),
         rerank(raw, nativeTop),
       ]);
-      modelWork.rerankTimedOut = rerankDeadline.aborted;
-      if (scores && nativeScores && !modelWork.rerankTimedOut) {
+      if (scores && nativeScores && !rerankDeadline.aborted) {
         head = [...scoredHead(searchTop, scores).map((row) => row.slug), ...head.slice(RERANK_TOP)];
         const leader = scoredHead(nativeTop, nativeScores)[0];
         const preserveLeader = leader && leader.score >= 0;
@@ -191,14 +212,13 @@ export async function rankMultilingualSearch(
         // Reuse original scores when they cover the lexical top 30 after a non-timeout failure.
         const originalScores = nativeScores && new Map(nativeTop.map((slug, index) => [slug, nativeScores[index]]));
         const lexicalTop = lexical.slice(0, RERANK_TOP);
-        if (!modelWork.rerankTimedOut && originalScores && lexicalTop.every((slug) => originalScores.has(slug))) {
+        if (!rerankDeadline.aborted && originalScores && lexicalTop.every((slug) => originalScores.has(slug))) {
           head = [...scoredHead(lexicalTop, lexicalTop.map((slug) => originalScores.get(slug)!)).map((row) => row.slug),
             ...lexical.slice(RERANK_TOP)];
           reranked = true;
         }
       }
     } catch {
-      modelWork.rerankTimedOut = rerankDeadline.aborted;
       fallback();
     }
   }

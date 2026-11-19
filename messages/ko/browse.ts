@@ -31,6 +31,8 @@ export const browse = {
   "empty.query": "“{query}”에 맞는 프로젝트가 없습니다",
   "empty.filtered": "조건에 맞는 프로젝트가 없습니다",
   "empty.queryHint": "철자를 확인하거나 더 짧고 흔한 말로 찾아보세요.",
+  "empty.translationPending": "번역이 준비되면 검색 결과가 더 나올 수 있어요.",
+  "empty.checkResults": "결과 다시 확인",
   "empty.filterHint": "다른 분야를 고르거나 필터를 초기화해 보세요.",
   "empty.searchIdeas": "이런 검색어는 어떠세요",
   "empty.categoryIdeas": "분야에서 찾아보기",

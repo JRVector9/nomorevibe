@@ -78,7 +78,17 @@ export async function searchRelevance(
   if (ranked.total > 0 || !resolved.translationPending || resolved.multilingualSource) return { ...ranked, plan: resolved.queries, translated: resolved.translated };
   const waited = await translate();
   if (!waited.translated) return { ...ranked, plan: resolved.queries, translated: null };
-  return { ...await rank(raw, waited.queries, filters), plan: waited.queries, translated: waited.translated };
+  const retried = await rank(raw, waited.queries, filters);
+  const initialWork = ranked.modelWork;
+  const retryWork = retried.modelWork;
+  const modelWork = initialWork && retryWork ? {
+    embeddingCalls: initialWork.embeddingCalls + retryWork.embeddingCalls,
+    rerankCalls: initialWork.rerankCalls + retryWork.rerankCalls,
+    embeddingTimedOut: initialWork.embeddingTimedOut || retryWork.embeddingTimedOut,
+    rerankTimedOut: initialWork.rerankTimedOut || retryWork.rerankTimedOut,
+    fallback: initialWork.fallback || retryWork.fallback,
+  } : retryWork ?? initialWork;
+  return { ...retried, ...(modelWork ? { modelWork } : {}), plan: waited.queries, translated: waited.translated };
 }
 
 /**
