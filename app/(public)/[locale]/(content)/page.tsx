@@ -520,11 +520,6 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
     translatedQuery = search.translated;
     multilingualTranslationPending = Boolean(search.multilingualSource && search.translationPending);
     if (query && search.translationPending) after(() => warmQueryTranslation(query, { mode: searchMode }));
-    const translationCache = search.translationCache ?? "not_applicable";
-    const detectedSource = query
-      ? multilingualQuerySourceLocale(query) ?? (/\p{Script=Latin}/u.test(query) ? "en" : "und")
-      : null;
-    const searchKey = [searchMode, MULTILINGUAL_SEARCH_RANKING_VERSION, translationCache, query, search.queries, search.nativeQueries];
     const listFilters = { category, query: search.queries, builder, observedTool, aiLevels };
     const { options, listOptions } = homeListOptions(effectiveSort, listFilters);
     const verifiedTotal = await verifiedLoad;
@@ -539,10 +534,18 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
      * 순위와 전체 수를 30초 동안 웹 여러 대가 함께 쓴다 — "더 보기"가 같은 순위를 이어 받는다.
      */
     const filters = { category, builder, observedTool, aiLevels };
-    const relevanceLoad = query && effectiveSort === "relevance"
+    const relevanceQuery = effectiveSort === "relevance" ? query : undefined;
+    const translationCache = search.translationCache ?? "not_applicable";
+    const detectedSource = relevanceQuery
+      ? multilingualQuerySourceLocale(relevanceQuery) ?? (/\p{Script=Latin}/u.test(relevanceQuery) ? "en" : "und")
+      : null;
+    const searchKey = relevanceQuery
+      ? [searchMode, MULTILINGUAL_SEARCH_RANKING_VERSION, translationCache, relevanceQuery, search.queries, search.nativeQueries]
+      : [];
+    const relevanceLoad = relevanceQuery
       ? publicRead("list", ["relevance", ...searchKey, filters],
         async () => {
-          const ranked = await searchRelevance(query, search, filters, () => resolveSearchQuery(query, { waitForTranslation: true }));
+          const ranked = await searchRelevance(relevanceQuery, search, filters, () => resolveSearchQuery(relevanceQuery, { waitForTranslation: true }));
           if (ranked.modelWork) logger.info("search.multilingual_model_work", {
             sourceLocale: detectedSource, mode: searchMode, translationCache, ...ranked.modelWork,
           });
