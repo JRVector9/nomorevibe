@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { searchQueries } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import type { RankedSearch } from "./hybrid-search";
 import type { QuerySourceLocale } from "./search-query-language";
 import type { MultilingualSearchMode } from "./search-translation";
 import { normalizeQuery } from "./search-translation";
@@ -44,6 +45,7 @@ export async function recordSearch(entry: {
   }
 }
 
+/** Request-level timing only. Model work is measured where the shared rank is computed. */
 export function recordMultilingualSearch(entry: {
   sourceLocale: QuerySourceLocale;
   mode: MultilingualSearchMode;
@@ -51,9 +53,13 @@ export function recordMultilingualSearch(entry: {
   translated: boolean;
   results: number;
   startedAt: Date;
+  ranked: RankedSearch | null;
 }): void {
-  const { startedAt, ...fields } = entry;
-  logger.info("search.multilingual", { ...fields, durationMs: Date.now() - startedAt.getTime() });
+  const { sourceLocale, mode, translationPending, translated, results, startedAt, ranked } = entry;
+  logger.info("search.multilingual", {
+    sourceLocale, mode, translationPending, translated, results, durationMs: Date.now() - startedAt.getTime(),
+    semantic: ranked?.semantic, reranked: ranked?.reranked, fallback: ranked?.modelWork?.fallback,
+  });
 }
 
 /** 오래된 기록은 지운다. 며칠짜리 흐름을 보는 표라 영원히 둘 이유가 없다 */

@@ -96,7 +96,7 @@ it("serves zero results immediately on a cold multilingual query and uses cached
   const { resolveSearchQuery, multilingualQueryTranslationTarget } = await import("@/lib/domain/products/search-translation");
   const { searchRelevance } = await import("@/lib/domain/products/relevance");
   const { textTranslations } = await import("@/lib/db/schema");
-  const options = { waitForTranslation: false, multilingual: true };
+  const options = { waitForTranslation: false, mode: "lexical" as const };
   const translate = vi.fn(async () => { throw new Error("unexpected translation wait"); });
   const rank: typeof rankRelevance = (query, plan, filters) => rankRelevance(query, plan, filters, servers);
 
@@ -109,4 +109,58 @@ it("serves zero results immediately on a cold multilingual query and uses cached
   expect(translate).not.toHaveBeenCalled();
   expect(servers.embed.mock.calls).toHaveLength(2);
   expect(servers.rerank.mock.calls[0]?.[0]).toBe(raw);
+});
+
+it("uses both vectors in the same scope and keeps a legacy-only leader without double-counting the tail", async () => {
+  const raw = "代码编辑器";
+  const english = "code editor";
+  const category = "Dev";
+  const { resolveSearchQuery, multilingualQueryTranslationTarget, queryTranslationKey } = await import("@/lib/domain/products/search-translation");
+  const { searchRelevance } = await import("@/lib/domain/products/relevance");
+  const { listProductSlugs } = await import("@/lib/domain/products/repository");
+  const { textTranslations } = await import("@/lib/db/schema");
+  await db.insert(textTranslations).values([
+    { sourceHash: queryTranslationKey(raw), targetLang: "en", status: "done", translated: "markdown editor", model: "legacy" },
+    { sourceHash: multilingualQueryTranslationTarget(raw)!.cacheKey, targetLang: "en", status: "done", translated: english, model: "fixture" },
+  ]);
+  await db.insert(products).values(Array.from({ length: 204 }, (_, index) => ({
+    slug: `code-editor-${index}`, url: `https://editor-${index}.example`, name: `Editor ${index}`, tagline: english, description: english,
+    category, status: "seeded" as const, source: "crawler" as const, verifyToken: "v", editTokenHash: "e",
+  })));
+  await product("legacy-leader", "markdown editor", null);
+  await product("vector-shared", "semantic match", direction(1, 1));
+  await product("translated-only", "semantic match", direction(0, 1));
+  await product("raw-only", "semantic match", direction(1, 0));
+  await product("excluded-by-category", english, direction(1, 1), { category: "Games" });
+  await product("hidden", english, direction(1, 1), { status: "banned" });
+  await product("down-full", english, direction(1, 1));
+  await db.insert(productHealth).values({ slug: "down-full", status: 503, failures: 3 });
+
+  const resolved = await resolveSearchQuery(raw, { mode: "full" });
+  const filters = { category } as const;
+  const [tailMatch] = await listProductSlugs({ ...filters, statuses: ["seeded"], excludeDown: true,
+    query: resolved.queries, sort: "relevance", limit: 1, offset: 201 });
+  expect(tailMatch).toBeTruthy();
+  await db.execute(sql`insert into product_embeddings (product_id, model, text_hash, embedding)
+    select id, ${EMBEDDING_MODEL}, 'h', ${vectorLiteral(direction(1, 1))}::halfvec from products where slug = ${tailMatch}`);
+  const embed = vi.fn(async (text: string) => text === raw ? QUERY : direction(0, 1));
+  const rerank = vi.fn(async (text: string, docs: string[]) => docs.map((doc) => text === raw && doc.startsWith("legacy-leader") ? 0 : -1));
+  const translate = vi.fn(async () => { throw new Error("unexpected translation wait"); });
+  const rank: typeof rankRelevance = (text, plan, scope, _deps, multilingual) =>
+    rankRelevance(text, plan, scope, { embed, rerank }, multilingual);
+  const result = await searchRelevance(raw, resolved, filters, translate, rank);
+  expect(translate).not.toHaveBeenCalled();
+  expect(result.head[0]).toBe("legacy-leader");
+  expect(result.total).toBe(208);
+  expect(result.head).toContain(tailMatch);
+  expect(embed.mock.calls.map(([text]) => text)).toEqual([raw, english]);
+  expect(rerank.mock.calls.map(([text]) => text)).toEqual([`${raw} / ${english}`, raw]);
+
+  const windows = await Promise.all([0, 15, 195, 205].map((start, index) =>
+    relevanceWindow(result, result.plan, filters, start, [15, 180, 10, 10][index])));
+  const all = windows.flat();
+  expect(all).toHaveLength(result.total);
+  expect(new Set(all).size).toBe(all.length);
+  expect(all).toEqual(expect.arrayContaining(["legacy-leader", tailMatch, "vector-shared", "translated-only", "raw-only"]));
+  for (const excluded of ["excluded-by-category", "hidden", "down-full"]) expect(all).not.toContain(excluded);
 });

@@ -46,13 +46,15 @@ export type ResolvedSearch = {
   translationPending?: boolean;
   /** Expanded Chinese/Japanese searches only warm translation after the response. */
   multilingualSource?: QuerySourceLocale;
+  nativeQueries?: SearchQuery;
 };
 
-export type SearchQueryOptions = { waitForTranslation?: boolean; multilingual?: boolean };
-export type MultilingualSearchMode = "off" | "lexical";
+export type SearchQueryOptions = { waitForTranslation?: boolean; mode?: MultilingualSearchMode };
+export type MultilingualSearchMode = "off" | "lexical" | "full";
+export const MULTILINGUAL_SEARCH_RANKING_VERSION = 1;
 
 export function multilingualSearchMode(value = process.env.SEARCH_MULTILINGUAL_MODE): MultilingualSearchMode {
-  return value === "lexical" ? value : "off";
+  return value === "lexical" || value === "full" ? value : "off";
 }
 
 /** 같은 뜻인데 공백·대소문자만 다른 말을 따로 옮기지 않는다 */
@@ -222,10 +224,10 @@ async function translateDetectedQuery(raw: string, multilingualTarget?: Websearc
  * 관련도순 검색은 번역을 기다리지 않는다(2026-10-07): 의미 검색·재정렬이 한국어 문장을 영어 소개와 바로 재서,
  * 번역 없이도 nDCG 0.824(번역을 붙이면 0.832)다. 처음 들어온 한국어 문장의 게이트웨이 대기(약 3초)를 없앤다.
  */
-export async function warmQueryTranslation(query: string, options: Pick<SearchQueryOptions, "multilingual"> = {}): Promise<void> {
+export async function warmQueryTranslation(query: string, options: Pick<SearchQueryOptions, "mode"> = {}): Promise<void> {
   const raw = query.trim();
   if (!raw) return;
-  const target = options.multilingual ? multilingualQueryTranslationTarget(raw) : null;
+  const target = options.mode && options.mode !== "off" ? multilingualQueryTranslationTarget(raw) : null;
   if (target || searchQuerySourceLocale(raw)) await translateDetectedQuery(raw, target ?? undefined);
 }
 
@@ -250,19 +252,30 @@ async function planWithPhrases(raw: string, phrases: string[]): Promise<SearchQu
   }
 }
 
+async function cachedNativePlan(raw: string): Promise<SearchQuery> {
+  // Only the baseline can read the old Chinese cache. It never starts a translation.
+  const stored = searchQuerySourceLocale(raw) ? await storedTranslation(queryTranslationKey(raw)) : null;
+  return planWithPhrases(raw, stored ? [...new Set(queryTranslationPhrases(stored))] : []);
+}
+
 export async function resolveSearchQuery(query: string | undefined, options: SearchQueryOptions = {}): Promise<ResolvedSearch> {
   const raw = query?.trim() ?? "";
   if (!raw) return { queries: [], translated: null };
 
-  const target = options.multilingual ? multilingualQueryTranslationTarget(raw) : null;
+  const target = options.mode && options.mode !== "off" ? multilingualQueryTranslationTarget(raw) : null;
   if (target) {
     const stored = await storedTranslation(target.cacheKey);
     const phrases = stored ? [...new Set(queryTranslationPhrases(stored))].slice(0, 2) : [];
+    const [queries, nativeQueries] = await Promise.all([
+      planWithPhrases(raw, phrases),
+      options.mode === "full" && phrases.length > 0 ? cachedNativePlan(raw) : undefined,
+    ]);
     return {
-      queries: await planWithPhrases(raw, phrases),
+      queries,
       translated: phrases.length ? phrases.join(" / ") : null,
       multilingualSource: target.sourceLocale,
       translationPending: phrases.length === 0,
+      ...(nativeQueries ? { nativeQueries } : {}),
     };
   }
 

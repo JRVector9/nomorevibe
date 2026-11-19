@@ -46,7 +46,8 @@ import { ToolsBoard } from "@/components/home/ToolsBoard";
 import { categoryCounts, countProducts } from "@/lib/domain/products/repository";
 import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/admin-models-search";
-import { multilingualSearchMode } from "@/lib/domain/products/search-translation";
+import { multilingualQuerySourceLocale } from "@/lib/domain/products/search-query-language";
+import { MULTILINGUAL_SEARCH_RANKING_VERSION, multilingualSearchMode } from "@/lib/domain/products/search-translation";
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import { translatedCategory } from "@/components/home/i18n";
 import { getRequestLocale } from "@/lib/i18n/server";
@@ -486,7 +487,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   const seasonLoad = requestedSort === "trending" ? publicRead("count", ["season"], () => getCurrentSeason()) : Promise.resolve(null);
   // 관련도순은 번역을 기다리지 않는다 — 의미 검색이 한국어 문장을 그대로 잰다(search-translation.ts warmQueryTranslation)
   const searchMode = requestedSort === "relevance" ? multilingualSearchMode() : "off";
-  const searchLoad = resolveSearchQuery(query, { waitForTranslation: requestedSort !== "relevance", multilingual: searchMode !== "off" });
+  const searchLoad = resolveSearchQuery(query, { waitForTranslation: requestedSort !== "relevance", mode: searchMode });
   const countsLoad = publicRead("count", ["categories"], () => categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }));
   const verifiedLoad = requestedSort === "trending" ? publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true })) : Promise.resolve(0);
   // SNS 화제 대표 구획(C안) — 거르기 없는 홈에서만. 실패하면 구획만 빠진다
@@ -508,8 +509,10 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
      */
     const search = await searchLoad;
     translatedQuery = search.translated;
-    if (query && search.translationPending) after(() => warmQueryTranslation(query, { multilingual: Boolean(search.multilingualSource) }));
-    const searchKey = search.multilingualSource ? [searchMode, "multilingual-v1", query, search.queries] : [query, search.queries];
+    if (query && search.translationPending) after(() => warmQueryTranslation(query, { mode: searchMode }));
+    const searchKey = search.multilingualSource
+      ? [searchMode, MULTILINGUAL_SEARCH_RANKING_VERSION, query, search.queries, search.nativeQueries]
+      : [query, search.queries];
     const listFilters = { category, query: search.queries, builder, observedTool, aiLevels };
     const { options, listOptions } = homeListOptions(effectiveSort, listFilters);
     const verifiedTotal = await verifiedLoad;
@@ -526,7 +529,11 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
     const filters = { category, builder, observedTool, aiLevels };
     const relevanceLoad = query && effectiveSort === "relevance"
       ? publicRead("list", ["relevance", ...searchKey, filters],
-        () => searchRelevance(query, search, filters, () => resolveSearchQuery(query, { waitForTranslation: true })))
+        async () => {
+          const ranked = await searchRelevance(query, search, filters, () => resolveSearchQuery(query, { waitForTranslation: true }));
+          if (ranked.modelWork) logger.info("search.multilingual_model_work", { mode: searchMode, sourceLocale: search.multilingualSource, ...ranked.modelWork });
+          return ranked;
+        })
       : null;
     relevanceLoad?.catch(() => {});
     approximate = relevanceLoad !== null;
@@ -546,18 +553,22 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
     earlyList?.catch(() => {});
     const [loadedCounts, matchingTotal] = await Promise.all([countsLoad, matchingLoad]);
     // 0건이라 번역을 기다려 다시 찾았으면 그 번역을 밝힌다
-    if (relevanceLoad) translatedQuery = (await relevanceLoad).translated;
+    const rankedSearch = await relevanceLoad;
+    if (rankedSearch) translatedQuery = rankedSearch.translated;
     counts = loadedCounts;
     // Public lists load only what is visible. Rankings retain their separate eligibility.
     const span = publicCatalogue ? spanOf(matchingTotal) : { start: 0, count: verifiedTotal };
     listStart = span.start;
     list = earlyList ? (await earlyList).slice(0, span.count) : await loadList(span.count, span.start);
     resultCount = publicCatalogue ? matchingTotal : list.length;
-    const source = search.multilingualSource;
-    if (source) after(() => recordMultilingualSearch({
-      sourceLocale: source, mode: searchMode, translationPending: Boolean(search.translationPending),
-      translated: Boolean(search.translated), results: matchingTotal, startedAt: now,
-    }));
+    const detectedSource = relevanceLoad && query ? multilingualQuerySourceLocale(query) : null;
+    if (detectedSource && detectedSource !== "ko") {
+      const translated = Boolean(translatedQuery);
+      after(() => recordMultilingualSearch({
+        sourceLocale: detectedSource, mode: searchMode, translationPending: Boolean(search.translationPending) && !translated,
+        translated, results: matchingTotal, startedAt: now, ranked: rankedSearch,
+      }));
+    }
 
     if (!publicCatalogue && !rankingReady) {
       unclaimedTotal = await publicRead("count", ["unclaimed", options], () => countProducts({ statuses: ["seeded"], ...options }));
