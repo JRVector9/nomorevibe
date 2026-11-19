@@ -286,3 +286,23 @@ it("0175 는 0168 의 OpenCode dispatch·events terminal 두 행만 같은 ordin
   }
   expect(await rulesNow()).toEqual(after);
 });
+
+it("widens the original and local-direct websearch guards on a database with existing ledger rows", async () => {
+  await migrateThrough(189);
+  const fixture = probes.queued_event_ok;
+  for (const statement of fixture) await client.unsafe(statement);
+  const requestsBefore = await client`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${id}::uuid`;
+  const eventsBefore = await client`SELECT to_jsonb(e) AS row FROM model_capacity_events e WHERE request_id=${id}::uuid`;
+
+  await migrateThrough(190);
+
+  const widened = await client`SELECT constraint_name, count(*)::int AS branches FROM model_capacity_check_rules
+    WHERE predicate LIKE '%sourceLocale%''zh-Hant''%''ja''%''han''%' GROUP BY constraint_name ORDER BY constraint_name`;
+  expect([...widened]).toEqual([
+    { constraint_name: "model_capacity_events_terminal_check", branches: 2 },
+    { constraint_name: "model_capacity_requests_dispatch_check", branches: 2 },
+    { constraint_name: "model_capacity_requests_terminal_check", branches: 2 },
+  ]);
+  expect(await client`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${id}::uuid`).toEqual(requestsBefore);
+  expect(await client`SELECT to_jsonb(e) AS row FROM model_capacity_events e WHERE request_id=${id}::uuid`).toEqual(eventsBefore);
+}, 60_000);

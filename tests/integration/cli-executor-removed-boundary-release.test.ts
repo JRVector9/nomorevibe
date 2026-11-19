@@ -27,7 +27,7 @@ import { releaseCliExecutorRemovedBoundaryRequest } from "@/lib/operations/dr/cl
 import { cliExecutorFixture } from "../fixtures/cli-executor-boundary";
 import { cliExecutorRemovedFixture, materializeRemovedArtifacts } from "../fixtures/cli-executor-removed-boundary";
 import { TEST_DATABASE_URL } from "./setup";
-import { ledgerCheckDefs } from "./ledger-check-defs";
+import { ledgerCheckDefs, widenWebsearchQueryLocales } from "./ledger-check-defs";
 
 const root = fileURLToPath(new URL("../..",import.meta.url)), name = `nomorevibe_test_cli_removed_${randomUUID().replaceAll("-","")}`;
 const url = new URL(TEST_DATABASE_URL); url.pathname=`/${name}`;
@@ -147,7 +147,7 @@ it("migrates nonempty old data without mutation and retains all predecessor pred
       const expr=live.slice("CHECK (".length,-1);
       // 0163/0166/0168/0174 append exact ordinals after 0161; the complete historical predicate remains the first leaf.
       const leaves = [expr, textLocalDirect[n], opencode[n], publication[n], opencodeTask[n], rejected[n], japanese[n]].filter(Boolean);
-      expect(after[n],`${n}: 0161/0163/0166/0168/0174/0184 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
+      expect(after[n],`${n}: current rules join`).toBe(widenWebsearchQueryLocales(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`));
       continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK (${predicate})`);

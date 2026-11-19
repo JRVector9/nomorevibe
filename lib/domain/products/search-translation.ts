@@ -8,6 +8,7 @@ import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
+import { MULTILINGUAL_QUERY_PROMPT_VERSION, legacyQuerySourceLocale, multilingualQuerySourceLocale } from "./search-query-language";
 import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
@@ -68,14 +69,14 @@ function queryTranslationPolicy(query: string, sourceLocale: ReturnType<typeof s
   return { prompt, glossary };
 }
 
-/** Input evidence, never the UI locale. Generic Han and Japanese without kana stay unknown. */
-export function searchQuerySourceLocale(text: string): "ko" | "zh-Hans" | "zh-Hant" | null {
-  if (/[가-힣]/.test(text)) return "ko";
-  if (/[぀-ヿ]/u.test(text)) return null;
-  // These software constructions are Mandarin; shared Han nouns such as 工具/筆記 alone are ambiguous.
-  const simplified = /软件|代码|数据库|文件夹|浏览器|网页|导出|开源|人工智能|图像识别|语音识别|自动化/.test(text);
-  const traditional = /軟體|程式碼|資料庫|資料夾|瀏覽器|網頁|匯出|開源|人工智慧|圖像辨識|語音辨識/.test(text);
-  return simplified && !traditional ? "zh-Hans" : traditional && !simplified ? "zh-Hant" : null;
+export const searchQuerySourceLocale = legacyQuerySourceLocale;
+
+export function multilingualQueryTranslationTarget(query: string): WebsearchQueryTarget | null {
+  const sourceLocale = multilingualQuerySourceLocale(query);
+  if (!sourceLocale || sourceLocale === "ko") return null;
+  const promptVersion = MULTILINGUAL_QUERY_PROMPT_VERSION;
+  const cacheKey = textHash(JSON.stringify(["search-keywords-v3", sourceLocale, "en", promptVersion, null, normalizeQuery(query)]));
+  return { query, sourceLocale, cacheKey, promptVersion, glossaryVersion: null };
 }
 
 async function cachedTranslation(hash: string): Promise<string | null> {

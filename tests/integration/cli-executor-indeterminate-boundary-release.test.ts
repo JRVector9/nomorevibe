@@ -26,7 +26,7 @@ import { cliExecutorIndeterminatePlanHash } from "@/lib/llm/cli-executor-indeter
 import { releaseCliExecutorIndeterminateBoundaryRequest } from "@/lib/operations/dr/cli-executor-indeterminate-boundary-release";
 import { cliExecutorIndeterminateFixture,materializeIndeterminateArtifacts } from "../fixtures/cli-executor-indeterminate-boundary";
 import { TEST_DATABASE_URL } from "./setup";
-import { ledgerCheckDefs } from "./ledger-check-defs";
+import { ledgerCheckDefs, widenWebsearchQueryLocales } from "./ledger-check-defs";
 
 const root=fileURLToPath(new URL("../..",import.meta.url)),name=`nomorevibe_test_cli_unknown_${randomUUID().replaceAll("-","")}`;
 const url=new URL(TEST_DATABASE_URL);url.pathname=`/${name}`;
@@ -123,7 +123,7 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
       const expr=live.slice("CHECK (".length,-1);
       // 0163/0166/0168/0174 append exact ordinals after 0161; the complete historical predicate remains the first leaf.
       const leaves = [expr, textLocalDirect[n], opencode[n], publication[n], opencodeTask[n], rejected[n], japanese[n]].filter(Boolean);
-      expect(after[n],`${n}: 0161/0163/0166/0168/0174/0184 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
+      expect(after[n],`${n}: current rules join`).toBe(widenWebsearchQueryLocales(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`));
       continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);

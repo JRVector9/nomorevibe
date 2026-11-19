@@ -18,6 +18,11 @@ const migrations = journal.entries.map(entry => ({
   ...entry,
   statements: readFileSync(`drizzle/${entry.tag}.sql`, "utf8").split("--> statement-breakpoint"),
 }));
+const websearchMigration = migrations.find(({ idx }) => idx === 190)!;
+const websearchRewrite = websearchMigration.statements.find((statement) => statement.includes("literal_old"))!;
+const websearchLiteral = (version: "old" | "new") =>
+  new RegExp(String.raw`literal_${version} constant text := \$sql\$([\s\S]*?)\$sql\$`).exec(websearchRewrite)![1];
+
 const checks = [
   ...getTableConfig(modelCapacityRequests).checks.filter(check => /_(logical|dispatch|terminal)_check$/.test(check.name)),
   ...getTableConfig(modelCapacityEvents).checks.filter(check => check.name === "model_capacity_events_terminal_check"),
@@ -76,6 +81,12 @@ function checkHistory(name: string) {
       } else expect(statement).toContain(`COUNT(*) FILTER (WHERE source = '${migration.tag}') = 0`);
       history.push({ idx: migration.idx, tag: migration.tag, expression: `(${previous!.expression}) OR (${rule[2]})`, leaf: rule[2] });
     }
+    if (statement === websearchRewrite && statement.includes(`'${name}'`)) {
+      const previous = history.at(-1)!;
+      expect(previous.expression).toContain(websearchLiteral("old"));
+      history.push({ idx: migration.idx, tag: migration.tag,
+        expression: previous.expression.replaceAll(websearchLiteral("old"), websearchLiteral("new")) });
+    }
     // 0175 rewrites one provider literal inside rules rows another migration added (same ordinal): replace exactly that leaf, once.
     const repair = /UPDATE model_capacity_check_rules r\s+SET predicate = replace\(r\.predicate, \$from\$([\s\S]*?)\$from\$, \$to\$([\s\S]*?)\$to\$\), source = '([^']+)'[\s\S]*?r\.source = '([^']+)'/.exec(statement);
     if (repair && new RegExp(`\\('(?:model_capacity_requests|model_capacity_events)','${name}','[a-f0-9]{64}'\\)`).test(statement)) {
@@ -101,7 +112,7 @@ it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migr
     expect(legacy, `${check.name}: legacy constraint`).toBeDefined();
     const expression = new PgDialect().sqlToQuery(check.value).sql;
     expect(latest!.expression === expression, `${check.name}: ${latest!.tag}`).toBe(true);
-    expect(expression.includes(legacy!.expression), `${check.name}: legacy CLI/gateway branches preserved`).toBe(true);
+    expect(expression.replaceAll(websearchLiteral("new"), websearchLiteral("old")).includes(legacy!.expression), `${check.name}: legacy CLI/gateway branches preserved`).toBe(true);
     expect(expression).toMatch(/local_model|local-direct/);
     expect(expression).toMatch(/cli|abcllm/);
   }

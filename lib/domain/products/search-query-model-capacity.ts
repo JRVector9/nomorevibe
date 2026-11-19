@@ -12,6 +12,8 @@ import { prepareWebsearchQueryDispatch, recordWebsearchQueryResult, type Websear
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { websearchQueryServingProvider } from "@/lib/llm/websearch-query-serving-contract";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import type { WebsearchQueryGatewayInput } from "@/lib/crawl/translate";
+import { MULTILINGUAL_QUERY_PROMPT_VERSION, usesMultilingualQueryPrompt } from "./search-query-language";
 import { assertProviderNotRateLimited } from "@/lib/llm/provider-rate-limit";
 
 /**
@@ -50,7 +52,15 @@ export async function translateQueryWithModelCapacity(value: WebsearchQueryTarge
 async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): Promise<WebsearchQueryCapacityResult> {
   const owner = websearchProcessOwner();
   if (!owner) throw new ModelCapacityDeferredError("owner_unavailable");
-  const input = { sourceLocale: target.sourceLocale, query: target.query };
+  const { sourceLocale, query } = target;
+  let input: WebsearchQueryGatewayInput;
+  if (sourceLocale !== "ko" && usesMultilingualQueryPrompt(target)) {
+    input = { sourceLocale, query, promptVersion: MULTILINGUAL_QUERY_PROMPT_VERSION };
+  } else if (sourceLocale === "ja" || sourceLocale === "han") {
+    throw new Error("websearch_query_prompt_version_mismatch");
+  } else {
+    input = { sourceLocale, query };
+  }
   const call = prepareWebsearchQueryGatewayCall(input, { model: textTaskModel("search-query-translate"), timeoutMs,
     provider: websearchQueryServingProvider(textTaskModel("search-query-translate")) });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
