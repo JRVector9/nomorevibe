@@ -44,6 +44,8 @@ export type ResolvedSearch = {
   translated: string | null;
   /** 기다리지 않아서 아직 옮기지 못했다 — 응답 뒤에 옮겨 캐시에 둔다(warmQueryTranslation) */
   translationPending?: boolean;
+  /** Whether the initial lookup found a translation in the cache for this mode. */
+  translationCache?: "hit" | "miss";
   /** Expanded Chinese/Japanese searches only warm translation after the response. */
   multilingualSource?: QuerySourceLocale;
   nativeQueries?: SearchQuery;
@@ -51,7 +53,7 @@ export type ResolvedSearch = {
 
 export type SearchQueryOptions = { waitForTranslation?: boolean; mode?: MultilingualSearchMode };
 export type MultilingualSearchMode = "off" | "lexical" | "full";
-export const MULTILINGUAL_SEARCH_RANKING_VERSION = 1;
+export const MULTILINGUAL_SEARCH_RANKING_VERSION = 2;
 
 export function multilingualSearchMode(value = process.env.SEARCH_MULTILINGUAL_MODE): MultilingualSearchMode {
   return value === "lexical" || value === "full" ? value : "off";
@@ -252,10 +254,9 @@ async function planWithPhrases(raw: string, phrases: string[]): Promise<SearchQu
   }
 }
 
-async function cachedNativePlan(raw: string): Promise<SearchQuery> {
-  // Only the baseline can read the old Chinese cache. It never starts a translation.
+async function cachedLegacyPhrases(raw: string): Promise<string[]> {
   const stored = searchQuerySourceLocale(raw) ? await storedTranslation(queryTranslationKey(raw)) : null;
-  return planWithPhrases(raw, stored ? [...new Set(queryTranslationPhrases(stored))] : []);
+  return stored ? [...new Set(queryTranslationPhrases(stored))] : [];
 }
 
 export async function resolveSearchQuery(query: string | undefined, options: SearchQueryOptions = {}): Promise<ResolvedSearch> {
@@ -265,16 +266,20 @@ export async function resolveSearchQuery(query: string | undefined, options: Sea
   const target = options.mode && options.mode !== "off" ? multilingualQueryTranslationTarget(raw) : null;
   if (target) {
     const stored = await storedTranslation(target.cacheKey);
-    const phrases = stored ? [...new Set(queryTranslationPhrases(stored))].slice(0, 2) : [];
+    const currentPhrases = stored ? [...new Set(queryTranslationPhrases(stored))].slice(0, 2) : [];
+    const hit = currentPhrases.length > 0;
+    const legacyPhrases = !hit || options.mode === "full" ? await cachedLegacyPhrases(raw) : [];
+    const phrases = hit ? currentPhrases : legacyPhrases;
     const [queries, nativeQueries] = await Promise.all([
       planWithPhrases(raw, phrases),
-      options.mode === "full" && phrases.length > 0 ? cachedNativePlan(raw) : undefined,
+      options.mode === "full" && hit ? planWithPhrases(raw, legacyPhrases) : undefined,
     ]);
     return {
       queries,
       translated: phrases.length ? phrases.join(" / ") : null,
       multilingualSource: target.sourceLocale,
-      translationPending: phrases.length === 0,
+      translationPending: !hit,
+      translationCache: hit ? "hit" : "miss",
       ...(nativeQueries ? { nativeQueries } : {}),
     };
   }
@@ -289,6 +294,7 @@ export async function resolveSearchQuery(query: string | undefined, options: Sea
   return {
     queries: await planWithPhrases(raw, phrases),
     translated: phrases.length ? phrases.join(" / ") : null,
+    ...(!wait && sourceLocale ? { translationCache: stored ? "hit" : "miss" } as const : {}),
     ...(translationPending ? { translationPending } : {}),
   };
 }

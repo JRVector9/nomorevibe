@@ -50,7 +50,7 @@ describe("관련도순 검색", () => {
 
     const ranked = await rankRelevance("meeting minutes", ["meeting minutes"], { category: "Dev" }, servers);
 
-    expect(ranked).toEqual({ head: ["word-match", "close-meaning"], total: 2, semantic: true, reranked: true });
+    expect(ranked).toMatchObject({ head: ["word-match", "close-meaning"], total: 2, semantic: true, reranked: true });
     // 재정렬 모델은 임베딩한 것과 같은 글을 읽는다
     expect(servers.rerank).toHaveBeenCalledWith("meeting minutes", ["word-match\nmeeting minutes tool", "close-meaning\n회의록을 정리해 줍니다"]);
   });
@@ -79,7 +79,7 @@ describe("관련도순 검색", () => {
     await product("only-words", "notes app", direction(1, 0));
     await product("only-meaning", "다른 말", direction(1, 0));
     const ranked = await rankRelevance("notes app", ["notes app"], {}, { ...servers, embed: vi.fn(async () => { throw new Error("timeout"); }) });
-    expect(ranked).toEqual({ head: ["only-words"], total: 1, semantic: false, reranked: true });
+    expect(ranked).toMatchObject({ head: ["only-words"], total: 1, semantic: false, reranked: true });
   });
 
   it("다른 정렬의 목록은 그대로 둔다 — 내려간 제품의 벡터가 남아 있어도 검색에서 빠진다", async () => {
@@ -109,6 +109,29 @@ it("serves zero results immediately on a cold multilingual query and uses cached
   expect(translate).not.toHaveBeenCalled();
   expect(servers.embed.mock.calls).toHaveLength(2);
   expect(servers.rerank.mock.calls[0]?.[0]).toBe(raw);
+});
+
+it("searches with the legacy Chinese cache while the new translation is pending", async () => {
+  const raw = "程式碼編輯器";
+  const english = "code editor";
+  await product("code-editor", english, null);
+  const { resolveSearchQuery, queryTranslationKey } = await import("@/lib/domain/products/search-translation");
+  const { searchRelevance } = await import("@/lib/domain/products/relevance");
+  const { textTranslations } = await import("@/lib/db/schema");
+  await db.insert(textTranslations).values({
+    sourceHash: queryTranslationKey(raw), targetLang: "en", status: "done", translated: english, model: "legacy",
+  });
+  const rank: typeof rankRelevance = (query, plan, filters, _deps, multilingual) =>
+    rankRelevance(query, plan, filters, servers, multilingual);
+  const translate = vi.fn();
+  for (const mode of ["lexical", "full"] as const) {
+    const resolved = await resolveSearchQuery(raw, { mode, waitForTranslation: false });
+    expect(resolved).toMatchObject({ translated: english, translationPending: true, translationCache: "miss" });
+    expect(await searchRelevance(raw, resolved, {}, translate, rank)).toMatchObject({
+      head: ["code-editor"], total: 1, translated: english, modelWork: { embeddingCalls: 1 },
+    });
+  }
+  expect(translate).not.toHaveBeenCalled();
 });
 
 it("uses both vectors in the same scope and keeps a legacy-only leader without double-counting the tail", async () => {

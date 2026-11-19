@@ -1,5 +1,6 @@
 import { publicPaginationBlocked } from "@/lib/web/public-pagination";
 import { PaginationNotice } from "@/components/home/PaginationNotice";
+import { SearchTranslationRetry } from "@/components/home/SearchTranslationRetry";
 import { localizeProductList } from "@/lib/i18n/products";
 import { Suspense, type ReactNode } from "react";
 import type { Metadata, ResolvingMetadata } from "next";
@@ -181,6 +182,7 @@ function EmptyReason({
   filtered,
   hasUnclaimed,
   query,
+  translationPending = false,
   suggestions = [],
   categories = [],
   headingLevel = 3,
@@ -193,6 +195,7 @@ function EmptyReason({
   filtered: boolean;
   hasUnclaimed: boolean;
   query?: string;
+  translationPending?: boolean;
   /** 찾아볼 만한 검색어 — 검색어로 0건일 때만 */
   suggestions?: string[];
   /** 둘러볼 분야 — 공개 수가 많은 순 */
@@ -205,7 +208,12 @@ function EmptyReason({
       <div className="projects-grid">
         <div className="empty-state">
           <Heading>{query ? t("empty.query", { query }) : t("empty.filtered")}</Heading>
-          <p>{t(query ? "empty.queryHint" : "empty.filterHint")}</p>
+          {translationPending ? (
+            <>
+              <p role="status">{t("empty.translationPending")}</p>
+              <SearchTranslationRetry label={t("empty.checkResults")} />
+            </>
+          ) : <p>{t(query ? "empty.queryHint" : "empty.filterHint")}</p>}
           <SuggestionChips title={t("empty.searchIdeas")} heading={headingLevel === 2 ? "h3" : "h4"}
             items={suggestions.map((text) => ({ href: localePath(locale, `/?q=${encodeURIComponent(text)}`), label: text }))} />
           <SuggestionChips title={t("empty.categoryIdeas")} heading={headingLevel === 2 ? "h3" : "h4"}
@@ -455,6 +463,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
   let unclaimedTotal = 0;
   let dbDown = false;
   let translatedQuery: string | null = null;
+  let multilingualTranslationPending = false;
   let rankingReady = true;
   /** 결과 수가 관련도순 검색(낱말·의미 섞음)의 수인가 — 그러면 '관련 결과 약 n개'로 쓴다 */
   let approximate = false;
@@ -509,10 +518,8 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
      */
     const search = await searchLoad;
     translatedQuery = search.translated;
+    multilingualTranslationPending = Boolean(search.multilingualSource && search.translationPending);
     if (query && search.translationPending) after(() => warmQueryTranslation(query, { mode: searchMode }));
-    const searchKey = search.multilingualSource
-      ? [searchMode, MULTILINGUAL_SEARCH_RANKING_VERSION, query, search.queries, search.nativeQueries]
-      : [query, search.queries];
     const listFilters = { category, query: search.queries, builder, observedTool, aiLevels };
     const { options, listOptions } = homeListOptions(effectiveSort, listFilters);
     const verifiedTotal = await verifiedLoad;
@@ -527,11 +534,21 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
      * 순위와 전체 수를 30초 동안 웹 여러 대가 함께 쓴다 — "더 보기"가 같은 순위를 이어 받는다.
      */
     const filters = { category, builder, observedTool, aiLevels };
-    const relevanceLoad = query && effectiveSort === "relevance"
+    const relevanceQuery = effectiveSort === "relevance" ? query : undefined;
+    const translationCache = search.translationCache ?? "not_applicable";
+    const detectedSource = relevanceQuery
+      ? multilingualQuerySourceLocale(relevanceQuery) ?? (/\p{Script=Latin}/u.test(relevanceQuery) ? "en" : "und")
+      : null;
+    const searchKey = relevanceQuery
+      ? [searchMode, MULTILINGUAL_SEARCH_RANKING_VERSION, translationCache, relevanceQuery, search.queries, search.nativeQueries]
+      : [];
+    const relevanceLoad = relevanceQuery
       ? publicRead("list", ["relevance", ...searchKey, filters],
         async () => {
-          const ranked = await searchRelevance(query, search, filters, () => resolveSearchQuery(query, { waitForTranslation: true }));
-          if (ranked.modelWork) logger.info("search.multilingual_model_work", { mode: searchMode, sourceLocale: search.multilingualSource, ...ranked.modelWork });
+          const ranked = await searchRelevance(relevanceQuery, search, filters, () => resolveSearchQuery(relevanceQuery, { waitForTranslation: true }));
+          if (ranked.modelWork) logger.info("search.multilingual_model_work", {
+            sourceLocale: detectedSource, mode: searchMode, translationCache, ...ranked.modelWork,
+          });
           return ranked;
         })
       : null;
@@ -561,11 +578,11 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
     listStart = span.start;
     list = earlyList ? (await earlyList).slice(0, span.count) : await loadList(span.count, span.start);
     resultCount = publicCatalogue ? matchingTotal : list.length;
-    const detectedSource = relevanceLoad && query ? multilingualQuerySourceLocale(query) : null;
-    if (detectedSource && detectedSource !== "ko") {
+    if (detectedSource && rankedSearch) {
       const translated = Boolean(translatedQuery);
       after(() => recordMultilingualSearch({
-        sourceLocale: detectedSource, mode: searchMode, translationPending: Boolean(search.translationPending) && !translated,
+        sourceLocale: detectedSource, mode: searchMode, translationCache,
+        translationPending: multilingualTranslationPending || Boolean(search.translationPending) && !translated,
         translated, results: matchingTotal, startedAt: now, ranked: rankedSearch,
       }));
     }
@@ -727,6 +744,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
             filtered={filtered}
             hasUnclaimed={unclaimed.length > 0}
             query={query}
+            translationPending={multilingualTranslationPending && resultCount === 0}
             suggestions={suggestions}
             categories={browseCategories}
             headingLevel={cardHeading}
