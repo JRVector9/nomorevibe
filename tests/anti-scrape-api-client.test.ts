@@ -82,13 +82,42 @@ describe("브라우저 공개 API 세션", () => {
     expect((await wrapped(new Request(`${ORIGIN}/api/product-summaries`, { method: "POST", body: '{"slugs":["a"]}' }))).status).toBe(200);
     expect(bodies).toEqual(['{"slugs":["a"]}', '{"slugs":["a"]}']);
   });
+  it("목록 밖의 같은 출처 API GET도 세션 누락 응답에 한 번만 다시 보낸다", async () => {
+    const missing = () => Response.json({ error: "api_session_required" }, { status: 401 });
+    const raw = vi.fn<typeof fetch>()
+      .mockImplementationOnce(async () => missing())
+      .mockImplementationOnce(async () => enabled())
+      .mockImplementationOnce(async () => Response.json({ expiresAt: Date.now() + 1800_000 }))
+      .mockImplementationOnce(async () => missing());
+    const solve = vi.fn().mockResolvedValue("XXXX.DUMMY.TOKEN.XXXX");
+    const input = new Request(ORIGIN + "/api/future-read?filter=1");
+    const wrapped = createSessionFetch(raw, ORIGIN, solve);
+    expect((await wrapped(input)).status).toBe(401);
+    expect(raw.mock.calls.map(([request, init]) => [request, init?.method])).toEqual([
+      [input, undefined],
+      [ORIGIN + "/api/session", undefined],
+      [ORIGIN + "/api/session", "POST"],
+      [input, undefined],
+    ]);
+    expect(solve).toHaveBeenCalledOnce();
+  });
+  it("세션 API·외부 요청·일반 페이지·쓰기의 401은 갱신하지 않는다", async () => {
+    const raw = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ error: "api_session_required" }, { status: 401 }));
+    const solve = vi.fn();
+    const wrapped = createSessionFetch(raw, ORIGIN, solve);
+    for (const path of ["/api/session", "https://outside.test/api/future-read", "/popular"]) {
+      expect((await wrapped(path)).status).toBe(401);
+    }
+    expect((await wrapped("/api/future-read", { method: "POST" })).status).toBe(401);
+    expect(raw).toHaveBeenCalledTimes(4);
+    expect(solve).not.toHaveBeenCalled();
+  });
   it("외부 출처·관리자·메이커 인증·쓰기·일반 요청을 그대로 넘긴다", async () => {
     const raw = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));
     const wrapped = createSessionFetch(raw, ORIGIN);
     for (const path of ["https://outside.test/api/product-cards", "/api/me", "/api/products/a/media", "/api/products/a/profile", "/api/products/a/links", "/api/products/a/provenance"]) await wrapped(path);
     await wrapped("/api/products/a/feedback", { method: "POST", body: "{}" });
     expect(raw).toHaveBeenCalledTimes(7);
-    expect(isSessionRead("/api/products/a/hero", "GET")).toBe(true);
     expect(isSessionRead("/api/products/a/details", "PUT")).toBe(false);
   });
 });

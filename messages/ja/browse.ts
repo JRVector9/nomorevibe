@@ -88,6 +88,7 @@ export const browse = defineCatalog<typeof Schema>()({
   "popular.allCategories": "すべてのカテゴリ",
   "popular.empty": "まだありません",
   "popular.more": "{tier} の全 {count}件を見る ›",
+  "popular.moreWithoutCount": "{tier} をすべて見る ›",
   "popular.range": "★ {range}・{category}・{count}件",
   "popular.position": "{first}–{last}位 / {total}",
   "active.title": "今週の更新が多いプロジェクト",

@@ -7,7 +7,6 @@ import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import { trackAttrs } from "@/lib/analytics/attrs";
-import { FillLine } from "@/components/cards/fill-line";
 import type { TierCountsResponse } from "@/app/api/browse-counts/route";
 import { useCountsQuery } from "./browse-counts";
 
@@ -53,6 +52,7 @@ export function PopularTierCards({ groups, personal }: { groups: PopularTierGrou
   };
   const group = groups[current];
   if (!group) return null;
+  const total = totalOf(group.key);
 
   return (
     <>
@@ -67,8 +67,9 @@ export function PopularTierCards({ groups, personal }: { groups: PopularTierGrou
             </button>
           ))}
         </div>
-        <Link prefetch={false} className="row-more" href={localePath(locale, group.href)}>{totalOf(group.key) === undefined ? <>{t("popular.more", { tier: group.label, count: "\u0000" }).split("\u0000")[0]}<FillLine width="2.5em" />{t("popular.more", { tier: group.label, count: "\u0000" }).split("\u0000")[1]}</>
-          : t("popular.more", { tier: group.label, count: count(totalOf(group.key)!) })}</Link>
+        <Link prefetch={false} className="row-more" href={localePath(locale, group.href)}>{total === undefined
+          ? t("popular.moreWithoutCount", { tier: group.label })
+          : t("popular.more", { tier: group.label, count: count(total) })}</Link>
       </div>
       {groups.map((tier, index) => (
         <div key={tier.key} role="tabpanel" id={`${id}-panel-${tier.key}`} aria-labelledby={`${id}-tab-${tier.key}`} hidden={index !== current}
