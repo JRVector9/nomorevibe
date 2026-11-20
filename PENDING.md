@@ -4,7 +4,7 @@
 
 - 공개 읽기 관문과 브라우저가 같은 경로 표를 쓰고, 집계가 실패하면 더 보기 링크에 수 없이 문구를 표시한다.
 - 55435 시험 DB 브라우저에서 홈 · 분야 집계, 검색 · 홈 더 보기, 인기 · 새로 나온 페이지 이동, 랭킹 · Talk 응답을 확인했다. 홈은 `9 / 36`에서 `18 / 36`으로 늘었고 집계 503에도 링크가 남았다.
-- 타입 검사·관련 시험 179건·ESLint·i18n 계약 검사를 통과했다. GitHub Actions는 계정 결제 또는 지출 한도 문제로 실행을 시작하지 못했다. 계정 조치 뒤 브랜치 CI를 통과시키고 Ready 전환 후 PR의 필수 `check`를 확인한다. [CI 실행 기록](https://github.com/JRVector9/nomorevibe/actions/runs/44746350258)
+- 타입 검사·관련 시험 179건·ESLint·i18n 계약 검사를 통과했다. 2026-11-20 처음에는 저장소가 비공개라 GitHub Actions가 결제 한도로 시작하지 못했다. 같은 날 사용자 지시로 저장소를 다시 공개한 뒤 브랜치 CI([실행 44836936917](https://github.com/JRVector9/nomorevibe/actions/runs/44836936917))와 Ready 전환 후 PR CI([실행 44838211460](https://github.com/JRVector9/nomorevibe/actions/runs/44838211460))의 필수 `check`가 모두 통과했다.
 - 남은 운영 확인은 별도 배포 뒤 브라우저에서 홈 · 분야 · 인기의 집계와 랭킹 · Talk 응답을 확인하는 것이다. 이 작업에서는 운영 배포 전 상태다. [PR #1000](https://github.com/JRVector9/nomorevibe/pull/1000)
 
 ## 오래된 감사 거절의 원본 다시 받기(PR #987) — 2026-11-17, 운영 미적용(코드·단위·작업 전용 DB 시험만)
