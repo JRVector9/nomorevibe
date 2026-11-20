@@ -69,15 +69,15 @@ describe("operator recovery for exhausted generation", () => {
     const verificationOnly = await seed("verification-only", {
       errorCode: null, needsRefresh: false, verifiedAt: null, verifyAttempts: 5, verifyError: "invalid_output",
     });
-    const hidden = await seed("hidden-exhausted-product", { errorCode: "invalid_output" });
-    await db.update(products).set({ status: "hidden" }).where(eq(products.id, hidden.product.id));
+    const banned = await seed("banned-exhausted-product", { errorCode: "invalid_output" });
+    await db.update(products).set({ status: "banned" }).where(eq(products.id, banned.product.id));
     const target = { productId: product.id, sourceRevision: profile.sourceRevision };
     const list = await listExhaustedKeywordGenerations(0);
     expect(list.rows.map(row => row.id)).toEqual([product.id, other.product.id]);
     expect(list.rows[0]).toMatchObject({ id: target.productId, sourceRevision: target.sourceRevision,
       errorCode: "invalid_output", attempts: MAX_PROFILE_ATTEMPTS + 2 });
     const floor = await auditFloor();
-    for (const excluded of [provider, verificationOnly, hidden]) {
+    for (const excluded of [provider, verificationOnly, banned]) {
       expect(await retryExhaustedKeywordGeneration({
         productId: excluded.product.id, sourceRevision: excluded.profile.sourceRevision,
       }, "operator")).toBe(false);
