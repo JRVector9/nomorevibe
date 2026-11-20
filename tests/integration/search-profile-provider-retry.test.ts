@@ -5,11 +5,13 @@ import { crawlCandidates, crawlTaglines, jobs, products, productSearchProfiles, 
 import { profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { collectSearchHealth } from "@/lib/domain/products/search-health";
+import { MAX_PROFILE_ATTEMPTS } from "@/lib/domain/products/search-profile-retry";
+import { listExhaustedKeywordGenerations, retryExhaustedKeywordGeneration } from "@/lib/operations/keyword-generation-recovery";
 import { readTextProgress } from "@/lib/operations/text-progress";
 import { JobLeaseLostError, type JobLease } from "@/lib/jobs/control";
 import { runJob } from "@/lib/jobs/runner";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
-import { ensureSchema, resetTables } from "./setup";
+import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 // 검색 키워드의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B)
@@ -55,6 +57,71 @@ async function inJob(work: (lease: JobLease) => Promise<void>) {
     return { done: true };
   })).toMatchObject({ status: "completed", done: true });
 }
+
+describe("operator recovery for exhausted generation", () => {
+  it("requeues only the selected revision for one counted attempt and preserves its search data", async () => {
+    const { product, profile } = await seed("recover-invalid-output", {
+      attempts: MAX_PROFILE_ATTEMPTS + 2, errorCode: "invalid_output", needsRefresh: false,
+      retryAt: new Date(Date.now() + 60_000),
+    });
+    const other = await seed("another-exhausted-product", { errorCode: "timeout" });
+    const provider = await seed("provider-automatically-retries");
+    const verificationOnly = await seed("verification-only", {
+      errorCode: null, needsRefresh: false, verifiedAt: null, verifyAttempts: 5, verifyError: "invalid_output",
+    });
+    const hidden = await seed("hidden-exhausted-product", { errorCode: "invalid_output" });
+    await db.update(products).set({ status: "hidden" }).where(eq(products.id, hidden.product.id));
+    const target = { productId: product.id, sourceRevision: profile.sourceRevision };
+    const list = await listExhaustedKeywordGenerations(0);
+    expect(list.rows.map(row => row.id)).toEqual([product.id, other.product.id]);
+    expect(list.rows[0]).toMatchObject({ id: target.productId, sourceRevision: target.sourceRevision,
+      errorCode: "invalid_output", attempts: MAX_PROFILE_ATTEMPTS + 2 });
+    const floor = await auditFloor();
+    for (const excluded of [provider, verificationOnly, hidden]) {
+      expect(await retryExhaustedKeywordGeneration({
+        productId: excluded.product.id, sourceRevision: excluded.profile.sourceRevision,
+      }, "operator")).toBe(false);
+    }
+    expect((await Promise.all([
+      retryExhaustedKeywordGeneration(target, "operator"),
+      retryExhaustedKeywordGeneration(target, "operator"),
+    ])).sort()).toEqual([false, true]);
+    expect(await current(product.id)).toEqual({
+      ...profile, attempts: MAX_PROFILE_ATTEMPTS - 1, retryAt: null, sourceRevision: profile.sourceRevision + 1,
+    });
+    expect(await current(other.product.id)).toEqual(other.profile);
+    expect((await listExhaustedKeywordGenerations(0)).rows.map(row => row.id)).toEqual([other.product.id]);
+    expect(await db.select({ version: jobs.requestedVersion }).from(jobs).where(eq(jobs.name, "product-search-profile")))
+      .toEqual([{ version: 1 }]);
+    expect(await auditRowsAfter(floor, "keyword-generation-retry")).toEqual([expect.objectContaining({
+      actor: "operator", target: product.slug,
+      detail: expect.objectContaining({ ...target, previousAttempts: MAX_PROFILE_ATTEMPTS + 2, errorCode: "invalid_output", requestedVersion: 1 }),
+    })]);
+
+    const task = (await pendingProfiles(10)).find(row => row.product.id === product.id)!;
+    expect(task).toBeDefined();
+    await inJob(async lease => {
+      expect(await recordProfileResult(task, lease, { kind: "failure", error: "invalid_output" })).toBe(true);
+    });
+    expect(await current(product.id)).toMatchObject({ attempts: MAX_PROFILE_ATTEMPTS, errorCode: "invalid_output", sourceHash: profile.sourceHash });
+    expect((await db.select({ text: products.searchKeywords }).from(products).where(eq(products.id, product.id)))[0])
+      .toEqual({ text: product.searchKeywords });
+    expect((await pendingProfiles(10)).some(row => row.product.id === product.id)).toBe(false);
+    expect((await listExhaustedKeywordGenerations(0)).rows.map(row => row.id)).toContain(product.id);
+    expect(await retryExhaustedKeywordGeneration(target, "operator")).toBe(false);
+  });
+
+  it("rolls back the grant when it cannot signal the normal worker", async () => {
+    const { product, profile } = await seed("recovery-job-signal-fails", { errorCode: "invalid_output" });
+    await db.insert(jobs).values({ name: "product-search-profile", requestedVersion: Number.MAX_SAFE_INTEGER });
+    const floor = await auditFloor();
+    await expect(retryExhaustedKeywordGeneration({
+      productId: product.id, sourceRevision: profile.sourceRevision,
+    }, "operator")).rejects.toThrow("job_version_exhausted");
+    expect(await current(product.id)).toEqual(profile);
+    expect(await auditRowsAfter(floor, "keyword-generation-retry")).toEqual([]);
+  });
+});
 
 describe("generation provider failures remain retryable without rewriting history", () => {
   it("does not charge tokenizer preflight unavailability on either cache insert or subsequent failure", async () => {
