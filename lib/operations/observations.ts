@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { operationsObservations } from '@/lib/db/schema';
+import { CONTRACT_READER_FIELD, CONTRACT_READER_GENERATION } from './contract-reader-mark';
 import { serviceObservationKey, type ServiceRole } from './instance';
 export async function observe(key: string, value: Record<string, unknown>) {
   const observedAt = new Date();
@@ -8,7 +9,9 @@ export async function observe(key: string, value: Record<string, unknown>) {
     .onConflictDoUpdate({ target: operationsObservations.key, set: { value, observedAt } });
 }
 
-export function observeService(role: ServiceRole, value: Record<string, unknown>) {
+export function observeService(role: ServiceRole, input: Record<string, unknown>) {
+  // 이 판이 읽는 계약 세대(lib/operations/contract-reader-mark.ts) — 새 모양 계약 저장·전환의 관문이 모든 서비스 관측에서 이것을 본다
+  const value: Record<string, unknown> = { ...input, [CONTRACT_READER_FIELD]: CONTRACT_READER_GENERATION };
   const key = serviceObservationKey(role);
   const bootId = value.bootId;
   const bootedAt = value.bootedAt;

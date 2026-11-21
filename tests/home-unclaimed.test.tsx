@@ -1,6 +1,10 @@
 import type { ResolvingMetadata } from "next";
+import { after } from "next/server";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { recordMultilingualSearch } from "@/lib/domain/products/search-log";
+import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { logger } from "@/lib/observability/logger";
 
 /**
  * 검색 기록은 응답 뒤에 적는다(next/server after). 여기는 요청 바깥이라 그 예약이 던진다 —
@@ -8,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 vi.mock("next/server", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  after: () => {},
+  after: vi.fn(),
 }));
 import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import type { ProductListItem } from "@/lib/domain/products/view";
@@ -59,10 +63,12 @@ vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mock
 vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage }));
 vi.mock("@/lib/domain/products/repository", () => ({ aiLevelCounts, categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
 // 0건 화면의 추천 검색어는 검색 기록(DB)에서 읽는다 — 화면 조합만 본다
-vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), popularSearches }));
+vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), recordMultilingualSearch: vi.fn(), popularSearches }));
 // 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
 vi.mock("@/lib/domain/products/search-translation", () => ({
-  resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
+  resolveSearchQuery: vi.fn(async (query?: string) => ({ queries: query ? [query] : [], translated: null })),
+  multilingualSearchMode: () => process.env.SEARCH_MULTILINGUAL_MODE ?? "off",
+  MULTILINGUAL_SEARCH_RANKING_VERSION: 1,
   normalizeQuery: (query: string) => query.trim().toLowerCase(),
 }));
 // 관련도순 검색(섞기·재정렬)은 모델 서버와 DB 를 부른다 — 화면 조합만 본다
@@ -333,6 +339,34 @@ describe("미클레임 구획을 붙이는 기준", () => {
  * 커밋 cb64f25가 세운 불변식이다.
  */
 describe("빈 화면 문구", () => {
+  it.each([
+    ["voice recorder", "en", "off", undefined],
+    ["음성 녹음기", "ko", "lexical", "miss"],
+    ["语音识别工具", "zh-Hans", "lexical", "hit"],
+    ["音声を録音する", "ja", "full", "hit"],
+  ] as const)("records each %s request and one model event for the cached ranking", async (query, sourceLocale, mode, cache) => {
+    vi.stubEnv("SEARCH_MULTILINGUAL_MODE", mode);
+    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const search = { queries: [query], translated: null, translationCache: cache };
+      vi.mocked(resolveSearchQuery).mockResolvedValueOnce(search).mockResolvedValueOnce(search);
+      const modelWork = { embeddingCalls: 1, rerankCalls: 0, embeddingTimedOut: true, rerankTimedOut: false, fallback: true };
+      searchRelevance.mockResolvedValue({ head: [], total: 0, semantic: false, reranked: false, plan: [], translated: null, modelWork });
+      await render({ q: query });
+      await render({ q: query });
+      for (const [callback] of vi.mocked(after).mock.calls) if (typeof callback === "function") await callback();
+
+      const dimensions = { sourceLocale, mode, translationCache: cache ?? "not_applicable" };
+      expect(recordMultilingualSearch).toHaveBeenCalledTimes(2);
+      expect(recordMultilingualSearch).toHaveBeenCalledWith(expect.objectContaining({ ...dimensions, results: 0 }));
+      expect(searchRelevance).toHaveBeenCalledOnce();
+      expect(info).toHaveBeenCalledExactlyOnceWith("search.multilingual_model_work", { ...dimensions, ...modelWork });
+    } finally {
+      info.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("도구 흔적 필터는 AI·등록 목록에 전달하고 첫 중복값만 쓰며 급상승 띠는 숨긴다", async () => {
     countProducts.mockResolvedValue(25);
     await render({ observedTool: ["Claude Code", "Codex"] });

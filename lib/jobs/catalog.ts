@@ -72,7 +72,8 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000, lane: "ai1" },
   /**
    * 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다. 전용 줄(second): AI2 가 items 모드면 이 잡은 행 올리기·닫기
-   * 정비 틱만 하고 stage_blocked 로 끝난다 — 사람 위임·감사·소개 검수 뒤에 줄 서지 않고, 요청이 남아 있으면 다음 poll(기본 5초)에 다시 돈다.
+   * 정비 틱만 하고 완료 틱으로 끝난다(2026-11-21 — 그 전에는 stage_blocked 미룸이라 요청이 남아 poll 5초마다 정비를 되풀이했다). 다음 틱은
+   * 이 주기의 정기 요청과 1차 기록·표 기록의 requestJob 이 깨운다 — 사람 위임·감사·소개 검수 뒤에 줄 서지 않는다.
    * legacy 모드에서 남은 행이 있으면 continuation:"ready" 로 runner 가 다시 요청해 1초 뒤 돈다(scripts/worker.ts).
    * 갈림 판가름(gpu3090)은 2026-10-31 부터 자기 잡 split-tiebreak 이다 — 이 잡은 표 심사·정비 틱만
    */

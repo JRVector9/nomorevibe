@@ -69,7 +69,9 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
   const positive = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value) && value > 0;
   // Stable keys let the independent watchdog age a failure across retries without
   // persisting provider bodies. Missing progress differs from an observed clear.
-  const providerFailures = status.progress ? Object.keys(TEXT_PROGRESS_STAGE_JOBS).filter(key => status.progress!.stages.some(stage =>
+  // 읽지 못한 텍스트 단계(unread)가 있으면 목록에서 빠진 것이 「고장 없음」으로 읽히지 않게 칸을 뺀다(진행 전체를 못 읽은 주기와 같다).
+  const textUnread = status.progress?.stages.some(stage => stage.unread && Object.hasOwn(TEXT_PROGRESS_STAGE_JOBS, stage.stage)) === true;
+  const providerFailures = status.progress && !textUnread ? Object.keys(TEXT_PROGRESS_STAGE_JOBS).filter(key => status.progress!.stages.some(stage =>
     stage.stage === key && !['paused', 'no_work', 'manual_attention'].includes(stage.reason) && stage.held !== true
     && (positive(stage.waiting) || positive(stage.deferred)) && (positive(stage.providerErrors) || positive(stage.errors5m))
     && [stage.completed5m, stage.progress5m].every(value => value == null || value === 0))) : undefined;
@@ -131,8 +133,12 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
   const mode = status.capacityMode;
   const capacityMode = mode && ['open', 'draining', 'disabled'].includes(mode.mode) && Number.isSafeInteger(mode.changedAt) && mode.changedAt >= 0
     ? { mode: mode.mode, changedAt: mode.changedAt } : undefined;
+  // 2026-11-21: 이번 주기에 읽지 못한 조각의 이름과 SQLSTATE·오류 이름. 「왜 unknown 인가」를 남기는 기록일 뿐 어떤 판정에도 쓰지 않는다.
+  const readFailures = (status.readFailures ?? []).filter(row => /^[a-z][a-z0-9-]{0,39}$/.test(row.piece) && /^[A-Za-z0-9_]{1,40}$/.test(row.code))
+    .slice(0, 12).map(row => ({ piece: row.piece, code: row.code }));
   writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures, stageFailures,
-    capacityUnknowns: status.capacityUnknowns, capacityMode, ...(consoleAlerts ? { consoleAlerts } : {}) }), { mode: 0o600 });
+    capacityUnknowns: status.capacityUnknowns, capacityMode, ...(consoleAlerts ? { consoleAlerts } : {}),
+    ...(readFailures.length ? { readFailures } : {}) }), { mode: 0o600 });
   renameSync(temporary, path);
 }
 
@@ -220,7 +226,8 @@ async function main() {
     }
     console.log(JSON.stringify({ measuredAt: status.measuredAt, overall: status.overall,
       badSamples: state.badSamples, ...(status.warnings ? { warnings: status.warnings } : {}),
-      ...(status.capacityMode ? { capacityMode: status.capacityMode.mode } : {}) }));
+      ...(status.capacityMode ? { capacityMode: status.capacityMode.mode } : {}),
+      ...(status.readFailures ? { readFailures: status.readFailures } : {}) }));
     await new Promise<void>(resolve => {
       const onAbort = () => { clearTimeout(timer); resolve(); };
       const timer = setTimeout(() => { stop.signal.removeEventListener('abort', onAbort); resolve(); }, 30_000);

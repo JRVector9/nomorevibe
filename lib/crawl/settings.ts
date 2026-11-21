@@ -93,7 +93,7 @@ export function storedAuditHold(stored: unknown): AuditHoldSettings {
 
 const QWEN_AUTO_STEP_SCHEMAS = {
   auditSecondOpinion: auditSecondOpinionSchema, publishedFilter: qwenAutoStepSchema, splitTiebreak: splitTiebreakSchema, heldRetry: heldQwenRetrySchema,
-  screenReview: screenReviewSchema,
+  screenReview: screenReviewSchema, sameModelRecheck: qwenAutoStepSchema,
 } as const satisfies Record<QwenAutoStep, unknown>;
 
 const plainObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -115,7 +115,7 @@ export function storedQwenAuto(stored: unknown): QwenAutoSettings {
     return DEFAULT_QWEN_AUTO[step];
   };
   return { auditSecondOpinion: read("auditSecondOpinion"), publishedFilter: read("publishedFilter"), splitTiebreak: read("splitTiebreak"),
-    heldRetry: read("heldRetry"), screenReview: read("screenReview") };
+    heldRetry: read("heldRetry"), screenReview: read("screenReview"), sameModelRecheck: read("sameModelRecheck") };
 }
 
 /** 저장된 행을 읽지 못해 기본값으로 돌아간 설정 — 스위치 하나를 바꾸는 쓰기가 나머지를 기본값으로 덮지 않게 가른다 */
@@ -372,7 +372,7 @@ export async function lockedSettings(tx: ProductTransaction): Promise<CrawlSetti
 /** 단계를 켜면 다음 틱을 바로 부를 잡 — 2026-10-31(PR 3a-C) 부터 단계마다 자기 잡(lib/jobs/catalog.ts) */
 const QWEN_AUTO_JOB: Record<QwenAutoStep, string> = {
   auditSecondOpinion: "audit-second-opinion", publishedFilter: "audit-second-opinion", splitTiebreak: "split-tiebreak", heldRetry: "held-qwen-retry",
-  screenReview: "audit-screen-review",
+  screenReview: "audit-screen-review", sameModelRecheck: "audit-second-opinion",
 };
 
 const sameValue = (left: unknown, right: unknown): boolean => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
@@ -397,7 +397,7 @@ export function qwenAutoWidens(before: Record<string, unknown>, after: Record<st
   const added = Array.isArray(after.reasons) && Array.isArray(before.reasons)
     && after.reasons.some((reason) => !(before.reasons as unknown[]).includes(reason));
   const wider = (after.scope === "all" && before.scope !== "all") || (after.autoClose === true && before.autoClose !== true);
-  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || added || wider;
+  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || raised("recollectPerTick") || added || wider;
 }
 
 /**

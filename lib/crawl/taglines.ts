@@ -446,7 +446,7 @@ async function recordReservedCrawlTagline(value: TaglineTask, job: JobLease, val
         if (!row || !["settled", "dispatched", "indeterminate"].includes(row.state) || row.token !== proof.dispatch.token
           || row.ownerInstanceId !== proof.dispatch.owner.instanceId || row.ownerBootId !== proof.dispatch.owner.bootId
           || row.epoch !== proof.dispatch.epoch || row.revision !== proof.dispatch.revision || row.policyHash !== proof.dispatch.policyHash
-          || row.routeId !== "crawl-tagline" || row.provider !== "abcllm" || row.model !== textTaskModel("crawl-tagline") || row.class !== "background" || row.pool !== "text"
+          || row.routeId !== "crawl-tagline" || row.provider !== proof.dispatch.binding.provider || row.model !== textTaskModel("crawl-tagline") || row.class !== "background" || row.pool !== "text"
           || row.workKey !== `${proof.dispatch.binding.logicalWorkKey}:${proof.dispatch.binding.inputHash}`
           || row.logicalWorkKey !== proof.dispatch.binding.logicalWorkKey || !isDeepStrictEqual(row.logicalMemberKeys, crawlTaglineMemberKeys(proof.dispatch.binding.member))
           || row.dispatchBindingHash !== proof.dispatch.bindingHash || !isDeepStrictEqual(row.dispatchBinding, proof.dispatch.binding)) throw new CrawlTaglineChanged();

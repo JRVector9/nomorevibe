@@ -133,6 +133,18 @@ describe("console home read", () => {
       "console.progress_unavailable"]);
   });
 
+  it("treats a report with an unread stage as unreadable progress instead of showing its empty numbers", async () => {
+    // 2026-11-21: 텍스트 진행 조각이 실패하면 진행 읽기는 던지지 않고 그 단계만 unread 로 준다 — 콘솔은 지금처럼 「진행을 읽지 못함」으로 둔다
+    read.progress.mockResolvedValue({ stages: [
+      { role: "text", stage: "reason-translate", job: "reason-translate", reason: "unknown_age", alarm: false, unread: { piece: "text-reason", code: "57014" } },
+      { role: "reviewer", stage: "intro-check", job: "product-intro-check", reason: "no_work", alarm: false, waiting: 0, oldestMinutes: null, completed5m: 0 }],
+      liveness: [] });
+    const { readConsoleHome } = await import("@/lib/operations/console-home-read");
+    const data = await readConsoleHome();
+    expect(data.inputs.progress).toBeNull();
+    expect(read.warn.mock.calls.map(([event]) => event)).toContain("console.progress_unavailable");
+  });
+
   it("shares the heavy counts through the cache instead of recounting per render", async () => {
     const { readConsoleHome } = await import("@/lib/operations/console-home-read");
     await readConsoleHome();

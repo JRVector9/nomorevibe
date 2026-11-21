@@ -12,6 +12,9 @@ const progressCache = sharedLoader<ConsoleProgress>({ namespace: "admin:console:
 
 async function loadProgress(): Promise<ConsoleProgress> {
   const report = await readWorkerProgress(new Date(), { includeText: true });
+  // 수치를 읽지 못한 단계(unread)가 섞인 보고는 지금처럼 「진행을 읽지 못함」으로 둔다 — 할 일·흐름 판정이 빈 수치를 「대기 0건」으로 읽지 않게.
+  // 사유 번역 집계는 5분 담아 쓰므로(text-stage-progress.ts) 잠깐의 실패는 여기까지 오지 않는다.
+  if (report.stages.some(stage => stage.unread)) throw new Error("console_progress_stage_unread");
   return {
     stages: report.stages.map(stage => ({ stage: stage.stage, job: stage.job ?? null, reason: stage.reason, alarm: stage.alarm,
       waiting: stage.waiting ?? null, oldestMinutes: stage.oldestMinutes ?? null, completed5m: stage.completed5m ?? null,

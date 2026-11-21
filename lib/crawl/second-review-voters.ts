@@ -1,4 +1,5 @@
 import { reviewIndependenceKey, sameReviewModel } from "./review-model-identity";
+import { sameReviewerProvider } from "./reviewer-identity";
 import { ensureReviewTaskRanks, reviewRanksSummary, secondReviewRankSets, settingsReviewersActive, secondReviewRanks, secondReviewRanksDegraded, secondReviewSlotFallbacks,
   type ReviewRankDegraded, type SecondReviewRanks } from "./review-task-ranks";
 import type { CrawlSettings } from "./settings-schema";
@@ -55,6 +56,16 @@ export function secondReviewFallbacksFor(settings: Pick<CrawlSettings, "secondRe
       ? [{ provider: candidate.binding.provider, model: candidate.binding.identity }] : []);
   }
   return secondReviewSlotFallbacks(rootModel);
+}
+
+/**
+ * 이 표(2차 행)의 투표자 자리 — 그 목록(투표자 또는 대체)에서 이 행의 심사자인 것. provider 는 동등 규칙(reviewer-identity.ts — abcllm 으로 받은 표는
+ * 그 모델의 계약을 local-direct 로 다시 저장한 뒤에도 그 칸의 표다), 모델은 예전처럼 sameReviewModel 이다. 글자 그대로 같은 자리가 먼저다. 없으면 undefined.
+ */
+export function secondReviewVoterFor<T extends { provider: string; model: string }>(pool: readonly T[],
+  row: { provider: string | null | undefined; model: string | null | undefined }): T | undefined {
+  return pool.find(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))
+    ?? pool.find(voter => sameReviewerProvider(voter.provider, row.provider) && sameReviewModel(voter.model, row.model));
 }
 
 /** 2차가 지금 표를 낼 수 있는가 — 순위 없음·표 못 읽음·모든 칸을 쓸 수 없음이면 그 degraded(잡이 그대로 적는다). replay 는 늘 null. */

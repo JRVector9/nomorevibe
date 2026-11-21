@@ -251,6 +251,51 @@ it.each(["current", "generation", "input", "removed-root-voter", "resolution"])(
     secondUnvalidated: mismatch === "current" ? 1 : 0, timedOut: false });
 });
 
+/*
+ * 심사자 identity 동등 규칙(reviewer-identity.ts, #1011)이 발견 관문의 2차 집계에 닿는 두 조건 — 1단계 리뷰의 시험 공백 ③. (abcllm, M)·(local-direct, M) 은 같은 심사자다.
+ * 각 조건을 #1011 이전 꼴(provider 글자 그대로 견줌)로 되돌리면 아래 시험이 실패한다.
+ */
+it("counts a waiting AI2 vote whose voter was re-saved under the other direct label (same ledger model); a CLI of that name is not that voter", async () => {
+  const fixture = await secondFixture();
+  const waiting = async () => (await readDiscoveryAdmission(await getSettings())).stages.find(stage => stage.key === "second")!.waiting;
+  expect(await waiting()).toBe(1);
+  // 표는 (abcllm, second) 로 올라가 있다 — 투표자를 (local-direct, second) 로 다시 저장해도 그 칸의 대기 표다(voterMatches 의 provider 견줌)
+  await saveSettings({ secondReview: { ...fixture.settings.secondReview, voters: [{ provider: "local-direct", model: "second" }] } }, "test");
+  expect(await waiting()).toBe(1);
+  await saveSettings({ secondReview: { ...fixture.settings.secondReview, voters: [{ provider: "opencode-cli", model: "second" }] } }, "test");
+  expect(await waiting()).toBe(0);
+});
+
+it("a gate vote stops counting once the same first reviewer judged again under the other direct label; another model's newer judgement does not stop it", async () => {
+  const repo = "acme/gate";
+  await crawl.putDocument({ repo, productUrl: "https://gate.test", repoMeta: { description: "A deployed product" },
+    pageStatus: 200, pageMeta: { title: "Product", description: "An app" } });
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 1_000) }).where(eq(crawlDocuments.repo, repo));
+  await crawl.recordJudgement({ repo, productUrl: "https://gate.test", state: "approved", reason: "passed", decidedBy: "auto" });
+  const candidate = (await crawl.getCandidate(repo))!, document = (await crawl.getDocument(repo))!;
+  const settings = await getSettings();
+  const input = createReviewInput(candidate, document, settings, { scan: null, observations: [] });
+  const approval = (provider: string, model: string, attemptNumber: number) => db.insert(crawlReviewAttempts).values({ candidateId: candidate.id,
+    kind: "automatic", state: "succeeded", provider, model, attemptNumber, inputHash: input.inputHash, policyHash: input.policyHash,
+    sourceRevisionHash: input.sourceRevisionHash, source: input.source, snapshot: input.snapshot, promptVersion: REVIEW_PROMPT_VERSION,
+    rulesVersion: REVIEW_RULES_VERSION, validUntil: input.validUntil,
+    outcome: { decision: "approve", reason: "Product confirmed", evidenceIds: ["product"], confidence: 0.95 } }).returning();
+  const [first] = await approval("abcllm", "first", 1);
+  await db.insert(secondReviews).values({ candidateId: candidate.id, repo, trigger: "ai_approved", firstAttemptId: first.id,
+    firstDecision: "approve", firstConfidence: 0.95, firstModel: "first", inputHash: input.inputHash,
+    generationKey: secondReviewGeneration(first.id, input, "ai_approved"), provider: "abcllm", model: "second", status: "pending",
+    createdAt: sql`now() - interval '10 minutes'` });
+  const waiting = async () => (await readDiscoveryAdmission(await getSettings())).stages.find(stage => stage.key === "second")!.waiting;
+  expect(await waiting()).toBe(1);
+  // 다른 모델의 더 새 판단은 「그 1차 심사자」의 것이 아니다 — 관문 표는 그대로 센다
+  const [other] = await approval("abcllm", "other-first", 2);
+  expect(await waiting()).toBe(1);
+  await db.delete(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, other.id));
+  // 같은 심사자가 이름표만 바꿔(local-direct, first) 다시 판단했다 — 관문 표는 옛 판단에 붙어 있어 지금 일이 아니다(admission_newer_first 의 provider 견줌)
+  await approval("local-direct", "first", 3);
+  expect(await waiting()).toBe(0);
+});
+
 it("throttles only pressure, retains hysteresis, and preserves one new candidate of exploration", () => {
   const snapshot = (waiting: number, age: number, recentNew = 0) => ({ recentNew, secondWindowLimited: false,
     stages: [{ key: "first" as const, waiting, oldestMinutes: age }] });

@@ -42,6 +42,7 @@ function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "li
   if (line.execution?.mode === "workload_pool") return { text: `작업 분산 · 모델 ${line.execution.members.length}개`, tone: "live" };
   if (aiTaskWorkloadPoolApiOnly(line.task)) return { text: "기존 CLI 분류", tone: "live" };
   if (line.lock) return { text: "바꿀 수 없음", tone: "lock" };
+  if (!line.live && line.scope) return { text: "2·3순위만 실행이 읽음", tone: "live" };
   if (!line.live) return { text: "설정값", tone: "set" };
   return { text: "실행이 이 순위를 읽음", tone: "live" };
 }
@@ -101,7 +102,7 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled, resave,
         showProvider={false} note={null} blocked={(option, index, slots) => flowOptionBlocked(editor, line, index, option, slots)}
         validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} layout="rows"
         renderAfterSlot={(row) => <SelectedModelProbe key={JSON.stringify([row.provider, row.model, row.reasoningEffort])} choice={row} disabled={disabled || !!line.lock} />} />}
-      {!line.live && !line.lock && !apiOnly && !nonLiveTarget && <p className="fr-note">{SET_ONLY_TEXT}</p>}
+      {!line.live && !line.lock && !apiOnly && !nonLiveTarget && <p className="fr-note" data-scope={line.scope ? "partial" : undefined}>{line.scope ?? SET_ONLY_TEXT}</p>}
       {!pool && !apiOnly && !nonLiveTarget && !!line.notes?.length && <ul className="fr-warns" aria-label={`${line.label} 저장된 순위의 막힘·알림`}>{line.notes.map((note) =>
         <li key={`${note.tone}:${note.text}`} className="fr-warn" data-tone={note.tone} data-note="readiness"><span aria-hidden="true">{note.tone === "bad" ? "■" : "▲"}</span> {modelPickerVisibleText(note.text, editor.connections)}</li>)}</ul>}
       {!pool && !apiOnly && !nonLiveTarget && !line.lock && !changed && !!line.pending?.length && line.saved.length > 0 && <div className="fr-resave" data-resave={line.key}>

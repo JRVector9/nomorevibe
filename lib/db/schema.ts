@@ -770,3 +770,6 @@ export * from "./intro-assist-schema";
 export * from "./news-localization-schema";
 
 export * from "./discovery-schema";
+export * from './same-model-recheck-schema';
+// 저장소 id 근거(0191) — 덧붙이기 전용, 쓰기는 DB 트리거만
+export * from "./repository-identity-schema";

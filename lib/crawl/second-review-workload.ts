@@ -11,6 +11,7 @@ import { bindReviewTaskRank, resolveReviewTaskRanks, reviewPoolCappedKeys, revie
   type ReviewRankCandidate, type ReviewRankReviewer } from './review-task-ranks';
 import { underlyingReviewModel, reviewIndependenceKey, sameReviewModel } from './review-model-identity';
 import { reviewIndependenceSql } from './held-qwen-retry-policy';
+import { reviewerProviderKey, reviewerProviderKeySql, sameReviewerProvider, sameReviewerProviderSql } from './reviewer-identity';
 
 export type SecondReviewWorkloadSlot = Readonly<{
   slot: number; config: AiTaskExecutionConfig; candidates: readonly ReviewRankCandidate[];
@@ -52,26 +53,41 @@ export async function secondReviewAssignmentMap(tx: Pick<ProductTransaction, 'se
     .where(inArray(secondReviewWorkloadAssignments.secondReviewId, ids));
   return new Map(assignments.map(assignment => [assignment.secondReviewId, assignment]));
 }
+/**
+ * 이 표(2차 행)의 지금 심사자 자리 — 없으면 null(회원이 아니다). provider 는 동등 규칙이다(reviewer-identity.ts): abcllm 으로 올린 표는 그 구성원·순위의 계약을
+ * local-direct 로 다시 저장한 뒤에도 그 자리의 표다. 글자 그대로 같은 자리가 먼저다. 모델 견줌은 예전 그대로다(배정 행이 있는 첫 표는 장부 이름 글자 그대로).
+ */
+export function secondReviewWorkloadReviewer(row: Pick<SecondReview, 'provider' | 'model' | 'fallbackForId'>,
+  assignment?: SecondReviewWorkloadAssignment | null): ReviewRankReviewer | null {
+  const pick = (candidates: readonly ReviewRankCandidate[], model: (identity: string) => boolean): ReviewRankReviewer | null => {
+    const mine = candidates.filter(candidate => candidate.binding && sameReviewerProvider(candidate.binding.provider, row.provider) && model(candidate.binding.identity));
+    const found = mine.find(candidate => candidate.binding!.provider === row.provider) ?? mine[0];
+    return found ? reviewer(found) : null;
+  };
+  const sameName = (identity: string) => sameReviewModel(identity, row.model);
+  const slots = secondReviewWorkloadSlots();
+  if (!assignment) {
+    for (const slot of slots) {
+      const primary = slot.legacy.find(candidate => candidate.binding && !candidate.unusable);
+      const found = pick(slot.legacy.filter(candidate => row.fallbackForId ? candidate !== primary : candidate === primary), sameName);
+      if (found) return found;
+    }
+    return null;
+  }
+  const slot = slots.find(slot => slot.slot === assignment.taskSlot);
+  if (!slot || slot.config.mode !== 'workload_pool' || slot.config.revision === null
+    || assignment.configRevision > slot.config.revision) return null;
+  if (row.fallbackForId) {
+    const primary = slot.legacy.find(candidate => candidate.binding && !candidate.unusable);
+    return pick(slot.legacy.filter(candidate => candidate !== primary), sameName);
+  }
+  return pick(slot.candidates.filter(candidate => candidate.poolMember?.memberId === assignment.memberId
+    && candidate.poolMember.canonicalModel === assignment.canonicalModel), identity => identity === row.model);
+}
 /** Membership only. All source/generation/ownership/pending/dissent gates remain at their original call sites. */
 export function secondReviewWorkloadMembership(row: Pick<SecondReview, 'provider' | 'model' | 'fallbackForId'>,
   assignment?: SecondReviewWorkloadAssignment | null): boolean {
-  const slots = secondReviewWorkloadSlots();
-  if (!assignment) return slots.some(slot => {
-    const primary = slot.legacy.find(candidate => candidate.binding && !candidate.unusable);
-    return slot.legacy.some(candidate => candidate.binding && (row.fallbackForId ? candidate !== primary : candidate === primary)
-      && candidate.binding.provider === row.provider && sameReviewModel(candidate.binding.identity, row.model));
-  });
-  const slot = slots.find(slot => slot.slot === assignment.taskSlot);
-  if (!slot || slot.config.mode !== 'workload_pool' || slot.config.revision === null
-    || assignment.configRevision > slot.config.revision) return false;
-  if (row.fallbackForId) {
-    const primary = slot.legacy.find(candidate => candidate.binding && !candidate.unusable);
-    return slot.legacy.some(candidate => candidate !== primary && candidate.binding
-      && candidate.binding.provider === row.provider && sameReviewModel(candidate.binding.identity, row.model));
-  }
-  return slot.candidates.some(candidate => candidate.binding && candidate.poolMember?.memberId === assignment.memberId
-    && candidate.poolMember.canonicalModel === assignment.canonicalModel
-    && candidate.binding.provider === row.provider && candidate.binding.identity === row.model);
+  return secondReviewWorkloadReviewer(row, assignment) !== null;
 }
 const OPAQUE_MODEL = /^(?:auto|supa)$/i;
 function modelCanonical(task: 'first-review' | 'second-review', model: string): string | null {
@@ -147,9 +163,9 @@ export function secondReviewPoolRootMembershipSql(root: SQL): SQL {
       jsonb_array_elements(${JSON.stringify(members)}::jsonb) m
       WHERE a.second_review_id = ${root}.id AND a.task_slot = 1 AND a.config_revision <= ${slot.config.revision}
         AND a.member_id::text = m->>'id' AND a.canonical_model = m->>'canonical'
-        AND ${root}.provider = m->>'provider' AND ${root}.model = m->>'model')
+        AND ${sameReviewerProviderSql(sql`${root}.provider`, sql`m->>'provider'`)} AND ${root}.model = m->>'model')
     OR (${Boolean(legacy)} AND NOT EXISTS (SELECT 1 FROM second_review_workload_assignments a WHERE a.second_review_id = ${root}.id)
-      AND ${root}.provider IS NOT DISTINCT FROM ${legacy?.provider ?? null}
+      AND ${reviewerProviderKeySql(sql`${root}.provider`)} IS NOT DISTINCT FROM ${legacy ? reviewerProviderKey(legacy.provider) : null}
       AND ${sameNameSql(sql`${root}.model`)} IS NOT DISTINCT FROM ${sameNameSql(sql`${legacy?.identity ?? null}`)}))`;
 }
 /** SQL discovery must match the controller membership; valid completed pool votes are not cleanup work. */
@@ -165,7 +181,7 @@ export function secondReviewPoolMembershipSql(row: SQL): SQL {
         AND workload_root.input_hash = ${row}.input_hash AND workload_root.status = 'resolved' AND workload_root.resolution = 'fallback'
         AND ${secondReviewPoolRootMembershipSql(sql`workload_root`)}
         AND EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
-          WHERE f->>'provider' = ${row}.provider AND ${sameNameSql(sql`f->>'model'`)} = ${sameNameSql(sql`${row}.model`)})) END`;
+          WHERE ${sameReviewerProviderSql(sql`f->>'provider'`, sql`${row}.provider`)} AND ${sameNameSql(sql`f->>'model'`)} = ${sameNameSql(sql`${row}.model`)})) END`;
 }
 export function secondReviewPoolRootExistsSql(candidateId: SQL, firstAttemptId: SQL, inputHash: SQL, trigger?: string): SQL {
   return sql`EXISTS (SELECT 1 FROM second_reviews wr
@@ -278,7 +294,7 @@ export function secondReviewPoolApprovedSql(attempt: { id: SQL; model: SQL }): S
         AND ${roots} AND (wa.second_review_id IS NULL OR ${actual} IS NOT NULL)
         AND (g.fallback_for_id IS NULL OR (wr.status = 'resolved' AND wr.resolution = 'fallback'
           AND EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
-            WHERE f->>'provider' = g.provider AND ${sameNameSql(sql`f->>'model'`)} = ${sameNameSql(sql`g.model`)}))))
+            WHERE ${sameReviewerProviderSql(sql`f->>'provider'`, sql`g.provider`)} AND ${sameNameSql(sql`f->>'model'`)} = ${sameNameSql(sql`g.model`)}))))
     AND NOT EXISTS (SELECT 1 FROM second_reviews g WHERE g.first_attempt_id = ${attempt.id}
       AND g.trigger = 'ai_approved' AND g.status IN ('pending', 'failed', 'needs_human')))`;
 }

@@ -7,6 +7,7 @@ import { retryableTranslations, untriedTranslations } from "@/lib/crawl/translat
 import { reasonTranslationInputHash, reasonTranslationLogicalWorkKey, type ReasonTranslationMember } from "@/lib/llm/capacity";
 import { requestReasonTranslationModelSlot } from "@/lib/llm/capacity-repository";
 import { readWorkerProgress } from "@/lib/operations/worker-progress-query";
+import { resetTextReasonProgressForTest } from "@/lib/operations/text-stage-progress";
 import { clearAllMemos } from "@/lib/cache/memo";
 import { admin, cleanupCapacityFixture, fixtureOwner, policy, setCapacityMode } from "./postprocess-backlog-fixture";
 import { ensureSchema, resetTables } from "./setup";
@@ -30,7 +31,8 @@ async function holdForeign(owner: { instanceId: string; bootId: string }, hashes
     routeId: "reason-translate", provider: "abcllm", model: MODEL }, members);
   expect(["granted", "deferred"]).toContain(slot.kind);
 }
-const stage = async () => (await readWorkerProgress()).stages.find(row => row.stage === "reason-translate")!;
+// 사유 그룹은 프로세스 안에 5분 담아 쓴다 — 자료를 바꿔 가며 읽는 이 파일은 읽기마다 비운다
+const stage = async () => { resetTextReasonProgressForTest(); return (await readWorkerProgress()).stages.find(row => row.stage === "reason-translate")!; };
 
 beforeAll(ensureSchema);
 async function clearReasons() {

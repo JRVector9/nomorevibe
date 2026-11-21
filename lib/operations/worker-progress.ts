@@ -2,6 +2,7 @@ import { batchJobsForRole, catalogJobsForBatch, type BatchRole } from '@/lib/job
 import type { ThroughputStage } from "./throughput-model";
 import { lanesForRole, type JobRole } from "@/lib/jobs/catalog";
 import { isPausedJob } from "@/lib/jobs/status";
+import { dbErrorFields } from "@/lib/db/error-fields";
 
 export type RuntimeLane = {
   name: string; jobs: string[]; state: "idle" | "polling" | "running" | "stopping";
@@ -91,16 +92,28 @@ export const EVIDENCE_STAGE_LABELS = {
   "agent-evidence": "개발 AI 근거(agent-evidence)",
   "ai-level": "AI 제작 단계(ai-level)",
 } as const satisfies Record<Extract<ProgressStageKey, "evidence" | "agent-evidence" | "ai-level">, string>;
+/** 읽지 못한 진행 조각(2026-11-21). 조각 이름과 SQLSTATE·오류 이름만 싣는다 — SQL 본문·입력값·오류 message 는 싣지 않는다. */
+export type ProgressReadFailure = { piece: string; code: string };
+const READ_FAILURE_CODE = /^[A-Za-z0-9_]{1,40}$/;
+/** 실패한 읽기 → 조각 이름 + SQLSTATE(드라이버 오류가 아니면 시스템 오류 code, 그것도 없으면 오류 이름). cause 사슬은 dbErrorFields 가 본다 */
+export function progressReadFailure(piece: string, error: unknown): ProgressReadFailure {
+  const { code, name } = dbErrorFields(error), picked = code ?? name;
+  return { piece, code: READ_FAILURE_CODE.test(picked) ? picked : 'error' };
+}
 export type ProgressStageInput = Omit<Pick<ThroughputStage, "key" | "enabled" | "waiting" | "oldestMinutes" | "completed5m" | "progress5m" | "errors5m" | "manualAttention">, "key"> & {
   key: ProgressStageKey; deferred?: number; providerErrors?: number; providerErrorMinutes?: number | null;
   /** 일감이 있어도 정책이 일부러 쉬게 한 상태(응답 점검 split 의 home 차단기 열림) — 재시작으로 고칠 수 없는 대기다 */
   held?: boolean;
+  /** 이 단계의 수치를 읽지 못했다(조각 읽기 실패, 또는 담아 둔 값이 상한보다 낡음). 수치 칸은 자리만 채운 것이라 판정에 쓰지 않는다 — 이 단계만 「모름」(unknown_age)이다 */
+  unread?: ProgressReadFailure;
+  /** 담아 두고 다시 쓰는 수치(사유 번역)를 잰 지 몇 초인가. 판정은 잰 때의 값 그대로다 */
+  measuredAgeSeconds?: number;
 };
 export type StageProgress = { role: "crawler" | "reviewer" | "publisher" | "maintenance" | "text"; stage: ProgressStageKey;
   reason: ProgressReason; alarm: boolean; restartEligible?: boolean; manualAttention?: number;
   job?: string; lane?: string; waiting?: number; oldestMinutes?: number | null; completed5m?: number;
   progress5m?: number | null; errors5m?: number | null; deferred?: number; providerErrors?: number; providerErrorMinutes?: number | null;
-  held?: boolean };
+  held?: boolean; unread?: ProgressReadFailure; measuredAgeSeconds?: number };
 
 /** 단계를 처리하는 역할 — 응답 점검(uptime, split claims 모드에서만 보고)은 maintenance 다 */
 export function progressStageRole(key: ProgressStageKey): StageProgress["role"] {
@@ -119,7 +132,9 @@ export function classifyStage(
   const textStage = Object.hasOwn(TEXT_PROGRESS_STAGE_JOBS, stage.key);
   const deferred = textStage || ["evidence", "agent-evidence", "ai-level"].includes(stage.key) ? stage.deferred ?? 0 : 0;
   const errors = Math.max(stage.providerErrors ?? 0, stage.errors5m ?? 0) + (job?.lastError ? 1 : 0);
-  if (!stage.enabled || isPausedJob(job ?? undefined, now.getTime())) reason = "paused";
+  // 읽지 못한 단계는 멈춤·보류 여부와 상관없이 모름이다 — 지어낸 0 으로 「일감 없음」이라 말하지 않는다(overall 은 unknown, 배포 관문은 통과시키지 않는다)
+  if (stage.unread) reason = "unknown_age";
+  else if (!stage.enabled || isPausedJob(job ?? undefined, now.getTime())) reason = "paused";
   else if (stage.waiting === 0 && !deferred) reason = (stage.manualAttention ?? 0) > 0 ? "manual_attention" : "no_work";
   else if ((stage.progress5m ?? stage.completed5m) > 0) reason = "progressing";
   // Alert on aged demand plus recorded provider failures even during its retry delay. A restart cannot repair credentials or an upstream outage.
@@ -134,7 +149,7 @@ export function classifyStage(
   return { role: progressStageRole(stage.key), stage: stage.key,
     reason, alarm: reason === "no_progress" || reason === "worker_missing" || reason === "upstream_stalled",
     // New text/intro observations alert independently; existing role/supervisor recovery retains its own fences.
-    restartEligible: reason === "no_progress" && !textStage, manualAttention: stage.manualAttention ?? 0 };
+    restartEligible: reason === "no_progress" && !textStage, ...(stage.unread ? {} : { manualAttention: stage.manualAttention ?? 0 }) };
 }
 
 export type SchedulerReason = "scheduled" | "unknown_schedule" | "worker_missing" | "scheduler_missed";

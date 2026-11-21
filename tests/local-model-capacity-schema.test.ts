@@ -10,6 +10,7 @@ import { operatorReviewEventSql } from "@/lib/llm/operator-review-sql";
 import { gatewayLocalDirectMembersSql } from "@/lib/llm/gateway-local-direct-sql";
 import { publicationClassifyReleaseLogicalSql } from "@/lib/llm/dispatch-release-kinds-sql";
 import { japaneseProductMembersSql } from "@/lib/llm/japanese-product-translation-sql";
+import { japaneseAbcllmProductMembersSql } from "@/lib/llm/japanese-abcllm-product-translation-sql";
 
 const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as {
   entries: { idx: number; tag: string }[];
@@ -18,6 +19,11 @@ const migrations = journal.entries.map(entry => ({
   ...entry,
   statements: readFileSync(`drizzle/${entry.tag}.sql`, "utf8").split("--> statement-breakpoint"),
 }));
+const websearchMigration = migrations.find(({ idx }) => idx === 190)!;
+const websearchRewrite = websearchMigration.statements.find((statement) => statement.includes("literal_old"))!;
+const websearchLiteral = (version: "old" | "new") =>
+  new RegExp(String.raw`literal_${version} constant text := \$sql\$([\s\S]*?)\$sql\$`).exec(websearchRewrite)![1];
+
 const checks = [
   ...getTableConfig(modelCapacityRequests).checks.filter(check => /_(logical|dispatch|terminal)_check$/.test(check.name)),
   ...getTableConfig(modelCapacityEvents).checks.filter(check => check.name === "model_capacity_events_terminal_check"),
@@ -76,6 +82,12 @@ function checkHistory(name: string) {
       } else expect(statement).toContain(`COUNT(*) FILTER (WHERE source = '${migration.tag}') = 0`);
       history.push({ idx: migration.idx, tag: migration.tag, expression: `(${previous!.expression}) OR (${rule[2]})`, leaf: rule[2] });
     }
+    if (statement === websearchRewrite && statement.includes(`'${name}'`)) {
+      const previous = history.at(-1)!;
+      expect(previous.expression).toContain(websearchLiteral("old"));
+      history.push({ idx: migration.idx, tag: migration.tag,
+        expression: previous.expression.replaceAll(websearchLiteral("old"), websearchLiteral("new")) });
+    }
     // 0175 rewrites one provider literal inside rules rows another migration added (same ordinal): replace exactly that leaf, once.
     const repair = /UPDATE model_capacity_check_rules r\s+SET predicate = replace\(r\.predicate, \$from\$([\s\S]*?)\$from\$, \$to\$([\s\S]*?)\$to\$\), source = '([^']+)'[\s\S]*?r\.source = '([^']+)'/.exec(statement);
     if (repair && new RegExp(`\\('(?:model_capacity_requests|model_capacity_events)','${name}','[a-f0-9]{64}'\\)`).test(statement)) {
@@ -101,7 +113,7 @@ it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migr
     expect(legacy, `${check.name}: legacy constraint`).toBeDefined();
     const expression = new PgDialect().sqlToQuery(check.value).sql;
     expect(latest!.expression === expression, `${check.name}: ${latest!.tag}`).toBe(true);
-    expect(expression.includes(legacy!.expression), `${check.name}: legacy CLI/gateway branches preserved`).toBe(true);
+    expect(expression.replaceAll(websearchLiteral("new"), websearchLiteral("old")).includes(legacy!.expression), `${check.name}: legacy CLI/gateway branches preserved`).toBe(true);
     expect(expression).toMatch(/local_model|local-direct/);
     expect(expression).toMatch(/cli|abcllm/);
   }
@@ -141,7 +153,9 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const expression = new PgDialect().sqlToQuery(check.value).sql;
   const release = history.find(entry => entry.idx === 158)!;
   expect(release.tag).toBe("0158_release_branch_kinds");
-  expect(latest.tag).toBe("0184_japanese_product_translation");
+  // 0193 은 0184 의 일본어 가지를 provider abcllm 으로 한 번 더 붙인다(운영 장부의 product-translate 행은 abcllm 이다).
+  expect(latest.tag).toBe("0193_japanese_abcllm_product_translation");
+  expect(history.at(-2)!.tag).toBe("0184_japanese_product_translation");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
@@ -162,7 +176,7 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const publicationApi = history.find(entry => entry.idx === 166)!;
   expect(publicationApi.tag).toBe("0166_publication_classify_api");
   expect(publicationApi.expression).toBe(`(${release.expression}) OR (${publicationApiLogicalSql})`);
-  expect(expression).toBe(`((${publicationApi.expression}) OR (${opencodeTaskMembersSql})) OR (${japaneseProductMembersSql})`);
+  expect(expression).toBe(`(((${publicationApi.expression}) OR (${opencodeTaskMembersSql})) OR (${japaneseProductMembersSql})) OR (${japaneseAbcllmProductMembersSql})`);
 });
 
 it("0168은 검토된 정본의 네 규칙만 기존 ordinal 다음에 추가하고 source·hash를 재검증한다", () => {

@@ -15,7 +15,7 @@ import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contr
 import { releaseCliExecutorBoundaryRequest } from "@/lib/operations/dr/cli-executor-boundary-release";
 import { cliExecutorFixture } from "../fixtures/cli-executor-boundary";
 import { TEST_DATABASE_URL } from "./setup";
-import { ledgerCheckDefs } from "./ledger-check-defs";
+import { ledgerCheckDefs, widenWebsearchQueryLocales } from "./ledger-check-defs";
 
 const root = fileURLToPath(new URL("../..",import.meta.url)), name = `nomorevibe_test_cli_boundary_${randomUUID().replaceAll("-","")}`;
 const url = new URL(TEST_DATABASE_URL); url.pathname=`/${name}`;
@@ -79,7 +79,7 @@ afterAll(async()=>{await client.end({timeout:5});if(created)await admin.unsafe(`
 it("migrates nonempty old data without mutation and retains all predecessor predicates",async()=>{
   expect(await rows()).toEqual(beforeRows);
   const after=await defs(),normalize=(s:string)=>s.replace(/::text\[\]|::text|::character varying/g,"").replace(/[()\s]/g,"");
-  for(const n of names)expect(normalize(after[n]).startsWith(normalize(prior[n]))).toBe(true);
+  for(const n of names)expect(normalize(after[n]).startsWith(normalize(widenWebsearchQueryLocales(prior[n])))).toBe(true);
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
 });
 it("SQL and TS agree on canonical hash, strict proof shape and both trusted closure variants",async()=>{

@@ -77,6 +77,10 @@ vi.mock("@/lib/crawl/published-second-review", () => ({ applyPublishedAutoOpinio
   state.written.push(`p:${value.id}`);
   return "noted";
 } }));
+// 원본 다시 받기(audit-stale-recollect.ts)는 tests/audit-stale-recollect.test.ts 가 본다 — 여기서는 끈 채(recollectPerTick 0) 예전의 쉬기만 본다
+vi.mock("@/lib/crawl/audit-stale-recollect", async (load) => ({ ...await load<typeof import("@/lib/crawl/audit-stale-recollect")>(),
+  settleAuditRecollects: async () => ({ done: 0, changed: 0, failed: 0, dropped: 0, waiting: 0 }),
+  requestAuditRecollect: async () => { throw new Error("recollect_not_expected"); } }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ loadReviewInput: async (candidate: { publishedSlug: string }) =>
   state.inputs.get(candidate.publishedSlug) ?? null }));
 
@@ -88,7 +92,8 @@ const fresh = () => new Date(Date.now() + 12 * HOUR);
 const stale = () => new Date(Date.now() - 7 * HOUR);
 function settings(steps: { audit?: boolean; published?: boolean }): CrawlSettings {
   return { ...DEFAULT_CRAWL_SETTINGS, enabled: true, qwenAuto: { ...DEFAULT_CRAWL_SETTINGS.qwenAuto,
-    auditSecondOpinion: { ...DEFAULT_CRAWL_SETTINGS.qwenAuto.auditSecondOpinion, enabled: Boolean(steps.audit), perTick: 10, autoClose: false },
+    auditSecondOpinion: { ...DEFAULT_CRAWL_SETTINGS.qwenAuto.auditSecondOpinion, enabled: Boolean(steps.audit), perTick: 10, autoClose: false,
+      recollectPerTick: 0 },
     publishedFilter: { enabled: Boolean(steps.published), perTick: 10 } } };
 }
 function context(): JobContext<null> {

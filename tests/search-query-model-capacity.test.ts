@@ -198,3 +198,44 @@ it("cancels only the reservation when reserved reentry changes and never POSTs",
   expect(await resolveSearchQuery(query, { waitForTranslation: true })).toMatchObject({ translationPending: true });
   expect(mocks.cancel).toHaveBeenCalledTimes(2); expect(mocks.native).not.toHaveBeenCalled();
 });
+
+it("serves a cold kana query immediately and uses cached phrases after a separate warmup", async () => {
+  const japanese = "ひらがな カタカナ";
+  const options = { mode: "lexical" as const };
+  const cold = await resolveSearchQuery(japanese, { ...options, waitForTranslation: true });
+  expect(cold).toMatchObject({
+    queries: { texts: [japanese], groups: [0] },
+    multilingualSource: "ja", translated: null, translationPending: true,
+  });
+  expect(mocks.control).not.toHaveBeenCalled();
+  expect(mocks.native).not.toHaveBeenCalled();
+
+  await warmQueryTranslation(japanese, options);
+  expect(mocks.prepareCall.mock.calls[0]?.[0]).toMatchObject({ query: japanese, sourceLocale: "ja", promptVersion: 2 });
+  expect(mocks.native).toHaveBeenCalledTimes(1);
+  mocks.cacheRead.mockResolvedValue([{ translated: "kana trainer | japanese kana trainer" }]);
+  expect(await resolveSearchQuery(japanese, options)).toMatchObject({
+    queries: { texts: [japanese, "kana trainer", "japanese kana trainer"], groups: [0, 1, 1] },
+    translated: "kana trainer / japanese kana trainer", translationPending: false,
+  });
+  expect(mocks.native).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the original result and model route when multilingual translation fails or the ledger is disabled", async () => {
+  const japanese = "翻訳ツール";
+  const options = { mode: "lexical" as const };
+  mocks.cacheRead.mockRejectedValue(new Error("read unavailable"));
+  expect(await resolveSearchQuery(japanese, options)).toMatchObject({ translated: null, translationPending: true });
+  mocks.cacheRead.mockResolvedValue([]);
+  mocks.control.mockResolvedValue({ ...open, mode: "disabled", policy: null });
+  await warmQueryTranslation(japanese, options);
+  expect(mocks.native).not.toHaveBeenCalled();
+  expect(mocks.legacyKo).not.toHaveBeenCalled();
+  expect(mocks.legacyZh).not.toHaveBeenCalled();
+  expect(mocks.legacyWrite).not.toHaveBeenCalled();
+});
+
+it.each(["English project", "문서 정리"])("keeps the original resolved plan for %s", async (text) => {
+  expect(await resolveSearchQuery(text, { waitForTranslation: false, mode: "lexical" as const }))
+    .toEqual(await resolveSearchQuery(text, { waitForTranslation: false }));
+});

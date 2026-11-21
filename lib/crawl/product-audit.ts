@@ -1,3 +1,4 @@
+import { sameModelRecheckField, type SameModelRecheckView } from "./same-model-recheck-repository";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, operationsAudit, products, productAuditAttempts, productAuditCampaigns, productAuditItems,
@@ -15,6 +16,8 @@ import { firstReviewer } from "./agent-review";
 import { classifyAuditReason } from "./audit-reason-category";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { loadReviewInput } from "./agent-review-repository";
+import { attachProjectActivity, loadProjectActivity } from "./audit-project-activity";
+import { auditRecollectField, type AuditRecollectView } from "./audit-recollect-view";
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
 import { auditReviewer, auditReviewerLabel, QWEN_AUDIT_PROVIDER, sameAuditReviewer, type AuditReviewer } from "./product-audit-reviewer";
@@ -307,11 +310,15 @@ export async function pendingAuditItems(campaignId: number, limit: number) {
  * 발행 문과 같은 입력(createReviewInput)을 만든다. 수집 원본이 없으면 null — 메이커가 직접 등록한 것.
  * 한 제품에 후보가 여럿이면(별칭) 가장 작은 id 의 후보다 — 공개분 변경 재판정의 쓸기(published-recheck.ts)가 같은 후보로 지금 내용을 만든다
  */
-export async function loadAuditInput(slug: string, settings: CrawlSettings): Promise<ReviewInput | null> {
+export async function loadAuditInput(slug: string, settings: CrawlSettings,
+  /** projectActivity: 프로젝트 활동 묶음(audit-project-activity.ts)을 싣는다 — 감사 거절의 두 번째 의견과 그 원본 다시 받기만 쓴다 */
+  options: { projectActivity?: boolean } = {}): Promise<ReviewInput | null> {
   const [row] = await db.select({ candidate: crawlCandidates, document: crawlDocuments }).from(crawlCandidates)
     .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
     .where(eq(crawlCandidates.publishedSlug, slug)).orderBy(asc(crawlCandidates.id)).limit(1);
-  return row ? loadReviewInput(row.candidate, row.document, auditSettings(settings)) : null;
+  if (!row) return null;
+  const input = await loadReviewInput(row.candidate, row.document, auditSettings(settings));
+  return options.projectActivity ? attachProjectActivity(input, await loadProjectActivity(slug, row.document)) : input;
 }
 
 export async function markAuditNoSource(itemId: number, lease: JobLease): Promise<void> {
@@ -535,12 +542,15 @@ export type AuditFindingRow = {
   heldAt: Date | null;
   /** 다른 모델의 두 번째 의견(audit-second-opinions.ts) — 출처·사유까지(엇갈림의 까닭을 줄에서 본다). 없으면 빈 목록 */
   second: SecondOpinionView[];
+  sameModelRecheck?: SameModelRecheckView | null;
   /** 이 답을 낸 제공자(0112) — 비어 있으면 그 감사가 시작할 때의 심사자다. 남은 감사 모델 바꾸기 뒤의 답을 화면이 가른다 */
   aiProvider: string | null;
   /** 수집 본문 글자 수(원본 없으면 null)·화면 판정이 있는가·엇갈림(m1 과 다른 모델이 반대) — audit-text-gate.ts */
   textLength: number | null; screenJudged: boolean; m1Split: boolean;
   /** 공개분 변경 재판정(0171)가 무엇이 바뀌어 다시 올렸나(published-recheck-change.ts). 사람이 연 감사의 항목은 null */
   changeSummary: Record<string, unknown> | null;
+  /** 입력 기한이 지나 원본을 다시 받은 줄(audit-recollect-view.ts, 0188) — 받는 중·감사 때와 지금의 차이·다시 받지 못한 사유. 없으면 null */
+  recollect: AuditRecollectView | null;
 };
 
 /** 감사 항목 id·감사 사유 — 두 번째 의견 조건이 바깥 항목을 가리킨다(모델별 거절 규칙이 사유를 본다) */
@@ -555,6 +565,8 @@ const findingColumns = {
   owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql, { reasons: true }), aiProvider: productAuditItems.aiProvider,
   textLength: pageTextLengthSql(sql`${products.id}`), screenJudged: screenJudgedSql(itemIdSql), m1Split: m1SplitSql(itemIdSql),
   changeSummary: productAuditItems.changeSummary,
+  recollect: auditRecollectField(itemIdSql),
+  sameModelRecheck: sameModelRecheckField(itemIdSql),
 };
 
 /** Qwen-v2 자동 의견 단계가 켜져 있는가 — 꺼져 있으면 그 거절은 '두 모델 모두 거절'·묶어 내리기의 까닭이 아니다(holdGates 와 같다) */

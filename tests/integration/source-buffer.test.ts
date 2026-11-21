@@ -71,6 +71,10 @@ async function cleanupOnce() {
     if (documentIds.size) await tx`DELETE FROM crawl_documents WHERE id=ANY(${[...documentIds]}) AND repo LIKE ${prefix+'/%'}`;
     if (sourceRepos.size) await tx`DELETE FROM crawl_documents WHERE repo=ANY(${[...sourceRepos]})`;
     if (frontierIds.size) await tx`DELETE FROM crawl_frontier WHERE id=ANY(${[...frontierIds]}) AND repo LIKE ${prefix+'/%'}`;
+    // 저장소 id 근거 표(0191)는 지울 수 없다 — 위 원본 삭제까지 근거로 남는다. 이 파일이 남긴 근거만, 이 TX 안에서만 거절 트리거를 끄고 치운다(원본을 지운 뒤에)
+    await tx`ALTER TABLE repository_identity_anchors DISABLE TRIGGER repository_identity_anchors_no_change`;
+    await tx`DELETE FROM repository_identity_anchors WHERE repo_key LIKE ${prefix.toLowerCase()+'/%'}`;
+    await tx`ALTER TABLE repository_identity_anchors ENABLE ALWAYS TRIGGER repository_identity_anchors_no_change`;
     for (const name of [...names].sort()) await restore(tx, "jobs", "name", name);
     for (const key of observationKeys) await restore(tx, "operations_observations", "key", key);
     await restore(tx, "crawl_settings", "id", 1);

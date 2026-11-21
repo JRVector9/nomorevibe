@@ -1,4 +1,4 @@
-import { AI_CLI_TOOL_LABELS, AI_TASK_GROUP_LABELS, aiTaskLedgerTracked, isAiAssistTask, type AiTaskDef, type AiTaskGroup } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_TASK_GROUP_LABELS, aiTaskLedgerTracked, aiTaskRankScopeNote, isAiAssistTask, type AiTaskDef, type AiTaskGroup } from "@/lib/llm/ai-tasks";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 import { aiConnectionHost, aiModelDisplayName, aiRankPendingText, aiSameUnderlyingModel, aiTaskRanksUnread, type AiConnectionView, type AiCurrentUse } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
@@ -180,6 +180,12 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     ledger.set(task.id, list);
   }
 
+  /**
+   * 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)의 2·3순위 — 1순위는 실제 적용 설정(기본 Qwen)과 같고, 2·3순위는 같은 모델 재판정 거절에만 쓰인다(PR #988).
+   * 실제 적용 설정 뒤에 붙여 보이고, 그 모델의 장부 호출을 「실제 적용 설정에 없는 모델」로 경고하지 않는다
+   */
+  const scopedRanks = (slot: TaskAssignSlotInput) => aiTaskRankScopeNote(slot.task.id) === null ? []
+    : slot.rows.filter(row => row.enabled && row.rank > 1).sort((a, b) => a.rank - b.rank);
   const executionOf = (task: string, slot: number) => input.executions?.find(row => row.task === task && row.slot === slot) ?? null;
   const modeOf = (slot: TaskAssignSlotInput): TaskAssignMode | null => {
     if (!input.executions) return slot.live ? "fallback" : null;
@@ -195,7 +201,9 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       return enabled.map((row, index) => ({ position: row.rank, connectionId: row.connectionId, model: row.model,
         identity: slot.readiness.find(ready => ready.rank === row.rank)?.identity ?? null, deviceId: connectionOf(row.connectionId)?.deviceId ?? null, first: index === 0 }));
     }
-    return (slot.current?.uses ?? []).map((use, index) => ({ position: index + 1, connectionId: null, model: use.model, identity: null, deviceId: use.deviceId, first: index === 0 }));
+    return [...(slot.current?.uses ?? []).map((use, index) => ({ position: index + 1, connectionId: null, model: use.model, identity: null, deviceId: use.deviceId, first: index === 0 })),
+      ...scopedRanks(slot).map(row => ({ position: row.rank, connectionId: row.connectionId, model: row.model,
+        identity: slot.readiness.find(ready => ready.rank === row.rank)?.identity ?? null, deviceId: connectionOf(row.connectionId)?.deviceId ?? null, first: false }))];
   };
 
   // 「발행분 감사 · 변경 재판정」의 API 순위는 감사 직접 경로(local-audit — 장부로는 「발행분 감사 · 직접 모델」의 route)로 묻는다(2026-11-09).
@@ -281,8 +289,8 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       const connection = connectionOf(member.connectionId);
       return { position: member.position, connectionId: member.connectionId, connection: connection ? aiModelDisplayName(connection) : "지워진 연결", model: member.model,
         effort: effortOf(member.options), off: !connection ? "연결 없음" : !connection.enabled ? "연결 꺼짐" : null };
-    }) : (slot.current?.uses ?? []).map((use, index) => ({ position: index + 1, connectionId: null, connection: currentConnectionLabel(use, connections), model: use.model,
-      effort: effortOf(use.options), off: null }));
+    }) : [...(slot.current?.uses ?? []).map((use, index) => ({ position: index + 1, connectionId: null, connection: currentConnectionLabel(use, connections), model: use.model,
+      effort: effortOf(use.options), off: null })), ...(mode === "effective" ? ranks.filter(choice => scopedRanks(slot).some(row => row.rank === choice.position)) : [])];
     const source = mode === "effective" || mode === "classifier" ? slot.current?.error ? null : slot.current?.source ?? null : null;
 
     // 실제 — 설정의 몇 번째가 몇 건을 맡았나

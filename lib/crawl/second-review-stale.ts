@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { inFlightStateSql } from "@/lib/llm/capacity-states";
+import { inFlightStateSql, occupyingStateSql } from "@/lib/llm/capacity-states";
 import type { CrawlCandidate, CrawlReviewAttempt, SecondReview } from "@/lib/db/schema";
 import { sameReviewModel } from "./review-model-identity";
 
@@ -175,10 +175,15 @@ export function staleReviewCapacityIdentitySql(cap: SQL, candidateId: SQL): SQL 
 }
 
 /** Filter terminal history once before candidate-dependent LIKE/regex checks.
- * Keep every reserved row: hints use wall time, while callbacks retain their existing JS tick time. */
+ * Keep every reserved row: hints use wall time, while callbacks retain their existing JS tick time.
+ * 점유 상태만 읽는다(2026-11-21) — 부분 색인 model_capacity_requests_active_idx 의 술어와 같은 조각이라 장부 전체를 훑지 않는다.
+ * 예전 `coalesce(state,'') NOT IN ('waiting','withdrawn','settled')` 와 실제 표에서 결과가 같다: state 는 NOT NULL + CHECK 6값이고,
+ * 빠지는 indeterminate 는 protectingCapacityStateSql·capacityBlocksStaleReconcile 어느 쪽도 보호로 치지 않는다.
+ * 예전 조건은 CHECK 밖의 상태도 보호 쪽으로 읽었다. 그 방어는 이제 통합 시험(second-review-published)이 CHECK 6값을 고정하는 것으로
+ * 대신한다 — 상태를 더하면 그 시험과 이 조각을 함께 고친다. */
 function protectingCapacityRowsSql(): SQL {
   return sql`SELECT cap.state, cap.reserved_until, cap.logical_work_key, cap.work_key, cap.route_id
-    FROM model_capacity_requests cap WHERE coalesce(cap.state, '') NOT IN ('waiting', 'withdrawn', 'settled')`;
+    FROM model_capacity_requests cap WHERE ${occupyingStateSql("cap.state")}`;
 }
 
 export function protectingCapacityExistsSql(candidateId: SQL, source = sql`model_capacity_requests`): SQL {

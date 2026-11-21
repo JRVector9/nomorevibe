@@ -141,6 +141,31 @@ DB·schema·마이그레이션 변경이 있으면 일반 배포가 이전을 �
 새 catalog 잡이 있으면 scheduler 배포와 DB 등록 확인을 먼저 끝내는 기존 규칙을 유지한다.
 native unknown 회수, 모델 종료, capacity 변경과 생산자 재등록은 별도 복구 절차이며 일반 도구는 실행하지 않는다.
 
+### 큰 표의 인덱스는 migrate 앞에 온라인으로 만든다(2026-11-21)
+
+마이그레이터는 밀린 마이그레이션 전체를 한 트랜잭션으로 돌려 `CREATE INDEX CONCURRENTLY`를 쓸 수 없다. 보통 `CREATE INDEX`는 빌드 내내 그 표의 쓰기를 막는다.
+큰 표에 인덱스를 더하는 마이그레이션(0192부터)은 그래서 두 걸음으로 적용한다.
+
+1. `scripts/ops/online-index.ts`가 마이그레이션 파일의 `CREATE INDEX IF NOT EXISTS …` 문을 트랜잭션 밖에서 CONCURRENTLY로 만든다.
+   DB 주소는 stdin으로만 준다. PgBouncer가 아닌 **직접 연결** 주소여야 한다(migrate가 쓰는 주소).
+   ```bash
+   <직접 연결 주소> | node --import tsx scripts/ops/online-index.ts drizzle/0192_online_missing_indexes.sql            # plan
+   <직접 연결 주소> | node --import tsx scripts/ops/online-index.ts drizzle/0192_online_missing_indexes.sql --execute
+   ```
+   plan은 인덱스마다 있음·유효·정의 일치와 표 크기, 어림 크기(`estimatedIndexBytes`)와 빌드 동안 쓸 디스크 어림(`estimatedBuildDiskBytes` — 인덱스 + 정렬 임시 파일 + WAL)을 찍는다.
+   execute는 없는 것만 만들고 몇 번을 돌려도 같다. 마지막 줄이 `"ok":true`이고 모든 인덱스가 `built` 또는 `present`여야 한다.
+2. 그 뒤 평소대로 migrate한다. 마이그레이션은 이미 있는 인덱스의 표를 건드리지 않고 기록만 한다(표 잠금 없음).
+   도구를 건너뛰고 migrate하면 「large table without its index」로, INVALID 인덱스가 남아 있으면 「index missing or INVALID」로 멈춘다 — 둘 다 도구를 돌린 뒤 다시 migrate한다.
+
+알아 둘 것:
+
+- CONCURRENTLY는 빌드 앞뒤로 그 표를 쓰던 트랜잭션과 옛 스냅숏이 끝나기를 기다린다. 긴 트랜잭션(백업 dump, 열어 둔 psql, 긴 배치)과 겹치면 그만큼 기다린다.
+  기다리는 동안 막히는 것은 그 표의 다른 DDL·VACUUM뿐이고 읽기·쓰기는 그대로다. 누구를 기다리는지는 `progress` 줄의 `lockerPid`로 본다.
+- 기다림 한도(`--wait-timeout-ms`, 기본 30분)를 넘기면 빌드는 실패하고 INVALID 인덱스가 남을 수 있다. 도구가 치우지 못했으면 `invalid_index_left`로 보고한다 —
+  막던 트랜잭션이 끝난 뒤 execute를 다시 돌리면 치우고 다시 만든다. INVALID 인덱스는 읽기에 쓰이지 않으니 급하게 손으로 지울 필요는 없다.
+- 유효한 인덱스가 같은 이름·다른 정의로 이미 있으면 `definition_differs`로 멈춘다. 이 도구는 인덱스를 지우지 않는다 — 사람이 판단한다.
+- 중간에 멈추려면 Ctrl-C(SIGINT)다. 도는 빌드를 취소하고 남은 INVALID 인덱스를 치운 뒤 끝난다.
+
 ### 모델 호출을 보유하는 앱 교체
 
 reviewer·publisher·text·maintenance·AI 소비자와 웹을 실제 교체할 때는 먼저 기존

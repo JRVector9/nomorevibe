@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { startupGatewayServingContracts } from "./gateway-serving-contract-config";
 import { DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, resolveProviderServingContract, servingContractProvider,
-  type GatewayContractProvider } from "./direct-serving-contract";
+  totalBoundDirectServingContractSchema, type GatewayContractProvider } from "./direct-serving-contract";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 /** abcLLM 총량 상한 계약 — 칸 순서·값 그대로(저장된 계약의 hash 가 바뀌지 않는다). */
@@ -24,7 +24,13 @@ export const searchVerifyServingContractSchema = z.object({
 export type SearchVerifyGatewayServingContract = Readonly<z.infer<typeof searchVerifyServingContractSchema>>;
 /** 엔진 직접 계약(PR 3b-E) — AI1·AI2 와 같은 direct-openai-chat-v1 모양, provider local-direct. 같은 route_id 아래 관리 화면(model_serving_contracts)에 둔다. */
 export const searchVerifyDirectServingContractSchema = directServingContractSchema("product-search-verify", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
-export const searchVerifyRouteServingContractSchema = z.discriminatedUnion("protocol", [searchVerifyServingContractSchema, searchVerifyDirectServingContractSchema]);
+/**
+ * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계): 장비 이름·tokenizer 칸 없이
+ * 「API 주소 + 모델 + 총량 상한」만 적고, 위 abcllm 계약의 wire 에서 context_strategy 만 뺀 것을 보낸다(D-6, lib/llm/direct-serving-contract.ts).
+ */
+export const searchVerifyTotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("product-search-verify");
+export const searchVerifyRouteServingContractSchema = z.discriminatedUnion("protocol", [searchVerifyServingContractSchema, searchVerifyDirectServingContractSchema,
+  searchVerifyTotalBoundDirectServingContractSchema]);
 export type SearchVerifyServingContract = Readonly<z.infer<typeof searchVerifyRouteServingContractSchema>>;
 /** 모양·hash 검사는 배포를 승인하지 않는다. raw 계약의 hash 는 합 스키마로 파싱해도 같다(같은 칸 순서). */
 export function searchVerifyServingContractHash(value: SearchVerifyServingContract): string {

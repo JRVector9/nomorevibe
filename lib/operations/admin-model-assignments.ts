@@ -465,7 +465,7 @@ export function assignmentSavedMessage(result: ModelAssignmentSaveResult, flagOn
     : `장비 역할 순위 ${result.deviceRole.before === null ? "없음" : fmt(result.deviceRole.before)} → ${fmt(result.deviceRole.after)}`;
   const reader = flagOn ? "" : " 읽는 쪽은 아직 설정을 씁니다(배정 표 읽기 꺼짐) — 「배정 표 읽기」를 켜면 이 배정을 읽습니다.";
   return `${result.before ? "저장했습니다" : "만들었습니다"}(배정 ${after.assignmentId}, 판 ${fmt(after.version)}, 모드 ${ASSIGNMENT_MODE_LABELS[after.mode]}). `
-    + `계약: ${contract}. ${route}. ${role}.${reader}`;
+    + `계약: ${contract}. ${route}. ${role}.${reader}${result.shapeNote ? ` ${result.shapeNote}` : ""}`;
 }
 
 // ---------- 현재 설정 → 배정 표 가져오기 ----------

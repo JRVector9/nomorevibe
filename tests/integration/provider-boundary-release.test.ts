@@ -16,7 +16,7 @@ import { readCommittedRelayBoundaryProof } from '@/lib/operations/dr/provider-bo
 import { CAPACITY_MONITOR_DEFAULTS, readModelCapacityUnknowns } from '@/lib/operations/model-capacity-unknowns';
 import { boundaryFixture } from "../fixtures/provider-boundary-release";
 import { TEST_DATABASE_URL } from "./setup";
-import { ledgerCheckDefs } from "./ledger-check-defs";
+import { ledgerCheckDefs, widenWebsearchQueryLocales } from "./ledger-check-defs";
 
 // Test-only metadata rows; no model endpoint, terminal issuance, production DB or process stop is used.
 const root = fileURLToPath(new URL("../..", import.meta.url)), name = `nomorevibe_test_boundary_${randomUUID().replaceAll("-", "")}`;
@@ -80,7 +80,7 @@ it("the full journal scans nonempty 0125 data without changing any previous row 
   expect(await rows()).toEqual(beforeRows);
   const after=await defs();
   const normalize=(v:string)=>v.replace(/::text\[\]|::text|::character varying/g,"").replace(/[()\s]/g,"");
-  for(const n of names)expect(normalize(after[n]).startsWith(normalize(prior[n]))).toBe(true);
+  for(const n of names)expect(normalize(after[n]).startsWith(normalize(widenWebsearchQueryLocales(prior[n])))).toBe(true);
   const [captured]=await client`SELECT prosrc FROM pg_proc WHERE proname='nmv_boundary_predecessor_binding_valid'`;
   for(const n of names.slice(0,3))expect(captured.prosrc.includes(prior[n].slice(6))).toBe(true);
   expect((await client`SELECT bool_and(convalidated) valid FROM pg_constraint WHERE conrelid IN ('model_capacity_requests'::regclass,'model_capacity_events'::regclass) AND contype='c'`)[0].valid).toBe(true);

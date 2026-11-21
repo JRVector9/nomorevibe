@@ -17,14 +17,15 @@ import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
 import { ai1GatewayServingContractHash, ai1GatewayServingContractSchema, resolveAi1GatewayServingContract,
   type Ai1GatewayServingContract } from "./agent-review-serving-contract";
 import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract, ai2ServingContractMatches,
-  type Ai2GatewayServingContract } from "./second-review-serving-contract";
+  ai2ServingProvider, type Ai2GatewayServingContract } from "./second-review-serving-contract";
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
-import { checkAi2TokenBudget } from "./second-review-direct-tokenize";
+import { checkAi2TokenBudget, type TokenBudgetCheck } from "./second-review-direct-tokenize";
 import { REVIEW_GATEWAY_LADDER, reviewGatewayLadder } from "@/lib/llm/deadline-ladder";
 import { ensureServingContracts, servingContractAuth, servingContractSnapshot, textRouteAccess, textRouteCallable } from "@/lib/llm/serving-contract-store";
-import { DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_REQUEST_TOKEN_BOUND, type GatewayContractProvider } from "@/lib/llm/direct-serving-contract";
+import { DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_REQUEST_TOKEN_BOUND, OPENAI_CHAT_TOTAL_BOUND_PROTOCOL, isTotalBoundDirectContract,
+  servingContractWireModel, totalBoundTokenizer, type GatewayContractProvider } from "@/lib/llm/direct-serving-contract";
 import { parseCliEngineRevision } from "@/lib/llm/cli-engine-config";
 
 /**
@@ -181,25 +182,64 @@ function directReviewWire(contract: { model: string; maxOutputTokens?: number },
   return JSON.stringify(body);
 }
 /**
- * 직접 계약(direct-openai-chat-v1)의 요청 상한을 엔진이 보고한 사용량이 어겼는가: 입력 + 출력 상한이 requestTokenBound 를 넘거나 출력이 상한을
- * 넘으면 계약과 모순이다 — terminal 은 그대로 기록하고 결과만 판단으로 받지 않는다(AI1·AI2·text 공통).
+ * 소유자 결정 D-6(2026-11-21): 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1)의 wire 는 게이트웨이 전용 칸 context_strategy 를 보내지 않는다.
+ * 그 칸 하나만 빼고 나머지(칸 순서·reasoning_effort·max_tokens·chat_template_kwargs·프롬프트 바이트)는 같은 엔진의 abcllm 계약이 보내는 그대로다.
+ * 그 칸이 없는 wire(번역 4경로·카테고리 분류)는 그대로 둔다(바이트까지 같다). abcllm 계약·direct-openai-chat-v1 의 wire 는 이 함수를 타지 않는다.
  */
-export function directBudgetExceeded(contract: { protocol: string; requestTokenBound?: number }, maxOutputTokens: number | undefined,
-  usage: { inputTokens: number; outputTokens: number } | null): boolean {
-  const { requestTokenBound } = contract;
-  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || requestTokenBound === undefined || maxOutputTokens === undefined || !usage) return false;
+function withoutGatewayContextField(body: Record<string, unknown>): boolean {
+  if (!Object.hasOwn(body, "context_strategy")) return false;
+  delete body.context_strategy;
+  return true;
+}
+/**
+ * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1)의 심사 wire — abcllm raw 계약이 보내는 바이트에서 context_strategy 만 뺀 것(D-6)에 계약의 엔진 모델
+ * 이름(engineModel, 없으면 model)을 넣는다. maxOutputTokens 가 있으면 2차의 requestBudget 처럼 max_tokens 를 그 값으로 둔다. reasoning_effort 는 남는다.
+ */
+function totalBoundReviewWire(contract: { model: string; engineModel?: string; maxOutputTokens?: number }, serialized: string): string {
+  const body = JSON.parse(gatewayWire(contract.engineModel ?? contract.model, serialized)) as Record<string, unknown>;
+  withoutGatewayContextField(body);
+  if (contract.maxOutputTokens !== undefined) body.max_tokens = contract.maxOutputTokens;
+  return JSON.stringify(body);
+}
+type TotalBoundBudgetContract = { protocol: string; model: string; engineModel?: string; totalTokenBound: number;
+  tokenizer?: { endpoint: string; requestTokenBound: number } };
+/**
+ * openai-chat-total-bound-v1 계약의 보내기 전 tokenizer 확인. tokenizer 묶음이 없으면 null(확인하지 않는다 — abcllm 총량 상한 계약과 같다).
+ * 있으면 보내는 wire 그대로(모델·max_tokens·messages·chat_template_kwargs)를 엔진 tokenizer 에 물어 입력 + 출력 상한 ≤ requestTokenBound 를 본다.
+ */
+async function totalBoundTokenCheck(contract: TotalBoundBudgetContract, wire: string,
+  options: { timeoutMs: number; signal?: AbortSignal }): Promise<TokenBudgetCheck | null> {
+  const tokenizer = totalBoundTokenizer(contract);
+  if (!tokenizer) return null;
+  let maxOutputTokens: number | undefined;
+  try { maxOutputTokens = wireMaxTokens(wire); } catch { /* The typed failure below closes an invalid frozen wire. */ }
+  if (maxOutputTokens === undefined) return { kind: "unavailable", reason: "request_mismatch" };
+  return checkAi2TokenBudget({ model: servingContractWireModel({ ...contract, provider: "local-direct" }), ...tokenizer,
+    totalTokenBound: contract.totalTokenBound, maxOutputTokens }, wire, { ...options, thinking: "as_sent" });
+}
+/**
+ * 직접 계약의 요청 상한을 엔진이 보고한 사용량이 어겼는가: 입력 + 출력 상한이 requestTokenBound 를 넘거나 출력이 상한을 넘으면 계약과 모순이다 —
+ * terminal 은 그대로 기록하고 결과만 판단으로 받지 않는다(AI1·AI2·text 공통). 요청 상한이 있는 것은 direct-openai-chat-v1 과, tokenizer 묶음을 둔
+ * openai-chat-total-bound-v1 뿐이다(묶음 없는 총량 상한 계약은 abcllm 계약처럼 이 확인이 없다).
+ */
+export function directBudgetExceeded(contract: { protocol: string; requestTokenBound?: number; tokenizer?: { endpoint: string; requestTokenBound: number } },
+  maxOutputTokens: number | undefined, usage: { inputTokens: number; outputTokens: number } | null): boolean {
+  const requestTokenBound = contract.protocol === DIRECT_OPENAI_CHAT_PROTOCOL ? contract.requestTokenBound : totalBoundTokenizer(contract)?.requestTokenBound;
+  if (requestTokenBound === undefined || maxOutputTokens === undefined || !usage) return false;
   return usage.inputTokens + maxOutputTokens > requestTokenBound || usage.outputTokens > maxOutputTokens;
 }
-/** 직접 계약(direct-openai-chat-v1)의 요청 상한: 엔진이 센 입력 + 출력 상한이 requestTokenBound 안이어야 판단으로 받는다(AI2 와 같은 규칙). */
-function directBudgetResult(contract: { protocol: string; requestTokenBound?: number; maxOutputTokens?: number },
-  usage: { inputTokens: number; outputTokens: number } | null, result: () => AgentReviewResult): AgentReviewResult {
-  return directBudgetExceeded(contract, contract.maxOutputTokens, usage)
+/** 직접 계약의 요청 상한: 엔진이 센 입력 + 출력 상한이 requestTokenBound 안이어야 판단으로 받는다(AI2 와 같은 규칙). 출력 상한은 보낸 wire 의 max_tokens 다. */
+function directBudgetResult(contract: { protocol: string; requestTokenBound?: number; maxOutputTokens?: number; tokenizer?: { endpoint: string; requestTokenBound: number } },
+  wire: string, usage: { inputTokens: number; outputTokens: number } | null, result: () => AgentReviewResult): AgentReviewResult {
+  return directBudgetExceeded(contract, contract.maxOutputTokens ?? (isTotalBoundDirectContract(contract) ? wireMaxTokens(wire) : undefined), usage)
     ? { ok: false, error: "invalid_output", detail: "request_token_bound_exceeded" } : result();
 }
 
 /** text 7경로의 계약 — abcLLM 총량 상한(raw) 모양 또는 공통 direct-openai-chat-v1 모양(PR 3b-E). 직접 계약만 tokenizer·요청 상한 칸이 있다. */
 type TextRouteContract = Readonly<{ routeId: string; provider: string; protocol: string; model: string; endpoint: string; totalTokenBound: number;
   tokenizerEndpoint?: string; requestTokenBound?: typeof DIRECT_REQUEST_TOKEN_BOUND; maxOutputTokens?: number; strictTerminalOptIn?: string;
+  /** openai-chat-total-bound-v1 계약의 tokenizer 묶음(있을 때만 보내기 전에 확인한다) */
+  tokenizer?: { endpoint: string; requestTokenBound: number };
   /** abcllm 형 계약의 엔진 모델 이름(PR B — model 이 연결로 가른 장부 이름일 때만 있다) */
   engineModel?: string;
   deploymentRevision?: string }>;
@@ -220,24 +260,39 @@ export function directTextWire(contract: { model: string; maxOutputTokens: numbe
   return JSON.stringify(body);
 }
 /**
- * 계약에 맞는 wire: local-direct 직접 계약이면 엔진 이름의 직접 wire, abcllm(게이트웨이·직접 연결)이면 그 경로의 게이트웨이 wire 를 선택 이름으로 그대로.
- * abcllm 형 계약에 engineModel 이 있으면(같은 모델을 다른 연결에도 둔 순위, PR B) 선택 이름(연결로 가른 장부 이름) 대신 그 엔진 이름을 보낸다.
+ * 계약에 맞는 wire: local-direct 직접 계약(direct-openai-chat-v1)이면 엔진 이름의 직접 wire, abcllm(게이트웨이·직접 연결)이면 그 경로의 게이트웨이 wire 를
+ * 선택 이름으로 그대로. abcllm 형 계약에 engineModel 이 있으면(같은 모델을 다른 연결에도 둔 순위, PR B) 선택 이름(연결로 가른 장부 이름) 대신 그 엔진 이름을 보낸다.
+ * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct)은 abcllm 형의 바이트에서 context_strategy 만 뺀 것이다(D-6) — 경로의 wire 에
+ * 계약의 엔진 이름(engineModel, 없으면 model)을 넣고, CLI 엔진 revision 이면 abcllm 형처럼 추론 강도를 맞춘다. maxOutputTokens 가 있을 때만 max_tokens 를
+ * 그 값 아래로 묶는다. 그 칸이 없는 경로의 wire 는 abcllm 형과 바이트까지 같다.
  */
 export function textWireFor(contract: TextRouteContract, selection: string, build: (model: string) => string): string {
   const cliEngineSource = parseCliEngineRevision(contract.deploymentRevision);
-  if (cliEngineSource === null) {
+  const totalBound = isTotalBoundDirectContract(contract);
+  if (cliEngineSource === null && !totalBound) {
     return contract.provider === "local-direct" && contract.maxOutputTokens !== undefined
       ? directTextWire({ model: contract.model, maxOutputTokens: contract.maxOutputTokens }, build(contract.model)) : build(contract.engineModel ?? selection);
   }
-  if (contract.provider === "local-direct") {
+  if (contract.provider === "local-direct" && !totalBound) {
     throw new Error("invalid_cli_engine_revision");
   }
-  const body = JSON.parse(build(contract.engineModel ?? selection)) as Record<string, unknown>;
-  const effort = cliEngineSource.reasoningEffort;
-  if (effort === undefined) {
-    delete body.reasoning_effort;
-  } else {
-    body.reasoning_effort = effort;
+  const wire = build(contract.engineModel ?? (totalBound ? contract.model : selection));
+  const outputCap = totalBound ? contract.maxOutputTokens : undefined;
+  const body = JSON.parse(wire) as Record<string, unknown>;
+  // D-6: 새 모양만 게이트웨이 전용 칸을 뺀다(abcllm 형 CLI 엔진 계약은 예전 바이트 그대로)
+  const dropped = totalBound && withoutGatewayContextField(body);
+  if (cliEngineSource === null && outputCap === undefined && !dropped) return wire;
+  if (cliEngineSource !== null) {
+    const effort = cliEngineSource.reasoningEffort;
+    if (effort === undefined) {
+      delete body.reasoning_effort;
+    } else {
+      body.reasoning_effort = effort;
+    }
+  }
+  if (outputCap !== undefined) {
+    const requested = body.max_tokens;
+    body.max_tokens = typeof requested === "number" && Number.isSafeInteger(requested) && requested >= 1 ? Math.min(requested, outputCap) : outputCap;
   }
   return JSON.stringify(body);
 }
@@ -278,20 +333,34 @@ export const wireMaxTokens = (wire: string): number | undefined => {
  */
 export async function directTextBudgetFailure(contract: TextRouteContract, wire: string,
   options: { timeoutMs: number; signal?: AbortSignal }): Promise<"input_too_large" | "tokenizer_unavailable" | null> {
-  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || options.signal?.aborted) return null;
-  let maxOutputTokens: number | undefined;
-  try { maxOutputTokens = wireMaxTokens(wire); } catch { /* The typed failure below closes an invalid frozen wire. */ }
-  const checked = contract.tokenizerEndpoint === undefined || contract.requestTokenBound === undefined || maxOutputTokens === undefined
-    ? { kind: "unavailable", reason: "request_mismatch" } as const
-    : await checkAi2TokenBudget({ model: contract.model, tokenizerEndpoint: contract.tokenizerEndpoint,
-      totalTokenBound: contract.totalTokenBound, requestTokenBound: contract.requestTokenBound, maxOutputTokens }, wire, options);
+  const totalBound = isTotalBoundDirectContract(contract);
+  if (!totalBound && contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || options.signal?.aborted) return null;
+  let checked: TokenBudgetCheck;
+  if (totalBound) {
+    // 총량 상한 직접 계약은 tokenizer 묶음이 있을 때만 확인한다 — 없으면 abcllm 총량 상한 계약처럼 C 만 계량하고 그대로 보낸다
+    const result = await totalBoundTokenCheck(contract, wire, options);
+    if (!result) return null;
+    checked = result;
+  } else {
+    let maxOutputTokens: number | undefined;
+    try { maxOutputTokens = wireMaxTokens(wire); } catch { /* The typed failure below closes an invalid frozen wire. */ }
+    checked = contract.tokenizerEndpoint === undefined || contract.requestTokenBound === undefined || maxOutputTokens === undefined
+      ? { kind: "unavailable", reason: "request_mismatch" } as const
+      : await checkAi2TokenBudget({ model: contract.model, tokenizerEndpoint: contract.tokenizerEndpoint,
+        totalTokenBound: contract.totalTokenBound, requestTokenBound: contract.requestTokenBound, maxOutputTokens }, wire, options);
+  }
   if (options.signal?.aborted || checked.kind === "within_budget") return null;
   if (checked.kind === "too_large") return "input_too_large";
   logger.warn("gateway.tokenizer_unavailable", { reason: checked.kind === "unavailable" ? checked.reason : "cancelled" });
   reportProviderOutcome({ ok: false, error: "tokenizer_unavailable" });
   return "tokenizer_unavailable";
 }
-export const textRedirect = (contract: { provider: string }): "error" | "manual" => contract.provider === "local-direct" ? "error" : "manual";
+/**
+ * 리다이렉트 처리. direct-openai-chat-v1(과 1차의 raw local-direct)은 거절(error), abcllm 형은 따라가지 않고 그 응답을 그대로 받는다(manual).
+ * openai-chat-total-bound-v1 은 abcllm 형이 하던 대로(manual)다 — 같은 서버에 같은 요청(context_strategy 만 뺀 — D-6)을 보내는 계약이라 전송 동작을 바꾸지 않는다.
+ */
+export const textRedirect = (contract: { provider: string; protocol?: string }): "error" | "manual" =>
+  contract.provider === "local-direct" && !isTotalBoundDirectContract(contract) ? "error" : "manual";
 
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
@@ -302,13 +371,15 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   endpoint?: { baseUrl: string; apiKey: string | null };
   /** 정책 글 뒤에 붙일 글 — 주지 않으면 GATEWAY_SYSTEM_SUFFIX. 정책 글 자체는 늘 그대로다 */
   systemSuffix?: string;
+  /** Extra context stays inside the escaped untrusted evidence envelope. */
+  sameModelRecheck?: Readonly<{ initialRejectReason: string | null }>;
 }): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
   const model = gatewayModel(options.model);
   if (!options.endpoint || !model) return { ok: false, error: "not_configured" };
   const key = options.endpoint.apiKey?.trim() || null;
   const url = `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`;
-  const serialized = JSON.stringify(input.snapshot);
+  const serialized = JSON.stringify(options.sameModelRecheck ? { ...input.snapshot, sameModelRecheck: options.sameModelRecheck } : input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
 
   const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model)));
@@ -480,9 +551,17 @@ export async function prepareAi1DirectCall(input: ReviewInput, options: { model:
   if (contract.provider !== "local-direct" || contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  const wire = directReviewWire(contract, serialized);
-  if (contract.protocol === DIRECT_OPENAI_CHAT_PROTOCOL && (await checkAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget")
-    return unsupported;
+  let wire: string;
+  if (contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL) {
+    // 총량 상한 직접 계약: abcllm raw 계약의 wire 에서 context_strategy 만 뺀 것(D-6), tokenizer 묶음이 있을 때만 요청 상한을 먼저 확인한다
+    wire = totalBoundReviewWire(contract, serialized);
+    const checked = await totalBoundTokenCheck(contract, wire, { timeoutMs, signal: options.signal });
+    if (checked && checked.kind !== "within_budget") return unsupported;
+  } else {
+    wire = directReviewWire(contract, serialized);
+    if (contract.protocol === DIRECT_OPENAI_CHAT_PROTOCOL && (await checkAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget")
+      return unsupported;
+  }
   if (options.signal?.aborted) return unsupported;
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: ai1GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
@@ -562,7 +641,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST",
-      redirect: state.contract.provider === "local-direct" ? "error" : "manual",
+      redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* A nonterminal response never releases its charge. */ }
@@ -578,7 +657,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   const evidence = ai1GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_gateway_terminal",
     dispatch: owned, responseHash: sha(body), ...completed });
   terminals.set(terminal, freeze(evidence));
-  return { result: directBudgetResult(state.contract, completed.actualUsage, () => gatewayResult(snapshot, body)), terminal };
+  return { result: directBudgetResult(state.contract, state.wire, completed.actualUsage, () => gatewayResult(snapshot, body)), terminal };
 }
 
 
@@ -596,9 +675,10 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
 }): Promise<PreparedAi2GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model);
-  const provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!model || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || options.signal?.aborted) return unsupported;
+  // provider 를 주지 않은 호출은 그 선택이 가리키는 계약의 provider 로 본다(abcllm 계약이 있으면 예전처럼 abcllm)
+  const provider = options.provider ?? ai2ServingProvider(model);
   const resolved = resolveAi2GatewayServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = ai2GatewayServingContractSchema.parse(structuredClone(resolved));
@@ -607,7 +687,12 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   if (contract.provider !== provider || !ai2ServingContractMatches(contract, model) || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   // 같은 모델을 다른 연결에도 둔 순위(PR C1): 엔진에는 계약의 engineModel 이 나간다(없으면 예전 그대로 model)
   let wire = gatewayWire(contract.provider === "abcllm" && contract.engineModel ? contract.engineModel : contract.model, serialized);
-  if (contract.provider === "local-direct") {
+  if (contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL) {
+    // 총량 상한 직접 계약: abcllm raw 계약의 wire 에서 context_strategy 만 뺀 것(D-6 — maxOutputTokens 는 requestBudget 처럼 max_tokens 가 된다), tokenizer 묶음이 있을 때만 확인
+    wire = totalBoundReviewWire(contract, serialized);
+    const checked = await totalBoundTokenCheck(contract, wire, { timeoutMs, signal: options.signal });
+    if (checked && checked.kind !== "within_budget") return unsupported;
+  } else if (contract.provider === "local-direct") {
     wire = directReviewWire(contract, serialized);
     if ((await checkAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget") return unsupported;
   } else if (contract.requestBudget) {
@@ -622,6 +707,17 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
     model, inputHash: snapshot.inputHash });
   preparedAi2Calls.set(call, { wire, inputIdentity: sha(JSON.stringify(snapshot)), contract: freeze(contract), timeoutMs, used: false });
   return call;
+}
+
+/**
+ * 이 준비 호출의 표가 줄에서 15초 넘게 기다리면 같은 칸의 다음 순위로 넘기는가(capacity_wait_timeout, second-review-model-capacity.ts) — 장비 이름 칸이 있는
+ * 엔진 직접 계약(direct-openai-chat-v1, #664 의 GPU 직접 주 모델 + 대체 설계)의 표만이다. abcllm 계약의 표와, 그 이름표만 local-direct 로 바꾼
+ * openai-chat-total-bound-v1 의 표는 예전 abcllm 표처럼 줄에서 기다린다(2026-11-21 이름표 정리 — 계약을 다시 저장해도 누가 그 표를 받는지가 바뀌지 않게).
+ * 판정은 준비한 그 계약으로 한다(준비 뒤에 계약 스냅숏이 바뀌어도 같은 답). 이 모듈이 준비하지 않은 값이면 false.
+ */
+export function ai2CallReroutesOnCapacityWait(call: PreparedAi2GatewayCall): boolean {
+  const contract = preparedAi2Calls.get(call)?.contract;
+  return contract?.provider === "local-direct" && !isTotalBoundDirectContract(contract);
 }
 
 /** Only the original native AI2 capability has historical evidence. */
@@ -661,7 +757,7 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST",
-      redirect: state.contract.provider === "local-direct" ? "error" : "manual",
+      redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown native completion keeps its original charge. */ }
@@ -675,7 +771,11 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   const evidence = ai2GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai2_gateway_terminal",
     dispatch: owned, responseHash: sha(body), ...completed });
   ai2Terminals.set(terminal, freeze(evidence));
-  const budget = state.contract.provider === "local-direct" ? state.contract : state.contract.requestBudget;
+  const wireOutputCap = state.contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL ? wireMaxTokens(state.wire) : undefined;
+  const budget = state.contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL
+    ? (state.contract.tokenizer && wireOutputCap !== undefined
+      ? { requestTokenBound: state.contract.tokenizer.requestTokenBound, maxOutputTokens: wireOutputCap } : undefined)
+    : state.contract.provider === "local-direct" ? state.contract : state.contract.requestBudget;
   const result = budget && completed.actualUsage
     && (completed.actualUsage.inputTokens + budget.maxOutputTokens > budget.requestTokenBound
       || completed.actualUsage.outputTokens > budget.maxOutputTokens)
@@ -728,7 +828,7 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST",
-      redirect: state.contract.provider === "local-direct" ? "error" : "manual",
+      redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown physical completion retains the original full charge. */ }
@@ -742,18 +842,21 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   const evidence = ai1ItemGatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_item_gateway_terminal",
     dispatch: owned, responseHash: sha(body), ...completed });
   ai1ItemTerminals.set(terminal, freeze(evidence));
-  return { result: directBudgetResult(state.contract, completed.actualUsage, () => gatewayResult(snapshot, body)), terminal };
+  return { result: directBudgetResult(state.contract, state.wire, completed.actualUsage, () => gatewayResult(snapshot, body)), terminal };
 }
 
 
 import { textProfileModelDispatchSchema, textProfileGatewayTerminalEvidenceSchema,
   type TextProfileModelDispatch, type TextProfileGatewayTerminalEvidence } from "@/lib/llm/capacity";
-import { textProfileServingContractHash, textProfileRouteServingContractSchema, resolveTextProfileServingContract,
+import { textProfileServingContractHash, textProfileRouteServingContractSchema, resolveTextProfileServingContract, textProfileServingProvider,
   type TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
 import { profileGatewayWire, parseProfileGatewayBody, profileHash,
   type ProfileEvidence, type KeywordResult } from "@/lib/domain/products/search-profile";
 
-/** text 7경로 준비 옵션 공통: provider 는 조정자가 계약 모듈(`<route>ServingProvider`)로 정한 값이다(PR 3b-E). 주지 않으면 예전처럼 abcllm 이다. */
+/**
+ * text 7경로 준비 옵션 공통: provider 는 조정자가 계약 모듈(`<route>ServingProvider`)로 정한 값이다(PR 3b-E). 주지 않으면 같은 함수로 그 선택이 가리키는
+ * 계약의 provider 를 읽는다 — abcllm 계약이 있거나 계약이 없으면 예전처럼 abcllm, local-direct 계약만 닿으면 local-direct 다.
+ */
 type TextPrepareOptions = { model: string; timeoutMs: number; provider?: GatewayContractProvider };
 export type PreparedTextProfileGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string; evidenceHash: string }>;
@@ -774,10 +877,11 @@ function validProfileEvidence(value: ProfileEvidence): boolean {
 export function prepareTextProfileGatewayCall(evidence: ProfileEvidence, options: TextPrepareOptions):
   PreparedTextProfileGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(evidence), model = gatewayModel(options.model), timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
+  const snapshot = structuredClone(evidence), model = gatewayModel(options.model), timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProfileEvidence(snapshot) || !model
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const provider = options.provider ?? textProfileServingProvider(model);
   const resolved = resolveTextProfileServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = textProfileRouteServingContractSchema.parse(structuredClone(resolved));
@@ -842,7 +946,7 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
 import { reasonTranslationModelDispatchSchema, reasonTranslationGatewayTerminalEvidenceSchema,
   type ReasonTranslationModelDispatch, type ReasonTranslationGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { reasonTranslationServingContractHash, reasonTranslationServingContractSchema, reasonTranslationRouteServingContractSchema,
-  resolveReasonTranslationServingContract, type ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
+  resolveReasonTranslationServingContract, reasonTranslationServingProvider, type ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
 import { reasonTranslationGatewayWire, parseTranslations, diagnoseTranslationOutput, textHash, type TranslateResult } from "./translate";
 import { ABCLLM_STRICT_TERMINAL_HEADER, ABCLLM_STRICT_TERMINAL_OPT_IN } from "@/lib/llm/gateway-serving-contract-config";
 /**
@@ -866,10 +970,11 @@ function validReasonTexts(value: unknown): value is string[] {
 export function prepareReasonTranslationGatewayCall(texts: readonly string[], options: TextPrepareOptions):
   PreparedReasonTranslationGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(texts), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
+  const snapshot = structuredClone(texts), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validReasonTexts(snapshot) || !reasonTranslationServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const provider = options.provider ?? reasonTranslationServingProvider(model);
   const resolved = resolveReasonTranslationServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = reasonTranslationRouteServingContractSchema.parse(structuredClone(resolved));
@@ -952,7 +1057,7 @@ function logReasonInvalidOutput(owned: ReasonTranslationModelDispatch, fields: R
 import { productTranslationModelDispatchSchema, productTranslationGatewayTerminalEvidenceSchema, type ProductTranslationModelDispatch,
   type ProductTranslationGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { productTranslationServingContractHash, productTranslationServingContractSchema, productTranslationRouteServingContractSchema,
-  resolveProductTranslationServingContract, type ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
+  resolveProductTranslationServingContract, productTranslationServingProvider, type ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
 import { productTranslationGatewayWire, type ProductTranslationGatewayItem } from "./translate";
 import { productTranslationPolicy, productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
@@ -975,10 +1080,11 @@ function validProductTranslationItems(value: unknown): value is ProductTranslati
 export function prepareProductTranslationGatewayCall(items: readonly ProductTranslationGatewayItem[], options: TextPrepareOptions):
   PreparedProductTranslationGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
+  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProductTranslationItems(snapshot) || !productTranslationServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const provider = options.provider ?? productTranslationServingProvider(model);
   const resolved = resolveProductTranslationServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = productTranslationRouteServingContractSchema.parse(structuredClone(resolved));
@@ -1049,7 +1155,7 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
 import { productTaglineKoModelDispatchSchema, productTaglineKoGatewayTerminalEvidenceSchema, type ProductTaglineKoModelDispatch,
   type ProductTaglineKoGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { productTaglineKoServingContractHash, productTaglineKoServingContractSchema, productTaglineKoRouteServingContractSchema,
-  resolveProductTaglineKoServingContract, type ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
+  resolveProductTaglineKoServingContract, productTaglineKoServingProvider, type ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { productTaglineKoGatewayWire, productTaglineKoSourceHash, type ProductTaglineKoGatewayItem } from "./translate";
 
 export type PreparedProductTaglineKoGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
@@ -1069,10 +1175,11 @@ function validProductTaglineKoItems(value: unknown): value is ProductTaglineKoGa
 export function prepareProductTaglineKoGatewayCall(items: readonly ProductTaglineKoGatewayItem[], options: TextPrepareOptions):
   PreparedProductTaglineKoGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
+  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProductTaglineKoItems(snapshot) || !productTaglineKoServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const provider = options.provider ?? productTaglineKoServingProvider(model);
   const resolved = resolveProductTaglineKoServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = productTaglineKoRouteServingContractSchema.parse(structuredClone(resolved));
@@ -1142,7 +1249,7 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
 import { crawlTaglineModelDispatchSchema, crawlTaglineGatewayTerminalEvidenceSchema, type CrawlTaglineModelDispatch,
   type CrawlTaglineGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { crawlTaglineServingContractHash, crawlTaglineServingContractSchema, crawlTaglineRouteServingContractSchema,
-  resolveCrawlTaglineServingContract, type CrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
+  resolveCrawlTaglineServingContract, crawlTaglineServingProvider, type CrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
 import { crawlTaglineGatewayWire, taglineHash, parseTagline, type TaglineEvidence, type TaglineResult } from "./tagline";
 
 export type PreparedCrawlTaglineGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
@@ -1163,10 +1270,11 @@ function validCrawlTaglineEvidence(value: unknown): value is TaglineEvidence {
 export function prepareCrawlTaglineGatewayCall(evidence: TaglineEvidence, options: TextPrepareOptions):
   PreparedCrawlTaglineGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(evidence), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
+  const snapshot = structuredClone(evidence), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validCrawlTaglineEvidence(snapshot) || !crawlTaglineServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const provider = options.provider ?? crawlTaglineServingProvider(model);
   const resolved = resolveCrawlTaglineServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = crawlTaglineRouteServingContractSchema.parse(structuredClone(resolved));
@@ -1233,7 +1341,7 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
 import { searchVerifyModelDispatchSchema, searchVerifyGatewayTerminalEvidenceSchema, type SearchVerifyModelDispatch,
   type SearchVerifyGatewayTerminalEvidence, type SearchVerifyOutcome } from "@/lib/llm/capacity";
 import { searchVerifyServingContractHash, searchVerifyServingContractSchema, searchVerifyRouteServingContractSchema,
-  resolveSearchVerifyServingContract, type SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
+  resolveSearchVerifyServingContract, searchVerifyServingProvider, type SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
 import { searchVerifyGatewayWire, parseVerification, type VerifyItem, type VerifyResult } from "@/lib/domain/products/search-verify";
 
 export type PreparedSearchVerifyGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
@@ -1252,10 +1360,11 @@ function validSearchVerifyItem(value: unknown): value is VerifyItem {
 export function prepareSearchVerifyGatewayCall(item: VerifyItem, options: TextPrepareOptions):
   PreparedSearchVerifyGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(item), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
+  const snapshot = structuredClone(item), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validSearchVerifyItem(snapshot) || !searchVerifyServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const provider = options.provider ?? searchVerifyServingProvider(model);
   const resolved = resolveSearchVerifyServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = searchVerifyRouteServingContractSchema.parse(structuredClone(resolved));
@@ -1329,11 +1438,12 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
 import { websearchQueryModelDispatchSchema, websearchQueryGatewayTerminalEvidenceSchema, type WebsearchQueryModelDispatch,
   type WebsearchQueryGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { websearchQueryServingContractHash, websearchQueryServingContractSchema, websearchQueryRouteServingContractSchema,
-  resolveWebsearchQueryServingContract, type WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
+  resolveWebsearchQueryServingContract, websearchQueryServingProvider, type WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
+import { MULTILINGUAL_QUERY_PROMPT_VERSION } from "@/lib/domain/products/search-query-language";
 import { parseQueryTranslation, websearchQueryGatewayWire, type WebsearchQueryGatewayInput } from "./translate";
 
 export type PreparedWebsearchQueryGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
-  servingContractHash: string; totalTokenBound: number; model: string; queryHash: string; sourceLocale: WebsearchQueryGatewayInput["sourceLocale"] }>;
+  servingContractHash: string; totalTokenBound: number; model: string; queryHash: string; sourceLocale: WebsearchQueryGatewayInput["sourceLocale"]; multilingual: boolean }>;
 export type WebsearchQueryGatewayTerminal = Readonly<{ kind: "websearch_query_gateway_terminal" }>;
 export type WebsearchQueryGatewayResult = { ok: true; keywords: string } | { ok: false; error: string };
 const websearchQueryCalls = new WeakMap<PreparedWebsearchQueryGatewayCall, { wire: string;
@@ -1342,24 +1452,28 @@ const websearchQueryTerminals = new WeakMap<WebsearchQueryGatewayTerminal, Webse
 function validWebsearchQueryInput(value: unknown): value is WebsearchQueryGatewayInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
-  return Object.keys(row).sort().join(",") === "query,sourceLocale" && typeof row.query === "string" && !!row.query
-    && row.query === row.query.trim() && ["ko", "zh-Hans", "zh-Hant"].includes(String(row.sourceLocale));
+  if (typeof row.query !== "string" || !row.query || row.query !== row.query.trim() || typeof row.sourceLocale !== "string") return false;
+  const keys = Object.keys(row).sort().join(",");
+  if (keys === "query,sourceLocale") return ["ko", "zh-Hans", "zh-Hant"].includes(row.sourceLocale);
+  return keys === "promptVersion,query,sourceLocale" && row.promptVersion === MULTILINGUAL_QUERY_PROMPT_VERSION
+    && ["zh-Hans", "zh-Hant", "ja", "han"].includes(row.sourceLocale);
 }
 /** One physical query POST per preparation; a caller descriptor never enables a deployment. */
 export function prepareWebsearchQueryGatewayCall(input: WebsearchQueryGatewayInput, options: TextPrepareOptions):
   PreparedWebsearchQueryGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(input), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
+  const snapshot = structuredClone(input), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validWebsearchQueryInput(snapshot) || !websearchQueryServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const provider = options.provider ?? websearchQueryServingProvider(model);
   const resolved = resolveWebsearchQueryServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = websearchQueryRouteServingContractSchema.parse(structuredClone(resolved));
   if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
   const wire = textWireFor(contract, model, engine => websearchQueryGatewayWire(snapshot, engine));
   const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire), servingContractHash: websearchQueryServingContractHash(contract),
-    totalTokenBound: contract.totalTokenBound, model, queryHash: sha(snapshot.query), sourceLocale: snapshot.sourceLocale });
+    totalTokenBound: contract.totalTokenBound, model, queryHash: sha(snapshot.query), sourceLocale: snapshot.sourceLocale, multilingual: snapshot.promptVersion !== undefined });
   websearchQueryCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
   return call;
 }
@@ -1379,6 +1493,7 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   const owned = checked.data, binding = owned.binding;
   if (textWireFor(state.contract, call.model, engine => websearchQueryGatewayWire(snapshot, engine)) !== state.wire || sha(snapshot.query) !== call.queryHash
     || binding.member.queryHash !== call.queryHash || binding.member.sourceLocale !== snapshot.sourceLocale
+    || (call.multilingual && binding.member.promptVersion !== snapshot.promptVersion)
     || snapshot.sourceLocale !== call.sourceLocale || binding.model !== call.model || binding.wireHash !== call.wireHash
     || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId

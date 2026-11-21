@@ -4,7 +4,7 @@ import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, craw
   crawlReviewAttempts, secondReviews } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { judgementQueue } from "@/lib/crawl/repository";
-import { pipelineThroughput } from "@/lib/operations/throughput";
+import { pipelineThroughput, THROUGHPUT_STAGE_KEYS, type ThroughputStageKey } from "@/lib/operations/throughput";
 import { ensureSchema, resetTables } from "./setup";
 
 const settings: CrawlSettings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: "off" };
@@ -153,4 +153,28 @@ it("counts a classification hold as blocked even where the connect-agent URL is 
   const result = await stage("publish", { ...settings, reviewMode: "enforce" });
   expect(result).toMatchObject({ waiting: 0 });
   expect(result.queueNote).toContain("심사·분류 조건 대기 1건");
+});
+
+// 2026-11-21: 역할 감독은 제 역할 단계만 센다 — 그 단계의 CTE 만 실어도 값은 다섯 단계를 함께 셀 때와 같고, 뺀 단계는 결과에 없다(0건이 아니다)
+it.each(([...THROUGHPUT_STAGE_KEYS.map(key => [key]), ["judge", "first", "second"], ["publish", "fetch"]] satisfies ThroughputStageKey[][])
+  .map(keys => [keys.join("+"), keys] as const))("counts only %s with the same values as the full statement", async (_name, keys) => {
+  const both = { ...settings, secondReview: { ...settings.secondReview, enabled: true } };
+  await db.insert(crawlFrontier).values({ signal: "test", repo: "only/fetch", state: "pending", discoveredAt: ago(600), updatedAt: ago(600), nextAttemptAt: ago(600) });
+  await db.insert(crawlDocuments).values({ repo: "only/judge", repoMeta: {}, fetchedAt: ago(1200) });
+  await candidate("only/manual", { state: "needs_review", reason: "ai_review_exhausted" });
+  const second = await candidate("only/second", { state: "needs_review" });
+  await db.insert(secondReviews).values({ candidateId: second.id, repo: second.repo, trigger: "ai_decided", firstDecision: "approve",
+    inputHash: "only", model: "m", status: "pending", createdAt: ago(7200) });
+  await candidate("only/publish", { state: "approved", reason: "passed", updatedAt: ago(7200) });
+  await db.insert(categoryDecisions).values({ repo: "only/publish", sourceHash: "h", category: null, reason: "held", actor: "test",
+    retryAt: ago(660), updatedAt: ago(3660) });
+  const full = await pipelineThroughput(both, now);
+  expect(full.stages.map(row => row.key)).toEqual(THROUGHPUT_STAGE_KEYS);
+  expect(full.stages.map(row => [row.waiting, row.manualAttention])).toEqual([[1, 0], [1, 0], [0, 1], [1, 0], [1, 0]]);
+  const part = await pipelineThroughput(both, now, keys);
+  expect(part).toEqual({ measuredAt: full.measuredAt, stages: full.stages.filter(row => keys.includes(row.key)) });
+});
+
+it("returns no stages without a statement when none is requested", async () => {
+  expect(await pipelineThroughput(settings, now, [])).toEqual({ measuredAt: now.toISOString(), stages: [] });
 });

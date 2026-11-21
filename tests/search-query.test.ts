@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import { hasSearchQuery, searchQueries } from "@/lib/domain/products/search";
-import { normalizeQuery, queryTranslationKey } from "@/lib/domain/products/search-translation";
-import { glossaryHints, parseQueryTranslation, queryExpansions, queryTranslationPhrases, textHash } from "@/lib/crawl/translate";
+import { multilingualQuerySourceLocale, MULTILINGUAL_QUERY_PROMPT_VERSION } from "@/lib/domain/products/search-query-language";
+import { multilingualQueryTranslationTarget, normalizeQuery, queryTranslationKey } from "@/lib/domain/products/search-translation";
+import { glossaryHints, parseQueryTranslation, queryExpansions, queryTranslationPhrases, textHash, websearchQueryGatewayWire } from "@/lib/crawl/translate";
 
 it("질의문은 다듬고 빈 것은 버린다", () => {
   expect(searchQueries("  회의록 요약  ")).toEqual(["회의록 요약"]);
@@ -60,4 +61,30 @@ it("영어로 옮기면 엉뚱한 것이 걸리는 말은 정해 둔 영어로�
 it("용어표 낱말이 든 질의만 번역 캐시 열쇠가 바뀐다 — 다른 질의의 번역은 그대로 쓴다", () => {
   expect(queryTranslationKey("회의록 요약")).toBe(textHash(JSON.stringify(["search-keywords-v3", "ko", "en", 2, null, "회의록 요약"])));
   expect(queryTranslationKey("드라마 추천")).toBe(textHash(JSON.stringify(["search-keywords-v3", "ko", "en", 2, 1, "드라마 추천"])));
+});
+
+it.each([
+  ["Notion 회의록 日本語", "ko"],
+  ["PDFを結合するツール", "ja"],
+  ["PDF ｽｷｬﾝ", "ja"],
+  ["代码 编辑器 GitHub", "zh-Hans"],
+  ["程式碼 編輯器 GitHub", "zh-Hant"],
+  ["GitHub 筆記", "han"],
+  ["音声認識", "han"],
+  ["代码 程式碼", "han"],
+  ["GitHub PDF", null],
+] as const)("detects search language from %s", (query, locale) => {
+  expect(multilingualQuerySourceLocale(query)).toBe(locale);
+});
+
+it("separates new Chinese keys while retaining the original Chinese key and format", () => {
+  const query = "VSCode 代码 编辑器";
+  expect(queryTranslationKey(query)).toBe(textHash(JSON.stringify(["search-keywords-v3", "zh-Hans", "en", 1, null, "vscode 代码 编辑器"])));
+  expect(multilingualQueryTranslationTarget(query)?.cacheKey).toBe(multilingualQueryTranslationTarget("vscode  代码 编辑器")?.cacheKey);
+  expect(multilingualQueryTranslationTarget(query)?.cacheKey).not.toBe(queryTranslationKey(query));
+  expect(multilingualQueryTranslationTarget("VSCode 코드 편집기")).toBeNull();
+  const wire = JSON.parse(websearchQueryGatewayWire({ query, sourceLocale: "zh-Hans", promptVersion: MULTILINGUAL_QUERY_PROMPT_VERSION }, "fixture"));
+  expect(wire.messages[0].content).toContain("Preserve product and technology names");
+  expect(wire.messages[1].content).toBe(JSON.stringify({ sourceLocale: "zh-Hans", query }));
+  expect(parseQueryTranslation("VSCode C++ editor | VSCode C++ IDE | editor")).toBe("vscode c++ editor | vscode c++ ide");
 });
