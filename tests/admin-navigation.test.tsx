@@ -30,6 +30,7 @@ const ADDRESSES: readonly (readonly [url: string, menu: WorkspaceId, tab: string
   ['/admin/flow?tab=flow', 'home', 'detail', null],
   ['/admin/flow?tab=diagnostics', 'home', 'diagnostics', null],
   ['/admin/flow?tab=changes', 'home', 'changes', null],
+  ['/admin/flow/keyword-recovery', 'home', 'home', null],
   ['/admin/flow?tab=unknown', 'home', 'home', null],
   // 홈 › 알림(조각 4b) — 휴대폰 알림 켜기·끄기와 조용한 시간
   ['/admin/alerts', 'home', 'alerts', null],
