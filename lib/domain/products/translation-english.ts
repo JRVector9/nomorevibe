@@ -15,7 +15,15 @@
  *  - ambiguous: short function words shared by English names/idioms and other languages (de, la, el …).
  *  - accented: other words with diacritics (é ü á …), except common English loanwords.
  */
-export type EnglishResultEvidence = { english: number; foreign: number; ambiguous: number; accented: number };
+import { englishWord, ENGLISH_FUNCTION_WORDS } from "./english-lexicon";
+
+export type EnglishResultEvidence = {
+  english: number; foreign: number; ambiguous: number; accented: number;
+  /** Lexicon words (english-lexicon.ts, any case, regular inflections), function words included; `content` excludes them. */
+  known: number; content: number;
+  /** Words that are none of the above: lowercase (`unknown`) or capitalised, likely names (`names`). */
+  unknown: number; names: number;
+};
 
 const ENGLISH = new Set(["a", "an", "the", "of", "to", "in", "on", "for", "with", "and", "or", "by", "from", "into", "your", "you",
   "that", "this", "these", "is", "are", "be", "it", "its", "as", "at", "can", "will", "all", "any", "more", "new", "via", "own",
@@ -61,16 +69,27 @@ const LOANWORDS = new Set(["café", "cafés", "résumé", "résumés", "resumé"
 
 export function englishResultEvidence(prose: string): EnglishResultEvidence {
   const words = prose.normalize("NFKC").match(/[\p{L}\p{M}]+(?:['’][\p{L}\p{M}]+)*/gu) ?? [];
-  const evidence: EnglishResultEvidence = { english: 0, foreign: 0, ambiguous: 0, accented: 0 };
+  const evidence: EnglishResultEvidence = { english: 0, foreign: 0, ambiguous: 0, accented: 0, known: 0, content: 0, unknown: 0, names: 0 };
+  const known = (lower: string) => { evidence.known++; if (!ENGLISH_FUNCTION_WORDS.has(lower.replaceAll("’", "'"))) evidence.content++; };
   words.forEach((word, index) => {
-    if (word.length >= 2 && word === word.toUpperCase()) return;
     const lower = word.toLowerCase();
+    if (word.length === 1) {
+      if (lower === "a" || lower === "i") known(lower);
+      else if (word === lower && FOREIGN.has(lower)) evidence.foreign++;
+      return;
+    }
+    // Acronyms (API, PDF, FREE) and inner capitals (WhatsApp, minFraud) are names; a long all-caps lexicon word (SYSTEM) still counts.
+    if (word === word.toUpperCase()) { if (word.length >= 5 && englishWord(lower)) known(lower); return; }
+    if (/\p{Ll}\p{Lu}/u.test(word)) return;
     const plain = word === lower || (index === 0 && word.slice(1) === lower.slice(1));
-    if (ENGLISH.has(lower)) evidence.english++;
-    else if (LOANWORDS.has(lower)) return;
+    if (ENGLISH.has(lower)) { evidence.english++; known(lower); }
+    else if (LOANWORDS.has(lower)) known(lower);
     else if ((plain && FOREIGN.has(lower)) || NON_ENGLISH_LETTER.test(word) || ROMANIZED_KOREAN.test(lower)) evidence.foreign++;
     else if (plain && AMBIGUOUS.has(lower)) evidence.ambiguous++;
     else if (/[^\x00-\x7f’]/u.test(word)) evidence.accented++;
+    else if (englishWord(lower)) known(lower);
+    else if (word !== lower) evidence.names++;
+    else evidence.unknown++;
   });
   return evidence;
 }
@@ -81,27 +100,61 @@ export function clearlyNotEnglish({ english, foreign }: EnglishResultEvidence): 
 }
 
 /**
- * The model returned the source unchanged, so accepting it publishes the source as English for good. Stricter than
- * clearlyNotEnglish: accept only when no word is doubtful (foreign, ambiguous or accented), or one doubtful word sits
- * among at least two English function words ("A client for Málaga bus times").
+ * A changed result of two or more words in which lexicon words are under a third (capitalised unknown words weigh half)
+ * is not shown to be English: "Kalkulator zakat", "Hesap makinesi app". Looser than the unchanged-source rule because a
+ * Korean source answered in another Latin language is rare, while short English translations ("Neovim config") are common.
  */
-export function unchangedSourceLooksEnglish({ english, foreign, ambiguous, accented }: EnglishResultEvidence): boolean {
-  const doubtful = foreign + ambiguous + accented;
-  return doubtful === 0 || (doubtful === 1 && english >= 2);
+export function lacksEnglishWords(evidence: EnglishResultEvidence): boolean {
+  const others = evidence.unknown + evidence.foreign + evidence.ambiguous + evidence.accented;
+  return evidence.known + others + evidence.names >= 2 && evidence.known < (evidence.known + others + evidence.names / 2) / 3;
 }
 
 /**
- * Refusals and meta answers instead of a translation. The validator skips this when the source itself contains the
- * same phrase (an English source about "untranslatable" words may be echoed).
+ * The model returned the source unchanged, so accepting it publishes the source as English for good. Requires
+ * POSITIVE evidence, not just the absence of foreign words: at least two lexicon words, one of them a content word,
+ * making up at least 70% of the words (capitalised unknown words, likely names, weigh half). Doubtful words
+ * (foreign, ambiguous, accented) are allowed only beside three or more lexicon words: one, or one per six lexicon
+ * words in longer text ("Tool for Kraków public transport").
  */
-export const TRANSLATION_REFUSAL = new RegExp([
-  String.raw`\b(?:cannot|can ?not|can'?t|can’t|unable to|not able to|won'?t|will not)\s+(?:be\s+)?translat`,
-  String.raw`\buntranslatable\b`,
-  String.raw`\bno translation (?:is )?(?:needed|necessary|required|available|possible)\b`,
-  String.raw`\b(?:text|input|sentence|tagline|description|content|it|this) (?:is|appears to be|seems to be) already (?:written )?(?:in )?english\b`,
-  String.raw`^already (?:in )?english\b`,
-  String.raw`\bas an ai(?: language)? model\b|\bas a (?:large )?language model\b|\bi am an ai\b`,
-  String.raw`^(?:sorry|apologies|unfortunately)[,!.]`,
-  String.raw`^(?:sure|certainly|of course|okay)[,!]`,
-  String.raw`^(?:n\/?a|none|null|undefined|nothing to translate)[.!]?$`,
+export function unchangedSourceLooksEnglish(evidence: EnglishResultEvidence): boolean {
+  const { known, content, unknown, names } = evidence;
+  const doubtful = evidence.foreign + evidence.ambiguous + evidence.accented;
+  const allowed = known >= 3 ? Math.max(1, Math.floor(known / 6)) : 0;
+  return doubtful <= allowed && known >= 2 && content >= 1
+    && known >= SOURCE_NATIVE_RATIO * (known + unknown + doubtful + names / 2);
+}
+const SOURCE_NATIVE_RATIO = 0.7;
+
+/**
+ * Refusals and meta answers instead of a translation. Each pattern is either the whole answer (brackets, quotes and end
+ * punctuation ignored) or a statement about the text/translation itself, so ordinary taglines that merely mention
+ * translation ("Translate memes that can't be translated", "Okay, let's plan your week") pass. The validator skips
+ * this when the source contains the same phrase.
+ */
+const WHOLE_ANSWER = new RegExp(String.raw`^(?:n\/?a|none|null|undefined|nil|empty|blank|unchanged|no changes?|not applicable|untranslated|`
+  + String.raw`not translated|same|same as (?:the )?(?:original|source|input|above)|(?:the )?original(?: text)?|(?:there is )?nothing to translate|`
+  + String.raw`no translation(?: is)? (?:needed|necessary|required|available|possible)|translation(?: is)? (?:not )?(?:needed|necessary|required|available|possible|unavailable)|`
+  + String.raw`(?:(?:this|it|that)(?: text)? is )?already (?:written )?(?:in )?english|todo|tbd|i (?:do not|don'?t) know|lorem ipsum dolor sit amet.*)$`, "iu");
+const META_ANSWER = new RegExp([
+  // "Here is the translation: …", "As requested, here is the English version"
+  String.raw`^(?:here(?:'s| is| are)|below is|the following is|as requested)\b[^.:：]{0,40}\b(?:translation|translated|english version|in english)\b`,
+  String.raw`^(?:english|english translation|en)\s*[:：]`,
+  // statements about the input
+  String.raw`\b(?:text|input|sentence|tagline|description|content|phrase|string)\s+(?:is already|appears to be|seems to be|looks like)\s+(?:written\s+)?(?:in\s+)?(?:english|korean|japanese|chinese)\b`,
+  String.raw`^(?:this|it) is (?:a |an )?(?:product |brand |proper |company |app |project )?(?:name|noun|brand|title)\b`,
+  String.raw`\b(?:it|this|text|name|term)\s+(?:\S+\s+){0,2}?(?:should not|shouldn'?t|must not|need not|does not need to|doesn'?t need to|cannot|can ?not|can'?t|could not|couldn'?t)\s+be\s+translated\b`,
+  String.raw`\b(?:kept|left|remains?)\s+(?:as[- ]is|unchanged|untranslated)\b`,
+  String.raw`\bproper noun\b|^note\s*[:：]`,
+  // first-person refusals and assistant boilerplate
+  String.raw`^(?:(?:sorry|apologies|unfortunately)[,!.]?\s*)?i(?:'m| am)?\s+(?:cannot|can ?not|can'?t|could not|couldn'?t|unable to|not able to|won'?t|will not)\s+(?:translat|help|assist|provide|process|comply|understand|determine|identify|read|access|do that)`,
+  String.raw`^(?:sorry|apologies|unfortunately)[,!.]?\s+(?:i|but|this|the)\b.{0,40}\b(?:translat|unable|cannot|can'?t|not able)`,
+  String.raw`\bas an ai(?: language)? model\b|\bas a (?:large )?language model\b|^i(?:'m| am) an ai (?:language model|assistant|model)\b`,
+  String.raw`^(?:sure|certainly|of course|okay|ok|absolutely)[,!.]?\s+(?:here\b|i(?:'ll| will| can)\b|the translation\b)`,
+  String.raw`^please (?:provide|enter|send|paste|share|give)\b`,
 ].join("|"), "iu");
+const BRACKETS = /^[\s"'“”‘’(\[{<]+|[\s"'“”‘’)\]}>.!?…。]+$/gu;
+
+export function translationRefusal(text: string): boolean {
+  const value = text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  return WHOLE_ANSWER.test(value.replace(BRACKETS, "")) || META_ANSWER.test(value);
+}

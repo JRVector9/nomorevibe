@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import type { ProductTranslation, ProductTranslationField, ProductTranslationLocale } from "@/lib/db/schema";
 import { hasEnglishEvidence } from "@/lib/i18n/content-language";
-import { clearlyNotEnglish, englishResultEvidence, TRANSLATION_REFUSAL, unchangedSourceLooksEnglish } from "./translation-english";
+import { clearlyNotEnglish, englishResultEvidence, lacksEnglishWords, translationRefusal, unchangedSourceLooksEnglish } from "./translation-english";
 import { DEFAULT_RUNTIME_SETTINGS, type ProductTranslationPolicy } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
@@ -140,9 +140,9 @@ export function productTranslationProtectedTokens(text: string): string[] {
   return [...new Set(text.match(/\b(?:[A-Z]{2,}[A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*)\b/g) ?? [])];
 }
 
-/** NFKC, collapsed whitespace, case and trailing sentence punctuation: "the model returned the source unchanged". */
+/** Same letters and digits (NFKC, case-folded; spaces, punctuation, symbols and emoji ignored): "the model returned the source unchanged". */
 const sameProductText = (a: string, b: string) => {
-  const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/gu, " ").replace(/[\s.!?…。]+$/u, "").trim().toLowerCase();
+  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, "");
   return normalize(a) === normalize(b);
 };
 
@@ -165,7 +165,7 @@ export function checkProductTranslation(
   if ([...text].length > (field === "tagline" ? 360 : 8_000)) return { ok: false, reason: "too_long" };
   if (field === "tagline" && /[\r\n]/.test(text)) return { ok: false, reason: "multiline" };
   if (MARKUP.test(text) || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) return { ok: false, reason: "markup" };
-  if (BOILERPLATE.test(text) || (TRANSLATION_REFUSAL.test(text) && !TRANSLATION_REFUSAL.test(original))) return { ok: false, reason: "boilerplate" };
+  if (BOILERPLATE.test(text) || (translationRefusal(text) && !translationRefusal(original))) return { ok: false, reason: "boilerplate" };
   if (source.name.trim().length >= 2 && original.includes(source.name) && !text.includes(source.name)) return { ok: false, reason: "name_lost" };
   if (productTranslationProtectedTokens(original).some((token) => !text.includes(token))) return { ok: false, reason: "term_lost" };
   if (!tokensPreserved(original, text, NUMBERS)) return { ok: false, reason: "number_changed" };
@@ -177,9 +177,10 @@ export function checkProductTranslation(
     const evidence = englishResultEvidence(prose);
     if (clearlyNotEnglish(evidence)) return { ok: false, reason: "not_english" };
     if (sameProductText(text, original)) {
-      return hasEnglishEvidence(prose) || unchangedSourceLooksEnglish(evidence)
+      return unchangedSourceLooksEnglish(evidence)
         ? { ok: true, text: original.trim(), sourceNative: true } : { ok: false, reason: "english_uncertain" };
     }
+    if (lacksEnglishWords(evidence)) return { ok: false, reason: "english_uncertain" };
   } else if (locale === "ja") {
     if (!/[ぁ-ゖァ-ヺ]/u.test(prose) || /[가-힣]/u.test(prose)) return { ok: false, reason: "not_japanese" };
   } else {
