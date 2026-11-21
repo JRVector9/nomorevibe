@@ -7,8 +7,9 @@ import { dequeueWithAdmission, enqueue, getDocument, saveFetchedDocument } from 
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { ensureShellRender, resetShellRenderBackoff } from "@/lib/crawl/jobs/shell-render-document";
-import { applyJsShellRequeue, countJsShellRequeue, dryRunJsShellRequeue, JS_SHELL_REQUEUE_ACTION } from "@/lib/crawl/js-shell-requeue";
-import { RENDERED_PAGE_KEY } from "@/lib/crawl/shell-render";
+import { applyJsShellRequeue, countJsShellRequeue, dryRunJsShellRequeue, JS_SHELL_REQUEUE_ACTION, readShellRenderSwitch } from "@/lib/crawl/js-shell-requeue";
+import { RENDERED_PAGE_KEY, SHELL_RENDER_ATTEMPTS, SHELL_RENDER_MAX_AGE_MS, shellRenderState } from "@/lib/crawl/shell-render";
+import { readRuntimeSettingsRow, saveRuntimeSettings } from "@/lib/operations/runtime-settings";
 import type { RenderClientResult } from "@/lib/screen-review/render-client";
 import { ensureSchema } from "./setup";
 import { claimFetchFixtureJob } from "./fetch-fixtures";
@@ -85,7 +86,7 @@ it("count/dry-run pick only shell split holds and apply requeues rendered ones w
   expect((await dryRunJsShellRequeue({ limit: 30 })).sample.map(row => row.id)).toEqual([shell.id, empty.id]);
   expect(await db.select().from(operationsAudit).where(and(eq(operationsAudit.action, JS_SHELL_REQUEUE_ACTION), eq(operationsAudit.actor, ACTOR)))).toHaveLength(0);
 
-  const result = await applyJsShellRequeue({ limit: 10, actor: ACTOR, env: ENV,
+  const result = await applyJsShellRequeue({ limit: 10, actor: ACTOR, env: ENV, intervalMs: 0,
     renderDeps: { render: async (url: string) => ok(url.includes("mochi") ? RENDERED : "") } });
   expect(result).toMatchObject({ examined: 2, rendered: 1, renderedEmpty: 1, requeued: 1 });
   const rows = await db.select().from(crawlCandidates).where(eq(crawlCandidates.reason, "source_changed"));
@@ -94,5 +95,59 @@ it("count/dry-run pick only shell split holds and apply requeues rendered ones w
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, empty.id)))[0]).toMatchObject({ state: "needs_review", reason: "second_review_split" });
   const audit = await db.select().from(operationsAudit).where(and(eq(operationsAudit.action, JS_SHELL_REQUEUE_ACTION), eq(operationsAudit.actor, ACTOR)));
   expect(audit).toHaveLength(1);
-  expect(audit[0].detail).toMatchObject({ examined: 2, rendered: 1, renderedEmpty: 1, requeued: 1, render: true });
+  expect(audit[0].detail).toMatchObject({ examined: 2, rendered: 1, renderedEmpty: 1, requeued: 1, render: true, final: true, part: 1,
+    runId: result.runId });
+});
+
+it("records only page failures on the document; a busy server writes nothing", async () => {
+  const candidate = await seed("daelong/mochipet-rpg", "https://mochi.example", SHELL, { reason: "ambiguous" });
+  const busy = await ensureShellRender((await getDocument(candidate.repo))!, { deadlineAt: Date.now() + 60_000, env: ENV,
+    render: async () => ({ ok: false, kind: "busy", code: "render_busy" }) });
+  expect(busy).toMatchObject({ kind: "wait", reason: "render_deferred" });
+  expect((await getDocument(candidate.repo))?.pageMeta).not.toHaveProperty(RENDERED_PAGE_KEY);
+  resetShellRenderBackoff();
+  const failed = await ensureShellRender((await getDocument(candidate.repo))!, { deadlineAt: Date.now() + 60_000, env: ENV,
+    render: async () => ({ ok: false, kind: "page", code: "page_http_503" }) });
+  expect(failed).toMatchObject({ kind: "wait", reason: "render_wait" });
+  const stored = await getDocument(candidate.repo);
+  expect(stored?.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ ok: false, code: "page_http_503", attempts: 1 });
+  const later = Date.now() + 11 * 60_000;
+  const exhausted = await ensureShellRender(stored!, { deadlineAt: later + 60_000, env: ENV, now: () => later,
+    render: async () => ({ ok: false, kind: "page", code: "page_http_503" }) });
+  expect(exhausted).toMatchObject({ kind: "ready", state: { kind: "unavailable", attempts: SHELL_RENDER_ATTEMPTS } });
+});
+
+it("re-renders a stale render in place and keeps the same review input when the text is the same", async () => {
+  const candidate = await seed("daelong/mochipet-rpg", "https://mochi.example", SHELL, { reason: "ambiguous" });
+  await ensureShellRender((await getDocument(candidate.repo))!, { deadlineAt: Date.now() + 60_000, env: ENV, render: async () => ok(RENDERED) });
+  const first = await getDocument(candidate.repo);
+  const before = await loadReviewInput(candidate, first!, mergeWithDefaults({}));
+  const later = Date.now() + SHELL_RENDER_MAX_AGE_MS + 60_000;
+  expect(shellRenderState(first!, later)).toMatchObject({ kind: "due", stale: true });
+  const step = await ensureShellRender(first!, { deadlineAt: later + 60_000, env: ENV, now: () => later, render: async () => ok(RENDERED) });
+  expect(step).toMatchObject({ kind: "ready", state: { kind: "rendered" } });
+  const second = await getDocument(candidate.repo);
+  expect(second?.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ ok: true, at: new Date(later).toISOString() });
+  expect((await loadReviewInput(candidate, second!, mergeWithDefaults({}))).inputHash).toBe(before.inputHash);
+});
+
+it("the runtime switch saved through the admin path turns rendering off without touching existing renders", async () => {
+  const row = await readRuntimeSettingsRow();
+  try {
+    expect(await readShellRenderSwitch()).toBe("on");
+    const saved = await saveRuntimeSettings({ "crawl-agent-review": { shellRender: 0 } }, ACTOR, { group: "jobs", expectedRevision: row.revision });
+    expect(saved).toMatchObject({ ok: true });
+    expect(await readShellRenderSwitch()).toBe("off");
+    await seed("daelong/mochipet-rpg", "https://mochi.example", SHELL);
+    expect(await countJsShellRequeue({ env: ENV })).toMatchObject({ renderSwitch: "off", renderConfigured: true, shell: 1 });
+    await expect(applyJsShellRequeue({ limit: 10, actor: ACTOR, env: ENV })).rejects.toThrow("js_shell_requeue_render_switched_off");
+    // 범위 밖 값은 저장 경로가 거절한다
+    const current = await readRuntimeSettingsRow();
+    expect(await saveRuntimeSettings({ "crawl-agent-review": { shellRender: 5 } }, ACTOR, { group: "jobs", expectedRevision: current.revision }))
+      .toMatchObject({ ok: false });
+  } finally {
+    const current = await readRuntimeSettingsRow();
+    await saveRuntimeSettings({ "crawl-agent-review": null }, ACTOR, { group: "jobs", expectedRevision: current.revision });
+  }
+  expect(await readShellRenderSwitch()).toBe("on");
 });

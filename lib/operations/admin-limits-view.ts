@@ -99,8 +99,8 @@ export const LIMITS_TASKS: readonly LimitsTaskSpec[] = Object.freeze([
   // 심사
   { id: "first-review", group: "review", label: "1차 심사", sub: "수집한 후보를 처음 읽고 승인·거절·보류를 정합니다", aiTask: "first-review", ledger: ["crawl-agent-review"],
     cap: { kind: "route", route: "review-cli", label: "CLI 호출 상한", note: "Qwen 직접 호출은 2차 심사 상한을 함께 씁니다" },
-    providerCaps: { abcllm: ladderCap, "local-direct": ladderCap }, tick: { kind: "budget", job: "crawl-agent-review" }, concurrency: byDevice, details: [],
-    jobs: ["crawl-agent-review"] },
+    providerCaps: { abcllm: ladderCap, "local-direct": ladderCap }, tick: { kind: "budget", job: "crawl-agent-review" }, concurrency: byDevice,
+    details: [knob("crawl-agent-review", "shellRender")], jobs: ["crawl-agent-review"] },
   { id: "second-review", group: "review", label: "2차 심사", sub: "1차 결과를 투표자 셋이 다시 봅니다", aiTask: "second-review", ledger: ["second-review"],
     cap: { ...ladderCap, note: "1차 심사의 Qwen 직접 호출도 이 값을 씁니다" }, tick: { kind: "none", text: "소비자가 처리 — 틱 없음" },
     concurrency: { kind: "text", text: "작업 배정에서 정함", href: TASKS_HREF, knob: { job: "second-review", knob: "consumerConcurrency", prefix: "소비자 동시" } },
@@ -289,11 +289,13 @@ const KNOB_FIELD: Readonly<Partial<Record<JobKnobName, { label: string; unit: st
   callMs: { label: "한 번 호출 상한", unit: "초" },
   consumerConcurrency: { label: "소비자 동시 업무", unit: "건" },
   classifierConcurrency: { label: "분류 동시 묶음", unit: "건" },
+  shellRender: { label: "JS 껍데기 그려 보기", unit: "1 켬·0 끔",
+    note: "본문이 제목·로딩 문구뿐인 후보를 1차 직전에 화면 서버로 그려 봅니다. 0 이면 새로 그리지 않고(이미 그린 글은 그대로 씀), 감사 화면 판별은 영향이 없습니다" },
 };
 /** 잡별 묶음 손잡이의 스키마 범위(jobKnobsSchema) — 화면 단위(ms 칸은 초) */
 const KNOB_RANGE: Readonly<Partial<Record<JobKnobName, [number, number]>>> = {
   batch: [1, 64], batchChars: [100, 30_000], minCallMs: [1, 600], slowCallMs: [1, 600], soloAttempts: [1, 10], callMs: [5, 600],
-  consumerConcurrency: [1, 4], classifierConcurrency: [1, 4],
+  consumerConcurrency: [1, 4], classifierConcurrency: [1, 4], shellRender: [0, 1],
 };
 
 type BuildContext = { stored: Record<string, unknown>; settings: RuntimeSettings; models: readonly ModelDefinition[] };
