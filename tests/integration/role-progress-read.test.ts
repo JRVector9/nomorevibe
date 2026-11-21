@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentRepositoryClaims, categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, jobs,
+import { agentRepositoryClaims, categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlSettings, jobs,
   operationsObservations, pipelineStageModes, secondReviews } from "@/lib/db/schema";
 import { saveSettings } from "@/lib/crawl/settings";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -37,10 +37,11 @@ const restoreControls = async () => {
 };
 beforeEach(async () => {
   await resetTables();
+  // 설정 행도 지운다 — 같은 샤드의 앞 파일이 남긴 설정(심사 모드·모델 묶음 등) 위에 덧씌우면 발행 대상 판정이 그 파일을 따라간다
   for (const table of [secondReviews, categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges,
-    agentRepositoryClaims, jobs, operationsObservations]) await db.delete(table);
+    agentRepositoryClaims, jobs, operationsObservations, crawlSettings]) await db.delete(table);
   await restoreControls();
-  await saveSettings({ enabled: true, reviewMode: "off", secondReview: { enabled: true } }, "test");
+  expect(await saveSettings({ enabled: true, reviewMode: "off", secondReview: { enabled: true } }, "test")).toMatchObject({ ok: true });
 });
 afterAll(restoreControls);
 
