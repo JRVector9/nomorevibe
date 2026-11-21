@@ -18,7 +18,8 @@ export { LLM_RETRY_HREF, llmRetryRowHref } from "./llm-ops-links";
  */
 export const LLM_HISTORY_KINDS = Object.freeze({
   connection: { label: "연결", actions: ["ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-model-hide", "ai-connection-key-fill",
-    "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save", "model-registry-override-disable",
+    "model-serving-contract-save", "model-serving-contract-disable", "model-serving-contract-convert", "model-serving-contract-revert",
+    "model-registry-override-save", "model-registry-override-disable",
     "search-model-settings-save", "admin-models-probe-start", "admin-models-probe-result",
     "selected-model-response-probe-start", "selected-model-response-probe-result"] },
   limit: { label: "한도", actions: ["runtime-settings-save", "model-capacity-device-save", "model-capacity-route-quota-save", "model-capacity-model-limit-save", "model-capacity-device-retire", "model-capacity-routes-prune", "model-helper-save", "model-helper-mode",

@@ -3,13 +3,18 @@ import { useActionState, useState } from "react";
 import { ConfirmSubmit } from "../ConfirmSubmit";
 import { readbackEngine, saveServingContract, type ContractSaveState } from "./actions";
 
-const AI1_TEMPLATE = { version: 1, protocol: "abcllm-raw-total-bound-v1", routeId: "crawl-agent-review", provider: "abcllm",
+/**
+ * 손 입력 틀 — 직접 연결 모양(openai-chat-total-bound-v1, provider local-direct, 2026-11-21 2단계): API 주소·모델·총량 상한만 적는다(장비 이름 칸 없음).
+ * 선택 칸(engineModel·maxOutputTokens·tokenizer 묶음, 경로에 따라 reasoningTokenReserve·rateLimitBackoff)은 필요할 때만 더한다. 저장은 계약을 읽는 모든 프로세스가
+ * 새 판일 때만 받는다(contract_reader_gate_closed). routeId 는 저장 때 고른 경로로 맞춘다.
+ */
+const DIRECT_TEMPLATE = { version: 1, protocol: "openai-chat-total-bound-v1", routeId: "crawl-agent-review", provider: "local-direct",
   model: "", responseModel: "", deploymentRevision: "", endpoint: "http://host:port/v1/chat/completions", totalTokenBound: 0 };
 
 /** One contract editor. The route schema on the server is the authority; this form only helps fill the JSON. */
 export function ContractForm({ routes, initial }: { routes: readonly string[]; initial?: { routeId: string; contract: Record<string, unknown>; auth: string; transport?: string } }) {
   const [routeId, setRouteId] = useState(initial?.routeId ?? "crawl-agent-review");
-  const [json, setJson] = useState(() => JSON.stringify(initial?.contract ?? AI1_TEMPLATE, null, 2));
+  const [json, setJson] = useState(() => JSON.stringify(initial?.contract ?? DIRECT_TEMPLATE, null, 2));
   const [auth, setAuth] = useState(initial?.auth ?? "none"), [key, setKey] = useState("");
   const [readback, setReadback] = useState<string | null>(null);
   const [state, action, pending] = useActionState<ContractSaveState, FormData>(saveServingContract, null);
@@ -22,7 +27,13 @@ export function ContractForm({ routes, initial }: { routes: readonly string[]; i
   }
   return <form action={action} className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px]">
     <label className="grid gap-1">경로
-      <select name="routeId" value={routeId} onChange={event => setRouteId(event.target.value)} className="rounded border border-line bg-bg p-2">
+      <select name="routeId" value={routeId} onChange={event => {
+        const next = event.target.value;
+        setRouteId(next);
+        // 틀의 routeId 를 고른 경로로 맞춘다(JSON 이 틀린 동안은 그대로 둔다)
+        setJson(previous => { try { const value = JSON.parse(previous) as Record<string, unknown>;
+          return value && typeof value === "object" && value.routeId === routeId ? JSON.stringify({ ...value, routeId: next }, null, 2) : previous; } catch { return previous; } });
+      }} className="rounded border border-line bg-bg p-2">
         {routes.map(route => <option key={route} value={route}>{route}</option>)}</select></label>
     <label className="grid gap-1">계약 JSON (이 경로의 형식 그대로)
       <textarea name="contract" value={json} onChange={event => setJson(event.target.value)} rows={12} spellCheck={false}
@@ -32,7 +43,7 @@ export function ContractForm({ routes, initial }: { routes: readonly string[]; i
         <option value="direct">엔진에 직접</option><option value="gateway">호출 안 됨 — 옛 전송 값(직접 연결을 고르세요)</option></select></label>
     <label className="grid gap-1">인증
       <select name="auth" value={auth} onChange={event => setAuth(event.target.value)} className="rounded border border-line bg-bg p-2">
-        <option value="none">키 없음(직접 연결 서버)</option><option value="gateway">호출 안 됨 — 옛 키 방식(키 없음 또는 저장 키)</option>
+        <option value="none">키 없음(키 없이 받는 서버)</option><option value="gateway">호출 안 됨 — 옛 키 방식(키 없음 또는 저장 키)</option>
         <option value="stored">이 연결의 키 저장(암호화)</option></select></label>
     {auth === "stored" && <label className="grid gap-1">API 키 (비워 두면 저장된 키 유지)
       <input name="apiKey" type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)} className="rounded border border-line bg-bg p-2" /></label>}
