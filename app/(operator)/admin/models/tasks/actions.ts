@@ -88,7 +88,7 @@ export const deleteAiConnectionAction = webWriteAction(async function deleteAiCo
 
 /**
  * 「작업 ↔ 모델」 한 줄 저장. 검증 → 준비 확인 → (없으면) 엔진 직접 계약 readback·1토큰 시험 → 한 TX(장비 행·계약·정책 경로 덧붙이기·순위 행·감사).
- * 실행 쪽이 순위를 읽는 작업만 저장합니다. 별도 설정 작업은 실제 적용 편집기로 안내합니다.
+ * 실행 쪽이 순위를 읽는 작업과 순위 일부만 읽는 작업(감사 두 번째 의견)만 저장합니다. 별도 설정 작업은 실제 적용 편집기로 안내합니다.
  */
 export const saveAiTaskRanksAction = webWriteAction(async function saveAiTaskRanksAction(_previous: AiTaskActionState, form: FormData): Promise<AiTaskActionState> {
   const admin = await currentAdmin();
@@ -104,7 +104,8 @@ export const saveAiTaskRanksAction = webWriteAction(async function saveAiTaskRan
   const count = parsed.input.ranks.filter(Boolean).length;
   return { ok: true, warnings: saved.warnings,
     message: `${aiTaskSlotLabel(task, parsed.input.slot)}: ${count ? `${count}개 순위를 저장했습니다` : "순위를 비웠습니다"}.${made.length ? ` 함께 만든 것: ${made.join(" · ")}.` : ""}`
-      + (isAiLiveTask(task.id) ? " 워커는 30초 주기로 설정을 다시 읽어 새 작업에 자동 반영합니다. 진행 중인 호출은 기존 모델을 유지합니다."
+      + (saved.scope ? ` ${saved.scope} 워커는 30초 주기로 순위를 다시 읽습니다.`
+        : isAiLiveTask(task.id) ? " 워커는 30초 주기로 설정을 다시 읽어 새 작업에 자동 반영합니다. 진행 중인 호출은 기존 모델을 유지합니다."
         : " 이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(설정값).") };
 });
 

@@ -10,7 +10,8 @@ import { textHash } from '@/lib/crawl/translate';
 import { productTranslationSourceHash } from '@/lib/domain/products/translation-policy';
 import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
 import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
-import { progressNeedsKoreanSql, progressReasonNeedsKoreanSql, readTextStageProgress, textStageProgressSql } from '@/lib/operations/text-stage-progress';
+import { progressNeedsKoreanSql, progressReasonNeedsKoreanSql, readTextStageProgress, resetTextReasonProgressForTest, TEXT_PROGRESS_WORK_MEM,
+  textStageProgressSql, warmTextReasonProgress } from '@/lib/operations/text-stage-progress';
 import { TRANSLATION_NEEDS_KOREAN_SQL } from '@/lib/crawl/translations';
 import { NEEDS_KOREAN } from '@/lib/domain/products/korean-tagline';
 import { clearAllMemos } from '@/lib/cache/memo';
@@ -45,7 +46,8 @@ async function demand(row: Awaited<ReturnType<typeof product>>, extra: Partial<t
     updatedAt: sql`now() - interval '2 hours'` as unknown as Date, ...extra,
   });
 }
-const stage = async (key: string) => (await readWorkerProgress()).stages.find(row => row.stage === key);
+// 사유 그룹은 프로세스 안에 5분 담아 쓴다 — 자료를 바꿔 가며 읽는 이 파일은 읽기마다 비운다
+const stage = async (key: string) => { resetTextReasonProgressForTest(); return (await readWorkerProgress()).stages.find(row => row.stage === key); };
 
 it('preserves the canonical Korean word ratio across scalar regex and whitespace boundaries', async () => {
   const lines: Array<string | null> = [null, '', ' ', '\t', '\n', '\r\n', '한글', 'english', '한글 English', '한글 English words'];
@@ -178,6 +180,38 @@ it('counts a real intro correction after ai_fixed leaves the eligibility predica
   expect(await stage('intro-check')).toMatchObject({ waiting: 1, completed5m: 1, reason: 'progressing', alarm: false });
 });
 
+it('counts the reason group once per process window, apart from the home list, and reports the reused age', async () => {
+  const reason = async (options: Parameters<typeof readTextStageProgress>[0] = {}) =>
+    (await readTextStageProgress(options)).find(row => row.key === 'reason-translate')!;
+  resetTextReasonProgressForTest();
+  // 한 번도 세지 않았으면 담아 둔 값만 쓰는 읽기는 그 단계만 모름이고, 나머지 여섯 단계는 읽힌다
+  const cold = await readTextStageProgress({ reuseReasonOnly: true });
+  expect(cold.filter(row => row.unread).map(row => [row.key, row.unread])).toEqual([['reason-translate', { piece: 'text-reason', code: 'not_read' }]]);
+  expect(await reason()).toMatchObject({ waiting: 0, measuredAgeSeconds: 0 });
+  const [candidate] = await db.insert(crawlCandidates).values({ repo: 'fixture/reason-reuse', state: 'approved' }).returning();
+  await db.insert(secondReviews).values({ candidateId: candidate.id, repo: candidate.repo, trigger: 'sample', firstDecision: 'approve',
+    inputHash: 'a'.repeat(64), provider: 'abcllm', model: 'fixture', secondReason: 'An English reason that arrived after the first count',
+    reviewedAt: new Date(Date.now() - 20 * 60_000) });
+  // 5분 안에는 다시 세지 않는다 — 잰 때의 값과 그 나이
+  const reused = await reason();
+  expect(reused).toMatchObject({ waiting: 0 });
+  expect(reused.unread).toBeUndefined();
+  expect(reused.measuredAgeSeconds).toBeGreaterThanOrEqual(0);
+  resetTextReasonProgressForTest();
+  await warmTextReasonProgress();
+  const counted = await reason({ reuseReasonOnly: true });
+  expect(counted).toMatchObject({ waiting: 1 });
+  expect(counted.oldestMinutes).toBeGreaterThanOrEqual(19);
+  // 사유 가지의 결과는 홈 목록과 무관하다(읽기는 빈 목록으로 만든다)
+  const counts = async (home: string[]) => {
+    const [row] = await db.execute<{ waiting: number; completed: number; errors: number; deferred: number; blocked: number; provider_errors: number }>(
+      textStageProgressSql(home, 'reason'));
+    return [row.waiting, row.completed, row.errors, row.deferred, row.blocked, row.provider_errors];
+  };
+  expect(await counts(['fixture-home-a', 'fixture-home-b'])).toEqual(await counts([]));
+  expect(TEXT_PROGRESS_WORK_MEM.reason).toBe('256MB');
+});
+
 it('runs the canonical reader with SELECT-only monitor grants and refuses writes', async () => {
   await product('readonly-proof');
   const role = 'text_stage_monitor_fixture';
@@ -198,9 +232,15 @@ it('runs the canonical reader with SELECT-only monitor grants and refuses writes
   try {
     globals.db = drizzle(client, { schema });
     clearAllMemos();
-    expect(await readTextStageProgress()).toHaveLength(7);
+    // 조각 실패는 이제 던지지 않고 그 단계만 unread 로 온다 — 읽기 전용 계정으로 두 조각(사유 그룹의 work_mem·문장 상한 SET LOCAL 포함)이 모두 읽혀야 한다
+    resetTextReasonProgressForTest();
+    const text = await readTextStageProgress();
+    expect(text).toHaveLength(7);
+    expect(text.filter(row => row.unread)).toEqual([]);
     expect(await readModelCapacityControlObservation()).toMatchObject({ epoch: expect.any(Number), revision: expect.any(Number) });
-    expect((await readWorkerProgress()).stages.filter(stage => ['product-translate', 'tagline-ko', 'intro-check'].includes(stage.stage))).toHaveLength(3);
+    const report = await readWorkerProgress();
+    expect(report.stages.filter(stage => ['product-translate', 'tagline-ko', 'intro-check'].includes(stage.stage))).toHaveLength(3);
+    expect(report.stages.filter(stage => stage.unread)).toEqual([]);
     await expect(client`SELECT 1 FROM dr_writer_fence FOR SHARE`).rejects.toMatchObject({ code: '42501' });
     await expect(client`SELECT 1 FROM model_capacity_control FOR SHARE`).rejects.toMatchObject({ code: '42501' });
     await expect(client`UPDATE jobs SET runs=runs`).rejects.toMatchObject({ code: '42501' });

@@ -4,8 +4,9 @@ import type { Ai2DirectServingContract } from "./second-review-serving-contract"
 const MAX_TOKENIZER_RESPONSE_BYTES = 1024 * 1024;
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
-type TokenBudgetContract = Pick<Ai2DirectServingContract, "model" | "tokenizerEndpoint" | "totalTokenBound" | "requestTokenBound" | "maxOutputTokens">
-  & { tokenizerModel?: string };
+/** requestTokenBound 는 direct-openai-chat-v1 에서는 32000 고정이고, openai-chat-total-bound-v1 의 tokenizer 묶음에서는 계약이 적은 값이다. */
+type TokenBudgetContract = Pick<Ai2DirectServingContract, "model" | "tokenizerEndpoint" | "totalTokenBound" | "maxOutputTokens">
+  & { requestTokenBound: number; tokenizerModel?: string };
 
 export type TokenBudgetCheck = { kind: "within_budget" } | { kind: "too_large" } | { kind: "cancelled" }
   | { kind: "unavailable"; reason: "request_mismatch" | "contract_mismatch" | "network" | "timeout" | "http_error"
@@ -15,9 +16,15 @@ const interrupted = (signal: AbortSignal, deadline?: AbortSignal): TokenBudgetCh
   deadline?.aborted || signal.reason instanceof Error && signal.reason.name === "TimeoutError"
     ? unavailable("timeout") : { kind: "cancelled" };
 
-/** Only a complete, matching tokenizer response can prove overflow. Unavailable evidence never becomes a product failure. */
+/**
+ * Only a complete, matching tokenizer response can prove overflow. Unavailable evidence never becomes a product failure.
+ * thinking "off" (default, direct-openai-chat-v1 and the AI2 requestBudget): the wire must carry chat_template_kwargs.enable_thinking=false.
+ * thinking "as_sent" (openai-chat-total-bound-v1 with a tokenizer block): the wire is the route's own bytes (only the gateway-only context_strategy
+ * field is dropped, D-6) and thinking is not rewritten, so the tokenizer is asked with exactly the chat_template_kwargs that are sent — none when
+ * the wire has none.
+ */
 export async function checkAi2TokenBudget(contract: TokenBudgetContract, wire: string,
-  options: { timeoutMs: number; signal?: AbortSignal }): Promise<TokenBudgetCheck> {
+  options: { timeoutMs: number; signal?: AbortSignal; thinking?: "off" | "as_sent" }): Promise<TokenBudgetCheck> {
   if (options.signal?.aborted) return interrupted(options.signal);
   if (![contract.totalTokenBound, contract.requestTokenBound, contract.maxOutputTokens, options.timeoutMs]
     .every(value => Number.isSafeInteger(value) && value > 0)
@@ -25,15 +32,18 @@ export async function checkAi2TokenBudget(contract: TokenBudgetContract, wire: s
     return unavailable("contract_mismatch");
   let chat: unknown;
   try { chat = JSON.parse(wire); } catch { return unavailable("request_mismatch"); }
+  const asSent = options.thinking === "as_sent";
   if (!object(chat) || chat.model !== contract.model || chat.max_tokens !== contract.maxOutputTokens
-    || chat.stream !== false || !Array.isArray(chat.messages) || !object(chat.chat_template_kwargs)
-    || chat.chat_template_kwargs.enable_thinking !== false) return unavailable("request_mismatch");
+    || chat.stream !== false || !Array.isArray(chat.messages)) return unavailable("request_mismatch");
+  if (asSent ? chat.chat_template_kwargs !== undefined && !object(chat.chat_template_kwargs)
+    : !object(chat.chat_template_kwargs) || chat.chat_template_kwargs.enable_thinking !== false) return unavailable("request_mismatch");
   const deadline = AbortSignal.timeout(Math.min(options.timeoutMs, 10_000));
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   if (signal.aborted) return interrupted(signal, deadline);
   try {
     const response = await undiciFetch(contract.tokenizerEndpoint, { method: "POST", redirect: "error",
       headers: { "Content-Type": "application/json" }, signal,
+      // chat_template_kwargs 가 undefined 면 JSON 에 실리지 않는다(as_sent 에서 wire 에 그 칸이 없을 때)
       body: JSON.stringify({ model: contract.tokenizerModel ?? contract.model, messages: chat.messages, add_generation_prompt: true,
         chat_template_kwargs: chat.chat_template_kwargs }),
     });

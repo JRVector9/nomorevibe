@@ -6,6 +6,7 @@ import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { textHash } from "@/lib/crawl/translate";
+import { QUERY_SOURCE_LOCALES, usesMultilingualQueryPrompt, type QuerySourceLocale } from "./search-query-language";
 import type { PreparedWebsearchQueryGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { lockModelCapacityCallerControl, lockWebsearchQueryModelCapacityDispatch, finishWebsearchQueryModelCapacityDispatch,
@@ -21,7 +22,7 @@ import { modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, web
  */
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type CacheRow = Record<string, unknown>;
-export type WebsearchQueryTarget = Readonly<{ query: string; sourceLocale: "ko" | "zh-Hans" | "zh-Hant"; cacheKey: string;
+export type WebsearchQueryTarget = Readonly<{ query: string; sourceLocale: QuerySourceLocale; cacheKey: string;
   promptVersion: number; glossaryVersion: number | null }>;
 export type WebsearchQueryResult = { ok: true; keywords: string } | { ok: false; error: string };
 export type WebsearchQueryWriteExpectation = Readonly<{ kind: "websearch_query_write" }>;
@@ -32,7 +33,7 @@ export type WebsearchQueryPreparation = { kind: "disabled" } | { kind: "skipped"
 const queryWrites = new WeakMap<WebsearchQueryWriteExpectation, { cacheKey: string; raw: CacheRow | null; model: string; used: boolean }>();
 class WebsearchQueryChanged extends Error { constructor() { super("websearch_query_input_changed"); } }
 
-const targetSchema = z.object({ query: z.string().min(1), sourceLocale: z.enum(["ko", "zh-Hans", "zh-Hant"]),
+const targetSchema = z.object({ query: z.string().min(1), sourceLocale: z.enum(QUERY_SOURCE_LOCALES),
   cacheKey: z.string().regex(/^[a-f0-9]{64}$/), promptVersion: z.number().int().positive().safe(),
   glossaryVersion: z.number().int().positive().safe().nullable() }).strict();
 
@@ -84,7 +85,8 @@ export async function prepareWebsearchQueryDispatch(value: WebsearchQueryTarget,
   const target = targetSchema.parse(structuredClone(value)), owner = websearchProcessOwnerSchema.parse(structuredClone(valueOptions.owner));
   const call = valueOptions.call, reserved = valueOptions.reserved && { reservation: modelCapacityReservationSchema.parse(valueOptions.reserved.reservation),
     identity: modelCapacityRequestIdentitySchema.parse(valueOptions.reserved.identity), input: websearchQueryInputSchema.parse(valueOptions.reserved.input) };
-  if (call.queryHash !== textHash(target.query) || call.sourceLocale !== target.sourceLocale) throw new Error("websearch_query_call_mismatch");
+  if (call.queryHash !== textHash(target.query) || call.sourceLocale !== target.sourceLocale
+    || call.multilingual !== usesMultilingualQueryPrompt(target)) throw new Error("websearch_query_call_mismatch");
   let writer: Parameters<typeof queryWrites.set>[1] | undefined;
   try {
     const prepared = await onPrimary(() => db.transaction(async (tx): Promise<Exclude<WebsearchQueryPreparation, { expectation: WebsearchQueryWriteExpectation }>

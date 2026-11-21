@@ -1,0 +1,115 @@
+Pager usage is off.
+SET
+## crawl_frontier columns
+string_agg
+id:integer, repo:character varying, signal:character varying, priority:integer, state:character varying, attempts:integer, next_attempt_at:timestamp without time zone, last_error:text, discovered_at:timestamp without time zone, updated_at:timestamp without time zone, builder:character varying, alias_of:character varying, discovery_source:jsonb
+(1 row)
+## crawl_frontier by state
+state | count
+done | 1061064
+skipped | 10359
+failed | 1693
+pending | 15
+(4 rows)
+## crawl_candidates by state/reason (top 40)
+state | reason | decided_by | count
+rejected | no_homepage | auto | 787579
+published | passed | auto | 91783
+rejected | not_a_product | auto | 84959
+published | passed | admin | 22074
+rejected | unreachable | auto | 20599
+rejected | ai_evidence_not_found | auto | 17882
+rejected | not_a_product | admin | 14268
+rejected | already_listed | auto | 6257
+needs_review | second_review_split | auto | 4915
+rejected | personal_site | admin | 2745
+rejected | not_a_product | qwen-v2 | 2135
+rejected | banned | auto | 1734
+published | passed | deepseek | 1558
+rejected | personal_site | auto | 797
+approved | passed | auto | 581
+rejected | not_a_product | deepseek | 490
+rejected | already_listed | admin | 347
+needs_review | review_approval_changed | auto | 307
+rejected | fork | auto | 221
+rejected | large_oss | admin | 128
+rejected | second_review_split_qwen_reject | auto | 101
+needs_review | no_description | auto | 33
+needs_review | suspected_spam | auto | 27
+rejected | already_listed | deepseek | 19
+needs_review | repo_deleted | auto | 18
+needs_review | no_description | admin | 11
+approved | passed | deepseek | 8
+needs_review | ambiguous | auto | 7
+needs_review | source_refresh_failed | auto | 4
+rejected | banned | admin | 2
+needs_review | ai_review_exhausted | auto | 1
+rejected | personal_site | deepseek | 1
+rejected | large_oss | auto | 1
+needs_review | review_approval_changed | deepseek | 1
+(34 rows)
+## crawl_documents page_status distribution (top 15)
+page_status | count
+ | 811982
+200 | 225826
+404 | 16303
+403 | 2855
+0 | 2655
+402 | 632
+401 | 414
+500 | 203
+307 | 198
+429 | 179
+503 | 133
+410 | 53
+400 | 39
+405 | 29
+451 | 16
+(15 rows)
+## operations_observations columns
+string_agg
+key:character varying, value:jsonb, observed_at:timestamp without time zone
+(1 row)
+## crawl_review_attempts last 24h by state/error
+state | err | provider | count
+succeeded |  | abcllm | 6027
+succeeded |  | m3-deepseek | 1920
+superseded | model_capacity_deferred | m3-deepseek | 1017
+succeeded |  | qwen-direct | 75
+failed | qwen_unreachable | qwen-direct | 61
+failed | invalid_output | abcllm | 26
+failed | owner_lost | m3-deepseek | 20
+superseded | input_or_switch_changed | m3-deepseek | 12
+superseded | input_changed | abcllm | 8
+superseded | qwen_cancelled | qwen-direct | 4
+superseded | input_or_switch_changed | qwen-direct | 3
+failed | cancelled | m3-deepseek | 1
+running |  | abcllm | 1
+(13 rows)
+## model_capacity_requests by state
+state | count
+settled | 483751
+withdrawn | 25949
+indeterminate | 605
+dispatched | 5
+reserved | 3
+waiting | 1
+(6 rows)
+Pager usage is off.
+## crawl_frontier failed: last_error shapes (top 25)
+err | count | max_attempts
+페이지 본문 수신 실패 — PageFetchError: HTTP N | 964 | 4
+페이지 본문 수신 실패 — PageFetchError: TypeError: fetch failed | 433 | 4
+페이지 본문 수신 실패 — PageFetchError: TimeoutError: The operation was aborted due to timeout | 270 | 4
+페이지 본문 수신 실패 — TimeoutError: The operation was aborted due to timeout | 22 | 4
+GitHub N | 1 | 4
+AI 흔적 확인 실패 — GitHub invalid_response | 1 | 4
+패키지 확인 실패 — GitHub N | 1 | 4
+페이지 본문 수신 실패 — PageFetchError: 도메인을 확인할 수 없습니다 | 1 | 4
+(8 rows)
+## crawl_frontier skipped: last_error shapes (top 15)
+err | count
+ | 9761
+github_not_found | 580
+github_empty_repository | 18
+(3 rows)

@@ -13,7 +13,7 @@ import { dbErrorFields } from '@/lib/db/error-fields';
 import { replicaFailure } from '@/lib/db/replica';
 import { observe } from '@/lib/operations/observations';
 import { serviceInstanceId } from '@/lib/operations/instance';
-import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
+import { readRoleProgress } from '@/lib/operations/worker-progress-query';
 import { maintenanceUptimeStalled, readMaintenanceUptimeProgress } from '@/lib/operations/maintenance-progress';
 import { readTextProgress, textProgressStalled } from '@/lib/operations/text-progress';
 import { hasActiveRoleJob } from '@/lib/jobs/control';
@@ -580,6 +580,28 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
 }
 
 /**
+ * 주 역할 감독의 15초 정체 판정(main 의 checkProgress). 전체 진행 집계(readWorkerProgress — 배포 관문·감시용) 대신 제 역할 몫만 읽는다
+ * (readRoleProgress, 2026-11-21): 감독이 쓰는 것은 scheduler 판정과 제 역할의 단계·줄뿐인데 역할마다 15초에 한 번 전체를 세고 버렸다.
+ * 판정 규칙은 그대로다. 읽기가 던지면 지금처럼 그 표본은 「모름」이고 재시작하지 않는다(runRoleCandidate 의 role.progress_unknown).
+ */
+export async function checkRoleProgress(role: RoleCandidate['role'], batchVersion?: RoleCandidate['batchVersion']): Promise<false | ProgressStallTrigger> {
+  if (batchVersion === 1) return false;
+  // These roles retain their specialized main-work progress policy; the supervisor observes each runtime lane.
+  if ((role === 'maintenance' || role === 'text') && await hasActiveRoleJob(role)) return false;
+  const report = await readRoleProgress(role);
+  if (role === 'maintenance') {
+    const uptime = { ...await readMaintenanceUptimeProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled' };
+    return maintenanceUptimeStalled(uptime) ? maintenanceStallTrigger(uptime) : false;
+  }
+  if (role === 'text') {
+    const text = { ...await readTextProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled' };
+    return textProgressStalled(text) ? textStallTrigger(text.oldestReadyMinutes) : false;
+  }
+  // 단계를 읽지 않은 보고서(scheduler 판정만)로는 단계·줄 정체를 말하지 않는다
+  return 'stages' in report ? selectUnexplainedStall(report, role) ?? false : false;
+}
+
+/**
  * D11 기록기. PR15f: PROCESS_GROUP_SUCCESSOR_PROBE=1(기본 꺼짐)이고 이 boot 의 커널 boot·PID namespace 를 읽을 수 있을 때만 attestation 을 남기고,
  * supervisor 와 함께 죽은 같은 instance 옛 boot 의 child 그룹 종료(ESRCH)를 직접 관측할 수 있다. 잘못된 flag 값은 읽기 전에 거절한다.
  */
@@ -648,21 +670,7 @@ async function main() {
   try {
     process.exitCode = await runRoleCandidate(candidate, controller.signal, {
       acquire: value => host.ready() ? tryAcquireRole(value, takeover) : Promise.resolve(null), renew: renewRole, release: releaseRole,
-      checkProgress: async role => {
-        if (candidate.batchVersion === 1) return false;
-        // These roles retain their specialized main-work progress policy; the supervisor observes each runtime lane.
-        if ((role === 'maintenance' || role === 'text') && await hasActiveRoleJob(role)) return false;
-        const report = await readWorkerProgress(undefined, { includeText: false });
-        if (role === 'maintenance') {
-          const uptime = { ...await readMaintenanceUptimeProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled' };
-          return maintenanceUptimeStalled(uptime) ? maintenanceStallTrigger(uptime) : false;
-        }
-        if (role === 'text') {
-          const text = { ...await readTextProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled' };
-          return textProgressStalled(text) ? textStallTrigger(text.oldestReadyMinutes) : false;
-        }
-        return selectUnexplainedStall(report, role) ?? false;
-      },
+      checkProgress: role => checkRoleProgress(role, candidate.batchVersion),
       recordStop: async record => {
         const key = workerExitObservationKey(candidate.role, candidate.bootId);
         if (!key) throw Object.assign(new Error('exit_record_key'), { code: 'exit_record_key' });

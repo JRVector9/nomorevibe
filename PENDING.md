@@ -1,5 +1,22 @@
 # 남은 작업
 
+## 오래된 감사 거절의 원본 다시 받기(PR #987) — 2026-11-17, 운영 미적용(코드·단위·작업 전용 DB 시험만)
+
+- 고침: 입력 기한(min(수집, 스캔)+24h)이 지나 두 번째 의견을 못 묻던 감사 거절(11/01 grok 캠페인 6 의 538건)을 기존 수집 길(프론티어·스캔 claim·README 잡)로
+  다시 받게 한 뒤 묻는다. 틱당 `qwenAuto.auditSecondOpinion.recollectPerTick`(기본 1)·동시 20. 실패는 `product_audit_recollects`(0188) 에 사유와 함께 사람 몫.
+  자세한 것·예상·되돌리기: `docs/operations/2026-11-17-audit-stale-recollect.md`.
+- **배포 뒤(대표, READ ONLY)**:
+  1. 진행 — `select state, failure_code, source_changed, readme_refreshed, count(*) from product_audit_recollects group by 1,2,3,4 order by 5 desc;`
+  2. 두 번째 의견이 다시 묻는지 — `select count(*) from product_audit_second_opinions o join product_audit_items i on i.id=o.item_id where i.campaign_id=6 and o.source='qwen-v2-auto' and o.created_at > now() - interval '6 hours';`
+  3. 수집·스캔이 몰리지 않는지 — `select state, count(*) from crawl_frontier where state in ('pending','fetching') group by 1;` · `select priority, count(*) from agent_repository_claims where state='active' and due_at <= now() group by 1;` · GitHub core 여유(`agent_evidence.github_headroom_low` 로그)
+  4. 사람 몫(모두 '다시 받지 못해서') — `select failure_code, count(*) from product_audit_recollects where state='failed' group by 1;`
+  5. 감사 때와 지금 차이(11-17 추가) — `select change_summary, count(*) from product_audit_recollects where state='done' group by 1 order by 2 desc limit 30;`
+  6. 감사 전용 글 판의 답 분포(오래됨 편향 방지 효과) — `select o.decision, count(*) from product_audit_second_opinions o join product_audit_items i on i.id=o.item_id where i.campaign_id=6 and o.prompt_version='2026-11-17.v2-audit' group by 1;`
+     v2 판(`2026-10-21.v2`) 전체 분포(승인 28.9%)와 견준다. 활동 묶음 값은 `after_activity` 에 있다.
+- 11-17 사람 추가 지시 반영: 나이 기준 없음(사유 이름 refetch_*), 두 번째 의견 입력의 프로젝트 활동 묶음(새 GitHub 호출 0), 감사 때와 지금 차이(change_summary, 감사 화면 한 줄),
+  감사 두 번째 의견 전용 글 판 `2026-11-17.v2-audit`(이미 받은 v2 의견은 다시 묻지 않음).
+- 남은 일: 효과(538건 중 자동 유지·숨김 수)는 관측 뒤에만 적는다. 예상치는 문서의 추정이다. 오래됨·비활동 사유가 몇 건인지 운영 표본 측정은 11-17 이 실행에서 권한 거부로 못 했다.
+
 ## 1차 근거 대기·승인 잇기(PR #954) — 2026-11-14, 운영 미적용(코드·단위·작업 전용 DB 시험만)
 
 - 고침: 준비된 1차 대기열이 AI 제작 근거 스캔이 자리 잡을 때까지(스캔 대기열에 있는 저장소만, 원본을 본 뒤 최대 6시간) 기다리고,

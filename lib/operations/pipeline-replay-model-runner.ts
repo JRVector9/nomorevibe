@@ -2,6 +2,7 @@ import { modelBaseUrl } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
+import { isGatewayDispatchProvider } from "@/lib/llm/capacity";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
@@ -44,11 +45,12 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
   ensure(isDeepStrictEqual(mergeWithDefaults(JSON.parse(JSON.stringify(settings))), settings), "replay_settings_invalid");
   ensure(settings.enabled && settings.reviewMode === "enforce" && settings.secondReview.enabled && settings.firstReview, "replay_settings_not_enforced");
   const first = settings.firstReview, second = [...settings.secondReview.voters, ...settings.secondReview.fallbacks ?? []];
-  // CLI 심사자는 계량기·상한 밖에서 외부로 나가고 item consumer 계약도 없다. 두 실행 모두 게이트웨이 모델만 받는다.
-  ensure([first, ...second].every(row => row.provider === "abcllm"), "replay_cli_provider_unsupported");
-  // 게이트웨이 모듈은 등록부의 ai1-preset 주소에 /v1 을 붙여 부른다. origin만 같은지 보고, 경로·슬래시가 다르면
-  // egress 관문이 모든 호출을 막으므로 실행 전에 거절한다.
-  ensure(modelBaseUrl("ai1-preset", env, "abcllm").replace(/\/v1$/, "") === manifest.upstream, "replay_upstream_mismatch");
+  // CLI 심사자는 계량기·상한 밖에서 외부로 나가고 item consumer 계약도 없다. 두 실행 모두 엔진에 HTTP 로 보내는 심사자만 받는다 —
+  // 장부의 게이트웨이 kind 로 서는 두 provider(abcllm 형 계약, 엔진 직접 local-direct 계약)다.
+  ensure([first, ...second].every(row => isGatewayDispatchProvider(row.provider)), "replay_cli_provider_unsupported");
+  // abcllm 1차는 등록부의 ai1-preset 주소와 upstream 이 같아야 한다(예전 그대로). origin만 같은지 보고, 경로·슬래시가 다르면
+  // egress 관문이 모든 호출을 막으므로 실행 전에 거절한다. local-direct 1차는 등록부 항목이 아니라 계약의 endpoint 가 주소라 아래 계약 검사가 본다.
+  if (first.provider === "abcllm") ensure(modelBaseUrl("ai1-preset", env, "abcllm").replace(/\/v1$/, "") === manifest.upstream, "replay_upstream_mismatch");
   // 키는 env 가 아니라 각 경로의 직접 연결 계약이 정한다(contractBearer) — 계약이 없으면 그 호출이 보내기 전에 거절된다.
   // 심사 잡은 README 표본이 없거나 판이 다르면 원본 옆 표본을 새로 받는다(lib/crawl/jobs/review-document.ts). 그 요청은 명시 dispatcher로
   // 나가 egress 관문·계량기를 거치지 않는다. 이 코드 판과 다른 표본이 하나라도 있으면 실행 전에 거절한다(F1).
@@ -56,17 +58,18 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
     && row.document.pageMeta.readmeSampleVersion === README_SAMPLE_VERSION), "replay_readme_sample_version_mismatch");
   const blocked: string[] = [];
   if (manifest.items) {
-    const routes = manifest.items.capacityPolicy.routes, mapped = (routeId: string, model: string) =>
-      routes.some(route => route.routeId === routeId && route.provider === "abcllm" && route.model === model);
-    const ai1 = resolveAi1GatewayServingContract(first.model);
+    // 계약과 장부 매핑은 그 심사자의 provider 로 찾는다(consumer 가 identity·binding 에 쓰는 provider 와 같다)
+    const routes = manifest.items.capacityPolicy.routes, mapped = (routeId: string, reviewer: { provider: string; model: string }) =>
+      routes.some(route => route.routeId === routeId && route.provider === reviewer.provider && route.model === reviewer.model);
+    const ai1 = resolveAi1GatewayServingContract(first.model, first.provider);
     if (!ai1) blocked.push("ai1_serving_contract_unavailable");
     else if (new URL(ai1.endpoint).origin !== manifest.upstream) blocked.push("ai1_serving_endpoint_outside_upstream");
-    if (!mapped("crawl-agent-review", first.model)) blocked.push("ai1_capacity_route_unmapped");
+    if (!mapped("crawl-agent-review", first)) blocked.push("ai1_capacity_route_unmapped");
     for (const row of second) {
-      const ai2 = resolveAi2GatewayServingContract(row.model);
+      const ai2 = resolveAi2GatewayServingContract(row.model, row.provider);
       if (!ai2) blocked.push("ai2_serving_contract_unavailable");
       else if (new URL(ai2.endpoint).origin !== manifest.upstream) blocked.push("ai2_serving_endpoint_outside_upstream");
-      if (!mapped("second-review", row.model)) blocked.push("ai2_capacity_route_unmapped");
+      if (!mapped("second-review", row)) blocked.push("ai2_capacity_route_unmapped");
     }
   }
   return { manifest, artifact, settings, blocked: [...new Set(blocked)] };

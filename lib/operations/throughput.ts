@@ -12,6 +12,10 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { classificationReadyPredicate } from "./categories";
 import { throughputStatus, type ThroughputSnapshot, type ThroughputStage } from "./throughput-model";
 
+export type ThroughputStageKey = ThroughputStage["key"];
+/** 한 문장이 내는 단계와 그 순서 */
+export const THROUGHPUT_STAGE_KEYS: readonly ThroughputStageKey[] = ["fetch", "judge", "first", "second", "publish"];
+
 /** 설정마다 지금 세는 중인 처리량 — 담아 두는 캐시가 아니다(끝나면 지운다) */
 const inflightThroughput = new Map<string, Promise<ThroughputSnapshot>>();
 
@@ -20,30 +24,35 @@ const inflightThroughput = new Map<string, Promise<ThroughputSnapshot>>();
  * Documents, rule verdicts and second votes retain their latest timestamp only;
  * these rates intentionally do not claim to measure every retry/network call.
  */
-export async function pipelineThroughput(settings: CrawlSettings, now?: Date): Promise<ThroughputSnapshot> {
-  if (now) return readThroughputSnapshot(settings, now);
+export async function pipelineThroughput(settings: CrawlSettings, now?: Date, only?: readonly ThroughputStageKey[]): Promise<ThroughputSnapshot> {
+  // `only`: 그 단계만 센다(역할 감독의 제 역할 읽기, 2026-11-21). 주지 않으면 다섯 단계 모두 — CTE·행 순서·결과가 예전과 같다
+  // (문장 글자는 조금 다르다: UNION 의 모든 갈래가 열 별칭과 NULL::int 를 스스로 단다 — 어느 갈래가 맨 앞에 오든 열 이름·형이 같게).
+  // 뺀 단계는 결과에 없다(0건이 아니다). 셀 단계가 없으면 DB 를 부르지 않는다
+  const stages = only ? THROUGHPUT_STAGE_KEYS.filter(key => only.includes(key)) : THROUGHPUT_STAGE_KEYS;
+  if (stages.length === 0) return { measuredAt: (now ?? new Date()).toISOString(), stages: [] };
+  if (now) return readThroughputSnapshot(settings, now, stages);
   // 시각을 주지 않은 부름(관리자 화면 — 흐름 판·조치 목록·메뉴 배지)이 같은 때 겹치면 한 번만 센다. 이 집계는 혼자 1초, 셋이 겹치면
   // 서로 밀려 2.6초였다(2026-11-10 프로드). 이미 세는 중인 값을 나눌 뿐 담아 두지 않는다 — 끝나면 다음 부름은 새로 센다
-  const key = JSON.stringify(settings);
+  const key = only ? `${stages.join(",")}|${JSON.stringify(settings)}` : JSON.stringify(settings);
   const running = inflightThroughput.get(key);
   if (running) return running;
-  const read = readThroughputSnapshot(settings, new Date())
+  const read = readThroughputSnapshot(settings, new Date(), stages)
     .finally(() => { if (inflightThroughput.get(key) === read) inflightThroughput.delete(key); });
   inflightThroughput.set(key, read);
   return read;
 }
 
-function readThroughputSnapshot(settings: CrawlSettings, now: Date): Promise<ThroughputSnapshot> {
+function readThroughputSnapshot(settings: CrawlSettings, now: Date, stages: readonly ThroughputStageKey[]): Promise<ThroughputSnapshot> {
   return withReadOnlyAiTaskModels(async () => {
     // Approval predicates synchronously resolve the current pool/legacy membership and contracts.
     // A fresh monitor process must await those read-only snapshots before constructing SQL.
     // Failed initialization retains the existing fail-closed resolver behavior; never invent fallback.
     await Promise.all([ensureAiTaskExecutionConfigs(), ensureAiTaskModels(), ensureServingContracts()]);
-    return readPipelineThroughput(settings, now);
+    return readPipelineThroughput(settings, now, stages);
   });
 }
 
-async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promise<ThroughputSnapshot> {
+async function readPipelineThroughput(settings: CrawlSettings, now: Date, stages: readonly ThroughputStageKey[]): Promise<ThroughputSnapshot> {
   const at = sql`${now.toISOString()}::timestamp`;
   const recent = (column: SQL, minutes: number) => sql`${column} > ${at} - ${minutes} * interval '1 minute' AND ${column} <= ${at}`;
   const counts = (column: SQL) => sql`count(*) FILTER (WHERE ${recent(column, 1)})::int AS one,
@@ -55,19 +64,13 @@ async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promi
   // 잡혔고, 발행 단계가 no_progress 경보를 내 릴리스 게이트(check-worker-progress)가 섰다(2026-10-03).
   const publishReady = and(reviewApprovalPredicate(settings), or(classificationReadyPredicate(), starAutoApprovalPredicate(settings)))!;
 
-  const rows = await db.transaction(async tx => {
-    // This small result has complex shared worker predicates. On production JIT compilation
-    // alone took 7.3s; disabling it for this transaction reduced execution to 156ms.
-    await tx.execute(sql`SET LOCAL jit = off`);
-    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
-    return tx.execute<{
-    key: ThroughputStage["key"]; one: number; five: number; waiting: number;
-    oldest: number | null; errors: number | null; extra: number; progress: number; manual: number;
-  }>(sql`
-    WITH fetched AS (
+  // 단계마다 제 CTE 만 싣는다. 다섯 단계를 모두 세면 예전과 같은 CTE 가 같은 순서로 실린다
+  const ctes: Array<[readonly ThroughputStageKey[], SQL]> = [
+    [["fetch"], sql`fetched AS (
       SELECT ${counts(sql`${crawlDocuments.fetchedAt}`)} FROM ${crawlDocuments}
       WHERE ${recent(sql`${crawlDocuments.fetchedAt}`, 5)}
-    ), fetch_queue AS (
+    )`],
+    [["fetch"], sql`fetch_queue AS (
       SELECT count(*) FILTER (WHERE ${fetchReady})::int AS waiting,
         extract(epoch FROM (${at} - min(CASE WHEN ${crawlFrontier.state} = 'fetching' THEN ${crawlFrontier.updatedAt}
           ELSE greatest(${crawlFrontier.discoveredAt}, ${crawlFrontier.nextAttemptAt}) END) FILTER (WHERE ${fetchReady}))) / 60 AS oldest,
@@ -75,15 +78,18 @@ async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promi
         count(*) FILTER (WHERE ${crawlFrontier.state} IN ('pending','failed') AND ${crawlFrontier.lastError} IS NOT NULL
           AND ${recent(sql`${crawlFrontier.updatedAt}`, 5)})::int AS errors
       FROM ${crawlFrontier}
-    ), judged AS (
+    )`],
+    [["judge"], sql`judged AS (
       SELECT ${counts(sql`${crawlCandidates.judgedAt}`)} FROM ${crawlCandidates}
       WHERE ${crawlCandidates.decidedBy} = 'auto' AND ${crawlCandidates.state} <> 'new'
         AND ${recent(sql`${crawlCandidates.judgedAt}`, 5)}
-    ), judge_queue AS (
+    )`],
+    [["judge"], sql`judge_queue AS (
       SELECT count(*)::int AS waiting, ${age(sql`greatest(${crawlDocuments.fetchedAt}, ${crawlCandidates.updatedAt})`)} AS oldest
       FROM ${crawlDocuments} LEFT JOIN ${crawlCandidates} ON ${crawlDocuments.repo} = ${crawlCandidates.repo}
       WHERE ${judgementQueuePredicate()}
-    ), first_done AS (
+    )`],
+    [["first"], sql`first_done AS (
       SELECT count(DISTINCT ${crawlReviewAttempts.candidateId}) FILTER (WHERE ${crawlReviewAttempts.state} = 'succeeded'
           AND ${crawlReviewAttempts.provider} <> 'rules' AND ${crawlReviewAttempts.reusedFromAttemptId} IS NULL AND ${recent(sql`${crawlReviewAttempts.completedAt}`, 1)})::int AS one,
         count(DISTINCT ${crawlReviewAttempts.candidateId}) FILTER (WHERE ${crawlReviewAttempts.state} = 'succeeded'
@@ -95,11 +101,13 @@ async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promi
         count(DISTINCT ${crawlReviewAttempts.candidateId}) FILTER (WHERE ${crawlReviewAttempts.state} = 'succeeded')::int AS progress
       FROM ${crawlReviewAttempts} WHERE ${crawlReviewAttempts.kind} = 'automatic'
         AND ${recent(sql`${crawlReviewAttempts.completedAt}`, 5)}
-    ), first_queue AS (
+    )`],
+    [["first"], sql`first_queue AS (
       SELECT count(*)::int AS waiting, ${age(sql`greatest(${crawlCandidates.updatedAt}, ${crawlDocuments.fetchedAt})`)} AS oldest
       FROM ${crawlCandidates} LEFT JOIN ${crawlDocuments} ON ${crawlCandidates.repo} = ${crawlDocuments.repo}
       WHERE ${reviewCandidatePredicate(settings, { readyOnly: true })}
-    ), second_stats AS (
+    )`],
+    [["second"], sql`second_stats AS (
       SELECT count(*) FILTER (WHERE ${secondReviews.secondDecision} IS NOT NULL AND ${secondReviews.errorCode} IS NULL
           AND ${recent(sql`${secondReviews.reviewedAt}`, 1)})::int AS one,
         count(*) FILTER (WHERE ${secondReviews.secondDecision} IS NOT NULL AND ${secondReviews.errorCode} IS NULL
@@ -113,14 +121,17 @@ async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promi
           AND ${recent(sql`${secondReviews.reviewedAt}`, 5)})::int AS errors,
         count(*) FILTER (WHERE ${secondReviews.status} = 'failed')::int AS extra
       FROM ${secondReviews}
-    ), published AS (
+    )`],
+    [["publish"], sql`published AS (
       SELECT ${counts(sql`${crawlPublicationChanges.occurredAt}`)} FROM ${crawlPublicationChanges}
       WHERE ${crawlPublicationChanges.delta} = 1 AND ${recent(sql`${crawlPublicationChanges.occurredAt}`, 5)}
-    ), manual_holds AS (
+    )`],
+    [["fetch", "first"], sql`manual_holds AS (
       SELECT count(*) FILTER (WHERE ${crawlCandidates.reason} IN ('source_refresh_failed', 'repo_deleted'))::int AS fetch,
         count(*) FILTER (WHERE ${crawlCandidates.reason} IN ('ai_review_exhausted', 'ai_review_skip_exhausted'))::int AS first
       FROM ${crawlCandidates} WHERE ${crawlCandidates.state} = 'needs_review'
-    ), publish_candidates AS MATERIALIZED (
+    )`],
+    [["publish"], sql`publish_candidates AS MATERIALIZED (
       -- 분류 보류는 retry_at 이 지나야 발행 대상이 된다. 보류를 건 시각(updated_at)으로 재면 막 풀린 후보가
       -- "1시간 기다림"으로 보여, 5분 주기 발행 잡이 돌기 전에 감시가 발행 워커를 멈춘 것으로 보고 재시작했다(2026-10-08 두 번)
       SELECT ${publishReady} AS ready, greatest(${crawlCandidates.updatedAt},
@@ -128,18 +139,37 @@ async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promi
         (SELECT max(s.reviewed_at) FROM second_reviews s WHERE s.candidate_id = ${crawlCandidates.id}),
         (SELECT max(greatest(cd.updated_at, cd.retry_at)) FROM category_decisions cd WHERE cd.repo = ${crawlCandidates.repo})) AS changed_at
       FROM ${crawlCandidates} WHERE ${crawlCandidates.state} = 'approved'
-    ), publish_queue AS (
+    )`],
+    [["publish"], sql`publish_queue AS (
       SELECT count(*) FILTER (WHERE ready)::int AS waiting,
         extract(epoch FROM (${at} - min(changed_at) FILTER (WHERE ready))) / 60 AS oldest,
         count(*) FILTER (WHERE NOT ready)::int AS extra FROM publish_candidates
-    )
-    SELECT 'fetch' AS key, one, five, waiting, oldest, errors, extra, five AS progress, manual_holds.fetch AS manual
-      FROM fetched CROSS JOIN fetch_queue CROSS JOIN manual_holds
-    UNION ALL SELECT 'judge', one, five, waiting, oldest, NULL, 0, five, 0 FROM judged CROSS JOIN judge_queue
-    UNION ALL SELECT 'first', one, five, waiting, oldest, errors, extra, progress, manual_holds.first
-      FROM first_done CROSS JOIN first_queue CROSS JOIN manual_holds
-    UNION ALL SELECT 'second', one, five, waiting, oldest, errors, extra, five, 0 FROM second_stats
-    UNION ALL SELECT 'publish', one, five, waiting, oldest, NULL, extra, five, 0 FROM published CROSS JOIN publish_queue
+    )`],
+  ];
+  // 첫 SELECT 가 칸 이름과 타입을 정한다 — 어느 단계가 처음 와도 같도록 갈래마다 이름·타입을 붙인다
+  const selects: Record<ThroughputStageKey, SQL> = {
+    fetch: sql`SELECT 'fetch' AS key, one, five, waiting, oldest, errors, extra, five AS progress, manual_holds.fetch AS manual
+      FROM fetched CROSS JOIN fetch_queue CROSS JOIN manual_holds`,
+    judge: sql`SELECT 'judge' AS key, one, five, waiting, oldest, NULL::int AS errors, 0 AS extra, five AS progress, 0 AS manual
+      FROM judged CROSS JOIN judge_queue`,
+    first: sql`SELECT 'first' AS key, one, five, waiting, oldest, errors, extra, progress, manual_holds.first AS manual
+      FROM first_done CROSS JOIN first_queue CROSS JOIN manual_holds`,
+    second: sql`SELECT 'second' AS key, one, five, waiting, oldest, errors, extra, five AS progress, 0 AS manual FROM second_stats`,
+    publish: sql`SELECT 'publish' AS key, one, five, waiting, oldest, NULL::int AS errors, extra, five AS progress, 0 AS manual
+      FROM published CROSS JOIN publish_queue`,
+  };
+
+  const rows = await db.transaction(async tx => {
+    // This small result has complex shared worker predicates. On production JIT compilation
+    // alone took 7.3s; disabling it for this transaction reduced execution to 156ms.
+    await tx.execute(sql`SET LOCAL jit = off`);
+    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
+    return tx.execute<{
+    key: ThroughputStage["key"]; one: number; five: number; waiting: number;
+    oldest: number | null; errors: number | null; extra: number; progress: number; manual: number;
+  }>(sql`
+    WITH ${sql.join(ctes.filter(([keys]) => keys.some(key => stages.includes(key))).map(([, cte]) => cte), sql`, `)}
+    ${sql.join(stages.map(key => selects[key]), sql` UNION ALL `)}
   `);
   }, { accessMode: "read only" });
 

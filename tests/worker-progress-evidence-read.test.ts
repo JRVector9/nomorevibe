@@ -4,7 +4,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { createReplicaRouter } from "@/lib/db/replica";
-import { evidenceProgress, readWorkerProgress, withProviderBackoff } from "@/lib/operations/worker-progress-query";
+import { evidenceProgress, readWorkerProgress, withProviderBackoff, workerProgressReadFailure } from "@/lib/operations/worker-progress-query";
 import { readTextStageProgress } from '@/lib/operations/text-stage-progress';
 import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import { readPublisherClassificationDrain } from '@/lib/operations/publisher-drain-progress';
@@ -151,6 +151,39 @@ describe("배포 관문 근거 읽기", () => {
     expect(readTextStageProgress).toHaveBeenCalledOnce();
   });
 
+  it('re-counts the reason group by default and only reuses it when the caller counted it separately', async () => {
+    vi.mocked(readTextStageProgress).mockClear();
+    await readWorkerProgress(fixture.NOW);
+    expect(readTextStageProgress).toHaveBeenLastCalledWith({ reuseReasonOnly: false });
+    await readWorkerProgress(fixture.NOW, { reuseTextReasonOnly: true });
+    expect(readTextStageProgress).toHaveBeenLastCalledWith({ reuseReasonOnly: true });
+  });
+
+  it('reports an unread text stage as unknown without failing the whole report', async () => {
+    vi.mocked(readTextStageProgress).mockResolvedValueOnce([{ key: 'reason-translate', enabled: true, waiting: 0, oldestMinutes: null,
+      completed5m: 0, progress5m: 0, errors5m: 0, unread: { piece: 'text-reason', code: '57014' } }]);
+    const report = await readWorkerProgress(fixture.NOW);
+    expect(report.stages.find(stage => stage.stage === 'reason-translate')).toMatchObject({ reason: 'unknown_age', alarm: false,
+      unread: { piece: 'text-reason', code: '57014' } });
+    expect(report.stages.map(stage => stage.stage)).toEqual(expect.arrayContaining(['evidence', 'agent-evidence', 'ai-level']));
+    expect(report.overall).not.toBe('ok');
+  });
+
+  it('names the failed core piece and its SQLSTATE while still failing the whole report with the same error object', async () => {
+    // drizzle 이 감싼 꼴 — message 의 SQL·입력값은 원인 기록에 들어가지 않는다
+    const wrapped = Object.assign(new Error('Failed query: select secret_body\nparams: hunter2'),
+      { cause: Object.assign(new Error('canceling statement due to statement timeout'), { name: 'PostgresError', code: '57014' }) });
+    fixture.capacity.mode = 'draining';
+    vi.mocked(readPublisherClassificationDrain).mockRejectedValueOnce(wrapped);
+    try {
+      const thrown = await readWorkerProgress(fixture.NOW).catch((error: unknown) => error);
+      expect(thrown).toBe(wrapped);
+      expect(workerProgressReadFailure(thrown)).toEqual({ piece: 'publisher-drain', code: '57014' });
+    } finally { fixture.capacity.mode = 'disabled'; }
+    expect(workerProgressReadFailure(new Error('review_stage_modes_missing'))).toEqual({ piece: 'progress', code: 'Error' });
+    expect(workerProgressReadFailure('boom')).toEqual({ piece: 'progress', code: 'string' });
+  });
+
   it("주 DB 에서 같은 SQL·같은 설정으로 읽고 같은 보고서를 낸다", async () => {
     fixture.primary.transactions.length = 0;
     const report = JSON.parse(JSON.stringify(await readWorkerProgress(fixture.NOW)));
@@ -224,8 +257,11 @@ describe("근거 재시도 보정(withProviderBackoff)", () => {
 });
 
 describe('text stage progress SQL limits', () => {
-  it('gives the reason group 10 s (3.2 s measured in production 2026-11-02) and keeps 3 s for the other text stages', async () => {
+  it('gives the reason group 20 s and enough work_mem to hash in memory, and keeps 3 s / 32MB for the other text stages', async () => {
+    // 2026-11-02 3.2초 → 10초, 2026-11-21 6.5~6.8초(6일에 +20%) → 5분 재사용과 함께 20초. 해시 집계 약 90MB 가 32MB(한도 64MB)에서는 임시 파일로 흘렀다
     const actual = await vi.importActual<typeof import('@/lib/operations/text-stage-progress')>('@/lib/operations/text-stage-progress');
-    expect(actual.TEXT_PROGRESS_STATEMENT_TIMEOUT).toEqual({ reason: '10s', other: '3s' });
+    expect(actual.TEXT_PROGRESS_STATEMENT_TIMEOUT).toEqual({ reason: '20s', other: '3s' });
+    expect(actual.TEXT_PROGRESS_WORK_MEM).toEqual({ reason: '256MB', other: '32MB' });
+    expect([actual.TEXT_REASON_REUSE_MS, actual.TEXT_REASON_RETRY_MS, actual.TEXT_REASON_MAX_AGE_MS]).toEqual([300_000, 60_000, 900_000]);
   });
 });

@@ -28,7 +28,8 @@ vi.mock("@/lib/crawl/agent-review-repository", () => ({ requeueStaleReviewSource
     selectFirstReviewer(firstReviewers(), candidate.id, [], [], { blocked }),
   loadReviewInput: async () => mocks.input, claimAgentReview: mocks.claim, recordAgentReview: mocks.recordFirst }));
 vi.mock("@/lib/crawl/first-reviewer-blocks", () => ({ readBlockedFirstReviewerKeys: async () => new Set<string>() }));
-vi.mock("@/lib/crawl/second-review-ownership", () => ({ canStartLegacySecondReview: async () => true, admitLegacySecondReview: mocks.admitSecond }));
+vi.mock("@/lib/crawl/second-review-ownership", () => ({ canStartLegacySecondReview: async () => true, legacySecondReviewStage: async () => "legacy",
+  admitLegacySecondReview: mocks.admitSecond }));
 vi.mock("@/lib/crawl/second-review", () => ({ enqueueSecondReviews: async () => 0, closeSettledSecondReviews: async () => 0,
   reopenOrphanedGateHolds: async () => 0, retryFailedSecondReviews: async () => 0, pendingSecondReviews: async () => [mocks.row],
   reconcileStaleSecondReviews: async () => 0,

@@ -3,8 +3,11 @@ import { ADMIN_MODEL_STAGES, type AdminStagePools } from "@/lib/llm/admin-model-
 import { ASSIGNMENT_STAGE_IDS, ASSIGNMENT_STAGES } from "@/lib/llm/capacity-helpers";
 import { GATEWAY_SERVING_CONTRACT_ROUTES, registeredGatewayContractShape, type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { modelRequestName, readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
+import { OPENAI_CHAT_TOTAL_BOUND_PROTOCOL } from "@/lib/llm/direct-serving-contract";
 import { ensureServingContracts, servingContractAuth, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
+import { contractReaderGateText, readContractReaderGate } from "./contract-reader-gate";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
+import { engineContractShape, engineContractShapeText, isTotalBoundShape, routeContractState, type EngineContractProvider } from "./engine-contract-shape";
 import { readbackServingEndpoint, saveServingContractTx, validateAdminServingContract } from "./admin-serving-contracts";
 import { saveRegistryOverrideTx } from "./admin-model-registry";
 
@@ -12,8 +15,10 @@ import { saveRegistryOverrideTx } from "./admin-model-registry";
  * 엔진 연결: an OpenAI-compatible engine address + key + engine model, applied to one existing registry key in one step.
  * - The registry definition of that key keeps its equipment, adapter, limits and purposes; only its address and engine
  *   model name change, and the gateway label goes (the engine expects its own model name on the wire).
- * - Each chosen gateway route gets a direct contract (transport direct, the stored or no key) of the route's plain total-bound shape
- *   (provider abcllm, so the ledger rows and capacity policy routes keep their abcllm identity). The engine's own model list
+ * - Each chosen gateway route gets a direct contract (transport direct, the stored or no key). It is openai-chat-total-bound-v1 with provider
+ *   local-direct (ledger rows and capacity policy routes are (route, local-direct, model)) only when every process that reads contracts runs a
+ *   release that reads that shape (lib/operations/contract-reader-gate.ts) and the route has no enabled abcllm contract left (converted by the
+ *   stage-3 tool, or a fresh route — engine-contract-shape.ts); otherwise it is the route's plain abcllm total-bound shape as before. The engine's own model list
  *   is read on the server first: the model must be there, and its maximum length becomes the contract's total bound.
  *   Engines whose /models omits max_model_len (mlx_lm.server, the M3 mlx-serve proxy) take the operator-typed bound instead;
  *   a typed bound that differs from a served one is refused, never picked over. The origin stays in the contract.
@@ -28,8 +33,10 @@ export type EngineConnectInput = { registryKey: string; baseUrl: string; auth: "
   /** Operator-typed context bound (tokens): required when /models omits max_model_len, must equal it when given. */
   maxModelLen?: number | null };
 export type EngineConnectBoundOrigin = "engine" | "operator";
-export type EngineConnectResult = { registryId: number; contracts: { routeId: string; id: number }[]; stages: string[]; requestModel: string;
-  responseModel: string; firstReviewRenamed: boolean; missingPolicyRoutes: string[]; totalTokenBound: number; totalTokenBoundFrom: EngineConnectBoundOrigin };
+export type EngineConnectResult = { registryId: number; contracts: { routeId: string; id: number; provider: EngineContractProvider }[]; stages: string[]; requestModel: string;
+  responseModel: string; firstReviewRenamed: boolean; missingPolicyRoutes: string[]; totalTokenBound: number; totalTokenBoundFrom: EngineConnectBoundOrigin;
+  /** 새 모양(local-direct)을 만들지 않은 까닭(관문이 닫힘·경로가 아직 전환 전) — 모두 새 모양이거나 까닭이 없으면 null */
+  directShapeNote: string | null };
 
 /** Routes whose contract is the plain total-bound shape (AI2 has its own adapter contract and is configured separately). */
 export const ENGINE_CONNECT_ROUTES = GATEWAY_SERVING_CONTRACT_ROUTES.filter(route => route !== "second-review");
@@ -134,9 +141,14 @@ export async function readServedContractModels(request: typeof fetch = fetch): P
   });
 }
 
-/** The plain total-bound contract of one gateway route for a directly connected (or gateway) engine model; null when the route schema refuses it. */
+/**
+ * The total-bound contract of one gateway route for a directly connected engine model; null when the route schema refuses it.
+ * provider abcllm: the route's plain abcllm total-bound shape (as before). provider local-direct: the engine-direct total-bound shape
+ * (openai-chat-total-bound-v1, 2026-11-21 stage 2) — the API address and model only: no device name (the revision is `direct-<model>-C<bound>`),
+ * no strict-terminal mark; engineModel is accepted on every route, the reasoning reserve only on routes whose abcllm shape takes it.
+ */
 export function engineRouteContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string,
-  boundFrom: EngineConnectBoundOrigin, engineModel: string | null = null, reasoningTokenReserve: number | null = null) {
+  boundFrom: EngineConnectBoundOrigin, engineModel: string | null = null, reasoningTokenReserve: number | null = null, provider: EngineContractProvider = "abcllm") {
   // The route's plain total-bound gateway shape: crawl-agent-review also accepts a direct-openai-chat-v1 contract (PR 3b-C), which this
   // connection does not write — it needs the engine's tokenizer read back and is configured separately, like AI2's direct contract.
   const shape = (registeredGatewayContractShape(routeId) as unknown as { shape?: Record<string, { value?: unknown }> } | null)?.shape;
@@ -144,6 +156,14 @@ export function engineRouteContract(routeId: GatewayServingRoute, model: string,
   if (typeof protocol !== "string") return null;
   // The bound and its origin end the revision; a long model name is what gets cut to the 200-char identity, never the tail.
   const tail = `-C${totalTokenBound}${boundFrom === "operator" ? OPERATOR_BOUND_REVISION_SUFFIX : ""}`;
+  if (provider === "local-direct") {
+    const direct: Record<string, unknown> = { version: 1, protocol: OPENAI_CHAT_TOTAL_BOUND_PROTOCOL, routeId, provider: "local-direct", model, responseModel,
+      deploymentRevision: `direct-${model}`.slice(0, 200 - tail.length) + tail, endpoint, totalTokenBound };
+    if (engineModel && engineModel !== model) direct.engineModel = engineModel;
+    if (reasoningTokenReserve && shape && "reasoningTokenReserve" in shape) direct.reasoningTokenReserve = reasoningTokenReserve;
+    const checked = validateAdminServingContract(routeId, direct);
+    return checked.ok ? checked.contract : null;
+  }
   const contract: Record<string, unknown> = { version: 1, protocol, routeId, provider: "abcllm", model, responseModel,
     deploymentRevision: `direct-${equipment}-${model}`.slice(0, 200 - tail.length) + tail, endpoint, totalTokenBound };
   // The four translation routes open only with the strict-terminal mark; a direct engine's own completion is terminal.
@@ -169,11 +189,12 @@ export function engineConnectAssignmentHref(registryKey: string, routes: readonl
   return `/admin/models/assignments?${query.toString()}#form`;
 }
 
-async function policyRoutes(): Promise<{ routeId: string; provider: string; model: string }[] | null> {
+type PolicyRoute = { routeId: string; provider: string; model: string; providerBudgetId: string; groupId: string };
+async function policyRoutes(): Promise<PolicyRoute[] | null> {
   try {
     const { readModelCapacityControlObservation } = await import("@/lib/llm/capacity-repository");
     const policy = (await readModelCapacityControlObservation()).policy as { routes?: unknown } | null;
-    return Array.isArray(policy?.routes) ? policy.routes.filter((route): route is { routeId: string; provider: string; model: string } =>
+    return Array.isArray(policy?.routes) ? policy.routes.filter((route): route is PolicyRoute =>
       !!route && typeof route === "object" && typeof (route as { routeId?: unknown }).routeId === "string") : [];
   } catch { return null; }
 }
@@ -198,11 +219,26 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   if (input.auth === "stored" && !key) throw new Error("serving_contract_key_required");
   const { responseModel, totalTokenBound, totalTokenBoundFrom } = await probeEngineContract({ endpoint: `${base}/chat/completions`, engineModel,
     apiKey: key ?? null, maxModelLen: input.maxModelLen }, request);
+  // 새 계약의 모양 — 계약을 읽는 모든 프로세스가 새 판이고 그 경로가 전환 뒤(또는 새 경로)면 엔진 직접 총량 상한(local-direct). 저장 TX 가 다시 본다
+  const gate = await readContractReaderGate();
+  const snapshotRows = servingContractSnapshot().rows.map(row => {
+    const contract = row.contract && typeof row.contract === "object" ? row.contract as { provider?: unknown; protocol?: unknown } : {};
+    return { routeId: row.routeId, provider: contract.provider, protocol: contract.protocol };
+  });
+  // 같은 (경로, 모델)이 이미 새 모양이면 그 모양 그대로(관문이 닫혀 있으면 낮추지 않고 거절) — 경로 상태보다 앞선다
+  const shapes = new Map(routes.map(route => {
+    const state = routeContractState(snapshotRows, route);
+    const own = servingContractSnapshot().rows.find(row => row.routeId === route && row.model === engineModel);
+    const current = own ? isTotalBoundShape((own.contract ?? {}) as { provider?: unknown; protocol?: unknown }) ? "total-bound" as const : "other" as const : null;
+    return [route, { state, shape: engineContractShape(route, gate.ok, state, false, current) }] as const;
+  }));
+  if ([...shapes.values()].some(entry => entry.shape.reason === "converted_gate_closed")) throw new Error("contract_converted_gate_closed");
+  const providerOf = (route: string) => shapes.get(route)?.shape.provider ?? "abcllm";
   const definition: ModelDefinition = { ...current, baseUrl: base, model: engineModel, displayName: current.displayName.includes("직접")
     ? current.displayName : `${current.displayName} · 직접 연결`.slice(0, 200) };
   delete (definition as { gatewayLabel?: string }).gatewayLabel;
-  const contracts = routes.map(route => ({ route, contract: engineRouteContract(route as GatewayServingRoute, engineModel, responseModel, `${base}/chat/completions`,
-    totalTokenBound, current.equipment, totalTokenBoundFrom) }));
+  const contracts = routes.map(route => ({ route, provider: providerOf(route), contract: engineRouteContract(route as GatewayServingRoute, engineModel, responseModel,
+    `${base}/chat/completions`, totalTokenBound, current.equipment, totalTokenBoundFrom, null, null, providerOf(route)) }));
   if (contracts.some(entry => !entry.contract)) throw new Error("contract_schema_invalid");
   const { getSettings, saveSettings } = await import("@/lib/crawl/settings");
   const settings = await getSettings(), stageIds = input.selectStages
@@ -212,13 +248,26 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   // The contract rows' note (which the save audit carries) also says when the bound was typed, not read from the engine.
   const mark = totalTokenBoundFrom === "operator" ? ` · 컨텍스트 상한 운영자 입력 ${totalTokenBound}` : "";
   const contractNote = note.slice(0, 400 - mark.length) + mark;
+  // 새 모양 계약의 정책 route — 같은 (경로, abcllm, 모델) route 가 있으면 그 예산·장비 그대로 (경로, local-direct, 모델)을 덧붙인다(전에 그 route 로
+  // 바로 불리던 연결이 새 모양에서도 바로 불린다). 없으면 예전처럼 덧붙이지 않고 빠진 경로로 알린다(이 저장은 용량을 새로 정하지 않는다)
+  const before = await policyRoutes();
+  const appendRoutes = routes.flatMap(route => {
+    if (providerOf(route) !== "local-direct" || !before) return [];
+    const from = before.find(row => row.routeId === route && row.provider === "abcllm" && row.model === engineModel);
+    const has = before.some(row => row.routeId === route && row.provider === "local-direct" && row.model === engineModel);
+    return from && !has ? [{ routeId: route, provider: "local-direct", model: engineModel, providerBudgetId: from.providerBudgetId, groupId: from.groupId }] : [];
+  });
   const saved = await onPrimary(() => db.transaction(async tx => {
     if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const registry = await saveRegistryOverrideTx(tx, definition, actor, note, pools);
     const rows = [];
-    for (const entry of contracts) rows.push({ routeId: entry.route, ...await saveServingContractTx(tx, { routeId: entry.route, contract: entry.contract,
-      auth: input.auth, transport: "direct", apiKey: input.auth === "stored" ? key : undefined, note: contractNote }, actor) });
-    return { registryId: registry.id, contracts: rows.map(row => ({ routeId: row.routeId, id: row.id })) };
+    for (const entry of contracts) rows.push({ routeId: entry.route, provider: entry.provider, ...await saveServingContractTx(tx, { routeId: entry.route,
+      contract: entry.contract, auth: input.auth, transport: "direct", apiKey: input.auth === "stored" ? key : undefined, note: contractNote }, actor) });
+    if (appendRoutes.length) {
+      const { appendCompatibleRoutes } = await import("@/lib/llm/capacity-repository");
+      await appendCompatibleRoutes(tx, appendRoutes);
+    }
+    return { registryId: registry.id, contracts: rows.map(row => ({ routeId: row.routeId, id: row.id, provider: row.provider })) };
   }));
   // Stage selection is the ordinary settings save (own version check and audit); the connection above already stands alone.
   const oldName = modelRequestName(current);
@@ -232,8 +281,15 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
     if (!result.ok) throw new Error("engine_stage_save_failed");
   }
   const policy = await policyRoutes();
-  const missingPolicyRoutes = policy === null ? routes.map(route => `${route} / abcllm / ${engineModel}`)
-    : routes.filter(route => !policy.some(row => row.routeId === route && row.provider === "abcllm" && row.model === engineModel))
-      .map(route => `${route} / abcllm / ${engineModel}`);
-  return { ...saved, stages: stageIds, requestModel: engineModel, responseModel, firstReviewRenamed: renameAi1, missingPolicyRoutes, totalTokenBound, totalTokenBoundFrom };
+  const missingPolicyRoutes = routes.filter(route => policy === null || !policy.some(row => row.routeId === route && row.provider === providerOf(route) && row.model === engineModel))
+    .map(route => `${route} / ${providerOf(route)} / ${engineModel}`);
+  const notes = routes.flatMap(route => {
+    const entry = shapes.get(route)!;
+    if (entry.shape.reason === "route_unconverted") return [engineContractShapeText(route, entry.shape, entry.state)!];
+    return entry.shape.reason === "gate_closed" && engineContractShape(route, true, entry.state).provider === "local-direct" ? ["gate"] : [];
+  });
+  const directShapeNote = notes.length ? [...notes.filter(note => note !== "gate"), ...notes.includes("gate")
+    ? [`새 계약은 abcllm 형으로 만들었습니다 — 직접 연결(local-direct) 모양은 모든 프로세스가 새 판일 때만 만듭니다. ${contractReaderGateText(gate)}`] : []].join(" ") : null;
+  return { ...saved, stages: stageIds, requestModel: engineModel, responseModel, firstReviewRenamed: renameAi1, missingPolicyRoutes, totalTokenBound, totalTokenBoundFrom,
+    directShapeNote };
 }

@@ -1,7 +1,8 @@
+import { runSameModelRechecks, type SameModelRecheckTally } from "./same-model-recheck";
 import { withAdminModelStage } from "@/lib/llm/admin-model-pools";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { bareModelName } from "./review-model-identity";
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { LocalModelDomainRefusedError, type LocalModelDomainCheck } from "@/lib/llm/local-model-domain-refusal";
@@ -27,12 +28,16 @@ import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qw
   withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { loadAuditInput } from "./product-audit";
 import { applyPublishedAutoOpinion, type PublishedAutoResult } from "./published-second-review";
-import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, reviewWithQwenDirect,
+import { AUDIT_OPINION_PROMPT_VERSIONS, QWEN_V2_AUDIT_PROMPT_VERSION, QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, reviewWithQwenDirect,
   type QwenDirectReview } from "./qwen-direct-review";
 import { lockedSettings, type AuditHoldSettings } from "./settings";
 import type { AuditOpinionScope, CrawlSettings } from "./settings-schema";
 import { thinPageTextSql } from "./audit-text-gate";
 import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-review";
+import { AUDIT_RECOLLECT_MAX_WAITING, auditRecollectBlocksSql, auditRecollectStatus, requestAuditRecollect, settleAuditRecollects,
+  type AuditRecollectStatus } from "./audit-stale-recollect";
+import { opinionBareModelSql, rejudgeSecondOpinionModels, rejudgeSecondOpinionModelSql, type RejudgeOpinionModel } from "./rejudge-second-opinion-models";
+import { withReadOnlyAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 
 /**
  * Qwen-v2 자동 단계(2026-10-21) — 자기 잡 audit-second-opinion(jobs/audit-second-opinion.ts, 전용 줄 audit-opinion)이 틱마다 한 번 돈다
@@ -47,7 +52,8 @@ import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-revi
  *    (audit-auto-close.ts — 승인은 유지, 주인 없는 것의 거절은 숨김, 글이 적은 페이지·엇갈림·그 밖은 열어 둠). 답으로 닫기 전에 받아 둔 이 판의 답(다시 묻지 않는다)은
  *    따라잡기(catchUpAutoClose)가 모델을 부르지 않고 틱마다 조금씩 그 답으로 닫는다. 아니면 거절은 쓸기가 다음 틱부터 분당 20건씩 건다
  *    (Qwen 거절은 카탈로그·디렉터리 같은 항목에서 세지 않는다).
- *    감사 모델이 같은 Qwen 이었던 항목은 묻지 않는다 — 같은 모델의 두 번째 의견은 뜻이 없다(답을 낸 심사자 ai_provider 가 qwen-direct 이거나,
+ *    감사 모델이 같은 Qwen 이었던 항목은 묻지 않는다. 변경 재판정의 거절은 이 작업의 다음 독립 순위 모델에 묻는다(없으면 사람 몫).
+ *    같은 모델의 두 번째 의견은 뜻이 없다(답을 낸 심사자 ai_provider 가 qwen-direct 이거나,
  *    coalesce(ai_model, 그 감사가 시작할 때의 model)이 같은 모델 — 0112 전 답은 ai_model 이 비어 있고 시작 모델이 답했다).
  * 2. 공개분 2차 거르기(qwenAuto.publishedFilter, 기본 꺼짐): 공개분 2차가 사람 확인(needs_human)으로 넘긴 행 가운데 이 모델·이 판의 판단이 없는 것을
  *    묻는다. 승인이면 사람의 '유지'와 같은 길로 닫고(누가 qwen-v2-auto), 거절·판단 보류면 판단만 적어 사람 확인 목록 앞에 둔다.
@@ -69,6 +75,12 @@ import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-revi
  * 시도 횟수에 세지 않는다). 그 대상은 INPUT_STALE_RETRY_MS 동안 고르지 않고, 그 뒤 원본이 다시 수집됐으면 다시 묻는다. 증명이 같은 까닭이나
  * 대상이 닫혀서 거절한 것(LocalModelDomainRefusedError)도 그 항목만 넘기고 같은 틱의 다음 대상으로 간다. 장부의 일시 거절(자리 경합·정책·
  * 예약 만료)은 예전처럼 이 틱을 멈추고 다음 틱에 다시 본다.
+ *
+ * 원본 다시 받기(2026-11-17, audit-stale-recollect.ts): 쉬었다 다시 골라도 원본을 다시 받는 곳이 없어 오래된 감사 거절(11/01 grok 감사 538건)은
+ * 영원히 input_stale 로 끝났다. 이제 기한 지난 감사 거절은 틱마다 recollectPerTick 건까지(다시 받는 중인 것은 AUDIT_RECOLLECT_MAX_WAITING 까지)
+ * 기존 수집 길로 원본·스캔을 다시 받게 하고, 그동안(waiting)과 다시 받지 못한 것(failed — 사람 몫)은 고르지 않는다. 틱 앞머리의 마무리
+ * (settleAuditRecollects)가 입력이 새로워진 것을 끝남으로 적으면(바뀐 근거 칸도 함께) 다음부터 보통처럼 묻는다. 상한을 넘긴 나머지와
+ * 공개분 2차 행은 예전처럼 쉬었다 다시 고른다.
  */
 export const QWEN_AUTO_OBSERVATION = "qwen-second-opinion";
 export const QWEN_V2_AUTO_ACTOR = QWEN_V2_AUTO_SOURCE;
@@ -98,7 +110,7 @@ export const QWEN_AUTO_INPUT_STALE = "input_stale";
 const FAILURE_MEMORY = 500;
 
 type Kind = "audit" | "published";
-type AuditTarget = { kind: "audit"; key: string; itemId: number; productId: number; slug: string };
+type AuditTarget = { kind: "audit"; key: string; itemId: number; productId: number; slug: string; opinionModel?: RejudgeOpinionModel };
 type PublishedTarget = { kind: "published"; key: string; id: number; slug: string; candidateId: number };
 type Target = AuditTarget | PublishedTarget;
 
@@ -110,23 +122,26 @@ export type QwenAutoObservation = {
 };
 
 export type QwenAutoTally = {
+  sameModelRecheck: SameModelRecheckTally;
   audit: { asked: number; approve: number; reject: number; needsReview: number; released: number; skipped: number;
     /** 답으로 닫은 것(audit-auto-close.ts) — 유지·숨김. caughtUp 은 그중 이미 받아 둔 답으로 닫은 것(모델을 부르지 않음) */
     autoKept: number; autoHeld: number; caughtUp: number;
     /** 답으로 닫지 않고 열어 둔 것 중 글이 적은 페이지(화면 판별 대기)·엇갈림(다른 모델이 반대) */
-    leftThin: number; leftSplit: number };
+    leftThin: number; leftSplit: number;
+    /** 원본 다시 받기(audit-stale-recollect.ts) — 이 틱에 요청한 것·요청이 바로 실패(사람 몫)한 것, 틱 앞머리 마무리의 끝남·그중 근거 바뀜·실패 */
+    recollectRequested: number; recollectRejected: number; recollectDone: number; recollectChanged: number; recollectFailed: number };
   published: { asked: number; kept: number; noted: number; skipped: number };
   failed: number; endpointError: string | null;
   /** 입력 유효 기한이 지나 자리를 잡지 않고 건너뛴 대상 */
   inputStale: number;
 };
 
-const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0,
-  leftThin: 0, leftSplit: 0 },
+const emptyTally = (): QwenAutoTally => ({ sameModelRecheck: { asked: 0, recommended: 0, failed: 0, inputStale: 0 }, audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0,
+  leftThin: 0, leftSplit: 0, recollectRequested: 0, recollectRejected: 0, recollectDone: 0, recollectChanged: 0, recollectFailed: 0 },
   published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null, inputStale: 0 });
 
 /** 앞의 게이트웨이 자리 표시('[gpu3090] ')와 배포자 접두어('Inferact/')를 뗀 소문자 모델 이름 — review-model-identity.ts bareModelName 과 같다 */
-const bareModel = (model: SQL) => sql`lower(regexp_replace(regexp_replace(trim(${model}), '^\\[[^]]*\\]\\s*', ''), '^[^/[:space:]]+/', ''))`;
+const bareModel = opinionBareModelSql;
 const bareModelValue = bareModelName;
 
 /**
@@ -141,18 +156,29 @@ function auditScope(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "min
     : sql`(i.product_id = p.id and ${openAuditRejectUniverse(latestCampaign)})`;
 }
 
+/** 감사 의견을 이미 받은 것으로 세는 판(옛 v2 + 감사 전용 판) — qwen-direct-review.ts AUDIT_OPINION_PROMPT_VERSIONS */
+const auditOpinionVersionsSql = sql.join(AUDIT_OPINION_PROMPT_VERSIONS.map((version) => sql`${version}`), sql`, `);
+/**
+ * 대상마다 쓰는 글의 판 — 감사 거절은 감사 전용 판(오래됨만으로 거절하지 말고 지금 활동·사용 가능성을 보라), 공개분 2차는 v2 그대로.
+ * v2 를 올리지 않는 까닭은 QWEN_V2_AUDIT_PROMPT_VERSION 주석
+ */
+export const promptFor = (target: Pick<Target, "kind">) => target.kind === "audit" ? QWEN_V2_AUDIT_PROMPT_VERSION : QWEN_V2_PROMPT_VERSION;
+
 /**
  * 물을 감사 항목 — 범위(auditScope)에 들고, 이 모델·이 판의 의견이 없고, 감사 답을 낸 심사자·시도가 같은 모델이 아니며(같은 모델 규칙),
- * 수집 원본이 있다(loadAuditInput 이 입력을 만들 수 있다)
+ * 수집 원본이 있고(loadAuditInput 이 입력을 만들 수 있다), 원본을 다시 받는 중이거나 다시 받지 못한 것(사람 몫)이 아니다(audit-stale-recollect.ts)
  */
-function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">, model: string, skip: readonly number[]): SQL {
+export function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">, model: string | SQL, skip: readonly number[],
+  otherRank: SQL = sql`false`): SQL {
+  const normalized = typeof model === "string" ? sql`${bareModelValue(model)}` : bareModel(model);
   return sql`${auditScope(scope, hold)}
     and not exists (select 1 from ${productAuditSecondOpinions} o where o.item_id = i.id and o.model = ${model}
-      and o.prompt_version = ${QWEN_V2_PROMPT_VERSION})
-    and coalesce(i.ai_provider, '') <> ${QWEN_AUDIT_PROVIDER} and ${bareModel(auditItemModel("i"))} <> ${bareModelValue(model)}
+      and o.prompt_version in (${auditOpinionVersionsSql}))
+    and (coalesce(i.ai_provider, '') <> ${QWEN_AUDIT_PROVIDER} or ${otherRank}) and ${bareModel(auditItemModel("i"))} <> ${normalized}
     and not exists (select 1 from ${productAuditAttempts} a where a.item_id = i.id and a.outcome is not null
-      and ${bareModel(sql`a.model`)} = ${bareModelValue(model)})
+      and ${bareModel(sql`a.model`)} = ${normalized})
     and exists (select 1 from ${crawlCandidates} c join ${crawlDocuments} d on d.repo = c.repo where c.published_slug = p.slug)
+    and ${auditRecollectBlocksSql(sql`i.id`)}
     ${skip.length ? sql`and i.id not in (${sql.join(skip.map((id) => sql`${id}`), sql`, `)})` : sql``}`;
 }
 
@@ -163,12 +189,15 @@ function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettin
  * 한 틱에 limit(perTick) 건까지 — 공개분 2차 거르기와 번갈아 한 줄로 서고(interleave), 갈림 판가름·보류 재심사와는 두 번째 자리를 한 호출씩
  * 나눠 쓴다(이 차례는 감사 갈래 안의 차례라 다른 갈래의 몫은 그대로다)
  */
-async function auditTargets(scope: AuditOpinionScope, hold: AuditHoldSettings, model: string, skip: readonly number[], limit: number): Promise<AuditTarget[]> {
-  const rows = await db.execute<{ item_id: number; product_id: number; slug: string }>(sql`
-    select i.id as item_id, p.id as product_id, p.slug from ${productAuditItems} i, ${products} p
-     where ${auditOpinionWanted(scope, hold, model, skip)}
+async function auditTargets(scope: AuditOpinionScope, hold: AuditHoldSettings, model: string, skip: readonly number[], limit: number,
+  alternatives: readonly RejudgeOpinionModel[]): Promise<AuditTarget[]> {
+  const selected = rejudgeSecondOpinionModelSql(model, alternatives, auditItemModel("i"));
+  const rows = await db.execute<{ item_id: number; product_id: number; slug: string; opinion_model: string }>(sql`
+    select i.id as item_id, p.id as product_id, p.slug, ${selected} as opinion_model from ${productAuditItems} i, ${products} p
+     where ${auditOpinionWanted(scope, hold, selected, skip, sql`${selected} <> ${model}`)}
      order by ${thinPageTextSql(sql`p.id`)}, (p.audit_hold_at is not null), i.ai_confidence desc nulls last, i.id limit ${limit}`);
-  return rows.map((row) => ({ kind: "audit", key: `a:${row.item_id}`, itemId: row.item_id, productId: row.product_id, slug: row.slug }));
+  return rows.map((row) => ({ kind: "audit", key: `a:${row.item_id}`, itemId: row.item_id, productId: row.product_id, slug: row.slug,
+    opinionModel: alternatives.find(choice => choice.config.model === row.opinion_model) }));
 }
 
 /**
@@ -271,11 +300,17 @@ export async function runQwenSecondOpinions(ctx: JobContext<null>, settings: Cra
   const tally = emptyTally();
   try {
     if (settings.stageModelPools?.["audit-second-opinion"]?.length || settings.stageModelPools?.["published-filter"]?.length) {
-      await withAdminModelStage("audit-second-opinion", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
-        publishedFilter: { ...settings.qwenAuto.publishedFilter, enabled: false } } }, tally));
+      await withAdminModelStage("audit-second-opinion", async () => {
+        await runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
+          publishedFilter: { ...settings.qwenAuto.publishedFilter, enabled: false } } }, tally);
+        tally.sameModelRecheck = await runSameModelRechecks(ctx, settings);
+      });
       await withAdminModelStage("published-filter", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
         auditSecondOpinion: { ...settings.qwenAuto.auditSecondOpinion, enabled: false } } }, tally));
-    } else await runStep(ctx, settings, tally);
+    } else {
+      await runStep(ctx, settings, tally);
+      tally.sameModelRecheck = await runSameModelRechecks(ctx, settings);
+    }
   } catch (error) {
     const code = error instanceof Error ? error.name === "Error" ? error.message.slice(0, 80) : error.name : "unknown";
     logger.error("qwen_second_opinion.failed", { code });
@@ -303,14 +338,31 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       target: audit.enabled ? "audit" : "published", at: now() } });
     return;
   }
+  const alternatives = audit.enabled ? await rejudgeSecondOpinionModels(config.model) : [];
   // 답으로 닫기 전에 받아 둔 이 판의 답(배포 전·꺼 두었던 동안)으로 먼저 닫는다 — 모델을 부르지 않고 시작 창(STEP_MS) 밖에서
   // 따라잡기의 뜻밖의 오류는 남기고 묻기로 넘어간다 — 따라잡기가 묻기를 막지 않게. lease 잃음·fence 는 묻기의 쓰기도 같은 까닭으로 멈춘다
   if (audit.enabled && audit.autoClose) {
     try {
       await catchUpAutoClose(ctx, lease, settings, config.model, tally);
+      for (const choice of alternatives) await catchUpAutoClose(ctx, lease, settings, choice.config.model, tally);
     } catch (error) {
       if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
       logger.error("qwen_second_opinion.catch_up_failed", { code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
+    }
+  }
+  // 원본 다시 받기의 마무리 — 모델을 부르지 않는다. 입력이 새로워진 것을 끝남으로 적어 아래에서 고르게 하고, 다시 받는 중인 수로 새 요청의 몫을 잰다.
+  // 마무리의 뜻밖의 오류는 남기고 새 요청만 이 틱에 하지 않는다(묻기는 막지 않는다). lease 잃음·fence 는 묻기의 쓰기도 같은 까닭으로 멈춘다
+  let recollectRoom = 0;
+  if (audit.enabled) {
+    try {
+      const settled = await settleAuditRecollects(lease, settings, INPUT_FRESH_MARGIN_MS);
+      tally.audit.recollectDone += settled.done;
+      tally.audit.recollectChanged += settled.changed;
+      tally.audit.recollectFailed += settled.failed;
+      recollectRoom = Math.max(0, Math.min(audit.recollectPerTick, AUDIT_RECOLLECT_MAX_WAITING - settled.waiting));
+    } catch (error) {
+      if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+      logger.error("qwen_second_opinion.recollect_settle_failed", { code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
     }
   }
   const startedAt = Date.now();
@@ -318,7 +370,7 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   const given = (prefix: "a:" | "p:") => [...givenUp(observation, prefix), ...staleCooling(observation, prefix, startedAt)];
   const queue = interleave(
     published.enabled ? await publishedTargets(config.model, given("p:"), published.perTick) : [],
-    audit.enabled ? await auditTargets(audit.scope, settings.auditHold, config.model, given("a:"), audit.perTick) : [],
+    audit.enabled ? await auditTargets(audit.scope, settings.auditHold, config.model, given("a:"), audit.perTick, alternatives) : [],
   );
   if (!queue.length) return;
   // 새 호출은 시작 창(STEP_MS) 안에서 틱 끝까지 15초 이상 남을 때만, 그리고 이 단계가 서버 탈을 만나 물러나기가 걸리면 곧바로 멈춘다.
@@ -336,13 +388,32 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     observation.failures[target.key] = { code: QWEN_AUTO_INPUT_STALE, count: observation.failures[target.key]?.count ?? 0, at: now(),
       ...(validUntil ? { validUntil } : {}) };
   };
+  // 입력 기한이 지난 감사 거절 — 이 틱의 몫(recollectRoom)이 남았으면 원본을 다시 받게 하고(그동안 고르지 않는다), 아니면 예전처럼 쉰다
+  const staleTarget = async (target: Target, input: ReviewInput, validUntil: string | undefined) => {
+    if (target.kind !== "audit" || recollectRoom <= 0) { noteStale(target, validUntil); return; }
+    let request: Awaited<ReturnType<typeof requestAuditRecollect>>;
+    try {
+      request = await requestAuditRecollect(lease, target, input);
+    } catch (error) {
+      if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+      logger.error("qwen_second_opinion.recollect_request_failed", { item: target.itemId, code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
+      noteStale(target, validUntil);
+      return;
+    }
+    if (request.result === "skipped") { noteStale(target, validUntil); return; }
+    tally.inputStale += 1;
+    delete observation.failures[target.key];
+    if (request.result === "requested") { recollectRoom -= 1; tally.audit.recollectRequested += 1; }
+    else tally.audit.recollectRejected += 1;
+  };
   let ran = false;
   for (const target of queue) {
     if (!canStart()) break;
     // 입력을 만들다 실패한 항목(입력 상한 초과 등)은 그 항목의 실패로 적고 넘어간다 — 한 항목이 단계를 막거나 틱마다 같은 자리에서 멈추지 않게
     let input: ReviewInput | null;
     try {
-      input = target.kind === "audit" ? await loadAuditInput(target.slug, settings) : await publishedInput(target, settings);
+      // 감사 거절은 프로젝트 활동 묶음을 싣는다(audit-project-activity.ts) — 진행 중인 프로젝트인지·지금 쓸 수 있는지를 함께 본다
+      input = target.kind === "audit" ? await loadAuditInput(target.slug, settings, { projectActivity: true }) : await publishedInput(target, settings);
     } catch (error) {
       const code = error instanceof Error && /^[a-z0-9_]{3,60}$/.test(error.message) ? error.message : "input_error";
       failItem(target, code);
@@ -353,7 +424,7 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     if (!input) { failItem(target, "no_source"); ran = true; continue; }
     // 입력 유효 기한이 지났으면(곧 지나면) 호출 직전 증명이 늘 거절한다 — 자리를 잡지 않고 다음 대상으로(줄 머리가 막히지 않게)
     if (input.validUntil.getTime() - Date.now() < INPUT_FRESH_MARGIN_MS) {
-      noteStale(target, input.validUntil.toISOString());
+      await staleTarget(target, input, input.validUntil.toISOString());
       ran = true;
       continue;
     }
@@ -370,17 +441,20 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
         const timeoutMs = Math.min(ceiling, left() - WRITE_MARGIN_MS);
         shrunk = timeoutMs < ceiling;
         callStartedAt = Date.now();
+        const alternative = target.kind === "audit" ? target.opinionModel : undefined;
         return withLocalModelCapacity({ target: target.kind === "audit"
           ? { kind: "audit", purpose: "second_opinion", itemId: target.itemId, slug: target.slug }
           : { kind: "published", purpose: "published_filter", secondReviewId: target.id, slug: target.slug },
-        input, lease, promptVersion: QWEN_V2_PROMPT_VERSION },
-        request => reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal, request }));
+        input, lease, promptVersion: promptFor(target),
+        ...(alternative ? { servingRevision: alternative.servingRevision, allowLegacy: false } : {}) },
+        request => reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal, request, promptVersion: promptFor(target),
+          ...(alternative ? { config: alternative.config } : {}) }));
       });
     } catch (error) {
       // 호출 직전 증명이 거절했다 — 그 예약은 dispatch 가 이미 물렸다(evidence 에 검사). 항목 하나의 일이면 넘기고 다음 대상으로 간다
       if (error instanceof LocalModelDomainRefusedError) {
         ctx.log("qwen_auto.domain_refused", { check: error.check });
-        if (error.check === "input_expired") { noteStale(target, error.refusal.validUntil); continue; }
+        if (error.check === "input_expired") { await staleTarget(target, input, error.refusal.validUntil); continue; }
         if (STEP_WIDE_REFUSALS.has(error.check)) break;
         failItem(target, error.check === "target_not_open" ? "not_open" : error.check);
         continue;
@@ -417,6 +491,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   if (!ran) return;
   ctx.log("qwen_second_opinion.ran", { auditAsked: tally.audit.asked, auditReleased: tally.audit.released, auditKept: tally.audit.autoKept,
     auditHeld: tally.audit.autoHeld, auditCaughtUp: tally.audit.caughtUp, auditLeftThin: tally.audit.leftThin, auditLeftSplit: tally.audit.leftSplit,
+    recollectRequested: tally.audit.recollectRequested, recollectRejected: tally.audit.recollectRejected, recollectDone: tally.audit.recollectDone,
+    recollectChanged: tally.audit.recollectChanged, recollectFailed: tally.audit.recollectFailed,
     publishedAsked: tally.published.asked,
     publishedKept: tally.published.kept, failed: tally.failed, inputStale: tally.inputStale, endpointError: tally.endpointError !== null });
   await saveObservation(lease, { ...observation, lastRunAt: now() });
@@ -466,7 +542,7 @@ async function catchUpAutoClose(ctx: JobContext<null>, lease: JobLease, settings
     select i.id as item_id, p.id as product_id, p.slug, o.model, o.decision, o.confidence, o.prompt_version
       from ${productAuditItems} i, ${products} p, ${productAuditSecondOpinions} o
      where ${auditScope(step.scope, settings.auditHold)} and o.item_id = i.id and o.source = ${QWEN_V2_AUTO_SOURCE} and o.model = ${model}
-       and o.prompt_version = ${QWEN_V2_PROMPT_VERSION} and ${autoClosableSql(settings.auditHold.enabled)}
+       and o.prompt_version in (${auditOpinionVersionsSql}) and ${autoClosableSql(settings.auditHold.enabled)}
        -- 운영자가 되돌린 것(자동 실행이든 정책 실행이든)은 다시 닫지 않는다 — 되돌림은 '사람이 본다'는 뜻이다. 자동 실행이 이미 손댄 항목도
        -- 다시 고르지 않는다(같은 날 같은 실행에 두 번 적을 수 없어 틱마다 같은 자리에 걸린다)
        and not exists (select 1 from ${productAuditPolicyRunItems} ri join ${productAuditPolicyRuns} r on r.id = ri.run_id where ri.item_id = i.id
@@ -511,7 +587,11 @@ async function writePublished(target: PublishedTarget, review: QwenDirectReview,
 
 export type QwenAutoStatus = {
   model: string | null; url: string | null; promptVersion: string;
-  audit: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; remaining: number; scope: AuditOpinionScope; autoClose: boolean };
+  audit: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; remaining: number; scope: AuditOpinionScope; autoClose: boolean;
+    /** 원본 다시 받기의 틱당 요청 상한(0 이면 새로 요청하지 않는다) */
+    recollectPerTick: number };
+  /** 입력 기한이 지난 감사 거절의 원본 다시 받기(audit-stale-recollect.ts) — 다시 받는 중·끝남(근거 바뀜)·실패(사람 몫). 못 읽으면 null */
+  recollect: AuditRecollectStatus | null;
   /** 오늘(UTC) 답으로 닫은 수(audit-auto-close.ts) — 유지·숨김(되돌린 것 포함)·되돌린 수, 그 확신 하한 */
   autoClose: AutoCloseToday & { minConfidence: number };
   /** 답으로 닫지 않고 열어 둔 무리 — 화면 판별 대기(글이 적은 페이지)·엇갈림(audit-screen-review.ts). 못 읽으면 null */
@@ -530,14 +610,18 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
   const steps = settings.qwenAuto;
   const config = qwenDirectConfig();
   const model = config?.model ?? "";
+  const alternatives = await withReadOnlyAiTaskModels(() => rejudgeSecondOpinionModels(model));
+  const auditModel = rejudgeSecondOpinionModelSql(model, alternatives, auditItemModel("i"));
+  const auditModels = [model, ...alternatives.map(choice => choice.config.model)];
   const observation = await readQwenAutoObservation(model);
   const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
-  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff, today, screen] = await Promise.all([
+  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff, today, screen, recollect] = await Promise.all([
     db.select({
       hour: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours')::int`,
     }).from(productAuditSecondOpinions).where(and(eq(productAuditSecondOpinions.source, QWEN_V2_AUTO_SOURCE),
-      eq(productAuditSecondOpinions.model, model), eq(productAuditSecondOpinions.promptVersion, QWEN_V2_PROMPT_VERSION))),
+      sql`${productAuditSecondOpinions.model} in (${sql.join(auditModels.map(value => sql`${value}`), sql`, `)})`,
+      inArray(productAuditSecondOpinions.promptVersion, [...AUDIT_OPINION_PROMPT_VERSIONS]))),
     db.select({
       hour: sql<number>`count(*) filter (where (${secondReviews.autoOpinion}->>'at')::timestamptz > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where (${secondReviews.autoOpinion}->>'at')::timestamptz > now() - interval '24 hours')::int`,
@@ -548,18 +632,21 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
     }).from(secondReviews).where(and(sql`${secondReviews.autoOpinion} is not null`, sql`${secondReviews.autoOpinion}->>'model' = ${model}`,
       sql`${secondReviews.autoOpinion}->>'promptVersion' = ${QWEN_V2_PROMPT_VERSION}`)),
     db.execute<{ count: number }>(sql`select count(*)::int as count from ${productAuditItems} i, ${products} p
-      where ${auditOpinionWanted(steps.auditSecondOpinion.scope, hold, model, given("a:"))}`),
+      where ${auditOpinionWanted(steps.auditSecondOpinion.scope, hold, auditModel, given("a:"), sql`${auditModel} <> ${model}`)}`),
     db.execute<{ count: number }>(sql`select count(*)::int as count from ${secondReviews} s where ${publishedOpinionWanted(model, given("p:"))}`),
     readQwenEndpointBackoff().catch(() => null),
     // 일지(0116)를 못 읽어도 상태 칸은 그린다
     autoCloseToday().catch(() => ({ day: utcDay(), kept: 0, held: 0, undone: 0 })),
     screenReviewCounts().catch(() => null),
+    // 표(0188)가 아직 없는 DB(배포 순서)에서도 상태 칸은 그린다
+    auditRecollectStatus().catch(() => null),
   ]);
   return {
     model: config?.model ?? null, url: config?.baseUrl ?? null, promptVersion: QWEN_V2_PROMPT_VERSION,
     audit: { enabled: steps.auditSecondOpinion.enabled, perTick: steps.auditSecondOpinion.perTick, lastHour: auditRow?.hour ?? 0, lastDay: auditRow?.day ?? 0,
-      remaining: auditLeft?.count ?? 0, scope: steps.auditSecondOpinion.scope, autoClose: steps.auditSecondOpinion.autoClose },
-    autoClose: { ...today, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE }, screen,
+      remaining: auditLeft?.count ?? 0, scope: steps.auditSecondOpinion.scope, autoClose: steps.auditSecondOpinion.autoClose,
+      recollectPerTick: steps.auditSecondOpinion.recollectPerTick },
+    autoClose: { ...today, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE }, screen, recollect,
     published: { enabled: steps.publishedFilter.enabled, perTick: steps.publishedFilter.perTick, lastHour: publishedRow?.hour ?? 0,
       lastDay: publishedRow?.day ?? 0, keptHour: publishedRow?.keptHour ?? 0, keptDay: publishedRow?.keptDay ?? 0, remaining: publishedLeft?.count ?? 0 },
     lastRunAt: observation.lastRunAt, lastSuccessAt: observation.lastSuccessAt, lastError: observation.lastError,

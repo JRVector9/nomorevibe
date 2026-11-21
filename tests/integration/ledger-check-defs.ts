@@ -39,3 +39,11 @@ export const LEDGER_RULE_CHECKS = {
     "model_capacity_requests_terminal_check"],
   model_capacity_events: ["model_capacity_events_kind_check", "model_capacity_events_terminal_check"],
 } as const;
+
+/** 0190 updates the same source-locale test in the original and local-direct rule formats. */
+export function widenWebsearchQueryLocales(definition: string): string {
+  return definition
+    .replaceAll("sourceLocale' IN ('ko','zh-Hans','zh-Hant')", "sourceLocale' IN ('ko','zh-Hans','zh-Hant','ja','han')")
+    .replaceAll("sourceLocale'::text) = ANY (ARRAY['ko'::text, 'zh-Hans'::text, 'zh-Hant'::text]",
+      "sourceLocale'::text) = ANY (ARRAY['ko'::text, 'zh-Hans'::text, 'zh-Hant'::text, 'ja'::text, 'han'::text]");
+}

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { crawlDocuments, productEvidenceSources, products, productStarObservations } from "@/lib/db/schema";
+import { crawlDocuments, productEvidenceSources, products, productStarObservations, repositoryIdentityAnchors } from "@/lib/db/schema";
 import { productMakerMembers } from "@/lib/db/me-schema";
 import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
 import { githubRequest } from "@/lib/crawl/github";
@@ -91,7 +91,8 @@ export type OwnershipDecision = { ok: true; githubUserId: number } | { ok: false
 
 /**
  * 우리가 전에 본 이 저장소의 id — 사실 수집(product_evidence_sources 의 repositoryId), 수집 원본(crawl_documents.repo_meta.id),
- * 스타 관측(product_star_observations.repository_id, GraphQL node id). 이름은 남이 차지할 수 있어도 id 는 그 저장소 하나다
+ * 스타 관측(product_star_observations.repository_id, GraphQL node id). 이름은 남이 차지할 수 있어도 id 는 그 저장소 하나다.
+ * 세 곳은 마지막 값만 갖는다 — 지난 값은 DB 트리거가 근거 표(repository_identity_anchors, 0191)에 남긴다
  */
 export type RepoAnchor = { repoId: number } | { nodeId: string };
 
@@ -165,12 +166,15 @@ export async function lookupRepositoryOwner(ref: RepoRef, options: { deadlineAt?
 }
 
 /**
- * 우리가 전에 본 이 제품 저장소의 id 전부(겹치면 하나로) — 사실 수집의 마지막 관측, 같은 이름의 수집 원본들, 이 주소로 한 스타 관측들(보관 기간 안).
- * 원본·관측은 지난 것까지 모두 본다 — 이름을 차지한 뒤의 관측이 끼어도 그 전의 id 가 남아 있으면 서로 달라 거절된다
+ * 우리가 전에 본 이 제품 저장소의 id 전부(겹치면 하나로). 근거 표(repository_identity_anchors, 0191)가 이 이름으로 본 id 를 덧붙이기만 해
+ * 지난 것까지 들고 있다 — 이름을 차지한 뒤의 관측이 끼어도 그 전의 id 가 남아 있어 서로 달라 거절된다.
+ * 근거 표가 채워지기 전의 값도 놓치지 않게 원래 세 출처(사실 수집의 마지막 관측, 같은 이름의 수집 원본, 이 주소로 한 스타 관측)도 함께 읽는다
  */
 export async function storedRepositoryAnchors(product: { id: number; slug: string; repoUrl: string }, ref: RepoRef): Promise<RepoAnchor[]> {
   return onPrimary(async () => {
-    const [evidence, crawled, observed] = await Promise.all([
+    const [kept, evidence, crawled, observed] = await Promise.all([
+      db.select({ kind: repositoryIdentityAnchors.kind, value: repositoryIdentityAnchors.value }).from(repositoryIdentityAnchors)
+        .where(eq(repositoryIdentityAnchors.repoKey, ref.fullName)),
       db.select({ id: sql<string | null>`${productEvidenceSources.normalizedFacts}->>'repositoryId'` }).from(productEvidenceSources)
         .where(and(eq(productEvidenceSources.slug, product.slug), eq(productEvidenceSources.kind, "repository"), eq(productEvidenceSources.sourceKey, ref.fullName))),
       db.selectDistinct({ id: sql<string | null>`${crawlDocuments.repoMeta}->>'id'` }).from(crawlDocuments)
@@ -178,8 +182,10 @@ export async function storedRepositoryAnchors(product: { id: number; slug: strin
       db.selectDistinct({ nodeId: productStarObservations.repositoryId }).from(productStarObservations)
         .where(and(eq(productStarObservations.productId, product.id), eq(productStarObservations.repoUrl, product.repoUrl), isNotNull(productStarObservations.repositoryId))),
     ]);
-    const ids = new Set([...evidence, ...crawled].map((row) => Number(row.id)).filter((id) => isGithubNumericId(id)));
-    const nodeIds = new Set(observed.flatMap((row) => row.nodeId?.trim() ? [row.nodeId.trim()] : []));
+    const ids = new Set([...evidence, ...crawled, ...kept.filter((row) => row.kind === "repo_id").map((row) => ({ id: row.value }))]
+      .map((row) => Number(row.id)).filter((id) => isGithubNumericId(id)));
+    const nodeIds = new Set([...observed, ...kept.filter((row) => row.kind === "node_id").map((row) => ({ nodeId: row.value }))]
+      .flatMap((row) => row.nodeId?.trim() ? [row.nodeId.trim()] : []));
     return [...[...ids].map((repoId) => ({ repoId })), ...[...nodeIds].map((nodeId) => ({ nodeId }))];
   });
 }

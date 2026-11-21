@@ -158,6 +158,27 @@ it("settles one native POST and writes the cache on primary even inside a read-o
   expect(bodies.length - before).toBe(1); expect(await rows(key)).toHaveLength(1);
 });
 
+it.each([["PDFを結合する", "ja"], ["GitHub 文書管理", "han"]] as const)(
+  "dispatches and settles %s once, with the same binding in the request and event ledgers", async (query, sourceLocale) => {
+    const goal = searchTranslation.multilingualQueryTranslationTarget(query)!;
+    cacheKeys.add(goal.cacheKey);
+    const before = bodies.length;
+    const results = await Promise.all([
+      onReplica(() => inRank(() => translateQueryWithModelCapacity(goal, 8_000))),
+      inRank(() => translateQueryWithModelCapacity(goal, 8_000)),
+    ]);
+    for (const result of results) expect(result).toEqual({ kind: "result", result: { ok: true, keywords: "merge pdf | merge pdf files" } });
+    expect(bodies.length - before).toBe(1);
+    expect(JSON.parse(bodies[before]).messages[1].content).toBe(JSON.stringify({ sourceLocale, query }));
+    const [row] = await rows(goal.cacheKey);
+    expect(row).toMatchObject({ state: "settled", dispatch_binding: { member: { sourceLocale, promptVersion: goal.promptVersion } } });
+    expect((await events(row.request_id)).map(event => event.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
+    expect((await cache(goal.cacheKey)).row).toMatchObject({ status: "done", attempts: 1 });
+    expect(await inRank(() => translateQueryWithModelCapacity(goal, 8_000))).toMatchObject({ kind: "cached" });
+    expect(bodies.length - before).toBe(1);
+  },
+);
+
 it("rechecks the primary cache missed by a lagging replica and does not POST", async () => {
   const goal = target("영수증 정리 앱 지연"), before = bodies.length;
   await admin`INSERT INTO text_translations (source_hash,target_lang,status,translated,model,attempts) VALUES (${goal.cacheKey},'en','done','receipt organizer','m',1)`;

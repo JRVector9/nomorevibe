@@ -254,6 +254,29 @@ describe("runJob — 실패 기록", () => {
     expect((await getJobState("capacity-typed"))?.lastError).toContain("또 실패");
   });
 
+  /**
+   * 2026-11-21: AI2 items 모드의 second-review 정비 틱이 poll 마다 다시 돌던 것은 그 잡이 완료 틱으로 끝내게 해서 멈췄다
+   * (lib/crawl/jobs/second-review.ts) — 러너의 미룸 규칙은 그대로다. 미룬 틱은 사유를 가리지 않고 요청을 인정하지 않아 다음 poll 이 같은 요청을
+   * 다시 집는다: model_capacity 는 장부 예약(TTL 30초)을 제때 집는 길이고, http_origin_permit·source_buffer·stage_blocked(원본 확보·1차·근거 갱신,
+   * 전환 중인 2차)는 막힌 것이 풀리면 정기 요청을 기다리지 않고 이어 간다.
+   */
+  it.each(["model_capacity", "http_origin_permit", "source_buffer", "stage_blocked"] as const)(
+    "미룬(%s) 틱은 요청을 인정하지 않는다 — 다음 poll 이 같은 요청을 다시 집고, 완료 틱이 와야 인정된다", async reason => {
+      const name = `deferred-${reason}`;
+      await db.insert(jobs).values({ name, requestedVersion: 3, processedVersion: 2 });
+      let ticks = 0;
+      for (let poll = 0; poll < 3; poll++) {
+        expect(await runJob(name, async () => { ticks++; return { done: false, deferred: reason }; }, { requestedOnly: true }))
+          .toMatchObject({ status: "deferred", reason });
+        expect(await getJobState(name)).toMatchObject({ requestedVersion: 3, processedVersion: 2, notBefore: null, lockedAt: null, leaseToken: null });
+      }
+      expect(ticks).toBe(3);
+      expect(await runJob(name, async () => ({ done: true }), { requestedOnly: true })).toMatchObject({ status: "completed", done: true });
+      expect(await getJobState(name)).toMatchObject({ requestedVersion: 3, processedVersion: 3 });
+      expect(await runJob(name, async () => { throw new Error("must not run"); }, { requestedOnly: true }))
+        .toEqual({ status: "skipped", reason: "not_requested" });
+    });
+
   it("DB 오류는 SQLSTATE 와 표·제약 이름을 실패 기록 앞과 job.failed 로그에 남긴다 — 키 값(detail)은 남기지 않는다", async () => {
     const lines: Record<string, unknown>[] = [];
     const level = process.env.LOG_LEVEL;

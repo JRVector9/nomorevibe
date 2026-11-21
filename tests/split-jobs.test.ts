@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { QwenAutoTally } from "@/lib/crawl/audit-second-opinion-auto";
 import type { JobContext } from "@/lib/jobs/runner";
 
 /**
@@ -34,9 +35,11 @@ import { jobRunOptions, runWorker } from "@/scripts/worker";
 const SPLIT_JOBS = ["held-qwen-retry", "split-confirm", "split-tiebreak", "audit-qwen", "audit-second-opinion"] as const;
 const context = (name: string, over: Partial<JobContext<null>> = {}): JobContext<null> => ({ cursor: null, save: vi.fn(), hasBudget: () => true,
   deadlineAt: Date.now() + 110_000, log: vi.fn(), lease: { name, token: "t", requestedVersion: 1 }, ...over });
-const tally = (audit: Partial<{ asked: number; caughtUp: number }> = {}, published = 0) => ({
-  audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0, leftThin: 0, leftSplit: 0, ...audit },
-  published: { asked: published, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null });
+const tally = (audit: Partial<{ asked: number; caughtUp: number }> = {}, published = 0, rechecks = 0): QwenAutoTally => ({
+  sameModelRecheck: { asked: rechecks, recommended: 0, failed: 0, inputStale: 0 },
+  audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0, leftThin: 0, leftSplit: 0,
+    recollectRequested: 0, recollectRejected: 0, recollectDone: 0, recollectChanged: 0, recollectFailed: 0, ...audit },
+  published: { asked: published, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null, inputStale: 0 });
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -146,6 +149,8 @@ describe("새 잡은 자기 단계 함수만 자기 lease 로 부른다", () => 
     mocks.opinions.mockResolvedValue(tally({ caughtUp: 1 }));
     expect(await reviewAuditSecondOpinions(context("audit-second-opinion"))).toEqual({ done: false });
     mocks.opinions.mockResolvedValue(tally({}, 1));
+    expect(await reviewAuditSecondOpinions(context("audit-second-opinion"))).toEqual({ done: false });
+    mocks.opinions.mockResolvedValue(tally({}, 0, 1));
     expect(await reviewAuditSecondOpinions(context("audit-second-opinion"))).toEqual({ done: false });
     await expect(reviewAuditSecondOpinions(context("audit-second-opinion", { lease: undefined }))).rejects.toThrow("audit_second_opinion_job_required");
   });

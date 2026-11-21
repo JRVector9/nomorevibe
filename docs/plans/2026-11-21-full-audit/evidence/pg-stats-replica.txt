@@ -1,0 +1,33 @@
+Pager usage is off.
+## replica: tables by seq_tup_read — table | seq_scan | seq_tup_read | idx_scan
+relname | seq_scan | seq_tup_read | idx_scan
+products | 66580 | 5299395975 | 3318639551
+social_posts | 24866 | 1312428112 | 74832
+crawl_candidates | 1495 | 402460694 | 3953659573
+crawl_frontier | 1367 | 396808836 | 12
+crawl_review_attempts | 4649 | 363579745 | 35083
+product_search_profiles | 6075 | 181772777 | 6
+product_health | 1396 | 142880332 | 14430248932
+product_evidence_audit | 1325 | 111164177 | 822950
+crawl_discovery_evidence | 41 | 78489984 | 14
+second_reviews | 1376 | 76933415 | 1453
+product_korean_taglines | 653 | 66134002 | 12830921
+agent_repository_observations | 78 | 43466472 | 2018771
+product_repo_reviews | 5178 | 26869298 | 2650
+model_capacity_events | 23 | 13468064 | 817831
+product_health_daily | 20 | 12339948 | 8777
+model_capacity_requests | 61 | 6653396 | 26960
+crawl_documents | 35 | 6166301 | 3951694528
+product_embeddings | 65 | 3828765 | 66
+crawl_taglines | 373 | 2154664 | 216
+agent_repository_scans | 22 | 1777796 | 7566743
+(20 rows)
+## replica connections
+application_name | usename | state | count
+nomorevibe:web-replica | nomorevibe | idle | 46
+psql | postgres | active | 1
+(2 rows)
+## replica conflicts
+datid | datname | confl_tablespace | confl_lock | confl_snapshot | confl_bufferpin | confl_deadlock | confl_active_logicalslot
+333945 | nomorevibe | 0 | 0 | 1 | 0 | 0 | 0
+(1 row)

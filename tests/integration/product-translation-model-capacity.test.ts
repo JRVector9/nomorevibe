@@ -33,6 +33,7 @@ import { inTextRank, pinTextRanks, textContract, textRankRow } from "../text-tas
 import { setAiTaskExecutionConfigsForTest } from "@/lib/llm/ai-task-execution-snapshot";
 import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
 import type { AiTaskPoolMember } from "@/lib/llm/ai-task-execution-config";
+import { JAPANESE_ABCLLM_TRANSLATION_TAG, japaneseAbcllmTranslationRules } from "@/scripts/ops/generate-japanese-abcllm-product-translation-sql";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTranslationServingContract | null }));
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
@@ -148,7 +149,7 @@ async function elect() {
     ROLE_LEASE_RELEASE: role.release, ROLE_LEASE_EPOCH: String(role.epoch) })) vi.stubEnv(key, value);
   for (const key of ["ROLE_LEASE_BATCH_VERSION", "ROLE_LEASE_HOST", "ROLE_LEASE_BATCH_EPOCH"]) vi.stubEnv(key, undefined);
 }
-async function seed(fields: ("tagline" | "description")[] = ["tagline"], tagline = "문서를 정리하는 도구", locale: "en" | "ja" = "en") {
+async function seed(fields: ("tagline" | "description")[] = ["tagline"], tagline = "문서를 정리하는 도구", locale: "en" | "ja" | "zh-Hans" = "en") {
   const slug = `${prefix}-${++serial}`;
   expect(await admin`SELECT id FROM products WHERE slug=${slug}`).toEqual([]); expect(await admin`SELECT id FROM cdn_purges WHERE slug=${slug}`).toEqual([]);
   expect(await admin`SELECT slug FROM takedown_requests WHERE slug=${slug}`).toEqual([]);
@@ -720,3 +721,109 @@ it("translates Japanese through the native ledger while preserving and excluding
     expect(events.map(event => event.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
   }, true);
 }), 20000);
+
+// 2026-11-21 운영 사고: 0184 는 ja 를 local-direct 가지에만 더했고 운영 장부의 제품 번역은 전부 provider='abcllm' 로 남는다 — ja 가 든 첫 묶음이
+// 대기열 맨 앞에 오자 INSERT 가 23514(model_capacity_requests_logical_check)로 틱마다 실패했다. 위 일본어 시험은 direct(local-direct) 계약만 돌려 놓쳤다.
+// 아래 둘은 기본(abcllm) 계약으로, 운영이 실제로 싼 꼴(ja 소개 셋 + zh-Hans 소개 하나, 제품은 모두 다름)을 장부 끝까지 보낸다 — 0193 가지가 없으면 실패한다.
+const jaReply = "Docで文書を整理できます", zhReply = "Doc 帮助你整理文档";
+async function seedProductionMix() {
+  const seeded = [await seed(["tagline"], "문서를 정리하는 도구", "ja"), await seed(["tagline"], "문서를 정리하는 도구", "ja"),
+    await seed(["tagline"], "문서를 정리하는 도구", "ja"), await seed(["tagline"], "문서를 정리하는 도구", "zh-Hans")];
+  const locales = ["ja", "ja", "ja", "zh-Hans"];
+  // 장부의 구성원 열쇠는 "C" 정렬이다(제품 번호가 글자로 비교된다) — 운영 묶음 12455·2840·41569·64373 과 같은 규칙
+  const keys = seeded.map(({ product }, index) => `product-translate:${product.id}:${locales[index]}:tagline`).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  return { ids: seeded.map(({ product }) => product.id), keys };
+}
+
+it("settles a production-shaped mixed batch (three ja + one zh-Hans taglines) on the default abcllm contract", exercise(async () => {
+  const { ids, keys } = await seedProductionMix();
+  await server(async ({ bodies, setReply }) => {
+    setReply((response, body) => { const items = JSON.parse(JSON.parse(body).messages[1].content) as { locale: string }[];
+      response.end(JSON.stringify(replyBody(items.map(item => item.locale === "ja" ? jaReply : zhReply)))); });
+    const outcome = await tick();
+    // 실패하면 까닭(운영에서는 23514 logical_check)이 그대로 보이게 결과를 메시지로 붙인다
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ status: "completed", done: true });
+    expect(outcome).not.toHaveProperty("degraded");
+    expect(bodies).toHaveLength(1);
+    expect((JSON.parse(JSON.parse(bodies[0]).messages[1].content) as { locale: string }[]).map(item => item.locale).sort()).toEqual(["ja", "ja", "ja", "zh-Hans"]);
+    const ledger = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${prefix}`;
+    expect(ledger).toHaveLength(1);
+    const row = ledger[0].row;
+    expect(row).toMatchObject({ state: "settled", route_id: jobName, provider: "abcllm", model: PRODUCT_TRANSLATE_MODEL, logical_member_keys: keys,
+      dispatch_binding: { kind: "product_translation_gateway", provider: "abcllm" } });
+    expect(row.dispatch_binding.members.map((member: Raw) => member.locale).sort()).toEqual(["ja", "ja", "ja", "zh-Hans"]);
+    expect(row.terminal_evidence.actualUsage).toEqual({ inputTokens: 70, outputTokens: 20, totalTokens: 90 });
+    const events = await admin`SELECT kind,to_state,evidence FROM model_capacity_events WHERE request_id=${row.request_id}::uuid ORDER BY id`;
+    expect(events.map(event => event.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
+    expect(events[3]).toMatchObject({ to_state: "settled" });
+    expect(events[3].evidence.dispatch.binding.members.map((member: Raw) => member.locale).sort()).toEqual(["ja", "ja", "ja", "zh-Hans"]);
+    const stored = await admin`SELECT locale,status,text,attempts,model FROM product_translations WHERE product_id=ANY(${ids}::int[]) ORDER BY locale,product_id`;
+    expect(stored.map(value => ({ ...value }))).toEqual([...ids.slice(0, 3).map(() => ({ locale: "ja", status: "ready", text: jaReply, attempts: 1, model: PRODUCT_TRANSLATE_MODEL })),
+      { locale: "zh-Hans", status: "ready", text: zhReply, attempts: 1, model: PRODUCT_TRANSLATE_MODEL }]);
+    const [job] = await admin`SELECT requested_version,processed_version,lease_token FROM jobs WHERE name=${jobName}`;
+    expect(job.processed_version).toBe(job.requested_version); expect(job.lease_token).toBeNull();
+    // 0193 의 다섯 행이 저마다 필요한지: 한 행만 뺀 트랜잭션에서 방금 정산된 행(요청)·정산 이벤트를 다시 쓰면 바로 그 제약 이름으로 23514 가 난다.
+    // 요청 행은 값이 같은 UPDATE(트리거가 행 전체를 다시 본다), 이벤트는 같은 내용의 INSERT(BEFORE 트리거가 unique 인덱스보다 먼저다). 매번 되돌린다.
+    const [terminalEvent] = await admin`SELECT id::text FROM model_capacity_events WHERE request_id=${row.request_id}::uuid AND kind='dispatch_settled'`;
+    const rewrite = (tx: postgres.Sql | postgres.TransactionSql, table: string) => table === "model_capacity_requests"
+      ? tx`UPDATE model_capacity_requests SET updated_at=updated_at WHERE request_id=${row.request_id}::uuid RETURNING request_id`
+      : tx`INSERT INTO model_capacity_events(request_id,kind,epoch,revision,policy_hash,from_state,to_state,reason,evidence)
+          SELECT request_id,kind,epoch,revision,policy_hash,from_state,to_state,reason,evidence FROM model_capacity_events WHERE id=${terminalEvent.id}::bigint RETURNING id`;
+    const undo = new Error("fixture_rollback");
+    // 대조: 규칙이 다 있으면 요청 행의 같은 UPDATE 는 받아들여진다(이벤트 사본은 규칙을 지난 뒤 정산 이벤트 unique 인덱스에 걸린다)
+    await expect(admin.begin(async tx => { expect(await rewrite(tx, "model_capacity_requests")).toHaveLength(1); throw undo; })).rejects.toBe(undo);
+    await expect(admin.begin(tx => rewrite(tx, "model_capacity_events"))).rejects.toMatchObject({ code: "23505", constraint_name: "model_capacity_events_terminal_idx" });
+    expect(japaneseAbcllmTranslationRules).toHaveLength(5);
+    for (const rule of japaneseAbcllmTranslationRules) {
+      let rejected: unknown;
+      await expect(admin.begin(async tx => {
+        expect(await tx`DELETE FROM model_capacity_check_rules WHERE source=${JAPANESE_ABCLLM_TRANSLATION_TAG} AND table_name=${rule.table}
+          AND constraint_name=${rule.name} AND predicate=${rule.sql} RETURNING ordinal`).toHaveLength(1);
+        await tx`SELECT nmv_model_capacity_check_guard_rebuild(${rule.table})`;
+        try { await rewrite(tx, rule.table); } catch (error) { rejected = error; }
+        throw undo;
+      })).rejects.toBe(undo);
+      expect(rejected, rule.name).toMatchObject({ code: "23514", table_name: rule.table, constraint_name: rule.name });
+    }
+    expect((await admin`SELECT count(*)::int AS rows FROM model_capacity_check_rules WHERE source=${JAPANESE_ABCLLM_TRANSLATION_TAG}`)[0].rows).toBe(5);
+    // 되돌린 뒤의 guard 는 다시 다섯 행을 다 쓴다 — 같은 행이 그대로 받아들여진다
+    expect(await rewrite(admin, "model_capacity_requests")).toHaveLength(1);
+  });
+}), 30_000);
+
+it("ends the same abcllm ja batch without a ledger rejection when the reply fails validation, the provider answers 429 or the reply is cut", exercise(async () => {
+  // ① 검사에 떨어지는 답(ja 자리에 중국어) — 전송은 끝났으므로 장부는 정상 정산(terminal 가지), 번역 행만 실패로 남는다
+  const first = await seedProductionMix();
+  await server(async ({ bodies, setReply }) => {
+    setReply((response, body) => { const items = JSON.parse(JSON.parse(body).messages[1].content) as unknown[];
+      response.end(JSON.stringify(replyBody(items.map(() => zhReply)))); });
+    const outcome = await tick();
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
+    const [settled] = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${prefix}`;
+    expect(settled.row).toMatchObject({ state: "settled", provider: "abcllm", logical_member_keys: first.keys });
+    expect(settled.row.terminal_evidence.actualUsage).toEqual({ inputTokens: 70, outputTokens: 20, totalTokens: 90 });
+    const stored = await admin`SELECT locale,status,error_code,attempts FROM product_translations WHERE product_id=ANY(${first.ids}::int[]) ORDER BY locale,product_id`;
+    expect(stored.map(value => ({ ...value }))).toEqual([...first.ids.slice(0, 3).map(() => ({ locale: "ja", status: "failed", error_code: "rejected:not_japanese", attempts: 1 })),
+      { locale: "zh-Hans", status: "ready", error_code: null, attempts: 1 }]);
+    // ② 처리 전 거절(429) — 0174 gateway_http_rejected 정산. 행 전체가 다시 검사되므로 ja 가 든 dispatch_binding 도 받아들여져야 한다
+    await admin`UPDATE product_translations SET retry_at=now()-interval '1 second' WHERE product_id=ANY(${first.ids}::int[]) AND status='failed'`;
+    setReply(response => { response.statusCode = 429; response.setHeader("retry-after", "5"); response.end('{"error":"rate limit"}'); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
+    const [rejected] = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${prefix} AND request_id<>${settled.row.request_id}::uuid`;
+    expect(rejected.row).toMatchObject({ state: "settled", provider: "abcllm", terminal_evidence: { kind: "gateway_http_rejected", status: 429, retryAfterMs: 5_000 } });
+    expect(rejected.row.logical_member_keys.every((key: string) => key.endsWith(":ja:tagline"))).toBe(true);
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${rejected.row.request_id}::uuid ORDER BY id`).map(event => event.kind))
+      .toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
+    // ③ 잘린 답(EOF) — 결과 미확정(indeterminate)으로 남는다(dispatch 가지의 state 목록)
+    resetProviderRateLimitsForTest();
+    await admin`UPDATE product_translations SET retry_at=now()-interval '1 second' WHERE product_id=ANY(${first.ids}::int[]) AND status='failed'`;
+    setReply(response => { response.end('{"id":"partial"'); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(3);
+    const unknown = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${prefix} AND state='indeterminate'`;
+    expect(unknown).toHaveLength(1);
+    expect(unknown[0].row).toMatchObject({ provider: "abcllm", terminal_evidence: null });
+    expect(unknown[0].row.logical_member_keys.every((key: string) => key.endsWith(":ja:tagline"))).toBe(true);
+    expect((await admin`SELECT status,attempts FROM product_translations WHERE product_id=ANY(${first.ids}::int[]) AND locale='ja'`).map(value => ({ ...value })))
+      .toEqual(first.ids.slice(0, 3).map(() => ({ status: "failed", attempts: 3 })));
+  });
+}), 30_000);

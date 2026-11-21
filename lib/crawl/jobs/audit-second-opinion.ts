@@ -14,5 +14,5 @@ export async function reviewAuditSecondOpinions(ctx: JobContext<null>): Promise<
   if (!ctx.lease) throw new Error("audit_second_opinion_job_required");
   const settings = await getSettings();
   const tally = await runQwenSecondOpinions(ctx, settings);
-  return { done: tally.audit.asked + tally.audit.caughtUp + tally.published.asked === 0 };
+  return { done: tally.audit.asked + tally.audit.caughtUp + tally.published.asked + tally.sameModelRecheck.asked === 0 };
 }

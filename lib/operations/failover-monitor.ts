@@ -3,7 +3,9 @@ import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
 import type { ModelCapacityMode } from '@/lib/llm/capacity';
 import { readFailoverReadiness, type ReadinessReport } from './failover-readiness';
-import { readWorkerProgress } from './worker-progress-query';
+import { readWorkerProgress, workerProgressReadFailure } from './worker-progress-query';
+import { progressReadFailure, type ProgressReadFailure } from './worker-progress';
+import { warmTextReasonProgress } from './text-stage-progress';
 import { capacityReviewOnlyAlarm, readModelCapacityUnknowns, unknownCapacityReport, type CapacityUnknownReport } from './model-capacity-unknowns';
 
 type ProgressReport = Awaited<ReturnType<typeof readWorkerProgress>>;
@@ -24,6 +26,11 @@ export type MonitorStatus = {
   capacityUnknowns?: CapacityUnknownReport;
   capacityMode?: CapacityModeObservation;
   warnings?: MonitorWarning[];
+  /**
+   * 이번 주기에 읽지 못한 조각(2026-11-21) — 이름과 SQLSTATE·오류 이름만. overall 을 바꾸지 않는 원인 기록이다(판정은 지금처럼 null·unknown 이 한다).
+   * 전에는 allSettled 가 실패 사유를 버려 「왜 unknown 인가」가 로그·하트비트 어디에도 없었다.
+   */
+  readFailures?: ProgressReadFailure[];
 };
 
 const CAPACITY_MODES: readonly string[] = ['open', 'draining', 'disabled'] satisfies ModelCapacityMode[];
@@ -36,12 +43,16 @@ const CAPACITY_MODES: readonly string[] = ['open', 'draining', 'disabled'] satis
  * 접수 모드(capacityMode)는 덧붙이기만 한다 — DRAINING 이어도 overall 은 그대로다(배포 관문·운영 홈·Kuma 는 지금처럼 경보를 본다).
  */
 export function combineMonitorStatus(readiness: ReadinessReport | null, progress: ProgressReport | null,
-  capacityUnknowns?: CapacityUnknownReport, capacityMode?: CapacityModeObservation): MonitorStatus {
+  capacityUnknowns?: CapacityUnknownReport, capacityMode?: CapacityModeObservation, readFailures: readonly ProgressReadFailure[] = []): MonitorStatus {
   const reviewOnly = capacityReviewOnlyAlarm(capacityUnknowns);
+  // 단계만 모름으로 온 조각(텍스트 진행)도 함께 적는다. 같은 조각은 한 번만, 많아도 12줄
+  const failures = [...readFailures, ...(progress?.stages ?? []).flatMap(stage => stage.unread ? [stage.unread] : [])]
+    .filter((row, index, rows) => rows.findIndex(other => other.piece === row.piece) === index).slice(0, 12);
   const overall = readiness?.overall === 'alarm' || progress?.overall === 'alarm' || (capacityUnknowns?.status === 'alarm' && !reviewOnly) ? 'alarm'
     : !readiness || !progress || progress.overall === 'unknown' || capacityUnknowns?.status === 'unknown' ? 'unknown' : 'ok';
   return { measuredAt: new Date().toISOString(), overall, readiness, progress, ...(capacityUnknowns ? { capacityUnknowns } : {}),
-    ...(capacityMode ? { capacityMode } : {}), ...(reviewOnly ? { warnings: ['capacity_review' as const] } : {}) };
+    ...(capacityMode ? { capacityMode } : {}), ...(reviewOnly ? { warnings: ['capacity_review' as const] } : {}),
+    ...(failures.length ? { readFailures: failures } : {}) };
 }
 
 export function exitCodeFor(overall: MonitorStatus['overall']): number {
@@ -65,10 +76,22 @@ export async function readCapacityModeObservation(): Promise<CapacityModeObserva
   return parseCapacityModeObservation(Array.from(rows)[0], Date.now());
 }
 
+/**
+ * 사유 번역 집계(가장 무거운 읽기, 20초 상한)는 5분에 한 번, 다른 읽기보다 먼저 혼자 돈다(2026-11-21). 감시는 DB 연결이 1개이고 풀 대기가 5초라,
+ * 이 문장이 다른 읽기와 겹치면 그 뒤에 줄 선 읽기가 풀 대기에서 떨어져 진행 전체가 unknown 이 됐다. 그래서 진행 읽기는 담아 둔 값만 쓴다
+ * (reuseTextReasonOnly). 세지 못했거나 값이 15분보다 낡으면 그 단계만 모름이다.
+ */
 export async function readMonitorStatus(): Promise<MonitorStatus> {
-  const [readiness, progress, capacity, mode] = await Promise.allSettled([readFailoverReadiness(), readWorkerProgress(), readModelCapacityUnknowns(),
-    readCapacityModeObservation()]);
+  await warmTextReasonProgress();
+  const [readiness, progress, capacity, mode] = await Promise.allSettled([readFailoverReadiness(),
+    readWorkerProgress(undefined, { reuseTextReasonOnly: true }), readModelCapacityUnknowns(), readCapacityModeObservation()]);
+  const failures = [
+    ...(readiness.status === 'rejected' ? [progressReadFailure('readiness', readiness.reason)] : []),
+    ...(progress.status === 'rejected' ? [workerProgressReadFailure(progress.reason)] : []),
+    ...(capacity.status === 'rejected' ? [progressReadFailure('capacity-unknowns', capacity.reason)] : []),
+    ...(mode.status === 'rejected' ? [progressReadFailure('capacity-mode', mode.reason)] : []),
+  ];
   return combineMonitorStatus(readiness.status === 'fulfilled' ? readiness.value : null,
     progress.status === 'fulfilled' ? progress.value : null, capacity.status === 'fulfilled' ? capacity.value : unknownCapacityReport(),
-    mode.status === 'fulfilled' ? mode.value : undefined);
+    mode.status === 'fulfilled' ? mode.value : undefined, failures);
 }

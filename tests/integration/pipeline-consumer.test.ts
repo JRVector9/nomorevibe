@@ -222,17 +222,24 @@ it('disabled compatibility entry still claims an actual item and settles its ori
   expect(released.row).toMatchObject({ token: null, owner_instance_id: null }); itemRows.set(key, released.row);
   expect(await admin`SELECT request_id FROM model_capacity_requests`).toHaveLength(baseline!.model_capacity_requests.length);
 }));
-it.each(['items', 'draining'] as const)('actual %s controller job produces AI2 work without legacy claims or producer ACK', value => exercise(async () => {
+// 전환 중(draining)은 producer 요청을 남긴 채 미룬다. items 는 정비를 마친 완료 틱이다(2026-11-21) — 집은 요청을 인정하고 성공 시각을 옮긴다
+it.each(['items', 'draining'] as const)('actual %s controller job produces AI2 work without legacy claims', value => exercise(async () => {
   const context = await source(false); await stage(value); await mode('open'); await requestJob('second-review');
   const before = (await whole()).jobs.find(row => row.name === 'second-review')!;
-  expect(await tracked(runJob('second-review', secondReviewCandidates, { requestedOnly: true }))).toMatchObject({ status: 'deferred', reason: 'stage_blocked' });
+  expect(await tracked(runJob('second-review', secondReviewCandidates, { requestedOnly: true })))
+    .toMatchObject(value === 'items' ? { status: 'completed', done: true } : { status: 'deferred', reason: 'stage_blocked' });
   const [vote] = await db.select().from(secondReviews).where(eq(secondReviews.candidateId, context.candidate.id));
   await rememberVote(vote.id, context.candidate.id, context.candidate.repo);
   expect(vote).toMatchObject({ status: 'pending', model: 'pr06-second' });
   expect(await admin`SELECT work_key FROM pipeline_item_leases WHERE stage='ai2' AND work_key=${`ai2:${vote.id}`}`).toHaveLength(0);
   itemKeys.set(`ai2:${vote.id}`, context.candidate.id);
   const after = (await whole()).jobs.find(row => row.name === 'second-review')!;
-  for (const key of ['requested_version','processed_version','cursor','not_before','last_error','last_success_at']) expect(after[key]).toEqual(before[key]);
+  if (value === 'draining') for (const key of ['requested_version','processed_version','cursor','not_before','last_error','last_success_at']) expect(after[key]).toEqual(before[key]);
+  else {
+    for (const key of ['requested_version','cursor','not_before','last_error']) expect(after[key]).toEqual(before[key]);
+    expect(after.processed_version).toEqual(before.requested_version);
+    expect(String(after.last_success_at) > String(before.last_success_at ?? '')).toBe(true);
+  }
   expect(after.lease_token).toBeNull(); for (const mock of Object.values(transport)) expect(mock).not.toHaveBeenCalled();
 }));
 it('items controllers reject an actually issued but released job token and roll back their candidate unit', () => exercise(async () => {

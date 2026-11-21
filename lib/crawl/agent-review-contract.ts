@@ -14,6 +14,7 @@ import { repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/acc
 import { packageProofOf, type PackageProof } from "./package-proof";
 import { reviewSemanticNow } from "./review-replay-context";
 import { reviewRenderedPage, type ReviewRenderedPage } from "./shell-render";
+import type { ProjectActivity } from "./audit-project-activity";
 
 /**
  * 심사 입력이 바뀌면 둘 다 올린다.
@@ -108,6 +109,11 @@ export type ReviewSnapshot = {
   scanState: "pending" | "complete" | "partial" | "failed";
   evidenceTruncated: boolean;
   adminFirstReviewRerunId?: string;
+  /**
+   * 프로젝트 활동(2026-11-17, audit-project-activity.ts) — 감사 거절의 두 번째 의견 입력에만 싣는다(보관 여부·마지막 push·최근 릴리스·사이트 응답).
+   * 1차·2차·감사 본심사 입력에는 없다 — 없을 때의 입력 해시는 그대로다. product 밖에 두어 원본 해시(auditSourceHash)도 그대로다
+   */
+  projectActivity?: ProjectActivity;
 };
 export type ReviewInput = {
   snapshot: ReviewSnapshot;
@@ -247,12 +253,17 @@ export function createReviewInput(
     ...(agentCoverageRevision(scan) ? { scanCoverage: agentCoverageRevision(scan)! } : {}),
   };
   const policyHash = reviewPolicyHash(settings);
-  // IDs and observation timestamps locate the source, but do not change its semantic judgment.
-  const semantic = { ...snapshot, evidence: snapshot.evidence.map(item => item.observation) };
-  return { snapshot, source, policyHash, inputHash: reviewHash({ snapshot: semantic, policyHash }),
+  return { snapshot, source, policyHash, inputHash: reviewInputHash(snapshot, policyHash),
     sourceRevisionHash: reviewHash(source),
     validUntil: new Date(Math.min(fetchedAt + REVIEW_FRESH_MS,
       scan?.completedAt ? scan.completedAt.getTime() + REVIEW_FRESH_MS : Infinity)) };
+}
+
+/** 입력 해시 — 스냅숏의 뜻(근거는 관측 내용만)과 정책. 근거의 id·관측 시각은 원본을 가리킬 뿐 판단을 바꾸지 않아 빼고 잰다 */
+export function reviewInputHash(snapshot: ReviewSnapshot, policyHash: string): string {
+  // IDs and observation timestamps locate the source, but do not change its semantic judgment.
+  const semantic = { ...snapshot, evidence: snapshot.evidence.map(item => item.observation) };
+  return reviewHash({ snapshot: semantic, policyHash });
 }
 
 /** 입력이 기댄 가장 오래된 근거(원본 수집·스캔 완료 중 이른 것)가 now 에 몇 시간 됐는가 — 소수 첫째 자리. 24 이상이면 기한이 지난 근거다 */

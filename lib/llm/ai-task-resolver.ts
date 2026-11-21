@@ -18,6 +18,7 @@ import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from "./ai-ta
 import { chooseTaskWorkloadMember } from "./ai-task-workload-selector";
 import { providerRateLimitedUntil } from "./provider-rate-limit";
 import { cliEngineBearer } from "./cli-engine-auth";
+import { isTotalBoundDirectContract, servingContractWireModel } from "./direct-serving-contract";
 import { cliEngineEndpoint, cliEngineRevision, isCliEngineConnection, isCliEngineTask, parseCliEngineRevision, type CliEngineSource } from "./cli-engine-config";
 
 /**
@@ -100,7 +101,9 @@ export type TextRankResolution = Readonly<{ routeId: AiTextTaskId; status: "ok" 
   candidates: readonly TextRankCandidate[] }>;
 
 type RouteContract = Readonly<{ row: StoredServingContract; provider: "abcllm" | "local-direct"; endpointBase: string | null; wireModel: string;
-  deploymentRevision?: string | null }>;
+  deploymentRevision?: string | null;
+  /** 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct)인가 — abcllm 형처럼 CLI 엔진 revision 을 받는 모양이다 */
+  totalBound?: boolean }>;
 const text = (value: unknown, name: string): string | null => {
   const field = value && typeof value === "object" ? (value as Record<string, unknown>)[name] : undefined;
   return typeof field === "string" && field ? field : null;
@@ -123,9 +126,10 @@ function routeContracts(routeId: GatewayServingRoute): RouteContract[] {
     const provider = parsed.provider === "local-direct" ? "local-direct" as const : "abcllm" as const;
     // 게이트웨이 전송 행(abcllm 형, transport gateway)은 열리지 않는다 — 엔진 직접만 순위가 된다
     if (provider === "abcllm" && row.transport !== "direct") return [];
-    const wireModel = provider === "local-direct" ? parsed.model : text(parsed, "engineModel") ?? parsed.model;
+    const wireModel = servingContractWireModel(parsed as { provider?: unknown; protocol?: unknown; model: string; engineModel?: unknown });
     const deploymentRevision = text(parsed, "deploymentRevision");
-    return [{ row, provider, endpointBase: endpointBase(text(parsed, "endpoint")), wireModel, deploymentRevision }];
+    return [{ row, provider, endpointBase: endpointBase(text(parsed, "endpoint")), wireModel, deploymentRevision,
+      totalBound: isTotalBoundDirectContract(parsed as { protocol?: unknown }) }];
   });
 }
 
@@ -157,7 +161,8 @@ function bindCliEngineTaskRank(routeId: GatewayServingRoute, rank: AiTaskRank, c
   } catch {
     return unusable("cli_engine_source_invalid");
   }
-  const direct = contracts.filter(entry => entry.provider === "abcllm" && entry.row.transport === "direct"
+  // CLI 엔진 계약은 abcllm 형(transport direct)이거나 같은 바이트(context_strategy 만 뺀 — D-6)를 보내는 엔진 직접 총량 상한 계약이다(다른 local-direct 모양은 받지 않는다)
+  const direct = contracts.filter(entry => (entry.provider === "abcllm" && entry.row.transport === "direct" || entry.totalBound === true)
     && entry.endpointBase === baseUrl && entry.wireModel === rank.model);
   if (!direct.length) return unusable("cli_contract_missing");
   const parsed = direct.flatMap(entry => {

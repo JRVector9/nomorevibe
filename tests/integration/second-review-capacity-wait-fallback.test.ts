@@ -18,7 +18,9 @@ import { executeSecondReviewConsumerItem } from '@/lib/crawl/second-review-item-
 import { ai2GatewayServingContractHash, type Ai2GatewayServingContract } from '@/lib/crawl/second-review-serving-contract';
 import { modelCapacityPolicyHash, type ModelCapacityPolicy, type ModelCapacityRequestIdentity } from '@/lib/llm/capacity';
 import { markModelDispatchIndeterminate, requestAi2ItemModelSlot, requestModelSlot } from '@/lib/llm/capacity-repository';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { directContractRow } from './direct-engine-fixtures';
 
 // Only the deployment allowlist is replaced. Domain locks, queue, events,
 // transaction rollback and the preflight HTTP request all use their real paths.
@@ -37,17 +39,20 @@ const managed = { model_capacity_control: ['id', 1], pipeline_stage_modes: ['sta
 const baseline: Record<string, Raw[]> = {};
 let initialized = false, serial = 0;
 const candidates = new Map<number, string>(), documents = new Map<number, string>(), leases: ItemLease[] = [];
-function settings(fallback = true): CrawlSettings {
+type PrimaryProvider = 'local-direct' | 'abcllm';
+function settings(fallback = true, primary: PrimaryProvider = 'local-direct'): CrawlSettings {
   return { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: 'enforce',
     firstReview: { provider: 'abcllm', model: firstModel }, secondReview: {
       ...structuredClone(DEFAULT_CRAWL_SETTINGS.secondReview), enabled: true,
-      voters: [{ provider: 'local-direct', model: mainModel }],
+      voters: [{ provider: primary, model: mainModel }],
       fallbacks: fallback ? [{ provider: 'abcllm', model: backupModel }] : [] } };
 }
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 1, providerLimits: { gpu: 1, abc: 1, fixture: 1 },
   groupLimits: { gpu: 1, abc: 1, fixture: 1 }, poolLimits: { reviewer: 1, text: 1 },
   weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 60_000, reservationTtlMs: 60_000,
   routes: [{ routeId: 'second-review', provider: 'local-direct', model: mainModel, providerBudgetId: 'gpu', groupId: 'gpu' },
+    // 오늘 운영 꼴(abcllm 계약의 주 투표자)도 같은 장비에 둔다 — 아래 「abcllm 표는 기다린다」 시험이 쓴다
+    { routeId: 'second-review', provider: 'abcllm', model: mainModel, providerBudgetId: 'gpu', groupId: 'gpu' },
     { routeId: 'second-review', provider: 'abcllm', model: backupModel, providerBudgetId: 'abc', groupId: 'abc' },
     // PR 1b: 입장은 장비별이다 — 막는 행은 주 AI2 경로와 같은 장비(gpu, 한도 1)에 둬야 주 경로가 대기한다(전역 한도 1 은 더 읽지 않는다).
     { routeId: 'wait-fixture', provider: 'fixture', model: 'blocker', providerBudgetId: 'fixture', groupId: 'gpu' }] };
@@ -138,28 +143,28 @@ beforeEach(async () => {
 afterEach(cleanup);
 afterAll(async () => { try { await cleanup(); } finally { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); } });
 
-async function fixture(saturated = true) {
+async function fixture(saturated = true, primary: PrimaryProvider = 'local-direct') {
   const repo = `${prefix}/app-${++serial}`, now = new Date(Date.now() - 2_000);
   const [candidate] = await db.insert(crawlCandidates).values({ repo, productUrl: `https://wait-${serial}.example`,
     state: 'approved', reason: 'passed', decidedBy: 'auto', judgedAt: now, decidedAt: now }).returning(); candidates.set(candidate.id, repo);
   const [document] = await db.insert(crawlDocuments).values({ repo, productUrl: candidate.productUrl, fetchedAt: now, pageStatus: 200,
     repoMeta: { description: 'A deployed task app' }, pageMeta: { title: 'Tasks', description: 'Create tasks', textSample: 'Manage projects online' } }).returning();
   documents.set(document.id, repo);
-  const input = await loadReviewInput(candidate, document, settings());
+  const input = await loadReviewInput(candidate, document, settings(true, primary));
   const [first] = await db.insert(crawlReviewAttempts).values({ candidateId: candidate.id, kind: 'automatic', state: 'succeeded',
     inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash, policyHash: input.policyHash, snapshot: input.snapshot, source: input.source,
     promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: 'abcllm', model: firstModel, attemptNumber: 1,
     validUntil: input.validUntil, completedAt: now, outcome: { decision: 'approve', confidence: .94, reason: 'A task app', evidenceIds: ['product'] } }).returning();
   const [row] = await db.insert(secondReviews).values({ candidateId: candidate.id, repo, trigger: 'ai_approved', firstDecision: 'approve',
     firstConfidence: .94, firstModel, firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input, 'ai_approved'),
-    inputHash: input.inputHash, provider: 'local-direct', model: mainModel }).returning();
+    inputHash: input.inputHash, provider: primary, model: mainModel }).returning();
   let intent: SecondReviewModelReservationRequired | undefined;
   try { await claimConsumerItemSecondReview(row.id, owner, 90_000); } catch (error) {
     if (!(error instanceof SecondReviewModelReservationRequired)) throw error; intent = error;
   }
   if (!intent) throw new Error('fixture_intent_missing');
   const binding = intent.intent.binding;
-  const identity: ModelCapacityRequestIdentity = { owner, class: 'second', pool: 'reviewer', routeId: 'second-review', provider: 'local-direct',
+  const identity: ModelCapacityRequestIdentity = { owner, class: 'second', pool: 'reviewer', routeId: 'second-review', provider: primary,
     model: mainModel, workKey: `ai2:${candidate.id}:${row.id}:${itemBindingHash(binding)}` };
   const target = { candidateId: candidate.id, vote: row.id }, requestId = randomUUID();
   const blocker = saturated ? await requestModelSlot({ owner, requestId: randomUUID(), class: 'first', pool: 'reviewer',
@@ -255,6 +260,55 @@ it('rolls back request cancellation, event and fallback when the final job signa
   await expect(fallbackWaitingSecondReview(value.intent, value.requestId)).rejects.toThrow('job_version_exhausted');
   expect(await snapshot(value.requestId)).toEqual(before);
 });
+/*
+ * abcllm 이름표 정리 2단계(3단계 전 확인 — second-review-model-capacity.ts 의 줄 대기 대체): 줄에서 15초 넘게 기다린 표를 같은 칸의 다음 순위로 넘기는 것은
+ * 장비 칸이 있는 엔진 직접 계약(direct-openai-chat-v1)의 표뿐이다. 오늘 운영 2차 표는 모두 abcllm 계약이라 기다린다 — 그 계약을 이름표만 local-direct 로 바꾼
+ * 새 모양(openai-chat-total-bound-v1)도 기다려야 3단계 전환이 「누가 그 표를 받는가」를 바꾸지 않는다. 조건을 예전 꼴(provider 가 local-direct)로 되돌리면
+ * 새 모양의 표가 다음 순위로 넘어가 이 시험이 실패한다. 실제 준비(prepareAi2GatewayCall)·장부 대기 행·소비자 경로를 그대로 탄다.
+ */
+it.each([
+  ['the device-named direct contract (direct-openai-chat-v1) hands the vote to its slot fallback', 'direct'],
+  ['the relabelled total-bound contract (openai-chat-total-bound-v1) keeps waiting like an abcllm vote', 'total-bound'],
+  // 오늘 운영 꼴: 2차 순위 1·2 가 abcllm 계약이다 — 그 표는 15초가 지나도 줄에서 기다린다(PR #1014 리뷰). 다르게 하려면 소유자 결정이 먼저다
+  ["today's abcllm contract (abcllm-raw-total-bound-v1) keeps waiting", 'abcllm'],
+] as const)('a vote waiting over 15 seconds on a full device: %s', async (_name, shape) => {
+  const tokenizer = createServer((request, response) => {
+    request.resume(); response.end(JSON.stringify({ count: 10, tokens: Array.from({ length: 10 }, (_, index) => index + 1), max_model_len: 40_960 }));
+  });
+  await new Promise<void>(resolve => tokenizer.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = tokenizer.address(); if (!address || typeof address === 'string') throw new Error('fixture_address_missing');
+    const origin = `http://127.0.0.1:${address.port}`;
+    contracts(origin);
+    if (shape === 'total-bound') serving.contracts.set(`local-direct:${mainModel}`, { version: 1, protocol: 'openai-chat-total-bound-v1', routeId: 'second-review',
+      provider: 'local-direct', model: mainModel, responseModel: mainModel, deploymentRevision: 'fixture', endpoint: `${origin}/v1/chat/completions`, totalTokenBound: 40_960 });
+    const primary: PrimaryProvider = shape === 'abcllm' ? 'abcllm' : 'local-direct';
+    if (shape === 'abcllm') {
+      // abcllm 계약은 엔진 직접 연결 행(transport direct)이 있어야 열린다 — 키 없는 엔진
+      serving.contracts.set(`abcllm:${mainModel}`, { version: 1, protocol: 'abcllm-raw-total-bound-v1', routeId: 'second-review', provider: 'abcllm',
+        model: mainModel, responseModel: mainModel, deploymentRevision: 'fixture', endpoint: `${origin}/v1/chat/completions`, totalTokenBound: 40_960 });
+      setServingContractSnapshotForTest([directContractRow('second-review', mainModel)]);
+      await db.update(crawlSettings).set({ values: settings(true, 'abcllm') }).where(eq(crawlSettings.id, 1));
+    }
+    const value = await fixture(true, primary); await age(value.requestId);
+    expect(value.row.provider).toBe(primary);
+    if (shape === 'direct') {
+      expect(await executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).toEqual({ state: 'rerouted' });
+      await expectHandoff(value, 'capacity_wait_timeout');
+      return;
+    }
+    const before = await snapshot(value.requestId);
+    await expect(executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).rejects.toMatchObject({ reason: 'capacity' });
+    // 표는 그대로 기다린다: 대기 행·사건·2차 행·잡 모두 그대로, 대체 표 없음
+    expect(await snapshot(value.requestId)).toEqual(before);
+    expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid`).toEqual([{ state: 'waiting' }]);
+    expect(await admin`SELECT id FROM second_reviews WHERE fallback_for_id=${value.row.id}`).toEqual([]);
+  } finally {
+    setServingContractSnapshotForTest(null);
+    tokenizer.closeAllConnections(); await new Promise<void>((resolve, reject) => tokenizer.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 it.each([true, false])('switches a failed tokenizer to fallback before inference (saturated=%s)', async saturated => {
   const paths: string[] = [], server = createServer((request, response) => {
     paths.push(request.url ?? ''); request.resume(); response.writeHead(503); response.end('{}');

@@ -1,0 +1,25 @@
+## public web timing from gpu3090 (KR/US path varies) — url | http | ttfb_s | total_s | bytes | cf-cache
+https://nomorevibe.com/ | 200 | 0.288672 | 0.322972 | 100250 | MISS
+https://nomorevibe.com/ | 200 | 0.286944 | 0.329118 | 100251 | MISS
+https://nomorevibe.com/ko | 308 | 0.299914 | 0.300136 | 1 | DYNAMIC
+https://nomorevibe.com/ko | 308 | 0.268332 | 0.268553 | 1 | DYNAMIC
+https://nomorevibe.com/en | 200 | 0.381956 | 0.457202 | 124987 | MISS
+https://nomorevibe.com/en | 200 | 0.290319 | 0.333577 | 124987 | MISS
+https://nomorevibe.com/ko/popular | 308 | 0.176374 | 0.176614 | 8 | DYNAMIC
+https://nomorevibe.com/ko/popular | 308 | 0.266761 | 0.266980 | 8 | DYNAMIC
+https://nomorevibe.com/ko/rising | 308 | 0.335044 | 0.335260 | 7 | DYNAMIC
+https://nomorevibe.com/ko/rising | 308 | 0.171654 | 0.171739 | 7 | DYNAMIC
+https://nomorevibe.com/ko/search?q=ai | 308 | 0.258849 | 0.258959 | 12 | DYNAMIC
+https://nomorevibe.com/ko/search?q=ai | 308 | 0.356683 | 0.356908 | 12 | DYNAMIC
+https://nomorevibe.com/ko/search?q=%EC%B1%97%EB%B4%87 | 308 | 0.261318 | 0.261541 | 28 | DYNAMIC
+https://nomorevibe.com/ko/search?q=%EC%B1%97%EB%B4%87 | 308 | 0.352291 | 0.352506 | 28 | DYNAMIC
+https://nomorevibe.com/ko/p/decostudio | 308 | 0.333294 | 0.333409 | 13 | DYNAMIC
+https://nomorevibe.com/ko/p/decostudio | 308 | 0.283466 | 0.283657 | 13 | DYNAMIC
+https://nomorevibe.com/api/health | 200 | 0.222218 | 0.222471 | 15 | DYNAMIC
+https://nomorevibe.com/api/health | 200 | 0.269713 | 0.269900 | 15 | DYNAMIC
+https://nomorevibe.com/api/products?limit=20 | 405 | 0.194480 | 0.194541 | 0 | DYNAMIC
+https://nomorevibe.com/api/products?limit=20 | 405 | 0.252527 | 0.252735 | 0 | DYNAMIC
+https://nomorevibe.com/api/products/decostudio/timeline | 403 | 0.182012 | 0.182447 | 189 | DYNAMIC
+https://nomorevibe.com/api/products/decostudio/timeline | 403 | 0.270210 | 0.270391 | 189 | DYNAMIC
+https://nomorevibe.com/sitemap.xml | 403 | 0.134566 | 0.134776 | 5363 | -
+https://nomorevibe.com/sitemap.xml | 403 | 0.114081 | 0.114531 | 5384 | -
