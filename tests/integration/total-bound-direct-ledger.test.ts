@@ -55,7 +55,7 @@ import { TEST_DATABASE_URL } from "./setup";
  * 돈다 — 줄 서기 → 예약 → dispatch(행·binding 모두 local-direct) → 그 경로의 실제 준비·전송 함수 → 정산. 끝나는 길마다 본다:
  * 엔진 완결 응답(terminal), 보내지 않음(gateway_not_started), HTTP 429(text 경로는 gateway_http_rejected, 심사·분류는 미확정), 미확정 뒤 로컬 종료
  * 근거 회수(local_call_ended), 미확정 뒤 운영자 검토(operator_review). 장부 guard(model_capacity_check_rules)가 어느 전이도 막지 않아야 한다.
- * 또 보낸 요청이 준비한 wire 바이트 그대로이고 엄격 terminal 헤더가 없음을 엔진 쪽에서 확인한다.
+ * 또 보낸 요청이 준비한 wire 바이트 그대로이고 게이트웨이 전용 칸 context_strategy(D-6)·엄격 terminal 헤더가 없음을 엔진 쪽에서 확인한다.
  * 계약은 실제 resolver 가 계약 스냅숏에서 읽는다(mock 없음). 자기 DB 를 새로 만든다. 운영 값이 아니다(loopback fixture).
  */
 const name = `nomorevibe_test_total_bound_${randomUUID().replaceAll("-", "")}`, url = new URL(TEST_DATABASE_URL); url.pathname = `/${name}`;
@@ -395,9 +395,11 @@ describe.each(FLOWS.map(flow => [flow.name, flow] as const))("%s", (_name, flow)
       dispatch_binding_hash: started.dispatch.bindingHash });
     const sent = await started.send();
     expect(sent.terminal).not.toBeNull(); expect(sent.notStarted).toBeUndefined(); expect(sent.rejected).toBeUndefined();
-    // 엔진이 받은 요청: 준비한 wire 바이트 그대로(= 같은 엔진의 abcllm 계약이 보내는 바이트 — 단위 시험이 두 wireHash 가 같음을 본다), tokenizer 호출 없음
+    // 엔진이 받은 요청: 준비한 wire 바이트 그대로(= 같은 엔진의 abcllm 계약이 보내는 바이트에서 context_strategy 만 뺀 것, D-6 — 단위 시험이 두 바이트의
+    // 관계를 본다), tokenizer 호출 없음
     expect(engine.requests.map(request => request.path)).toEqual(["/v1/chat/completions"]);
     expect(sha(chats()[0].body)).toBe(started.wireHash);
+    expect(JSON.parse(chats()[0].body)).not.toHaveProperty("context_strategy");
     expect(chats()[0].headers["x-abcllm-strict-terminal"]).toBeUndefined(); expect(chats()[0].headers.authorization).toBeUndefined();
     expect(await started.settle(sent.terminal!)).toEqual({ kind: "settled" });
     expect(await started.settle(sent.terminal!)).toEqual({ kind: "already_settled" });

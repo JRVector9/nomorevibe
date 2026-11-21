@@ -26,7 +26,8 @@ import { TEST_DATABASE_URL } from "./setup";
  * 2026-11-21 abcllm 이름표 정리 1단계: 실제 잡 한 틱(crawl-tagline)이 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct)으로
  * 끝까지 돈다 — 순위 묶기(계약의 provider) → 장부 매핑 확인 → 예약·dispatch → 전송 → 정산 → 결과 저장(lib/crawl/taglines.ts 가 장부 행의 provider 를
  * binding 의 provider 와 견준다. 예전에는 abcllm 글자와 견줘 local-direct 행의 결과를 적지 못했다).
- * 보낸 바이트는 abcllm 계약 때와 같은 그 경로의 wire 다. mock 없이 실제 resolver·계약 스냅숏·순위 스냅숏으로 본다. 자기 DB 를 새로 만든다.
+ * 보낸 바이트는 abcllm 계약 때의 그 경로 wire 에서 게이트웨이 전용 칸 context_strategy 만 뺀 것이다(2단계, 소유자 결정 D-6).
+ * mock 없이 실제 resolver·계약 스냅숏·순위 스냅숏으로 본다. 자기 DB 를 새로 만든다.
  */
 const name = `nomorevibe_test_tagline_total_bound_${randomUUID().replaceAll("-", "")}`, url = new URL(TEST_DATABASE_URL); url.pathname = `/${name}`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} }), client = postgres(url.toString(), { max: 4, prepare: false, onnotice: () => {} });
@@ -87,13 +88,16 @@ afterAll(async () => {
   await client.end({ timeout: 3 }); if (created) await admin.unsafe(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end({ timeout: 3 });
 });
 
-it("a real crawl-tagline tick writes the tagline through a local-direct total-bound contract with the abcllm-era wire bytes", async () => {
+it("a real crawl-tagline tick writes the tagline through a local-direct total-bound contract with the abcllm-era wire bytes minus context_strategy", async () => {
   open();
   const task = await seed();
   expect(await tick()).toMatchObject({ status: "completed", done: true });
   expect(engine.requests).toHaveLength(1);
-  // abcllm 계약 때와 같은 바이트(같은 시험이 abcllm 계약으로 보는 식과 같다 — crawl-tagline-capacity-dispatch.test.ts), 엄격 terminal 헤더 없음
-  expect(engine.requests[0].body).toBe(crawlTaglineGatewayWire(taglineEvidence(task.candidate.repo, task.document), MODEL));
+  // abcllm 계약 때의 바이트(같은 시험이 abcllm 계약으로 보는 식 — crawl-tagline-capacity-dispatch.test.ts)에서 context_strategy 하나만 빠진다(D-6), 엄격 terminal 헤더 없음
+  const abcllmWire = JSON.parse(crawlTaglineGatewayWire(taglineEvidence(task.candidate.repo, task.document), MODEL)) as Record<string, unknown>;
+  expect(abcllmWire.context_strategy).toBe("raw");
+  delete abcllmWire.context_strategy;
+  expect(engine.requests[0].body).toBe(JSON.stringify(abcllmWire));
   expect(engine.requests[0].headers["x-abcllm-strict-terminal"]).toBeUndefined();
   expect(Array.from(await ledger(task.candidate.repo))).toEqual([{ state: "settled", provider: "local-direct", bound: "local-direct", kind: "crawl_tagline_gateway_terminal" }]);
   expect((await client`SELECT tagline, attempts, error_code FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0]).toEqual({ tagline: "Document manager", attempts: 1, error_code: null });

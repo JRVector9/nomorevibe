@@ -28,8 +28,8 @@ export const ai1RawGatewayServingContractSchema = z.object({
 /** AI1 의 직접 계약 — AI2 와 같은 공통 direct-openai-chat-v1 모양(tokenizer 로 요청 상한을 확인한다). */
 export const ai1DirectServingContractSchema = directServingContractSchema("crawl-agent-review", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
 /**
- * AI1 의 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계). abcllm raw 계약과 같은
- * wire(게이트웨이 칸 포함, engineModel)를 보내고, tokenizer 묶음이 있을 때만 요청 상한을 먼저 확인한다.
+ * AI1 의 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계). abcllm raw 계약의
+ * wire 에서 context_strategy 만 뺀 것(D-6 — reasoning_effort 는 남는다, engineModel)을 보내고, tokenizer 묶음이 있을 때만 요청 상한을 먼저 확인한다.
  */
 export const ai1TotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("crawl-agent-review");
 export const ai1GatewayServingContractSchema = z.discriminatedUnion("protocol", [
