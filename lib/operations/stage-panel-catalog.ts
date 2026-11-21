@@ -28,6 +28,7 @@ export type StagePanelDef = Readonly<{
 
 const jobHref = (job: string) => `/admin/status?tab=jobs&job=${encodeURIComponent(job)}`;
 const COLLECTION = { label: "수집·판정 설정", href: "/admin/settings?tab=collection" };
+export const KEYWORD_GENERATION_RECOVERY_HREF = "/admin/flow/keyword-recovery";
 
 export const STAGE_PANELS: readonly StagePanelDef[] = Object.freeze([
   { key: "discover", label: "탐색", station: "discover", progress: [], jobs: STATION_JOBS.discover, tasks: [],
@@ -45,7 +46,9 @@ export const STAGE_PANELS: readonly StagePanelDef[] = Object.freeze([
   { key: "publish", label: "발행", station: "publish", progress: ["publish"], jobs: STATION_JOBS.publish, tasks: ["publish-classify"],
     links: [{ label: "발행 대기 보기", href: "/admin/review?tab=publish&stage=publish" }] },
   { key: "keywords", label: "키워드 등록", station: "keywords", progress: ["keywords", "keyword-verify"], jobs: STATION_JOBS.keywords,
-    tasks: ["product-search-profile", "product-search-verify"], links: [{ label: "검색 반영 진단", href: "/admin/status?tab=diagnostics" }] },
+    tasks: ["product-search-profile", "product-search-verify"], links: [
+      { label: "키워드 생성 복구", href: KEYWORD_GENERATION_RECOVERY_HREF },
+      { label: "검색 반영 진단", href: "/admin/status?tab=diagnostics" }] },
   { key: "human", label: "사람 확인", station: null, progress: [],
     jobs: [{ job: "human-deepseek-review", label: "사람 몫 AI 위임" }], tasks: ["human-review"],
     links: [{ label: "확인할 목록 보기", href: "/admin/review?tab=human" },

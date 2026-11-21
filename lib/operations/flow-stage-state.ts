@@ -25,6 +25,9 @@ export function flowStageBadge(station: Station, jobs: readonly (Job | undefined
     return { label: "연결 필요", tone: "amber", why: "기존 CLI 연결 에이전트가 현재 분류 요청을 받을 수 없습니다." };
   if (known.some(job => job.lastError)) return { label: "오류 확인", tone: "amber", why: "최근 작업 오류가 있습니다. 상세 실행 기록을 확인하세요." };
   if (station.tone === "jam") return { label: "정체", tone: "red", why: station.reason ?? "대기 업무의 진행이 관측되지 않습니다." };
+  if (station.llm.kind === "llm" && station.llm.tasks.some(task => task.state === "waiting"))
+    return { label: station.llm.tasks.filter(task => task.state === "waiting").every(task => task.waitReason === "capacity") ? "칸 대기" : "재시도 대기",
+      tone: "amber", why: station.reason ?? "설정된 모델의 빈 칸·재시도를 기다립니다." };
   if (station.tone === "slow") return { label: station.holds.some(hold => hold.count > 0) ? "보류" : "적체", tone: "amber", why: station.reason ?? "처리할 업무가 쌓이고 있습니다." };
   if (station.tone === "idle") return { label: "대기 없음", tone: "gray", why: "현재 집계된 대기 업무가 없습니다." };
   return { label: "원활", tone: "green", why: "처리량 관측에서 정체나 중지 신호가 없습니다." };

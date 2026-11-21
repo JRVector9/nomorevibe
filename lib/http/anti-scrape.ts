@@ -1,4 +1,5 @@
 import { guardApiSession } from "@/lib/anti-scrape/gate";
+import { requiresPublicApiSession } from "@/lib/anti-scrape/paths";
 import { onPrimary } from "@/lib/db";
 import { blockRateLimitKey, publicClientIp, rateLimitWindow } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
@@ -75,7 +76,7 @@ export async function guardPublicApiRead(
   if (limited) return limited;
   const detailLimited = await guardDetailApiRead(request, route);
   if (detailLimited) return detailLimited;
-  return route === "session" ? null : guardApiSession(request, route, onSessionRequired);
+  return requiresPublicApiSession(route) ? guardApiSession(request, route, onSessionRequired) : null;
 }
 
 /** 검색 경로 한도 — 화면이라 UA 로 거절하지 않는다(검색·답변 봇은 화면을 본다) */
