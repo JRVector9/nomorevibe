@@ -104,7 +104,7 @@ export const LIMITS_TASKS: readonly LimitsTaskSpec[] = Object.freeze([
   { id: "second-review", group: "review", label: "2차 심사", sub: "1차 결과를 투표자 셋이 다시 봅니다", aiTask: "second-review", ledger: ["second-review"],
     cap: { ...ladderCap, note: "1차 심사의 Qwen 직접 호출도 이 값을 씁니다" }, tick: { kind: "none", text: "소비자가 처리 — 틱 없음" },
     concurrency: { kind: "text", text: "작업 배정에서 정함", href: TASKS_HREF, knob: { job: "second-review", knob: "consumerConcurrency", prefix: "소비자 동시" } },
-    details: [{ kind: "maxTokens", route: "gateway-review", label: "심사 응답 토큰 상한(1차 Qwen·2차 공통)" }], jobs: [] },
+    details: [knob("second-review", "reviewWaitMs"), { kind: "maxTokens", route: "gateway-review", label: "심사 응답 토큰 상한(1차 Qwen·2차 공통)" }], jobs: [] },
   { id: "human-review", group: "review", label: "사람 큐 심사", sub: "사람 몫 심사를 모델에 맡깁니다", aiTask: "human-review", ledger: ["local-human-deepseek"],
     cap: { kind: "route", route: "human-review" }, tick: { kind: "budget", job: "human-deepseek-review" }, concurrency: byDevice,
     details: [{ kind: "maxTokens", route: "human-review" }], jobs: ["human-deepseek-review"] },
@@ -291,11 +291,16 @@ const KNOB_FIELD: Readonly<Partial<Record<JobKnobName, { label: string; unit: st
   classifierConcurrency: { label: "분류 동시 묶음", unit: "건" },
   shellRender: { label: "JS 껍데기 그려 보기", unit: "1 켬·0 끔",
     note: "본문이 제목·로딩 문구뿐인 후보를 1차 직전에 화면 서버로 그려 봅니다. 0 이면 새로 그리지 않고(이미 그린 글은 그대로 씀), 감사 화면 판별은 영향이 없습니다" },
+  reviewWaitMs: { label: "심사 대기 시간", unit: "초",
+    note: "2차 표가 제 모델 줄에서 이 시간보다 오래 기다렸는데 그 모델이 아직 가득 차 있으면 같은 투표자 칸의 다음 순위로 넘깁니다(연결 계약 모양과 무관). "
+      + "기다림은 그 모델로 마지막으로 보낸 뒤 처음 줄에 선 때부터 이어서 셉니다(대기 만료로 다시 줄을 서도 이어짐). 모델 장부가 닫혀 있던 시간(DRAIN)·2차 단계가 멈췄던 시간은 "
+      + "세지 않고, 접수를 다시 연 때·모델 장부 정책을 저장한 때부터 다시 셉니다. 다음 순위가 없거나 이미 표를 낸 모델뿐이면 넘기지 않습니다. "
+      + "0 이면 넘기지 않고 계속 기다립니다(이때는 오래 기다린 2차 표를 먼저 다시 묻는 일도 하지 않습니다). 2차 소비자가 30초 안에 읽습니다" },
 };
 /** 잡별 묶음 손잡이의 스키마 범위(jobKnobsSchema) — 화면 단위(ms 칸은 초) */
 const KNOB_RANGE: Readonly<Partial<Record<JobKnobName, [number, number]>>> = {
   batch: [1, 64], batchChars: [100, 30_000], minCallMs: [1, 600], slowCallMs: [1, 600], soloAttempts: [1, 10], callMs: [5, 600],
-  consumerConcurrency: [1, 4], classifierConcurrency: [1, 4], shellRender: [0, 1],
+  consumerConcurrency: [1, 4], classifierConcurrency: [1, 4], shellRender: [0, 1], reviewWaitMs: [0, 3_600],
 };
 
 type BuildContext = { stored: Record<string, unknown>; settings: RuntimeSettings; models: readonly ModelDefinition[] };

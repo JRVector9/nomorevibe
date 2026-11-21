@@ -140,7 +140,10 @@ describe("작업 줄 — 실제로 읽는 칸만", () => {
       ["jobs.reason-translate.batchChars", "한 묶음 글자 수", "자", "1600"], ["jobs.reason-translate.soloAttempts", "이만큼 실패하면 혼자 보냄", "회", "3"],
       ["routes.limits.reason-translate.maxTokens", "응답 토큰 상한", "토큰", "6000"]]);
     expect(rowOf(view, "reason-translate").minCallPath).toBe("jobs.reason-translate.minCallMs");
-    expect(rowOf(view, "second-review").details.map(field => field.path)).toEqual(["routes.limits.gateway-review.maxTokens"]);
+    // 2차 심사 대기 시간(2026-11-21) — 초 칸, 기본 0(넘기지 않음), 0~3600초
+    expect(rowOf(view, "second-review").details.map(field => field.path)).toEqual(["jobs.second-review.reviewWaitMs", "routes.limits.gateway-review.maxTokens"]);
+    expect(rowOf(view, "second-review").details[0]).toMatchObject({ label: "심사 대기 시간", unit: "초", kind: "ms", initial: "0", defaultInput: "0",
+      overridden: false, min: 0, max: 3_600 });
     expect(rowOf(view, "second-review").concurrency).toEqual({ kind: "text", text: "작업 배정에서 정함 (지금 소비자 동시 2)", href: "/admin/models#concurrency" });
     expect(rowOf(view, "human-review").concurrency).toEqual({ kind: "text", text: "장비 한도가 정함", href: "/admin/models/devices" });
     expect(rowOf(view, "reason-translate").models).toBe("1순위 m1-gemma");

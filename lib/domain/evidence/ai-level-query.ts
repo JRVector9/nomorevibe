@@ -8,6 +8,8 @@ import { AGENT_ROOT_DIRECTORIES, type CommitFacts, type MergedPullRequest, type 
  * 2026-10-10 실측(공개분 무작위 10개 묶음 세 번): 기본 브랜치 최근 커밋 30개(메시지·작성자) + 병합 PR 30개(연 계정) + 루트 목록이
  * 1점, 3.5~4.5초, 응답 260KB 남짓. PR 50개로 늘리면 4.5~7.3초라 GitHub 10초 상한에 가까워 30개로 둔다.
  * 오래 활발한 저장소는 병합 PR 30개 너머의 에이전트 PR 을 놓친다 — 단계를 낮게 볼 수는 있어도 높게 보지는 않는다.
+ * owner { __typename login }(2026-11-21, 제작자 이메일 0194): 지금 주인 — GitHub 은 옮겨 가거나 이름이 바뀐 저장소를 옛 이름으로 물어도 돌려주므로
+ * 저장된 키의 owner 는 낡을 수 있다. 연결(connection)이 아닌 칸이라 질의 점수는 그대로다.
  */
 export const AI_LEVEL_BATCH = 10;
 const HISTORY = 30;
@@ -15,7 +17,7 @@ const PULL_REQUESTS = 30;
 const SEGMENT = /^[A-Za-z0-9_.-]+$/;
 const SHA = /^[a-f0-9]{40}$/;
 
-const REPOSITORY_FIELDS = `isFork defaultBranchRef { name target { ... on Commit { oid history(first: ${HISTORY}) { nodes { oid message parents { totalCount } author { name email user { login } } } } } } } `
+const REPOSITORY_FIELDS = `isFork owner { __typename login } defaultBranchRef { name target { ... on Commit { oid history(first: ${HISTORY}) { nodes { oid message parents { totalCount } author { name email user { login } } } } } } } `
   + `pullRequests(states: MERGED, first: ${PULL_REQUESTS}, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number mergedAt baseRefName author { __typename login } } } `
   + `root: object(expression: "HEAD:") { ... on Tree { entries { name type mode } } }`;
 
@@ -30,8 +32,10 @@ export function aiLevelBatchQuery(repos: readonly RepositoryRef[]): string {
     + `fragment A on Repository { ${REPOSITORY_FIELDS} }`;
 }
 
+/** 응답이 준 지금 주인 — 로그인과 종류(User·Organization). 응답에 없거나 깨졌으면 null */
+export type RepositoryOwnerNow = { login: string; type: string };
 export type RepositoryAiScan = {
-  isFork: boolean; defaultBranch: string | null; headSha: string | null;
+  isFork: boolean; owner: RepositoryOwnerNow | null; defaultBranch: string | null; headSha: string | null;
   commits: CommitFacts[]; pullRequests: MergedPullRequest[]; rootEntries: TreeEntry[];
 };
 /** found 받음 · not_found 없음(NOT_FOUND) · unknown 이번 답으로는 모름(오류·깨진 답) — 지난 판정을 그대로 둔다 */
@@ -75,7 +79,10 @@ function readScan(node: Record<string, unknown>): RepositoryAiScan {
       authorLogin: typeof author?.login === 'string' ? author.login : null, authorType: typeof author?.__typename === 'string' ? author.__typename : null }];
   });
   const headSha = typeof target?.oid === 'string' && SHA.test(target.oid) ? target.oid : null;
-  return { isFork: node.isFork === true, defaultBranch: typeof branch?.name === 'string' ? branch.name : null, headSha, commits, pullRequests,
+  const ownerNode = asObject(node.owner);
+  const owner = typeof ownerNode?.login === 'string' && ownerNode.login && typeof ownerNode.__typename === 'string'
+    ? { login: ownerNode.login.slice(0, 100), type: ownerNode.__typename } : null;
+  return { isFork: node.isFork === true, owner, defaultBranch: typeof branch?.name === 'string' ? branch.name : null, headSha, commits, pullRequests,
     rootEntries: treeEntries(node.root, '') };
 }
 
