@@ -1,14 +1,15 @@
 import { db } from "@/lib/db";
-import { and, inArray, notLike, sql, type SQL } from "drizzle-orm";
+import { and, inArray, like, notLike, or, sql, type SQL } from "drizzle-orm";
 import { modelCapacityControl, operationsObservations, pipelineStageModes } from "@/lib/db/schema";
 import { consumerInstancePrefix } from "@/lib/runtime/consumer-registry";
 import { getSettings } from "@/lib/crawl/settings";
 import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
-import { applyCapacityAdmissionBlock, readCapacityAdmissionBlocks, type CapacityAdmissionBlock, type StageAdmissionDetail } from './capacity-admission-block';
+import { applyCapacityAdmissionBlock, CAPACITY_ADMISSION_BLOCK_JOBS, readCapacityAdmissionBlocks, type CapacityAdmissionBlock, type StageAdmissionDetail } from './capacity-admission-block';
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
 import { WITHOUT_JOB_DEFERRALS } from "@/lib/jobs/deferral-observation";
 import { WITHOUT_JOB_TALLIES } from "@/lib/jobs/tally";
+import type { BatchRole } from "@/lib/jobs/batches";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
@@ -18,7 +19,7 @@ import { evidenceSourceTargetCtesSql } from "@/lib/domain/evidence/source-demand
 import { AGENT_SCAN_CONSUMER_HEARTBEAT_MS, AGENT_SCAN_CONSUMER_LIVE_STATUSES, AGENT_SCAN_CONSUMER_PREFIX, AGENT_SCAN_HEADROOM_WAIT_MS, agentScanByClaims, readAgentScanMode,
   type AgentScanModeState } from "@/lib/domain/evidence/agents/claim-control";
 import { latestServiceInstance, serviceInstancesFromObservations } from "./instance";
-import { pipelineThroughput } from "./throughput";
+import { pipelineThroughput, THROUGHPUT_STAGE_KEYS } from "./throughput";
 import type { ThroughputSnapshot } from "./throughput-model";
 import { classifyLiveness, classifyScheduler, classifyStage, laneForJob, parseAgentProviderFailure, parseRuntimeLanes, progressStageRole,
   progressReadFailure, runtimeLaneStall, TEXT_PROGRESS_STAGE_JOBS, type AgentProviderFailure, type ProgressReadFailure, type ProgressStageInput, type ProgressStageKey,
@@ -474,16 +475,43 @@ export function workerProgressReadFailure(error: unknown): ProgressReadFailure {
 }
 
 /**
- * `reuseTextReasonOnly`: 사유 번역 집계를 여기서 다시 세지 않고 담아 둔 값만 쓴다(text-stage-progress.ts) — 호출자가 방금 따로 세었을 때.
- * 텍스트 두 조각은 실패해도 던지지 않고 그 단계만 `unread`(모름)로 온다. 그래도 overall 은 ok 가 되지 않는다(unknown_age → unknown).
+ * 읽을 범위. 전체(배포 관문·감시·콘솔)는 모든 조각을 읽고, 역할 감독은 제 단계 판정에 드는 조각만 읽는다(readRoleProgress).
+ * 한 함수가 두 범위를 함께 맡는다 — 조각을 더하거나 바꿀 때 두 읽기가 어긋나지 않게.
  */
-export async function readWorkerProgress(now = new Date(), options: { includeText?: boolean; reuseTextReasonOnly?: boolean } = {}) {
+type ProgressReadScope = {
+  /** null = 모든 단계. 목록이면 그 단계의 조각만 — 뺀 단계는 보고서에 없다(0건이 아니다) */
+  stageKeys: readonly ProgressStageKey[] | null;
+  /** null = 관측 표 전체(미룸·집계·발굴 진행 줄 제외). 아니면 scheduler 와 이 역할의 관측만 */
+  observationRole: StageProgress["role"] | "scheduler" | null;
+  includeText: boolean; reuseTextReasonOnly: boolean;
+};
+const EVIDENCE_STAGE_KEYS: readonly ProgressStageKey[] = ["evidence", "agent-evidence", "ai-level"];
+
+/**
+ * 역할 감독이 쓰는 관측 줄만: scheduler 생존(예전 키 `scheduler` 포함), 제 역할의 인스턴스(consumer 도 같은 접두어다), 제 단계 잡의
+ * 「모두 건너뜀」 관측(job:<잡>), 제작 근거 단계가 있으면 consumer 스캔 관측(agent-scan:<instance>). buildWorkerProgress 가 단계·줄마다 보는 키와 같다.
+ */
+function scopedObservations(role: StageProgress["role"] | "scheduler", stageKeys: readonly ProgressStageKey[]): SQL {
+  const jobKeys = stageKeys.map(key => jobForStage[key]).filter(job => Object.hasOwn(ALL_SKIPPED_CODES, job)).map(job => `job:${job}`);
+  const prefixes = [...new Set(["service:scheduler:", `service:${role}:`, ...(stageKeys.includes("agent-evidence") ? ["agent-scan:"] : [])])];
+  return or(inArray(operationsObservations.key, [...new Set(["scheduler", role, ...jobKeys])]),
+    ...prefixes.map(prefix => like(operationsObservations.key, `${prefix}%`)))!;
+}
+
+async function readProgressReport(now: Date, scope: ProgressReadScope): Promise<WorkerProgressReport> {
+  const wants = (key: ProgressStageKey) => scope.stageKeys === null || scope.stageKeys.includes(key);
+  const stageJobs = scope.stageKeys?.map(key => jobForStage[key]) ?? null;
+  // control 행(batch·제작 근거 모드·심사 단계 모드·모델 용량)은 범위와 상관없이 읽는다 — 행이 없거나 읽지 못하면 어느 범위든 판정을 내지 않는다
   const [settings, jobs, batch, agentScan, reviewModes, capacity, admissionBlocks] = await Promise.all([
-    piece('settings', getSettings()), piece('jobs', listJobStates()), piece('batch-mode', readJobBatchMode()), piece('agent-scan-mode', readAgentScanMode(db)),
+    // 설정은 처리량·근거 집계만 쓴다 — 셀 단계가 없으면(scheduler 판정만) 읽지 않는다
+    scope.stageKeys?.length === 0 ? Promise.resolve(null) : piece('settings', getSettings()),
+    piece('jobs', listJobStates()), piece('batch-mode', readJobBatchMode()), piece('agent-scan-mode', readAgentScanMode(db)),
     piece('review-modes', db.select({ stage: pipelineStageModes.stage, mode: pipelineStageModes.mode, drainingFrom: pipelineStageModes.drainingFrom })
       .from(pipelineStageModes).where(inArray(pipelineStageModes.stage, ['ai1', 'ai2']))),
     piece('capacity-control', readModelCapacityControlObservation()),
-    piece('admission-blocks', readCapacityAdmissionBlocks()),
+    // 접수 막힘은 1차·2차 심사 잡의 재시작만 끈다
+    stageJobs === null || stageJobs.some(job => CAPACITY_ADMISSION_BLOCK_JOBS.includes(job))
+      ? piece('admission-blocks', readCapacityAdmissionBlocks()) : Promise.resolve([]),
   ]);
   // A missing control row must not fall back to legacy restart authority.
   if (!['ai1', 'ai2'].every(stage => reviewModes.some(row => row.stage === stage))) throw new Error('review_stage_modes_missing');
@@ -492,19 +520,75 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
   const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
   // claim 표로 셀 때는 잡 커서의 스캔 전 실패(legacy 스캔의 기록)를 쓰지 않는다
   const agentClaims = agentScanByClaims(agentScan);
+  const throughputKeys = scope.stageKeys === null ? null : THROUGHPUT_STAGE_KEYS.filter(wants);
   // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
   const [throughput, observations, evidence, split, text, publisherDraining] = await Promise.all([
-    piece('throughput', pipelineThroughput(settings, now)),
-    piece('observations', db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES,
-      notLike(operationsObservations.key, "discovery-progress:%")))),
-    piece('evidence', evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
-      agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims)),
+    !settings || throughputKeys?.length === 0 ? Promise.resolve<ThroughputSnapshot>({ measuredAt: now.toISOString(), stages: [] })
+      : piece('throughput', throughputKeys === null ? pipelineThroughput(settings, now) : pipelineThroughput(settings, now, throughputKeys)),
+    piece('observations', db.select().from(operationsObservations).where(scope.observationRole === null
+      ? and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES, notLike(operationsObservations.key, "discovery-progress:%"))
+      : scopedObservations(scope.observationRole, scope.stageKeys ?? []))),
+    !settings || !EVIDENCE_STAGE_KEYS.some(wants) ? Promise.resolve([])
+      : piece('evidence', evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
+        agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims)),
     // 응답 점검은 split claims 모드에서만 단계로 본다(legacy 는 지금처럼 maintenance 생존·줄로만 본다)
-    piece('uptime-split', readUptimeSplitStage(db)),
-    options.includeText === false ? Promise.resolve([])
-      : piece('text', readTextStageProgress({ reuseReasonOnly: options.reuseTextReasonOnly === true })),
-    piece('publisher-drain', capacity.mode === 'draining' ? readPublisherClassificationDrain() : Promise.resolve(false)),
+    wants('uptime') ? piece('uptime-split', readUptimeSplitStage(db)) : Promise.resolve(null),
+    !scope.includeText ? Promise.resolve([])
+      : piece('text', readTextStageProgress({ reuseReasonOnly: scope.reuseTextReasonOnly })),
+    piece('publisher-drain', capacity.mode === 'draining' && wants('publish') ? readPublisherClassificationDrain() : Promise.resolve(false)),
   ]);
   return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch,
     [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity.mode, publisherDraining, admissionBlocks);
+}
+
+/**
+ * `reuseTextReasonOnly`: 사유 번역 집계를 여기서 다시 세지 않고 담아 둔 값만 쓴다(text-stage-progress.ts) — 호출자가 방금 따로 세었을 때.
+ * 텍스트 두 조각은 실패해도 던지지 않고 그 단계만 `unread`(모름)로 온다. 그래도 overall 은 ok 가 되지 않는다(unknown_age → unknown).
+ */
+export async function readWorkerProgress(now = new Date(), options: { includeText?: boolean; reuseTextReasonOnly?: boolean } = {}) {
+  return readProgressReport(now, { stageKeys: null, observationRole: null,
+    includeText: options.includeText !== false, reuseTextReasonOnly: options.reuseTextReasonOnly === true });
+}
+
+/**
+ * 역할 감독(scripts/role-worker.ts checkRoleProgress)이 단계 판정에 쓰는 제 역할 단계(2026-11-21 추적). 감독은 전체 보고서에서 scheduler 판정과
+ * 제 역할의 단계·줄만 본다(selectUnexplainedStall). 텍스트 단계는 감독이 원래 읽지 않는다(includeText: false — 소개 검수는 reviewer 지만 여기 없다).
+ * maintenance·text 감독은 scheduler 판정 하나만 쓰고 제 정체는 따로 잰다(maintenance-progress.ts·text-progress.ts) — 응답 점검 단계(uptime)도 읽지 않는다.
+ */
+export const ROLE_PROGRESS_STAGES = {
+  crawler: ["fetch", "evidence", "agent-evidence", "ai-level"],
+  reviewer: ["judge", "first", "second"],
+  publisher: ["publish"],
+} as const satisfies Partial<Record<StageProgress["role"], readonly ProgressStageKey[]>>;
+export type RoleProgressStageRole = keyof typeof ROLE_PROGRESS_STAGES;
+
+/** scheduler 판정만 읽었다. 단계·줄·생존 칸은 없다 — 읽지 않은 것이지 0건·정상이 아니다 */
+export type RoleSchedulerProgress = Pick<WorkerProgressReport, "measuredAt" | "scheduler"> & { role: BatchRole };
+/**
+ * 제 역할 몫. `overall` 이 없다 — 다른 역할을 읽지 않았으므로 배포 관문·감시 판정에 쓸 수 없다.
+ * `stageKeys` 밖의 단계와 다른 역할의 생존·줄은 읽지 않았다(없다고 0건·정상이 아니다).
+ */
+export type RoleStageProgress = RoleSchedulerProgress & { role: RoleProgressStageRole; stageKeys: readonly ProgressStageKey[];
+  stages: WorkerProgressStage[]; liveness: WorkerProgressReport["liveness"]; lanes: WorkerLaneProgress[]; activeJobs: string[] };
+export type RoleProgressReport = RoleSchedulerProgress | RoleStageProgress;
+
+/**
+ * 역할 감독의 15초 읽기 — 전체 읽기(readWorkerProgress, includeText: false)에서 그 역할 감독이 쓰는 몫만 읽는다. 같은 DB 상태·같은 `now` 면
+ * scheduler 판정과 제 역할의 생존·단계·줄·도는 잡이 전체 읽기의 것과 같다(같은 판정 함수에 같은 입력).
+ * 읽지 않는 것: 다른 역할 단계의 처리량 CTE, 다른 역할의 관측 줄, 근거 집계(crawler 만 읽는다), 접수 막힘 집계(reviewer 만),
+ * 발행 분류 drain(publisher 만), 응답 점검 장부, 텍스트 단계. control 행은 모든 역할이 읽는다 — 행이 없으면 전체 읽기처럼 던진다.
+ * 읽지 않는 조각의 실패는 이 역할의 판정을 막지 않는다(전체 읽기는 어느 조각이든 실패하면 모든 역할의 판정이 「모름」이었다).
+ */
+export async function readRoleProgress(role: BatchRole, now = new Date()): Promise<RoleProgressReport> {
+  const stageRole = Object.hasOwn(ROLE_PROGRESS_STAGES, role) ? role as RoleProgressStageRole : null;
+  const stageKeys: readonly ProgressStageKey[] = stageRole ? ROLE_PROGRESS_STAGES[stageRole] : [];
+  // 이 보고서의 overall 과 다른 역할의 생존은 읽지 않은 관측으로 만든 값이라 버린다
+  const report = await readProgressReport(now, { stageKeys, observationRole: stageRole ?? "scheduler", includeText: false, reuseTextReasonOnly: false });
+  if (!stageRole) return { measuredAt: report.measuredAt, role, scheduler: report.scheduler };
+  const stages = report.stages.filter(stage => stage.role === stageRole);
+  // 읽기로 한 단계가 빠진 보고서는 「그 단계 정체 없음」으로 읽힌다 — 판정을 내지 않는다
+  if (stages.length !== stageKeys.length || stageKeys.some(key => !stages.some(stage => stage.stage === key))) throw new Error("role_progress_stage_missing");
+  return { measuredAt: report.measuredAt, role: stageRole, scheduler: report.scheduler, stageKeys, stages,
+    liveness: report.liveness.filter(row => row.role === "scheduler" || row.role === stageRole),
+    lanes: (report.lanes ?? []).filter(lane => lane.role === stageRole), activeJobs: report.activeJobs ?? [] };
 }
