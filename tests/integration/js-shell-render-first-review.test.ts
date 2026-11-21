@@ -126,3 +126,27 @@ it("waits without writing when the render server is busy and renders on a later 
   expect(grok).toHaveBeenCalledOnce();
   expect(grok.mock.calls[0][0].snapshot.product.pageText).toBe(RENDERED);
 });
+
+// PR #1020 리뷰 BLOCKER — 짝 없는 서로게이트·NUL 이 든 그린 글이 jsonb 쓰기를 22P02 로 실패시켜 틱 전체가 매 틱 멈췄다. 옆의 정상 후보와 함께 돈다
+it("a rendered page with a lone surrogate and NUL is stored cleanly and does not stall the tick for a healthy neighbour", async () => {
+  const lone = String.fromCharCode(0xd800);
+  await source("daelong/mochipet-rpg", "https://mochi.example", { title: SHELL, textSample: SHELL });
+  await source("acme/normal-app", "https://normal.example", { title: "Normal App",
+    textSample: "Track invoices, send payment reminders, export monthly reports and manage customers for your small shop." });
+  render.mockImplementation(async (url: string) => ok(`${RENDERED} ${lone} 타자 효과\u0000 끝`, `${url}/`));
+  const results = [];
+  for (let ticks = 0; ticks < 3 && grok.mock.calls.length < 2; ticks++) results.push(await tick());
+  expect(results.every(result => result.status === "completed")).toBe(true);
+  expect(render).toHaveBeenCalledOnce();
+  expect(grok).toHaveBeenCalledTimes(2);
+  const reviewed = new Map(grok.mock.calls.map(([input]) => [input.snapshot.product.repo, input.snapshot.product.pageText as string]));
+  expect(reviewed.get("acme/normal-app")).toContain("Track invoices");
+  const shellText = reviewed.get("daelong/mochipet-rpg")!;
+  expect(shellText.isWellFormed()).toBe(true);
+  expect(shellText).not.toContain("\u0000");
+  expect(shellText).toContain("�");
+  const [document] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, "daelong/mochipet-rpg"));
+  expect(document.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ ok: true });
+  expect(await db.select({ repo: crawlCandidates.repo }).from(crawlReviewAttempts)
+    .innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))).toHaveLength(2);
+});

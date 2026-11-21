@@ -866,4 +866,65 @@ describe("JS 앱 껍데기 — 규칙 갈림 뒤에 그린다", () => {
     // 건너뜀 상한은 후보 탓만 센다 — 이 까닭은 세지 않는다
     expect(ctx.save).not.toHaveBeenCalledWith(expect.objectContaining({ firstReviewSkips: expect.anything() }));
   });
+
+  // PR #1020 리뷰 BLOCKER — 그린 기록 쓰기 하나가 실패(22P02 등)해도 틱이 멈추지 않고, 옆 후보는 그대로 심사된다
+  it("그린 기록 쓰기가 실패한 후보는 그리지 않은 것으로 심사하고, 같은 틱의 다른 후보도 심사한다", async () => {
+    const document = await mocks.document();
+    mocks.document.mockImplementation(async (repo: string) => ({ ...document, repo }));
+    mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2, repo: "acme/two" }]);
+    mocks.setRendered.mockImplementation(async (expected: CrawlDocument, rendered: unknown) => {
+      if (expected.repo === "acme/demo") throw Object.assign(new Error("Failed query: update crawl_documents"), { cause: { code: "22P02" } });
+      return { ...expected, pageMeta: { ...expected.pageMeta, renderedPage: rendered } };
+    });
+    const ctx = context();
+    await expect(reviewCrawlCandidates(ctx)).resolves.toBeDefined();
+    expect(mocks.claim.mock.calls.map(([value]) => value.candidate.id).sort()).toEqual([1, 2]);
+    const byRepo = new Map(mocks.review.mock.calls.map(([input]) => [input.snapshot.product.repo, input.snapshot.product]));
+    expect(byRepo.get("acme/demo")).not.toHaveProperty("renderedPage");
+    expect(byRepo.get("acme/two")).toMatchObject({ pageText: RENDERED });
+    expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_shell_render_skipped", expect.objectContaining({ repo: "acme/demo", reason: "record_failed",
+      code: "record_failed_22P02" }));
+  });
+
+  // PR #1020 리뷰 MAJOR — CLI 순위뿐인 40초 틱: 그리기는 모델 시간(틱 끝 − 상한 20초 − 여유) 안으로, 1시간 기다림은 시도 전에 본다
+  it("CLI 40초 틱에서 시간 초과가 이어져도 1시간 뒤에는 그리지 않고 심사한다(0·30·61·62·120분)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const base = Date.now();
+      mocks.render.mockImplementation(async (_url: string, options: { timeoutMs: number }) => {
+        vi.setSystemTime(Date.now() + options.timeoutMs);
+        return { ok: false, kind: "outage", code: "render_timeout" };
+      });
+      const reviewedAt: number[] = [];
+      for (const minute of [0, 30, 61, 62, 120]) {
+        vi.setSystemTime(base + minute * 60_000);
+        const before = mocks.review.mock.calls.length;
+        await reviewCrawlCandidates(context());
+        if (mocks.review.mock.calls.length > before) reviewedAt.push(minute);
+      }
+      expect(mocks.render).toHaveBeenCalledTimes(2);
+      for (const [, options] of mocks.render.mock.calls) expect((options as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(40_000 - 20_000 - 3_000);
+      expect(reviewedAt).toEqual([61, 62, 120]);
+      expect(mocks.claim).toHaveBeenCalledTimes(3);
+      expect(mocks.setRendered).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // PR #1020 리뷰 MINOR — 앞 틱에서 줄에 선 후보는 예약을 쥔 채 그리지 않는다(입력이 바뀌어 pending_hint_mismatch 가 되지 않게)
+  it("앞 틱에서 줄에 선 후보(예약)는 그리지 않고 줄에 설 때의 입력으로 심사한다", async () => {
+    const own = candidate(), document = await mocks.document(own.repo);
+    const reviewer = { provider: "claude-cli" as const, model: "tested-model" };
+    const input = createReviewInput(own, document, mocks.settings!, { scan: null, observations: [] });
+    mocks.pendingList.mockResolvedValue([{ candidate: own, reviewer, state: "reserved",
+      workKey: `ai1:${own.id}:${itemBindingHash(agentReviewBinding(own.id, input, reviewer))}` }]);
+    mocks.list.mockResolvedValue([]);
+    const ctx = context();
+    await reviewCrawlCandidates(ctx);
+    expect(mocks.render).not.toHaveBeenCalled();
+    expect(mocks.claim).toHaveBeenCalledTimes(1);
+    expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_shell_render_skipped", expect.objectContaining({ reason: "pending_reservation" }));
+    expect(ctx.log).not.toHaveBeenCalledWith("crawl.agent_review_skipped", expect.objectContaining({ reason: "pending_hint_mismatch" }));
+  });
 });

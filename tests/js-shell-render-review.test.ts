@@ -49,7 +49,11 @@ import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { pageTextShell, renderedPageFailure, renderedPageSuccess, renderedTextMeaningful, renderStayedOnSite, RENDERED_PAGE_KEY, RENDERED_PAGE_NOTE,
   reviewRenderedPage, shellInputOf, shellRenderState, SHELL_RENDER_ATTEMPTS, SHELL_RENDER_COOLDOWN_MS, SHELL_RENDER_MAX_AGE_MS } from "@/lib/crawl/shell-render";
 import { ensureShellRender, resetShellRenderBackoff, shellRenderBackoff, shellRenderEnabled, SHELL_RENDER_BUSY_PAUSE_MS, SHELL_RENDER_REQUEST_MS,
-  SHELL_RENDER_WAIT_MAX_MS } from "@/lib/crawl/jobs/shell-render-document";
+  SHELL_RENDER_TIMEOUT_STREAK, SHELL_RENDER_WAIT_MAX_MS } from "@/lib/crawl/jobs/shell-render-document";
+import { requestRender } from "@/lib/screen-review/render-client";
+import { jsonbSafeText } from "@/lib/screen-review/protocol";
+import { JobLeaseLostError } from "@/lib/jobs/lease";
+import { TEXT_SAMPLE_LIMIT } from "@/lib/net/normalize";
 import { applyJsShellRequeue, countJsShellRequeue, dryRunJsShellRequeue, JS_SHELL_REQUEUE_ACTION } from "@/lib/crawl/js-shell-requeue";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 import { resolveRuntimeSettings } from "@/lib/operations/runtime-settings-schema";
@@ -189,11 +193,11 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
   });
 
   it("페이지 실패는 10분 뒤 다시 그리고, 두 번이면 수집 본문으로 심사하며, 24시간 뒤 새 바퀴로 다시 그린다", async () => {
-    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "page", code: "page_timeout" }));
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "page", code: "page_navigation_failed" }));
     const first = await ensureShellRender(mochi(), { deadlineAt: deadlineAt(), env: ENV, render });
     expect(first).toMatchObject({ kind: "wait", reason: "render_wait" });
     const stored = await (mocks.setRenderedPage.mock.results[0]!.value as Promise<CrawlDocument>);
-    expect(stored.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ ok: false, code: "page_timeout", attempts: 1 });
+    expect(stored.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ ok: false, code: "page_navigation_failed", attempts: 1 });
     // 기다리는 동안에는 부르지 않는다
     expect(await ensureShellRender(stored, { deadlineAt: deadlineAt(), env: ENV, render })).toMatchObject({ kind: "wait", reason: "render_wait" });
     expect(render).toHaveBeenCalledTimes(1);
@@ -248,10 +252,10 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
     render.mockResolvedValueOnce(ok(MOCHI_RENDERED));
     expect(await ensureShellRender(mochi(), { deadlineAt: back + 60_000, env: ENV, render, now: () => back }))
       .toMatchObject({ kind: "ready", state: { kind: "rendered" } });
-    expect(shellRenderBackoff).toEqual({ failures: 0, retryAt: 0 });
+    expect(shellRenderBackoff).toEqual({ failures: 0, retryAt: 0, timeouts: 0 });
   });
 
-  it("우리 쪽 사정의 기다림은 1시간까지 — 넘으면 지금 원본으로 심사하고, 그 뒤에도 그릴 수 있으면 그린다", async () => {
+  it("우리 쪽 사정의 기다림은 1시간까지 — 넘었으면 그리기를 시도하지 않고 지금 원본으로 심사한다", async () => {
     const render = outage();
     const start = Date.now();
     expect(await ensureShellRender(mochi(), { deadlineAt: start + 60_000, env: ENV, render, now: () => start })).toMatchObject({ kind: "wait" });
@@ -260,17 +264,20 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
     expect(await ensureShellRender(mochi(), { deadlineAt: halfway + 60_000, env: ENV, render, now: () => halfway })).toMatchObject({ kind: "wait" });
     const late = start + SHELL_RENDER_WAIT_MAX_MS;
     shellRenderBackoff.retryAt = 0;
+    render.mockClear();
+    // 상한은 시도 전에 본다 — 시도가 틱을 먹지 않는다(CLI 40초 틱, PR #1020 리뷰 MAJOR)
     const expired = await ensureShellRender(mochi(), { deadlineAt: late + 60_000, env: ENV, render, now: () => late });
-    expect(expired).toMatchObject({ kind: "ready", state: { kind: "due" }, skipped: "wait_expired", code: "render_unreachable" });
+    expect(expired).toMatchObject({ kind: "ready", state: { kind: "due" }, skipped: "wait_expired", code: "wait_limit" });
+    expect(render).not.toHaveBeenCalled();
     if (expired.kind === "ready") expect(buildReviewProduct(candidateOf(expired.document), expired.document, settings, now).pageText).toBe(MOCHI_SHELL);
     expect(mocks.setRenderedPage).not.toHaveBeenCalled();
     // 다른 후보의 기다림은 따로 센다
-    shellRenderBackoff.retryAt = 0;
     expect(await ensureShellRender(bible(), { deadlineAt: late + 60_000, env: ENV, render, now: () => late })).toMatchObject({ kind: "wait" });
-    // 서버가 돌아오면 기다림이 끝난 후보도 그린다
-    shellRenderBackoff.retryAt = 0;
+    // 기다림 칸은 24시간 살아 있다 — 그 뒤에는 새 기다림으로 다시 그린다
     render.mockResolvedValueOnce(ok(MOCHI_RENDERED));
-    expect(await ensureShellRender(mochi(), { deadlineAt: late + 120_000, env: ENV, render, now: () => late + 60_000 }))
+    const nextDay = start + 24 * 3_600_000 + 1;
+    shellRenderBackoff.retryAt = 0;
+    expect(await ensureShellRender(mochi(), { deadlineAt: nextDay + 60_000, env: ENV, render, now: () => nextDay }))
       .toMatchObject({ kind: "ready", state: { kind: "rendered" } });
   });
 
@@ -291,7 +298,7 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
     expect(await ensureShellRender(mochi(), { deadlineAt: Date.now() + 20_000, env: ENV, render }))
       .toMatchObject({ kind: "wait", reason: "render_window", code: "render_timeout_shortened" });
     expect(((render.mock.calls[0] as unknown[])[1] as { timeoutMs: number }).timeoutMs).toBeLessThan(SHELL_RENDER_REQUEST_MS);
-    expect(shellRenderBackoff).toEqual({ failures: 0, retryAt: 0 });
+    expect(shellRenderBackoff).toEqual({ failures: 0, retryAt: 0, timeouts: 0 });
     expect(mocks.setRenderedPage).not.toHaveBeenCalled();
     // 다른 후보는 곧바로 그릴 수 있다
     expect(await ensureShellRender(bible(), { deadlineAt: deadlineAt(), env: ENV, render })).toMatchObject({ kind: "wait", reason: "render_deferred" });
@@ -302,7 +309,7 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
   it("취소(틱 끝·워커 멈춤)는 적지 않고 다음 틱에", async () => {
     const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "busy", code: "render_cancelled" }));
     expect(await ensureShellRender(mochi(), { deadlineAt: deadlineAt(), env: ENV, render })).toMatchObject({ kind: "wait", reason: "render_window" });
-    expect(shellRenderBackoff).toEqual({ failures: 0, retryAt: 0 });
+    expect(shellRenderBackoff).toEqual({ failures: 0, retryAt: 0, timeouts: 0 });
     expect(mocks.setRenderedPage).not.toHaveBeenCalled();
   });
 
@@ -372,6 +379,138 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
   it("감사 화면 판별은 그리기 스위치를 읽지 않는다(끄기가 감사 쪽을 함께 끄지 않는다)", () => {
     const source = readFileSync("lib/screen-review/job.ts", "utf8") + readFileSync("lib/crawl/audit-screen-review.ts", "utf8");
     expect(source).not.toMatch(/shellRender|shell-render-document/);
+  });
+});
+
+const bibleDoc = () => documentOf({ repo: "danielkim614/super-bible-verse-party", url: "https://super-bible-verse-party-614.vercel.app",
+  title: "2026 더드림 성경 암송 파티", text: "2026 더드림 성경 암송 파티" });
+
+/**
+ * PR #1020 리뷰(2026-11-21) 보완 — 그린 글의 jsonb 정리·원본 쓰기 실패가 틱을 멈추지 않음·모델 상한 안으로 줄인 그리기·m1 쪽 실패(브라우저·서버
+ * 시간 초과)를 후보 탓으로 세지 않음·다시 그리기 실패가 좋은 글을 지우지 않음·줄에 선 후보는 그리지 않음
+ */
+describe("PR #1020 리뷰 보완", () => {
+  const deadlineAt = () => Date.now() + 60_000;
+  const LONE = String.fromCharCode(0xd800);
+  const timeoutOf = (render: { mock: { calls: unknown[][] } }, call: number) => (render.mock.calls[call]![1] as { timeoutMs: number }).timeoutMs;
+
+  it("그린 글의 짝 없는 서로게이트·NUL 은 jsonb 에 들어갈 수 있게 걸러 적는다(자른 자리의 서로게이트 포함)", () => {
+    expect(jsonbSafeText(`a ${LONE} b\u0000c 😀`)).toBe("a � bc 😀");
+    const base = mochi();
+    const dirty = `${MOCHI_RENDERED} ${LONE} \u0000끝`;
+    const record = renderedPageSuccess(base, { text: dirty, textLength: dirty.length, finalUrl: `https://mochipet-rpg.vercel.app/${LONE}`, status: 200 },
+      now.getTime());
+    if (!record.ok) throw new Error("expected success");
+    expect(record.text.isWellFormed()).toBe(true);
+    expect(record.text).not.toContain("\u0000");
+    expect(record.finalUrl!.isWellFormed()).toBe(true);
+    expect(JSON.stringify(record)).not.toMatch(/\\ud8|\\u0000/);
+    // 상한에서 자를 때 이모지 짝이 갈려도 남지 않는다
+    const edge = renderedPageSuccess(base, { text: `${"x".repeat(TEXT_SAMPLE_LIMIT - 1)}😀`, textLength: TEXT_SAMPLE_LIMIT + 1, finalUrl: null, status: 200 });
+    if (!edge.ok) throw new Error("expected success");
+    expect(edge.text.isWellFormed()).toBe(true);
+  });
+
+  it("화면 서버 답의 글·주소도 받는 자리에서 거른다(다른 사용처까지)", async () => {
+    const body = '{"ok":true,"protocol":1,"finalUrl":"https://a.example/\\ud800","status":200,"text":"Board \\ud800 tasks\\u0000 done","textLength":22,'
+      + '"screenshot":"/9j/4AAQ","renderMs":5,"egress":{"requests":1,"bytes":1,"blocked":0}}';
+    const result = await requestRender("https://a.example", { config: { baseUrl: "http://100.64.0.9:8791", token: "t".repeat(40) }, timeoutMs: 5_000,
+      request: async () => new Response(body, { status: 200, headers: { "content-type": "application/json" } }) });
+    expect(result).toMatchObject({ ok: true, text: "Board � tasks done", finalUrl: "https://a.example/�" });
+  });
+
+  it("그린 기록 쓰기가 실패하면 그 후보만 그리지 않은 것으로 보고 지금 원본으로 심사한다 — lease 잃음은 던진다", async () => {
+    const render = vi.fn(async () => ok(MOCHI_RENDERED));
+    mocks.setRenderedPage.mockRejectedValueOnce(Object.assign(new Error("Failed query: update crawl_documents …"), { cause: { code: "22P02" } }));
+    const step = await ensureShellRender(mochi(), { deadlineAt: deadlineAt(), env: ENV, render });
+    expect(step).toMatchObject({ kind: "ready", state: { kind: "due" }, skipped: "record_failed", code: "record_failed_22P02" });
+    if (step.kind === "ready") expect(buildReviewProduct(candidateOf(step.document), step.document, settings, now).pageText).toBe(MOCHI_SHELL);
+    mocks.setRenderedPage.mockRejectedValueOnce(new JobLeaseLostError());
+    await expect(ensureShellRender(mochi(), { deadlineAt: deadlineAt(), env: ENV, render })).rejects.toBeInstanceOf(JobLeaseLostError);
+  });
+
+  it("브라우저가 뜨지 않음은 m1 의 일로 보고 물러나며, 후보에 적지 않는다", async () => {
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "page", code: "page_browser_failed" }));
+    expect(await ensureShellRender(mochi(), { deadlineAt: deadlineAt(), env: ENV, render })).toMatchObject({ kind: "wait", reason: "render_deferred",
+      code: "page_browser_failed" });
+    expect(shellRenderBackoff.failures).toBe(1);
+    expect(mocks.setRenderedPage).not.toHaveBeenCalled();
+  });
+
+  it("서버 쪽 시간 초과는 후보 탓으로 세지 않고, 이어지면 과부하로 보고 물러난다", async () => {
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "page", code: "page_timeout" }));
+    const shells = Array.from({ length: SHELL_RENDER_TIMEOUT_STREAK }, (_, n) =>
+      documentOf({ repo: `slow/app-${n}`, url: `https://slow-${n}.example`, title: `Slow ${n}`, text: `Slow ${n}` }));
+    for (const [n, shell] of shells.entries()) {
+      const step = await ensureShellRender(shell, { deadlineAt: deadlineAt(), env: ENV, render });
+      expect(step).toMatchObject({ kind: "wait", reason: "render_deferred", code: "page_timeout" });
+      expect(shellRenderBackoff.failures).toBe(n + 1 < SHELL_RENDER_TIMEOUT_STREAK ? 0 : 1);
+    }
+    expect(mocks.setRenderedPage).not.toHaveBeenCalled();
+    expect(shellRenderBackoff.retryAt).toBeGreaterThan(Date.now());
+  });
+
+  it("그리기는 모델을 부를 시간 안으로 줄이고, 그 안에 시간이 없으면 온전한 상한을 줄 수 있을 때만 그린다", async () => {
+    const render = vi.fn(async () => ok(MOCHI_RENDERED));
+    const at = Date.now();
+    // 108초 틱의 처음: 틱 끝 − 모델 상한(60초) 안에 44초가 남는다 → 44초로
+    await ensureShellRender(mochi(), { deadlineAt: at + 106_000, modelDeadlineAt: at + 44_000, env: ENV, render, now: () => at });
+    expect(timeoutOf(render, 0)).toBe(44_000);
+    // 모델 시간 안에 12초가 안 남지만 틱 끝까지 50초가 남는다 → 온전한 상한(모델은 다음 틱)
+    await ensureShellRender(bibleDoc(), { deadlineAt: at + 70_000, modelDeadlineAt: at + 5_000, env: ENV, render, now: () => at });
+    expect(timeoutOf(render, 1)).toBe(SHELL_RENDER_REQUEST_MS);
+    // 둘 다 안 된다(CLI 40초 틱의 끝) → 그리지 않는다
+    expect(await ensureShellRender(documentOf({ repo: "c/late", url: "https://late.example", title: "Late", text: "Late" }),
+      { deadlineAt: at + 30_000, modelDeadlineAt: at + 8_000, env: ENV, render, now: () => at })).toMatchObject({ kind: "wait", reason: "render_window" });
+    expect(render).toHaveBeenCalledTimes(2);
+  });
+
+  it("줄인 상한에서 시간이 다 된 껍데기는 다음에 온전한 상한을 줄 수 있는 틱에서 그린다(없으면 줄여서라도)", async () => {
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "outage", code: "render_timeout" }));
+    const at = Date.now();
+    expect(await ensureShellRender(mochi(), { deadlineAt: at + 38_000, modelDeadlineAt: at + 17_000, env: ENV, render, now: () => at }))
+      .toMatchObject({ kind: "wait", reason: "render_window", code: "render_timeout_shortened" });
+    expect(timeoutOf(render, 0)).toBe(17_000);
+    // CLI 틱이 또 온다 — 온전한 상한이 없으니 줄여서
+    await ensureShellRender(mochi(), { deadlineAt: at + 38_000, modelDeadlineAt: at + 17_000, env: ENV, render, now: () => at });
+    expect(timeoutOf(render, 1)).toBe(17_000);
+    // 긴 틱이면 온전한 상한으로
+    render.mockResolvedValueOnce(ok(MOCHI_RENDERED));
+    expect(await ensureShellRender(mochi(), { deadlineAt: at + 106_000, modelDeadlineAt: at + 44_000, env: ENV, render, now: () => at }))
+      .toMatchObject({ kind: "ready", state: { kind: "rendered" } });
+    expect(timeoutOf(render, 2)).toBe(SHELL_RENDER_REQUEST_MS);
+    expect(shellRenderBackoff.failures).toBe(0);
+  });
+
+  it("부르는 쪽이 그리지 말라 하면(줄에 선 후보의 예약) 그리지 않는다", async () => {
+    const render = vi.fn(async () => ok(MOCHI_RENDERED));
+    expect(await ensureShellRender(mochi(), { deadlineAt: deadlineAt(), env: ENV, render, skip: "pending_reservation" }))
+      .toMatchObject({ kind: "ready", skipped: "pending_reservation", state: { kind: "due" } });
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it("7일 지나 다시 그리다 실패해도 좋은 글은 새 성공까지 입력에 남는다 — 새로 그린 글이 껍데기면 그때 바뀐다", async () => {
+    const base = mochi();
+    const good = withRender(base, renderedPageSuccess(base, { text: MOCHI_RENDERED, textLength: MOCHI_RENDERED.length,
+      finalUrl: "https://mochipet-rpg.vercel.app/", status: 200 }, now.getTime()));
+    const before = createReviewInput(candidateOf(good), good, settings, { scan: null, observations: [] }, now);
+    const later = now.getTime() + SHELL_RENDER_MAX_AGE_MS + 1;
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "page", code: "page_navigation_failed" }));
+    expect(await ensureShellRender(good, { deadlineAt: later + 60_000, env: ENV, render, now: () => later })).toMatchObject({ kind: "wait", reason: "render_wait" });
+    const once = await (mocks.setRenderedPage.mock.results[0]!.value as Promise<CrawlDocument>);
+    expect(once.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ ok: false, attempts: 1, last: { text: MOCHI_RENDERED } });
+    expect(buildReviewProduct(candidateOf(once), once, settings, now).pageText).toBe(MOCHI_RENDERED);
+    expect(createReviewInput(candidateOf(once), once, settings, { scan: null, observations: [] }, now).inputHash).toBe(before.inputHash);
+    // 두 번째 실패(unavailable)에도 남는다
+    const second = later + 11 * 60_000;
+    const twice = await ensureShellRender(once, { deadlineAt: second + 60_000, env: ENV, render, now: () => second });
+    expect(twice).toMatchObject({ kind: "ready", state: { kind: "unavailable" } });
+    if (twice.kind !== "ready") return;
+    expect(twice.document.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ attempts: SHELL_RENDER_ATTEMPTS, last: { text: MOCHI_RENDERED } });
+    expect(buildReviewProduct(candidateOf(twice.document), twice.document, settings, now).pageText).toBe(MOCHI_RENDERED);
+    // 새로 그린 글이 껍데기면 그 성공이 앞선 글을 대신한다
+    const replaced = withRender(base, renderedPageSuccess(base, { text: "Loading…", textLength: 8, finalUrl: null, status: 200 }, later));
+    expect(buildReviewProduct(candidateOf(replaced), replaced, settings, now).pageText).toBe(MOCHI_SHELL);
   });
 });
 

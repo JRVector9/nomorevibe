@@ -161,9 +161,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     // JS 앱 껍데기(제목·로딩 문구뿐)는 화면 서버로 한 번 그려 그린 글로 심사한다(shell-render.ts). 기다림은 후보 탓이 아니라 세지 않는다 —
     // 페이지 실패가 두 번이거나 우리 쪽 사정(화면 서버 탈·붐빔)으로 1시간을 기다렸으면 지금처럼 수집 본문으로 심사한다.
     // 모델을 부르지 않을 후보(스팸 의심·규칙 거절·이미 등재·근거 보류)는 그리지 않는다 — 같은 규칙 갈림을 그리기 전에 본다(983-A).
-    // 그린 글은 그 갈림에 들어가지 않으므로 아래 prepareAgentReview 가 같은 답을 낸다
+    // 그린 글은 그 갈림에 들어가지 않으므로 아래 prepareAgentReview 가 같은 답을 낸다.
+    // 그리기는 그린 뒤 같은 틱에 모델을 부를 수 있게 「틱 끝 − 가장 짧은 모델 상한 − 여유」 안으로 줄인다(CLI 40초 틱에서 그리기가 틱을 다 먹지 않게,
+    // PR #1020 리뷰 MAJOR). 앞 틱에서 줄에 세운 후보(hint — 예약을 쥐고 있다)는 그리지 않는다: 그리는 사이 예약이 만료되거나 입력이 바뀌어
+    // pending_hint_mismatch 가 되지 않게, 줄에 설 때의 입력 그대로 심사한다
     const unrendered = { document, input: unrenderedInput };
-    const shell = await ensureShellRender(document, { lease, deadlineAt: deadlineAt - 2_000, signal: ctx.signal,
+    const shell = await ensureShellRender(document, { lease, deadlineAt: deadlineAt - 2_000, modelDeadlineAt: deadlineAt - minimumCeiling - 3_000,
+      signal: ctx.signal, ...(hint ? { skip: "pending_reservation" } : {}),
       gate: async () => ruleGateReason(await prepareAgentReviewRules({ candidate, document: unrendered.document, settings, input: unrendered.input })) });
     if (shell.kind === "wait") return skip(candidate, shell.reason, { ...(shell.code ? { code: shell.code } : {}),
       ...(shell.retryAt ? { retryAt: new Date(shell.retryAt).toISOString() } : {}) });

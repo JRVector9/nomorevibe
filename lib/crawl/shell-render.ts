@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { TEXT_SAMPLE_LIMIT } from "@/lib/net/normalize";
+import { jsonbSafeText } from "@/lib/screen-review/protocol";
 import { stubNormalize, stubTextHits, stubWords } from "./rules";
 
 /**
@@ -25,7 +26,8 @@ import { stubNormalize, stubTextHits, stubWords } from "./rules";
  *    끝난 바퀴는 since 에서 SHELL_RENDER_COOLDOWN_MS 가 지나면 새 바퀴로 다시 그린다(due) — 영영 잃지 않되, 후보가 1차·재심사 도구로 다시
  *    올 때만 그리고 하루 한 바퀴를 넘지 않는다.
  *  - 그린 글(성공)은 SHELL_RENDER_MAX_AGE_MS 가 지나면 1차가 쓰기 전에 다시 그린다(due). 심사 입력은 나이를 보지 않는다 — 그 지문의 마지막
- *    성공 기록을 그대로 쓴다(공개분 감사·재판정의 입력이 시계로 흔들리지 않게. 공개분의 얇은 글은 감사 화면 판별이 새로 그려 본다).
+ *    성공을 그대로 쓴다(공개분 감사·재판정의 입력이 시계로 흔들리지 않게. 공개분의 얇은 글은 감사 화면 판별이 새로 그려 본다). 다시 그리기가
+ *    실패해도 앞선 성공은 실패 기록 안(last)에 남아 새 성공까지 입력에 쓰인다 — 새로 그린 글이 껍데기·다른 사이트면 그때 바뀐다.
  *    입력에는 그린 시각을 싣지 않는다 — 다시 그려 글이 같으면 입력 해시도 같다.
  *  - JS 가 다른 사이트로 넘긴 화면(finalUrl 의 호스트가 제품 주소의 호스트·그 하위 도메인이 아님)의 글은 제품의 글로 쓰지 않는다(rendered_offsite).
  */
@@ -111,15 +113,19 @@ export function shellFingerprint(productUrl: string | null, textSample: string |
   return createHash("sha256").update(`${productUrl ?? ""}\n${textSample ?? ""}`).digest("hex").slice(0, 32);
 }
 
-const renderedOkSchema = z.object({
-  version: z.string().max(40), shell: z.string().length(32), at: z.string().max(40), ok: z.literal(true),
-  text: z.string().max(TEXT_SAMPLE_LIMIT), textLength: z.number().int().nonnegative(), finalUrl: z.string().max(2048).nullable(),
+const renderedBodyShape = {
+  at: z.string().max(40), text: z.string().max(TEXT_SAMPLE_LIMIT), textLength: z.number().int().nonnegative(), finalUrl: z.string().max(2048).nullable(),
   status: z.number().int().nullable(),
-}).strict();
-/** 페이지 탓 실패만 적는다 — attempts 는 이 바퀴의 페이지 실패 수, since 는 이 바퀴의 첫 실패 시각(ms) */
+};
+const renderedOkSchema = z.object({ version: z.string().max(40), shell: z.string().length(32), ok: z.literal(true), ...renderedBodyShape }).strict();
+/**
+ * 페이지 탓 실패만 적는다 — attempts 는 이 바퀴의 페이지 실패 수, since 는 이 바퀴의 첫 실패 시각(ms).
+ * last: 같은 지문의 마지막 성공(나이 차 다시 그리다 실패한 경우) — 새로 그리기가 성공할 때까지 입력은 이 글을 쓴다(PR #1020 리뷰 MINOR)
+ */
 const renderedFailSchema = z.object({
   version: z.string().max(40), shell: z.string().length(32), at: z.string().max(40), ok: z.literal(false),
   code: z.string().max(80), attempts: z.number().int().min(1).max(100), retryAfter: z.number().int().nonnegative(), since: z.number().int().nonnegative(),
+  last: z.object(renderedBodyShape).strict().optional(),
 }).strict();
 export const renderedPageSchema = z.discriminatedUnion("ok", [renderedOkSchema, renderedFailSchema]);
 export type RenderedPageMeta = z.infer<typeof renderedPageSchema>;
@@ -170,7 +176,7 @@ export type ShellRenderState =
   | { kind: "unavailable"; code: string; attempts: number; retryAt: number };
 
 /** 성공 기록의 글이 쓸 만한가 — 시각과 무관하다(입력과 상태가 같은 판정을 쓴다) */
-function successKind(input: ShellInput, rendered: Extract<RenderedPageMeta, { ok: true }>): "rendered" | "rendered_empty" | "rendered_offsite" {
+function successKind(input: ShellInput, rendered: { text: string; finalUrl: string | null }): "rendered" | "rendered_empty" | "rendered_offsite" {
   if (!renderedTextMeaningful(input, rendered.text)) return "rendered_empty";
   return renderStayedOnSite(input.productUrl, rendered.finalUrl) ? "rendered" : "rendered_offsite";
 }
@@ -199,34 +205,36 @@ export function shellRenderState(document: DocumentLike, now = Date.now()): Shel
 export type ReviewRenderedPage = { source: "browser_render"; note: string; crawlerPageText: string; finalUrl: string | null };
 
 /**
- * 심사 입력에 쓸 그린 글 — 지금 지문의 마지막 기록이 성공이고, 글이 뜻있고, 제품 사이트에 머문 것만. 아니면 null(수집 본문 그대로).
- * 나이는 보지 않는다(머리 설명 — 다시 그리기는 1차 직전의 일이다)
+ * 심사 입력에 쓸 그린 글 — 지금 지문의 마지막 성공(마지막 기록이 성공이거나, 다시 그리기 실패 기록이 품은 앞선 성공)의 글이 뜻있고 제품 사이트에
+ * 머문 것만. 아니면 null(수집 본문 그대로). 나이는 보지 않는다(머리 설명 — 다시 그리기는 1차 직전의 일이다)
  */
 export function reviewRenderedPage(document: DocumentLike): { pageText: string; renderedPage: ReviewRenderedPage } | null {
   const input = shellInputOf(document);
   if (!document.productUrl || !pageTextShell(input)) return null;
   const rendered = renderedPageOf(document);
-  if (!rendered?.ok || successKind(input, rendered) !== "rendered") return null;
-  return { pageText: rendered.text.slice(0, TEXT_SAMPLE_LIMIT).trim(),
-    renderedPage: { source: "browser_render", note: RENDERED_PAGE_NOTE, crawlerPageText: (input.textSample ?? "").trim(), finalUrl: rendered.finalUrl } };
+  const good = rendered?.ok ? rendered : rendered?.last;
+  if (!good || successKind(input, good) !== "rendered") return null;
+  return { pageText: good.text.slice(0, TEXT_SAMPLE_LIMIT).trim(),
+    renderedPage: { source: "browser_render", note: RENDERED_PAGE_NOTE, crawlerPageText: (input.textSample ?? "").trim(), finalUrl: good.finalUrl } };
 }
 
 /** 렌더 성공 기록 */
 export function renderedPageSuccess(document: DocumentLike, result: { text: string; textLength: number; finalUrl: string | null; status: number | null },
   now = Date.now()): RenderedPageMeta {
   return { version: SHELL_RENDER_VERSION, shell: shellFingerprint(document.productUrl, metaText(document.pageMeta, "textSample")),
-    at: new Date(now).toISOString(), ok: true, text: result.text.slice(0, TEXT_SAMPLE_LIMIT), textLength: result.textLength,
-    finalUrl: result.finalUrl ? result.finalUrl.slice(0, 2048) : null, status: result.status };
+    at: new Date(now).toISOString(), ok: true, text: jsonbSafeText(result.text.slice(0, TEXT_SAMPLE_LIMIT)), textLength: result.textLength,
+    finalUrl: result.finalUrl ? jsonbSafeText(result.finalUrl.slice(0, 2048)) : null, status: result.status };
 }
 
 /**
  * 페이지 탓 렌더 실패 기록 — 이 바퀴가 열려 있으면(앞선 실패가 상한 아래) 횟수에 하나를 더하고 since 를 잇는다. 아니면(첫 실패·앞선 기록이 성공·
- * 끝난 바퀴의 쉼이 지남) 새 바퀴를 연다
+ * 끝난 바퀴의 쉼이 지남) 새 바퀴를 연다. 앞선 성공(또는 앞선 실패가 품은 성공)은 last 로 옮긴다 — 실패가 좋은 글을 지우지 않는다
  */
 export function renderedPageFailure(document: DocumentLike, code: string, now = Date.now()): RenderedPageMeta {
   const prior = renderedPageOf(document);
   const open = prior && !prior.ok && prior.attempts < SHELL_RENDER_ATTEMPTS ? prior : null;
+  const last = prior?.ok ? { at: prior.at, text: prior.text, textLength: prior.textLength, finalUrl: prior.finalUrl, status: prior.status } : prior?.last;
   return { version: SHELL_RENDER_VERSION, shell: shellFingerprint(document.productUrl, metaText(document.pageMeta, "textSample")),
     at: new Date(now).toISOString(), ok: false, code: code.slice(0, 80), attempts: Math.min(100, (open?.attempts ?? 0) + 1),
-    retryAfter: now + SHELL_RENDER_RETRY_MS, since: open?.since ?? now };
+    retryAfter: now + SHELL_RENDER_RETRY_MS, since: open?.since ?? now, ...(last ? { last } : {}) };
 }
