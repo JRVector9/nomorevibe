@@ -25,7 +25,8 @@ const inflightThroughput = new Map<string, Promise<ThroughputSnapshot>>();
  * these rates intentionally do not claim to measure every retry/network call.
  */
 export async function pipelineThroughput(settings: CrawlSettings, now?: Date, only?: readonly ThroughputStageKey[]): Promise<ThroughputSnapshot> {
-  // `only`: 그 단계만 센다(역할 감독의 제 역할 읽기, 2026-11-21). 주지 않으면 다섯 단계 모두 — 문장도 결과도 예전과 같다.
+  // `only`: 그 단계만 센다(역할 감독의 제 역할 읽기, 2026-11-21). 주지 않으면 다섯 단계 모두 — CTE·행 순서·결과가 예전과 같다
+  // (문장 글자는 조금 다르다: UNION 의 모든 갈래가 열 별칭과 NULL::int 를 스스로 단다 — 어느 갈래가 맨 앞에 오든 열 이름·형이 같게).
   // 뺀 단계는 결과에 없다(0건이 아니다). 셀 단계가 없으면 DB 를 부르지 않는다
   const stages = only ? THROUGHPUT_STAGE_KEYS.filter(key => only.includes(key)) : THROUGHPUT_STAGE_KEYS;
   if (stages.length === 0) return { measuredAt: (now ?? new Date()).toISOString(), stages: [] };

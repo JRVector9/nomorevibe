@@ -578,6 +578,7 @@ export type RoleProgressReport = RoleSchedulerProgress | RoleStageProgress;
  * 읽지 않는 것: 다른 역할 단계의 처리량 CTE, 다른 역할의 관측 줄, 근거 집계(crawler 만 읽는다), 접수 막힘 집계(reviewer 만),
  * 발행 분류 drain(publisher 만), 응답 점검 장부, 텍스트 단계. control 행은 모든 역할이 읽는다 — 행이 없으면 전체 읽기처럼 던진다.
  * 읽지 않는 조각의 실패는 이 역할의 판정을 막지 않는다(전체 읽기는 어느 조각이든 실패하면 모든 역할의 판정이 「모름」이었다).
+ * 다만 처리량 조각은 어느 단계만 세든 AI 작업·계약 스냅숏과 발행·1차 술어를 예전처럼 다 읽는다 — 그 읽기가 실패하면 처리량을 읽는 역할은 모두 「모름」이다.
  */
 export async function readRoleProgress(role: BatchRole, now = new Date()): Promise<RoleProgressReport> {
   const stageRole = Object.hasOwn(ROLE_PROGRESS_STAGES, role) ? role as RoleProgressStageRole : null;
