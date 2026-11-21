@@ -1,0 +1,131 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * 제작자 이메일 관리자 화면(0194) — 표는 서버 부품이 그리고, 지우기 단추(브라우저 부품)에는 주소를 넘기지 않는다.
+ * 지우기 동작은 관리자 확인 뒤에만, 주소 꼴의 값은 받지 않으며, 실패 기록에도 주소·해시를 남기지 않는다. 실제 DB 동작은 tests/integration/ai-level-refresh.test.ts.
+ */
+const fake = vi.hoisted(() => ({ admin: vi.fn(), product: vi.fn(), deny: vi.fn(), denyAddress: vi.fn(), record: vi.fn(), button: vi.fn() }));
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/auth/admin", () => ({ currentAdmin: fake.admin }));
+vi.mock("@/lib/domain/products/repository", () => ({ findBySlug: fake.product }));
+vi.mock("@/lib/domain/makers/maintainer-emails-admin", () => ({ denyMaintainerEmail: fake.deny, denyMaintainerEmailAddress: fake.denyAddress,
+  MAINTAINER_EMAIL_DENY_ACTION: "maintainer-email-deny", MAINTAINER_EMAIL_DENY_ADDRESS_ACTION: "maintainer-email-deny-address", MAINTAINER_EMAIL_OPT_OUT_TARGET: "maintainer-emails" }));
+vi.mock("@/lib/operations/admin-log", () => ({ recordAdminAction: fake.record }));
+vi.mock("@/lib/operations/dr/web-gate", () => ({ webWriteAction: (action: unknown) => action }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/app/(operator)/admin/products/[slug]/MaintainerEmailDeny", () => ({
+  MaintainerEmailDeny: (props: Record<string, unknown>) => { fake.button(props); return createElement("button", { type: "button" }, "지우기"); },
+}));
+const { denyMaintainerEmailAction, denyMaintainerEmailAddressAction } = await import("@/app/(operator)/admin/products/[slug]/actions");
+const { MaintainerEmailsPanel } = await import("@/app/(operator)/admin/products/[slug]/MaintainerEmails");
+const { maintainerEmailDenyHash, maskMaintainerEmail } = await import("@/lib/domain/makers/maintainer-emails");
+
+const EMAIL = "kim@fixture.nomorevibe.com";
+const KEY = maintainerEmailDenyHash(EMAIL);
+const form = (values: Record<string, string>) => { const data = new FormData(); for (const [key, value] of Object.entries(values)) data.set(key, value); return data; };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  fake.admin.mockResolvedValue({ login: "operator" });
+  fake.product.mockResolvedValue({ slug: "kim-tool", repoUrl: "https://github.com/kim/tool" });
+  fake.deny.mockResolvedValue({ deletedRows: 2, repositories: 1, alreadyDenied: false });
+  fake.denyAddress.mockResolvedValue({ deletedRows: 3, repositories: 2, alreadyDenied: false });
+});
+
+describe("제작자 이메일 표", () => {
+  it("주소는 서버 부품의 표에만 — 지우기 단추에는 거부 열쇠와 가린 주소만 넘긴다", () => {
+    const at = new Date("2026-11-21T00:00:00Z");
+    const html = renderToStaticMarkup(createElement(MaintainerEmailsPanel, { slug: "kim-tool", view: { repositoryKey: "kim/tool", rows: [
+      { email: EMAIL, name: "Kim", login: "kim", commits: 2, firstSeenAt: at, lastSeenAt: at, denyKey: KEY, masked: maskMaintainerEmail(EMAIL) },
+    ] } }));
+    expect(html).toContain(`<code>${EMAIL}</code>`);
+    expect(html).toContain("제작자 이메일 (관리자 전용·비공개)");
+    expect(fake.button).toHaveBeenCalledTimes(1);
+    const props = fake.button.mock.calls[0][0] as Record<string, unknown>;
+    expect(props).toEqual({ slug: "kim-tool", denyKey: KEY, masked: "k***@fixture.nomorevibe.com" });
+    expect(JSON.stringify(props)).not.toContain(EMAIL);
+  });
+
+  it("못 읽음·저장소 없음·빈 목록을 구분한다", () => {
+    const render = (view: Parameters<typeof MaintainerEmailsPanel>[0]["view"]) => renderToStaticMarkup(createElement(MaintainerEmailsPanel, { slug: "kim-tool", view }));
+    expect(render(null)).toContain("제작자 이메일을 읽지 못했습니다.");
+    expect(render({ repositoryKey: null, rows: [] })).toContain("GitHub 저장소가 없는 프로젝트라 모으지 않습니다.");
+    expect(render({ repositoryKey: "kim/tool", rows: [] })).toContain("모은 주소가 없습니다.");
+  });
+
+  it("「주소로 거부」 입력은 어느 상태에서도 보이고, 값을 미리 채우거나 자동 완성에 남기지 않는다", () => {
+    for (const view of [null, { repositoryKey: null, rows: [] }, { repositoryKey: "kim/tool", rows: [] }]) {
+      const html = renderToStaticMarkup(createElement(MaintainerEmailsPanel, { slug: "kim-tool", view }));
+      const input = html.match(/<input[^>]*name="address"[^>]*>/)?.[0] ?? "";
+      expect(input).toMatch(/autocomplete="off"/i);
+      expect(input).not.toMatch(/\svalue=/);
+      expect(html).toContain("주소로 거부 (본인 요청)");
+    }
+  });
+});
+
+describe("지우고 다시 모으지 않기 동작", () => {
+  it("관리자가 아니면 아무것도 지우지 않는다", async () => {
+    fake.admin.mockResolvedValue(null);
+    expect(await denyMaintainerEmailAction(null, form({ slug: "kim-tool", denyKey: KEY }))).toEqual({ issues: ["권한이 없습니다. 다시 로그인해주세요."] });
+    expect(fake.deny).not.toHaveBeenCalled();
+  });
+
+  it("주소 꼴의 값·깨진 식별자는 받지 않는다 — 양식은 해시만 보낸다", async () => {
+    for (const values of [{ slug: "kim-tool", denyKey: EMAIL }, { slug: "Kim Tool", denyKey: KEY }, { slug: "kim-tool", denyKey: KEY.toUpperCase() }]) {
+      expect(await denyMaintainerEmailAction(null, form(values))).toEqual({ issues: ["지울 주소를 확인해주세요."] });
+    }
+    expect(fake.deny).not.toHaveBeenCalled();
+  });
+
+  it("저장소는 양식이 아니라 제품의 repo_url 로 정하고 지운다", async () => {
+    expect(await denyMaintainerEmailAction(null, form({ slug: "kim-tool", denyKey: KEY, repoUrl: "https://github.com/other/repo" })))
+      .toEqual({ ok: true, deletedRows: 2 });
+    expect(fake.deny).toHaveBeenCalledWith({ slug: "kim-tool", repoUrl: "https://github.com/kim/tool", denyKey: KEY, actor: "operator" });
+    fake.product.mockResolvedValue(undefined);
+    expect(await denyMaintainerEmailAction(null, form({ slug: "gone", denyKey: KEY }))).toEqual({ issues: ["제품을 찾을 수 없습니다."] });
+  });
+
+  it("실패하면 실패 기록을 남기되 주소·해시·SQL 은 남기지 않는다(DB 까닭 코드만)", async () => {
+    fake.deny.mockRejectedValue(Object.assign(new Error(`Failed query: delete from "repository_maintainer_emails" where "email" = $1 params: ${EMAIL}`),
+      { cause: Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }) }));
+    expect(await denyMaintainerEmailAction(null, form({ slug: "kim-tool", denyKey: KEY }))).toEqual({ issues: ["주소를 지우지 못했습니다. 잠시 후 다시 시도해주세요."] });
+    expect(fake.record).toHaveBeenCalledWith("operator", { action: "maintainer-email-deny", target: "kim-tool", ok: false, error: "55P03" });
+    expect(JSON.stringify(fake.record.mock.calls)).not.toContain(EMAIL);
+    expect(JSON.stringify(fake.record.mock.calls)).not.toContain(KEY);
+  });
+});
+
+describe("주소로 거부 동작(본인 요청)", () => {
+  it("관리자가 아니면 아무것도 하지 않는다", async () => {
+    fake.admin.mockResolvedValue(null);
+    expect(await denyMaintainerEmailAddressAction(null, form({ address: EMAIL }))).toEqual({ issues: ["권한이 없습니다. 다시 로그인해주세요."] });
+    expect(fake.denyAddress).not.toHaveBeenCalled();
+  });
+
+  it("주소 꼴이 아니면 받지 않는다", async () => {
+    for (const address of ["", "kim", "@fixture.nomorevibe.com", "kim@", "a@b@fixture.nomorevibe.com", "kim @fixture.nomorevibe.com", `${"a".repeat(250)}@fixture.nomorevibe.com`]) {
+      expect(await denyMaintainerEmailAddressAction(null, form({ address })), address).toEqual({ issues: ["주소 꼴을 확인해주세요(앞뒤 공백 없이, @ 하나)."] });
+    }
+    expect(fake.denyAddress).not.toHaveBeenCalled();
+  });
+
+  it("정규화한 주소를 서버 쪽 거부로 넘기고, 응답에는 수만 — 주소를 돌려주지 않는다", async () => {
+    const state = await denyMaintainerEmailAddressAction(null, form({ address: "  Kim@Fixture.NoMoreVibe.com " }));
+    expect(state).toEqual({ ok: true, deletedRows: 3, alreadyDenied: false });
+    expect(fake.denyAddress).toHaveBeenCalledWith({ address: EMAIL, actor: "operator" });
+    expect(JSON.stringify(state)).not.toMatch(/fixture\.nomorevibe\.com/i);
+  });
+
+  it("실패하면 실패 기록을 남기되 주소·해시는 남기지 않는다(DB 까닭 코드만, 고정 대상)", async () => {
+    fake.denyAddress.mockRejectedValue(Object.assign(new Error(`Failed query: insert … params: ${KEY}`),
+      { cause: Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }) }));
+    const state = await denyMaintainerEmailAddressAction(null, form({ address: EMAIL }));
+    expect(state).toEqual({ issues: ["거부 목록에 넣지 못했습니다. 잠시 후 다시 시도해주세요."] });
+    expect(fake.record).toHaveBeenCalledWith("operator", { action: "maintainer-email-deny-address", target: "maintainer-emails", ok: false, error: "55P03" });
+    expect(JSON.stringify([fake.record.mock.calls, state])).not.toMatch(new RegExp(`fixture\\.nomorevibe\\.com|${KEY}`, "i"));
+  });
+});

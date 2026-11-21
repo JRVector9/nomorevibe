@@ -3,13 +3,22 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, products, repositoryAiLevels } from "@/lib/db/schema";
+import { maintainerEmailDenials, repositoryMaintainerEmails } from "@/lib/db/maintainer-email-schema";
 import type { githubGraphql, githubRequest } from "@/lib/crawl/github";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { getRepositoryAiLevel, storedAiLevel } from "@/lib/domain/evidence/ai-level-store";
+import {
+  denyMaintainerEmail, denyMaintainerEmailAddress, MAINTAINER_EMAIL_DENY_ACTION, MAINTAINER_EMAIL_DENY_ADDRESS_ACTION, maintainerEmailsForRepoUrl,
+} from "@/lib/domain/makers/maintainer-emails-admin";
+import { MAINTAINER_EMAIL_LOCK, maintainerEmailDenyHash } from "@/lib/domain/makers/maintainer-emails";
 import { update } from "@/lib/domain/products/repository";
 import { dueRepositories, refreshAiLevelsJob, type AiLevelCursor } from "@/lib/jobs/products/ai-level-refresh";
 import type { JobContext } from "@/lib/jobs/runner";
-import { ensureSchema, resetTables } from "./setup";
+import { hideBindValuesInStatementLog } from "@/lib/db/statement-log-guard";
+import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
+
+// 관리자 전용 읽기 모듈(maintainer-emails-admin.ts)은 server-only 다 — Next 밖에서는 빈 모듈로
+vi.mock("server-only", () => ({}));
 
 /** AI 제작 근거 단계 잡(ai-level-refresh) — 차례, 단계마다의 판정, 제품에 옮겨 적기, 실패를 가두기(GitHub 은 가짜) */
 
@@ -17,6 +26,9 @@ beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await resetTables();
   await db.delete(crawlCandidates);
+  // 공용 resetTables(setup.ts)에 넣지 않는다 — 모든 통합 파일이 부르는 파일이라 CI 증분 tsc 가 통째로 다시 검사한다
+  await db.delete(repositoryMaintainerEmails);
+  await db.delete(maintainerEmailDenials);
 });
 
 const SHA = (n: number) => n.toString(16).padStart(40, "0");
@@ -33,6 +45,9 @@ type Fixture = {
   restCommits?: Record<string, { message: string; authorName?: string; authorEmail?: string; authorLogin?: string | null }>;
   missing?: boolean;
   fail?: boolean;
+  isFork?: boolean;
+  /** 응답의 지금 주인 owner { __typename login } — 없으면 물은 키의 owner(개인 계정), null 이면 응답에 주인이 없다 */
+  owner?: { login: string; type: string } | null;
 };
 
 function fakeGithub(fixtures: Record<string, Fixture>) {
@@ -64,7 +79,8 @@ function fakeGithub(fixtures: Record<string, Fixture>) {
         data[alias] = node;
       } else {
         data[alias] = {
-          isFork: false,
+          isFork: fixture.isFork ?? false,
+          owner: fixture.owner === null ? null : { __typename: fixture.owner?.type ?? "User", login: fixture.owner?.login ?? key.split("/")[0] },
           defaultBranchRef: { name: "main", target: { oid: SHA(999), history: { nodes: (fixture.commits ?? []).map((commit) => ({
             oid: commit.sha, message: commit.message, parents: { totalCount: 1 },
             author: { name: commit.authorName ?? "Kim", email: commit.authorEmail ?? "kim@example.com", user: commit.authorLogin === null ? null : { login: commit.authorLogin ?? "kim" } },
@@ -306,4 +322,278 @@ it("GitHub 한도에 걸리면 아무것도 적지 않고 풀릴 때까지 쉰�
   // 쉬는 동안은 부르지도 않는다
   await refreshAiLevelsJob(context(outcome.cursor!), { graphql });
   expect(graphql).toHaveBeenCalledTimes(1);
+});
+
+// ───────────────────────── 제작자 이메일(관리자 전용, 0194) ─────────────────────────
+// 주소는 운영자가 가진 도메인의 시험용 하위 도메인(*.fixture.nomorevibe.com, 받는 곳 없음)이다 — 남의 실제 주소가 아니다.
+// 예약 도메인(example.*)은 코드가 버린다 — 위 고정값의 기본 주소(kim@example.com)는 남지 않는다
+
+/** 저장소 키·주소 차례(JS 비교 — DB 정렬 규칙에 기대지 않는다) */
+const byKey = <T extends { repositoryKey: string; email: string }>(rows: T[]) => [...rows].sort((a, b) =>
+  a.repositoryKey < b.repositoryKey ? -1 : a.repositoryKey > b.repositoryKey ? 1 : a.email < b.email ? -1 : a.email > b.email ? 1 : 0);
+const emailRows = async () => byKey(await db.select().from(repositoryMaintainerEmails))
+  .map(({ repositoryKey, email, authorName, authorLogin, commitCount }) => ({ repositoryKey, email, authorName, authorLogin, commitCount }));
+const pairs = async () => (await emailRows()).map((row) => `${row.repositoryKey} ${row.email}`);
+const emailLog = (ctx: JobContext<AiLevelCursor>) => vi.mocked(ctx.log).mock.calls.find(([event]) => event === "ai_level.maintainer_emails")?.[1];
+const ZERO = { repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0, notPublic: 0, organization: 0, ownerUnknown: 0, fork: 0, noOwnerCommit: 0, noAddress: 0 };
+const F = (local: string) => `${local}@fixture.nomorevibe.com`;
+const old = (key: string, email: string, login: string) => db.insert(repositoryMaintainerEmails).values({ repositoryKey: key, email, authorName: "Old",
+  authorLogin: login, commitCount: 1, firstSeenAt: new Date("2026-06-01T00:00:00Z"), lastSeenAt: new Date("2026-06-01T00:00:00Z") });
+
+it("제작자 이메일: 공개 제품 저장소에서 지금 주인(개인 계정) 로그인이 쓴 커밋의 사람 주소만 — 다른 기여자·조직·포크·주인 모름·후보만 있는 저장소는 모으지 않고 까닭만 센다", async () => {
+  const base = { message: "fix: x" };
+  const fixtures: Record<string, Fixture> = {
+    // 개인 계정 저장소: 주인 kim 의 주소만. 다른 기여자(lee)·계정에 안 이어진 커밋·비공개 주소·봇·AI 도구는 뺀다
+    "kim/tool": { commits: [
+      { sha: SHA(1), ...base, authorName: "Kim", authorEmail: "Kim@Fixture.NoMoreVibe.com", authorLogin: "Kim" },
+      { sha: SHA(2), ...base, authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" },
+      { sha: SHA(3), ...base, authorName: "Kim", authorEmail: "kim.work@kr.fixture.nomorevibe.com", authorLogin: "kim" },
+      { sha: SHA(4), ...base, authorName: "Lee", authorEmail: F("lee"), authorLogin: "lee" },
+      { sha: SHA(5), ...base, authorName: "Kim", authorEmail: F("kim.unlinked"), authorLogin: null },
+      { sha: SHA(6), ...base, authorName: "Kim", authorEmail: "1+kim@users.noreply.github.com", authorLogin: "kim" },
+      { sha: SHA(7), ...base, authorName: "Cursor Agent", authorEmail: "cursoragent@cursor.com", authorLogin: "cursoragent" },
+      { sha: SHA(8), ...base, authorName: "dependabot[bot]", authorEmail: "49699333+dependabot[bot]@users.noreply.github.com", authorLogin: null },
+    ] },
+    // 공개 제품이 없는 후보 저장소(2026-11-21 소유자 결정: 공개 제품만) — 제작자 커밋이 있어도 모으지 않는다
+    "park/app": { owner: { login: "Park", type: "User" }, commits: [{ sha: SHA(9), ...base, authorName: "Park", authorEmail: F("park"), authorLogin: "Park" }] },
+    // 조직 저장소: 지금 주인이 조직이면 커밋을 보지 않는다
+    "acme/org-tool": { owner: { login: "acme", type: "Organization" }, commits: [{ sha: SHA(10), ...base, authorName: "Acme", authorEmail: F("team"), authorLogin: "acme" }] },
+    // 응답에 주인이 없으면 아무것도 모으지 않는다
+    "kim/no-owner": { owner: null, commits: [{ sha: SHA(11), ...base, authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" }] },
+    "kim/forked": { isFork: true, commits: [{ sha: SHA(12), ...base, authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" }] },
+  };
+  await product("https://github.com/kim/tool");
+  await product("https://github.com/acme/org-tool");
+  await product("https://github.com/kim/no-owner");
+  await product("https://github.com/kim/forked");
+  await db.insert(crawlCandidates).values({ repo: "Park/App", state: "new" });
+  const ctx = context();
+  await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  expect(await emailRows()).toEqual([
+    { repositoryKey: "kim/tool", email: "kim.work@kr.fixture.nomorevibe.com", authorName: "Kim", authorLogin: "kim", commitCount: 1 },
+    { repositoryKey: "kim/tool", email: F("kim"), authorName: "Kim", authorLogin: "Kim", commitCount: 2 },
+  ]);
+  // 까닭별 수 — 주소는 로그에 없다. 시험 DB 역할은 superuser 라 bind 값 숨기기가 켜진다(unguarded 0)
+  expect(emailLog(ctx)).toEqual({ ...ZERO, repositories: 1, saved: 2, notPublic: 1, organization: 1, ownerUnknown: 1, fork: 1 });
+  expect(JSON.stringify(vi.mocked(ctx.log).mock.calls)).not.toMatch(/fixture\.nomorevibe\.com/i);
+
+  // 관리자 화면이 읽는 모양 — 저장소 주소를 어떻게 적어도 같은 키. 지우기 양식에는 주소 대신 해시와 가린 주소
+  const view = await maintainerEmailsForRepoUrl("https://github.com/Kim/Tool/");
+  expect(view.repositoryKey).toBe("kim/tool");
+  expect(view.rows.map(({ email, commits, denyKey, masked }) => ({ email, commits, denyKey, masked }))).toEqual([
+    { email: F("kim"), commits: 2, denyKey: maintainerEmailDenyHash(F("kim")), masked: "k***@fixture.nomorevibe.com" },
+    { email: "kim.work@kr.fixture.nomorevibe.com", commits: 1, denyKey: maintainerEmailDenyHash("kim.work@kr.fixture.nomorevibe.com"), masked: "k***@kr.fixture.nomorevibe.com" },
+  ]);
+  expect(await maintainerEmailsForRepoUrl("https://gitlab.com/kim/tool")).toEqual({ repositoryKey: null, rows: [] });
+
+  // 다시 볼 때: 이번 창에 없는 예전 주소는 남기고(1년 보관 정리가 지운다), 이번에 본 주소는 커밋 수·마지막 확인을 고친다(처음 확인은 그대로)
+  const first = (await db.select().from(repositoryMaintainerEmails).where(eq(repositoryMaintainerEmails.email, F("kim"))))[0];
+  await db.update(repositoryAiLevels).set({ nextCheckAt: new Date(Date.now() - 60_000) });
+  fixtures["kim/tool"].commits = [{ sha: SHA(13), ...base, authorName: "", authorEmail: F("kim"), authorLogin: "kim" }];
+  await refreshAiLevelsJob(context(), fakeGithub(fixtures));
+  const after = byKey(await db.select().from(repositoryMaintainerEmails).where(eq(repositoryMaintainerEmails.repositoryKey, "kim/tool")));
+  expect(after.map(({ email, authorName, commitCount }) => ({ email, authorName, commitCount }))).toEqual([
+    { email: "kim.work@kr.fixture.nomorevibe.com", authorName: "Kim", commitCount: 1 },
+    { email: F("kim"), authorName: "Kim", commitCount: 1 },
+  ]);
+  const kim = after.find((item) => item.email === F("kim"))!;
+  expect(kim.firstSeenAt.getTime()).toBe(first.firstSeenAt.getTime());
+  expect(kim.lastSeenAt.getTime()).toBeGreaterThan(first.lastSeenAt.getTime());
+  // 판정(repository_ai_levels.evidence)에는 주소가 섞이지 않는다
+  const levels = await db.select({ evidence: repositoryAiLevels.evidence }).from(repositoryAiLevels);
+  expect(JSON.stringify(levels)).not.toMatch(/fixture\.nomorevibe\.com/i);
+});
+
+it("공개 제품(seeded·verified)의 저장소만 — 검증 대기 제품·후보만 있는 저장소는 모으지 않고, 그 키에 남은 행도 지운다", async () => {
+  const commit = (n: number) => ({ sha: SHA(n), message: "fix: x", authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" });
+  const fixtures: Record<string, Fixture> = { "kim/listed": { commits: [commit(1)] }, "kim/verified": { commits: [commit(2)] },
+    "kim/pending": { commits: [commit(3)] }, "kim/candidate": { commits: [commit(4)] } };
+  await product("https://github.com/kim/listed");
+  await product("https://github.com/kim/verified", { status: "verified" });
+  // 검증 대기(unverified)는 공개 목록에 없다 — 후보와 함께 수집 대상(차례)에는 들지만 주소는 남기지 않는다
+  await product("https://github.com/kim/pending", { status: "unverified" });
+  await db.insert(crawlCandidates).values([{ repo: "kim/pending", state: "new" }, { repo: "kim/candidate", state: "new" }]);
+  // 예전에 남은 행(공개였다가 내려간 뒤 다시 후보가 된 저장소 등)은 그 자리에서 지운다
+  await old("kim/candidate", F("kim.before"), "kim");
+  const ctx = context();
+  await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  expect(await pairs()).toEqual([`kim/listed ${F("kim")}`, `kim/verified ${F("kim")}`]);
+  expect(emailLog(ctx)).toEqual({ ...ZERO, repositories: 2, saved: 2, notPublic: 2, removed: 1 });
+});
+
+it("옮겨 가거나 이름이 바뀐 저장소: 저장된 키가 아니라 응답의 지금 주인으로 맞추고, 지금 주인이 아닌 계정의 행은 지운다", async () => {
+  const base = { message: "fix: x" };
+  const kimCommit = (n: number) => ({ sha: SHA(n), ...base, authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" });
+  const fixtures: Record<string, Fixture> = {
+    // 조직으로 옮겨 감: 키는 kim/… 이지만 지금 주인은 조직 acme — kim 의 커밋이 있어도 모으지 않고, 전에 모은 kim 의 행도 지운다
+    "kim/to-org": { owner: { login: "acme", type: "Organization" }, commits: [kimCommit(1)] },
+    // 다른 사람에게 옮겨 감: 지금 주인 lee 의 주소만 모으고, 옛 주인 kim 의 행은 지운다
+    "kim/to-lee": { owner: { login: "lee", type: "User" }, commits: [kimCommit(2), { sha: SHA(3), ...base, authorName: "Lee", authorEmail: F("lee"), authorLogin: "lee" }] },
+    // 이름만 바뀜(kim/old-name → kim/new-name): 주인이 같아 그대로 모은다 — 키는 물은 이름 그대로
+    "kim/old-name": { owner: { login: "kim", type: "User" }, commits: [kimCommit(4)] },
+    // 응답에 주인이 없음: 모으지도 지우지도 않는다
+    "kim/no-owner": { owner: null, commits: [kimCommit(5)] },
+  };
+  for (const key of Object.keys(fixtures)) await product(`https://github.com/${key}`);
+  for (const key of ["kim/to-org", "kim/to-lee", "kim/no-owner"]) await old(key, F("kim.before"), "kim");
+  const ctx = context();
+  await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  expect(await pairs()).toEqual([`kim/no-owner ${F("kim.before")}`, `kim/old-name ${F("kim")}`, `kim/to-lee ${F("lee")}`]);
+  expect(emailLog(ctx)).toEqual({ ...ZERO, repositories: 2, saved: 2, removed: 2, organization: 1, ownerUnknown: 1 });
+});
+
+it("제작자 이메일 지우기: 해시로 표 전체에서 바로 지우고 거부 목록(해시)에 넣는다 — 다음 수집에서 다시 모으지 않고, 작업 로그에는 주소·해시가 없다", async () => {
+  const base = { message: "fix: x" };
+  const fixtures: Record<string, Fixture> = {
+    "kim/tool": { commits: [{ sha: SHA(1), ...base, authorEmail: F("kim"), authorLogin: "kim" }, { sha: SHA(2), ...base, authorEmail: "kim.work@kr.fixture.nomorevibe.com", authorLogin: "kim" }] },
+    "kim/other": { commits: [{ sha: SHA(3), ...base, authorEmail: F("kim"), authorLogin: "kim" }] },
+  };
+  const tool = await product("https://github.com/kim/tool");
+  await product("https://github.com/kim/other");
+  await refreshAiLevelsJob(context(), fakeGithub(fixtures));
+  expect(await pairs()).toEqual([`kim/other ${F("kim")}`, "kim/tool kim.work@kr.fixture.nomorevibe.com", `kim/tool ${F("kim")}`]);
+
+  const floor = await auditFloor();
+  const denyKey = maintainerEmailDenyHash(F("kim"));
+  expect(await denyMaintainerEmail({ slug: tool.slug, repoUrl: tool.repoUrl, denyKey, actor: "operator" })).toEqual({ deletedRows: 2, repositories: 2, alreadyDenied: false });
+  expect(await pairs()).toEqual(["kim/tool kim.work@kr.fixture.nomorevibe.com"]);
+  expect(await db.select({ hash: maintainerEmailDenials.emailHash }).from(maintainerEmailDenials)).toEqual([{ hash: denyKey }]);
+  const audit = await auditRowsAfter(floor, MAINTAINER_EMAIL_DENY_ACTION);
+  expect(audit.map(({ target, ok, detail }) => ({ target, ok, detail }))).toEqual([{ target: tool.slug, ok: true,
+    detail: { repositoryKey: "kim/tool", deletedRows: 2, repositories: 2, alreadyDenied: false } }]);
+  expect(JSON.stringify(audit)).not.toContain("fixture.nomorevibe.com");
+  expect(JSON.stringify(audit)).not.toContain(denyKey);
+  // 거부 목록에 있는 주소는 다시 모으지 않는다(다른 저장소에서 보여도) — 수에는 denied 로 남는다
+  await db.update(repositoryAiLevels).set({ nextCheckAt: new Date(Date.now() - 60_000) });
+  const ctx = context();
+  await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  expect(await pairs()).toEqual(["kim/tool kim.work@kr.fixture.nomorevibe.com"]);
+  expect(emailLog(ctx)).toMatchObject({ repositories: 1, saved: 1, denied: 2 });
+  // 같은 해시를 다시 보내도(두 번 누름) 지울 것이 없고 거부 목록도 하나
+  expect(await denyMaintainerEmail({ slug: tool.slug, repoUrl: tool.repoUrl, denyKey, actor: "operator" })).toEqual({ deletedRows: 0, repositories: 0, alreadyDenied: true });
+  expect(await db.select().from(maintainerEmailDenials)).toHaveLength(1);
+  await expect(denyMaintainerEmail({ slug: tool.slug, repoUrl: tool.repoUrl, denyKey: F("kim"), actor: "operator" })).rejects.toThrow("maintainer_email_deny_key_invalid");
+});
+
+it("제작자 이메일 지우기: 그 제품 저장소에 행이 없어도(화면을 그린 뒤 사라짐·저장소 주소가 바뀜) 다른 저장소의 같은 주소를 지운다 — 다른 주소는 그대로", async () => {
+  const tool = await product("https://github.com/kim/tool");
+  await old("kim/other", F("kim"), "kim");
+  await old("kim/other", F("kim.second"), "kim");
+  await old("lee/app", F("kim"), "lee");
+  expect(await denyMaintainerEmail({ slug: tool.slug, repoUrl: tool.repoUrl, denyKey: maintainerEmailDenyHash(F("kim")), actor: "operator" }))
+    .toEqual({ deletedRows: 2, repositories: 2, alreadyDenied: false });
+  expect(await pairs()).toEqual([`kim/other ${F("kim.second")}`]);
+});
+
+it("주소로 거부(본인 요청): 서버가 해시만 계산해 거부 목록에 넣고 표 전체에서 지운다 — 작업 로그·로그에 주소·해시가 없고, 다시 모으지 않는다", async () => {
+  const fixtures: Record<string, Fixture> = { "kim/tool": { commits: [{ sha: SHA(1), message: "fix", authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" }] } };
+  await product("https://github.com/kim/tool");
+  await old("kim/other", F("kim"), "kim");
+  await old("lee/app", F("kim"), "lee");
+  await old("lee/app", F("lee"), "lee");
+  const floor = await auditFloor();
+  // 관리자가 적은 꼴 그대로(대소문자·공백) — 정규화해 같은 해시
+  expect(await denyMaintainerEmailAddress({ address: "  KIM@Fixture.NoMoreVibe.com ", actor: "operator" })).toEqual({ deletedRows: 2, repositories: 2, alreadyDenied: false });
+  expect(await pairs()).toEqual([`lee/app ${F("lee")}`]);
+  expect(await db.select({ hash: maintainerEmailDenials.emailHash }).from(maintainerEmailDenials)).toEqual([{ hash: maintainerEmailDenyHash(F("kim")) }]);
+  const audit = await auditRowsAfter(floor, MAINTAINER_EMAIL_DENY_ADDRESS_ACTION);
+  expect(audit.map(({ target, ok, detail }) => ({ target, ok, detail }))).toEqual([{ target: "maintainer-emails", ok: true,
+    detail: { deletedRows: 2, repositories: 2, alreadyDenied: false } }]);
+  expect(JSON.stringify(await auditRowsAfter(floor))).not.toMatch(new RegExp(`fixture\\.nomorevibe\\.com|${maintainerEmailDenyHash(F("kim"))}`, "i"));
+  // 다시 모으지 않는다 — 공개 제품의 제작자 커밋에 그 주소가 있어도
+  const ctx = context();
+  await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  expect(await pairs()).toEqual([`lee/app ${F("lee")}`]);
+  expect(emailLog(ctx)).toMatchObject({ saved: 0, denied: 1 });
+  // 아직 모으지 않은 주소도 미리 거부해 둘 수 있다(지울 행 없음) · 주소 꼴이 아니면 거절(오류 글에 주소 없음)
+  expect(await denyMaintainerEmailAddress({ address: F("someone"), actor: "operator" })).toEqual({ deletedRows: 0, repositories: 0, alreadyDenied: false });
+  await expect(denyMaintainerEmailAddress({ address: "not-an-address", actor: "operator" })).rejects.toThrow(/^maintainer_email_address_invalid$/);
+});
+
+it("제작자 이메일 지우기는 진행 중인 수집 쓰기를 기다린 뒤 지운다 — 거부 전에 목록을 읽은 쓰기가 주소를 되살리지 못한다", async () => {
+  const tool = await product("https://github.com/kim/tool");
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let locked!: () => void;
+  const lockedNow = new Promise<void>((resolve) => { locked = resolve; });
+  // 수집 쓰기 흉내: 공유 잠금을 잡고(거부 목록은 비어 있다고 읽은 뒤) 조금 있다 주소를 쓴다
+  const writer = db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock_shared(hashtext(${MAINTAINER_EMAIL_LOCK}))`);
+    locked();
+    await held;
+    await tx.insert(repositoryMaintainerEmails).values({ repositoryKey: "kim/tool", email: F("kim"), commitCount: 1 });
+  });
+  await lockedNow;
+  let denied = false;
+  const deny = denyMaintainerEmail({ slug: tool.slug, repoUrl: tool.repoUrl, denyKey: maintainerEmailDenyHash(F("kim")), actor: "operator" })
+    .then((result) => { denied = true; return result; });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(denied).toBe(false);
+  release();
+  await writer;
+  expect(await deny).toEqual({ deletedRows: 1, repositories: 1, alreadyDenied: false });
+  expect(await emailRows()).toEqual([]);
+});
+
+it("수집 쓰기는 거부 목록을 읽기 전에 공유 잠금을 잡는다 — 진행 중인 거부가 commit 될 때까지 기다렸다가 거부 목록을 보고 쓰지 않는다", async () => {
+  await product("https://github.com/kim/tool");
+  const fixtures: Record<string, Fixture> = { "kim/tool": { commits: [{ sha: SHA(1), message: "fix", authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" }] } };
+  let commitDeny!: () => void;
+  const denyHeld = new Promise<void>((resolve) => { commitDeny = resolve; });
+  let locked!: () => void;
+  const lockedNow = new Promise<void>((resolve) => { locked = resolve; });
+  // 관리자 거부 흉내: 배타 잠금을 잡고 해시를 넣은 채 아직 commit 하지 않는다
+  const deny = db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${MAINTAINER_EMAIL_LOCK}))`);
+    await tx.insert(maintainerEmailDenials).values({ emailHash: maintainerEmailDenyHash(F("kim")) });
+    locked();
+    await denyHeld;
+  });
+  await lockedNow;
+  const ctx = context();
+  let finished = false;
+  const job = refreshAiLevelsJob(ctx, fakeGithub(fixtures)).then((outcome) => { finished = true; return outcome; });
+  // 잠금이 없으면 이 사이에 수집이 (아직 비어 보이는) 거부 목록을 읽고 주소를 써 버린다
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(finished).toBe(false);
+  commitDeny();
+  await deny;
+  await job;
+  expect(await emailRows()).toEqual([]);
+  expect(emailLog(ctx)).toMatchObject({ saved: 0, denied: 1 });
+});
+
+it("제작자 이메일 기록이 실패해도(표가 없어도) 단계 판정은 적는다 — 로그에는 주소 없이 개수·코드만", async () => {
+  const product1 = await product("https://github.com/kim/no-table");
+  const fixtures: Record<string, Fixture> = { "kim/no-table": { commits: [{ sha: SHA(1), message: "fix", authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" }],
+    root: [{ name: ".windsurfrules", type: "blob" }] } };
+  await db.execute(sql`ALTER TABLE repository_maintainer_emails RENAME TO repository_maintainer_emails_hidden`);
+  const ctx = context();
+  try {
+    await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  } finally {
+    await db.execute(sql`ALTER TABLE repository_maintainer_emails_hidden RENAME TO repository_maintainer_emails`);
+  }
+  expect(await levelOf(product1.id)).toBe(3);
+  expect(ctx.log).toHaveBeenCalledWith("ai_level.maintainer_emails_failed", { repositories: 1, code: "42P01" });
+  // 기록이 실패한 묶음은 saved 에 넣지 않는다(셀 것이 없으면 수집 결과 줄도 남기지 않는다)
+  expect(emailLog(ctx)).toBeUndefined();
+  expect(JSON.stringify(vi.mocked(ctx.log).mock.calls)).not.toContain(F("kim"));
+  expect(await db.select().from(repositoryMaintainerEmails)).toEqual([]);
+});
+
+it("문장 로그 bind 값 숨기기: 권한이 있으면 이 트랜잭션에서만 log_parameter_max_length 를 0 으로, 없으면 오류 없이 그대로 둔다", async () => {
+  const before = (await db.execute<{ value: string }>(sql`SELECT current_setting('log_parameter_max_length') AS value`))[0].value;
+  expect(await db.transaction(async (tx) => {
+    const hidden = await hideBindValuesInStatementLog(tx);
+    return { hidden, value: (await tx.execute<{ value: string }>(sql`SELECT current_setting('log_parameter_max_length') AS value`))[0].value };
+  })).toEqual({ hidden: true, value: "0" });
+  expect((await db.execute<{ value: string }>(sql`SELECT current_setting('log_parameter_max_length') AS value`))[0].value).toBe(before);
+  // GRANT SET ON PARAMETER 전의 앱 역할 흉내 — 권한 없는 역할로는 거절될 SET 을 보내지 않고 false, 트랜잭션은 그대로 쓸 수 있다
+  await db.execute(sql`DO $$ BEGIN CREATE ROLE nmv_log_guard_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+  expect(await db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL ROLE nmv_log_guard_probe`);
+    const hidden = await hideBindValuesInStatementLog(tx);
+    return { hidden, value: (await tx.execute<{ value: string }>(sql`SELECT current_setting('log_parameter_max_length') AS value`))[0].value };
+  })).toEqual({ hidden: false, value: before });
 });

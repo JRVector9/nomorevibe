@@ -408,7 +408,9 @@ it("every admin server action and every write route handler goes through the web
   // applyContractConversion(계획 hash 로 실행) 둘이 더해져 134.
   // 2026-11-21 #999 admin/flow/keyword-recovery/actions.ts: retryKeywordGenerationAction(생성 한도에 걸린 제품 한 건 다시 대기열) 하나가 더해져 135.
   // 2026-11-21 #1019 admin/translations/actions.ts: revertSourceNativeAction(원문 유지로 적힌 영어 번역 한 건을 실패로 되돌림) 하나가 더해져 136.
-  expect(wrapped).toBe(136);
+  // 2026-11-21 #1021 admin/products/[slug]/actions.ts: denyMaintainerEmailAction(제작자 이메일 지우고 다시 모으지 않기, 0194) 하나가 더해져 137.
+  // 2026-11-21 #1021 admin/products/[slug]/actions.ts: denyMaintainerEmailAddressAction(제작자 이메일 「주소로 거부」 — 본인 요청, 해시만 저장) 하나가 더해져 138.
+  expect(wrapped).toBe(138);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");
