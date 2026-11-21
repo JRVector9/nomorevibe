@@ -255,35 +255,47 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
     expect(shellRenderBackoff).toEqual({ failures: 0, retryAt: 0, timeouts: 0 });
   });
 
-  it("화면 서버 쪽 사정의 기다림은 1시간까지 — 넘으면 물러나는 중엔 시도 없이, 아니면 한 번 더 시도해 보고 지금 원본으로 심사한다", async () => {
+  it("서버 사정이 1시간 이어지면 — 물러나는 중엔 시도 없이, 아니면 한 번 더 시도해 보고 지금 원본으로 심사한다", async () => {
     const render = outage();
     const start = Date.now();
-    expect(await ensureShellRender(mochi(), { deadlineAt: start + 60_000, env: ENV, render, now: () => start })).toMatchObject({ kind: "wait" });
-    const halfway = start + 30 * 60_000;
-    shellRenderBackoff.retryAt = 0;
-    expect(await ensureShellRender(mochi(), { deadlineAt: halfway + 60_000, env: ENV, render, now: () => halfway })).toMatchObject({ kind: "wait" });
+    // 이어진 탈: 물러나기가 끝날 때마다(10분마다) 다시 불러 또 탈이다
+    for (const minute of [0, 10, 20, 30, 40, 50]) {
+      shellRenderBackoff.retryAt = 0;
+      const at = start + minute * 60_000;
+      expect(await ensureShellRender(mochi(), { deadlineAt: at + 60_000, env: ENV, render, now: () => at })).toMatchObject({ kind: "wait" });
+    }
     const late = start + SHELL_RENDER_WAIT_MAX_MS;
     render.mockClear();
-    // 서버가 지금 나쁘다고 알려졌다(물러나는 중) — 시도하지 않고 지금 원본으로(시도가 틱을 먹지 않는다)
+    // 지금도 물러나는 중이다 — 시도하지 않고 지금 원본으로(시도가 틱을 먹지 않는다)
     shellRenderBackoff.retryAt = late + 60_000;
     const expired = await ensureShellRender(mochi(), { deadlineAt: late + 60_000, env: ENV, render, now: () => late });
     expect(expired).toMatchObject({ kind: "ready", state: { kind: "due" }, skipped: "wait_expired", code: "wait_limit" });
     expect(render).not.toHaveBeenCalled();
     if (expired.kind === "ready") expect(buildReviewProduct(candidateOf(expired.document), expired.document, settings, now).pageText).toBe(MOCHI_SHELL);
-    // 물러나기가 끝났으면 한 번 더 시도해 본다 — 또 탈이면 지금 원본으로
+    // 물러나기가 끝났으면 한 번 더 시도해 본다 — 또 탈이면 지금 원본으로. 서버 사정은 프로세스의 일이라 다른 껍데기도 같다
     shellRenderBackoff.retryAt = 0;
     expect(await ensureShellRender(mochi(), { deadlineAt: late + 60_000, env: ENV, render, now: () => late }))
       .toMatchObject({ kind: "ready", skipped: "wait_expired", code: "render_unreachable" });
-    expect(render).toHaveBeenCalledTimes(1);
-    expect(mocks.setRenderedPage).not.toHaveBeenCalled();
-    // 다른 후보의 기다림은 따로 센다
     shellRenderBackoff.retryAt = 0;
-    expect(await ensureShellRender(bible(), { deadlineAt: late + 60_000, env: ENV, render, now: () => late })).toMatchObject({ kind: "wait" });
-    // 서버가 돌아오면 기다림이 끝난 후보도 그린다
+    expect(await ensureShellRender(bible(), { deadlineAt: late + 60_000, env: ENV, render, now: () => late }))
+      .toMatchObject({ kind: "ready", skipped: "wait_expired", code: "render_unreachable" });
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(mocks.setRenderedPage).not.toHaveBeenCalled();
+    // 서버가 돌아오면 그린다 — 성공이 서버 사정을 지워 다른 껍데기도 다시 기다린다
     shellRenderBackoff.retryAt = 0;
     render.mockResolvedValueOnce(ok(MOCHI_RENDERED));
     expect(await ensureShellRender(mochi(), { deadlineAt: late + 120_000, env: ENV, render, now: () => late + 60_000 }))
       .toMatchObject({ kind: "ready", state: { kind: "rendered" } });
+    expect(await ensureShellRender(bible(), { deadlineAt: late + 180_000, env: ENV, render, now: () => late + 120_000 })).toMatchObject({ kind: "wait" });
+  });
+
+  it("서버 사정이 오래(20분 넘게) 끊겼으면 새 사정으로 센다", async () => {
+    const render = outage();
+    const start = Date.now();
+    await ensureShellRender(mochi(), { deadlineAt: start + 60_000, env: ENV, render, now: () => start });
+    shellRenderBackoff.retryAt = 0;
+    const late = start + 61 * 60_000;
+    expect(await ensureShellRender(mochi(), { deadlineAt: late + 60_000, env: ENV, render, now: () => late })).toMatchObject({ kind: "wait" });
   });
 
   // PR #1020 다시 보기 MAJOR-2(리뷰어 재현) — 틱에 시간이 없어 한 번 미룬 껍데기가 1시간 뒤 돌아오면 m1 이 멀쩡할 때 그려야 한다(4be83326 은 그리지 않았다)
@@ -297,6 +309,55 @@ describe("1차 직전 그리기(ensureShellRender)", () => {
     expect(await ensureShellRender(mochi(), { deadlineAt: t61 + 60_000, env: ENV, render, now: () => t61 }))
       .toMatchObject({ kind: "ready", state: { kind: "rendered" } });
     expect(render).toHaveBeenCalledTimes(1);
+  });
+
+  // PR #1020 다시 보기 MINOR-G — 창이 없어 미룬 껍데기는 61분 뒤에도 창이 없으면 그냥 기다린다(시계를 열었으면 wait_expired 가 된다)
+  it("틱에 시간이 없어 미룬 껍데기는 61분 뒤에도 시간이 없으면 기다린다(wait_expired 아님)", async () => {
+    const render = vi.fn(async () => ok(MOCHI_RENDERED));
+    const t0 = Date.now();
+    expect(await ensureShellRender(mochi(), { deadlineAt: t0 + 5_000, env: ENV, render, now: () => t0 })).toMatchObject({ kind: "wait", reason: "render_window" });
+    const t61 = t0 + 61 * 60_000;
+    expect(await ensureShellRender(mochi(), { deadlineAt: t61 + 5_000, env: ENV, render, now: () => t61 }))
+      .toEqual({ kind: "wait", reason: "render_window", code: "render_window" });
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it("취소된 껍데기도 61분 뒤 시간이 없으면 기다린다", async () => {
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "busy", code: "render_cancelled" }));
+    const t0 = Date.now();
+    await ensureShellRender(mochi(), { deadlineAt: t0 + 60_000, env: ENV, render, now: () => t0 });
+    const t61 = t0 + 61 * 60_000;
+    expect(await ensureShellRender(mochi(), { deadlineAt: t61 + 5_000, env: ENV, render, now: () => t61 })).toMatchObject({ kind: "wait", reason: "render_window" });
+  });
+
+  // PR #1020 다시 보기 MINOR-E — 한 번의 429 가 연 시계는 서버가 돌아온 뒤 남지 않는다. 61분 뒤 시간이 없으면 기다리고, 시간이 있으면 그린다
+  it("429 한 번 뒤 서버가 멀쩡하면, 61분 뒤 시간이 없을 때 기다리고 시간이 있을 때 그린다", async () => {
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "busy", code: "render_busy" }));
+    const t0 = Date.now();
+    expect(await ensureShellRender(mochi(), { deadlineAt: t0 + 60_000, env: ENV, render, now: () => t0 })).toMatchObject({ kind: "wait", code: "render_busy" });
+    // 다른 껍데기가 잘 그려진다 — 서버가 돌아왔다
+    render.mockResolvedValueOnce(ok(MOCHI_RENDERED));
+    const t1 = t0 + 60_000;
+    expect(await ensureShellRender(bibleDoc(), { deadlineAt: t1 + 60_000, env: ENV, render, now: () => t1 })).toMatchObject({ kind: "ready" });
+    const t61 = t0 + 61 * 60_000;
+    expect(await ensureShellRender(mochi(), { deadlineAt: t61 + 5_000, env: ENV, render, now: () => t61 }))
+      .toEqual({ kind: "wait", reason: "render_window", code: "render_window" });
+    render.mockResolvedValueOnce(ok(MOCHI_RENDERED));
+    expect(await ensureShellRender(mochi(), { deadlineAt: t61 + 60_000, env: ENV, render, now: () => t61 }))
+      .toMatchObject({ kind: "ready", state: { kind: "rendered" } });
+  });
+
+  it("다른 껍데기의 탈 동안 물러나기로 미룬 껍데기도, 서버가 돌아온 뒤 61분에 시간이 없으면 기다린다", async () => {
+    const render = vi.fn(async (): Promise<RenderClientResult> => ({ ok: false, kind: "outage", code: "render_unreachable" }));
+    const t0 = Date.now();
+    await ensureShellRender(bibleDoc(), { deadlineAt: t0 + 60_000, env: ENV, render, now: () => t0 });
+    expect(await ensureShellRender(mochi(), { deadlineAt: t0 + 60_000, env: ENV, render, now: () => t0 })).toMatchObject({ kind: "wait", code: "render_backoff" });
+    render.mockResolvedValueOnce(ok(MOCHI_RENDERED));
+    const t5 = t0 + 5 * 60_000;
+    expect(await ensureShellRender(bibleDoc(), { deadlineAt: t5 + 60_000, env: ENV, render, now: () => t5 })).toMatchObject({ kind: "ready" });
+    expect(shellRenderBackoff).toMatchObject({ failures: 0, retryAt: 0 });
+    const t61 = t0 + 61 * 60_000;
+    expect(await ensureShellRender(mochi(), { deadlineAt: t61 + 5_000, env: ENV, render, now: () => t61 })).toMatchObject({ kind: "wait", reason: "render_window" });
   });
 
   it("취소도 기다림 시계를 열지 않는다", async () => {
@@ -491,9 +552,12 @@ describe("PR #1020 리뷰 보완", () => {
     const calls = render.mock.calls.length;
     expect(await ensureShellRender(bibleDoc(), cli)).toMatchObject({ kind: "wait", code: "render_backoff" });
     expect(render).toHaveBeenCalledTimes(calls);
-    // 물러나기가 끝난 뒤 성공 없이 또 시간 초과면 한 번에 다시 물러난다(두 배)
+    // 물러나기가 끝난 뒤 성공 없이 또 시간 초과면 서로 다른 껍데기 둘로 다시 물러난다(두 배) — 느린 페이지 하나로는 아니다(다시 보기 MINOR-F)
     shellRenderBackoff.retryAt = 0;
     await ensureShellRender(bibleDoc(), cli);
+    await ensureShellRender(bibleDoc(), cli);
+    expect(shellRenderBackoff.failures).toBe(1);
+    await ensureShellRender(documentOf({ repo: "stuck/app-3", url: "https://stuck-3.example", title: "Stuck 3", text: "Stuck 3" }), cli);
     expect(shellRenderBackoff.failures).toBe(2);
     expect(mocks.setRenderedPage).not.toHaveBeenCalled();
   });

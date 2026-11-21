@@ -31,9 +31,11 @@ import { storedReviewEvidenceRequired } from "../review-replay-context";
  *    (40초) 초과 — 이 두 시간 초과가 서로 다른 껍데기 3개에서 이어지면 m1 이 멈췄거나 과부하로 보고 물러난다·브라우저가 뜨지 않음(page_browser_failed)과
  *    화면 서버 탈(닿지 않음·401/403·5xx·약속과 다른 답·온전한 상한의 시간 초과 — 이 프로세스가 1분부터 두 배씩 15분까지 물러나고, 그동안 다른 후보는
  *    부르지 않고 기다린다)·원본 쓰기의 일시 오류.
- *  - 기다림 상한: 화면 서버 쪽 사정으로 한 껍데기를 기다리는 것은 이 프로세스가 그 사정으로 처음 못 그린 때부터 SHELL_RENDER_WAIT_MAX_MS(1시간)까지다.
- *    넘은 뒤에는 한 번 더 시도해 보고(상한이 모델 시간 안이라 틱을 먹지 않는다) 또 서버 쪽 사정이면 지금 원본으로 심사한다. 물러나는 중이면 시도하지
- *    않고 바로 보낸다. 기다림 표는 프로세스 메모리다(재시작하면 다시 센다 — 크기·나이 상한).
+ *  - 기다림 상한(SHELL_RENDER_WAIT_MAX_MS, 1시간)은 지금 미루는 그 까닭의 시계로 본다. 서버 사정(물러남·탈·붐빔)은 이 프로세스의 서버 사정 시계 —
+ *    서버가 제대로 답하면(성공·페이지 탓 실패) 지워지므로 이어진 사정만 1시간을 채운다. 그 껍데기 탓일 수 있는 세지 않는 실패(시간 초과·원본 쓰기 일시
+ *    오류)는 그 껍데기의 시계. 틱에 그릴 시간이 없음·취소는 시계를 보지 않고 다음 틱으로 미룬다. 넘은 뒤에는 한 번 더 시도해 보고(상한이 모델 시간 안이라
+ *    틱을 먹지 않는다) 또 그 까닭이면 지금 원본으로 심사한다. 서버 사정이 1시간 이어졌고 물러나는 중이면 시도하지 않고 바로 보낸다.
+ *    시계는 프로세스 메모리다(재시작하면 다시 센다 — 크기·나이 상한).
  *  - 그린 기록 쓰기가 데이터·한도 오류(22xxx·54xxx)로 실패하면 그 후보만 그리지 않은 것으로 보고 지금 원본으로 심사한다(record_failed). 그 밖의 쓰기
  *    실패는 일시 오류로 보고 그 후보만 미룬다(record_deferred). 글은 화면 서버 답(render-client.ts)과 기록(shell-render.ts renderedPageSuccess)에서
  *    jsonb 에 맞게 거른다(짝 없는 서로게이트·NUL).
@@ -59,19 +61,30 @@ export function shellRenderEnabled(settings: RuntimeSettings = runtimeSettings()
 /**
  * 화면 서버 탈의 물러나기(failures = 연속 탈) — 붐빔은 failures 를 올리지 않고 retryAt 만 조금 미룬다.
  * timeouts: 서로 다른 껍데기에서 시간 초과(서버 쪽 40초 초과·틱 끝 때문에 줄인 상한의 초과)가 이어진 수 — SHELL_RENDER_TIMEOUT_STREAK 개면
- * m1 이 멈췄거나 과부하로 보고 탈처럼 물러난다(이미 물러난 적이 있고 그 뒤 성공이 없으면 한 번에). 후보의 시도로는 세지 않는다
+ * m1 이 멈췄거나 과부하로 보고 탈처럼 물러난다. 이미 물러난 뒤 성공이 없으면 서로 다른 껍데기 SHELL_RENDER_TIMEOUT_REARM 개로 다시 물러난다
+ * (느린 페이지 하나가 곧바로 두 배 물러남을 켜지 않게, 다시 보기 MINOR-F). 후보의 시도로는 세지 않는다
  */
 export const shellRenderBackoff = { failures: 0, retryAt: 0, timeouts: 0 };
 /** 서로 다른 껍데기의 시간 초과가 이만큼 이어지면(사이에 다른 답 없음) 탈로 본다 */
 export const SHELL_RENDER_TIMEOUT_STREAK = 3;
+/** 이미 물러난 뒤(성공 없음) 다시 물러나는 데 필요한 서로 다른 껍데기 수 */
+export const SHELL_RENDER_TIMEOUT_REARM = 2;
 const timeoutKeys = new Set<string>();
 /**
- * 우리 쪽 사정으로 기다리는 껍데기 — 저장소 + 껍데기 지문마다.
- *  - since: 기다림 시계(1시간 상한)를 연 때. 화면 서버 쪽 사정(물러남·탈·붐빔·시간 초과·원본 쓰기의 일시 오류)으로 미룰 때만 연다 —
- *    틱에 그릴 시간이 없었을 뿐(render_window)·취소는 열지 않는다(PR #1020 다시 보기 MAJOR-2: 그것으로 열면 늦게 돌아온 껍데기가 m1 이 멀쩡해도
- *    그려지지 않았다).
+ * 이 프로세스의 화면 서버 사정(물러남·탈·붐빔) — 그 사정이 처음 난 때(since)와 마지막으로 난 때(last).
+ * 그리기 성공·페이지 탓 실패(서버가 제대로 답함)로 지운다. 마지막 사정에서 SHELL_RENDER_TROUBLE_GAP_MS 넘게 아무 사정이 없었으면 새 사정으로 센다
+ * (물러남은 길어야 15분이라, 이어진 탈 동안은 그보다 자주 난다). 1시간 기다림 상한은 서버 사정 때문에 미룰 때 이 시계로 본다 — 껍데기마다 두면 한 번의
+ * 429 가 연 시계가 서버가 돌아온 뒤에도 남아, 늦게 돌아온 껍데기를 그리지 않았다(다시 보기 MINOR-E)
+ */
+const serverTrouble: { since: number | null; last: number } = { since: null, last: 0 };
+export const SHELL_RENDER_TROUBLE_GAP_MS = 20 * 60_000;
+/**
+ * 그 껍데기만의 기다림 — 저장소 + 껍데기 지문마다.
+ *  - since: 그 껍데기 탓일 수 있는, 세지 않는 실패(서버 쪽 시간 초과·줄인 상한의 시간 초과·원본 쓰기의 일시 오류)가 처음 난 때. 1시간 상한은 그 까닭으로
+ *    미룰 때만 본다. 틱에 그릴 시간이 없음·취소는 시계를 열지도 보지도 않는다(다시 보기 MAJOR-2·MINOR-G).
  *  - full: 틱 끝 때문에 줄인 상한에서 시간이 다 됐다 — 다음에는 온전한 상한을 줄 수 있는 틱에서 그린다(모델은 그다음 틱).
  *  - created: 칸의 나이(WAITING_ENTRY_TTL_MS 뒤에는 새로 센다).
+ * 그 껍데기의 기록(성공·페이지 실패)이 적히면 지운다.
  */
 const waitingSince = new Map<string, { since?: number; full: boolean; created: number }>();
 let renderTail: Promise<unknown> = Promise.resolve();
@@ -80,6 +93,8 @@ export function resetShellRenderBackoff(): void {
   shellRenderBackoff.retryAt = 0;
   shellRenderBackoff.timeouts = 0;
   timeoutKeys.clear();
+  serverTrouble.since = null;
+  serverTrouble.last = 0;
   waitingSince.clear();
   renderTail = Promise.resolve();
 }
@@ -96,8 +111,8 @@ function waitingEntry(key: string, at: number) {
   const entry = waitingSince.get(key);
   return entry && at - entry.created < WAITING_ENTRY_TTL_MS ? entry : undefined;
 }
-/** 기다림 칸을 적는다. clock 이면 시계를 연다(이미 열렸으면 그대로). 시계를 연 때를 돌려준다(열리지 않았으면 undefined). 표는 크기·나이 상한 안에서만 자란다 */
-function noteWaiting(key: string, at: number, mark: { clock: boolean; full?: boolean }): number | undefined {
+/** 기다림 칸을 적는다. clock 이면 그 껍데기의 시계를 연다(이미 열렸으면 그대로). 표는 크기·나이 상한 안에서만 자란다 */
+function noteWaiting(key: string, at: number, mark: { clock: boolean; full?: boolean }): void {
   let entry = waitingEntry(key, at);
   if (!entry) {
     waitingSince.delete(key);
@@ -107,13 +122,28 @@ function noteWaiting(key: string, at: number, mark: { clock: boolean; full?: boo
   }
   if (mark.clock) entry.since ??= at;
   if (mark.full) entry.full = true;
-  return entry.since;
 }
-/** 시간 초과 하나를 센다 — 서로 다른 껍데기가 SHELL_RENDER_TIMEOUT_STREAK 개 이어졌거나 이미 물러난 뒤 성공이 없으면 true(탈로 본다) */
+/** 서버 사정 하나를 적는다 — 사정이 없었거나 마지막 사정에서 오래 지났으면 새로 센다 */
+function noteServerTrouble(at: number): void {
+  if (serverTrouble.since === null || at - serverTrouble.last > SHELL_RENDER_TROUBLE_GAP_MS) serverTrouble.since = at;
+  serverTrouble.last = at;
+}
+/** 서버가 제대로 답했다(성공·페이지 탓 실패) — 서버 사정을 지운다 */
+function clearServerTrouble(): void {
+  serverTrouble.since = null;
+}
+/** 서버 사정이 이어진 지 상한이 지났는가 */
+function serverTroubleExpired(at: number, maxMs: number): boolean {
+  return serverTrouble.since !== null && at - serverTrouble.last <= SHELL_RENDER_TROUBLE_GAP_MS && at - serverTrouble.since >= maxMs;
+}
+/**
+ * 시간 초과 하나를 센다 — 서로 다른 껍데기가 SHELL_RENDER_TIMEOUT_STREAK 개(이미 물러난 뒤 성공이 없으면 SHELL_RENDER_TIMEOUT_REARM 개) 이어졌으면
+ * true(탈로 본다)
+ */
 function noteServerTimeout(key: string): boolean {
   timeoutKeys.add(key);
   shellRenderBackoff.timeouts = timeoutKeys.size;
-  if (timeoutKeys.size < SHELL_RENDER_TIMEOUT_STREAK && shellRenderBackoff.failures === 0) return false;
+  if (timeoutKeys.size < (shellRenderBackoff.failures ? SHELL_RENDER_TIMEOUT_REARM : SHELL_RENDER_TIMEOUT_STREAK)) return false;
   clearServerTimeouts();
   return true;
 }
@@ -166,8 +196,8 @@ export type ShellRenderDeps = {
  *   줄인 상한에서 시간이 다 된 껍데기는 다음에 온전한 상한을 줄 수 있는 틱에서 그린다.
  * gate: 그리기 직전에 부르는 규칙 관문 — 까닭을 돌려주면 그리지 않는다(ready · skipped).
  * skip: 부르는 쪽이 그리지 말라고 한 까닭(1차가 앞 틱에서 줄에 세운 후보 — 예약을 쥔 채 그리지 않는다).
- * waitMaxMs: 화면 서버 쪽 사정으로 기다릴 상한(기본 1시간, 시계를 연 때부터). 넘었으면 그리기를 다시 시도해 보고(모델 시간 안의 상한이라 틱을 먹지
- *   않는다), 또 서버 쪽 사정이면 지금 원본으로 보낸다. 서버가 지금 나쁘다고 알려졌으면(물러나는 중) 시도하지 않고 바로 보낸다. 재심사 도구는 Infinity.
+ * waitMaxMs: 우리 쪽 사정으로 기다릴 상한(기본 1시간, 머리 설명의 두 시계). 넘었으면 그리기를 다시 시도해 보고(모델 시간 안의 상한이라 틱을 먹지
+ *   않는다), 또 그 까닭이면 지금 원본으로 보낸다. 서버 사정이 넘었고 물러나는 중이면 시도하지 않고 바로 보낸다. 재심사 도구는 Infinity.
  */
 export async function ensureShellRender(document: CrawlDocument, options: { lease?: JobLease; deadlineAt: number; modelDeadlineAt?: number;
   signal?: AbortSignal; gate?: () => Promise<string | null>; skip?: ShellRenderSkip; waitMaxMs?: number } & ShellRenderDeps): Promise<ShellRenderStep> {
@@ -188,15 +218,24 @@ export async function ensureShellRender(document: CrawlDocument, options: { leas
   if (gated) return ready(gated);
   const key = waitKey(document);
   const waitMaxMs = options.waitMaxMs ?? SHELL_RENDER_WAIT_MAX_MS;
-  const expired = (at: number) => { const since = waitingEntry(key, at)?.since; return since !== undefined && at - since >= waitMaxMs; };
-  // 기다림 시계가 다 됐고 서버가 지금도 나쁘다고 알려졌으면(물러나는 중) 시도하지 않고 지금 원본으로 — 시도해 봐야 미룸뿐이다.
-  // 서버가 나쁘다고 알려지지 않았으면 한 번 더 시도한다: 상한이 모델 시간 안이라 틱을 먹지 않는다(PR #1020 다시 보기 MAJOR-2)
-  if (shellRenderBackoff.retryAt > now() && expired(now())) return ready("wait_expired", "wait_limit");
-  // 우리 쪽 사정 — 세지 않고 적지 않는다. clock 이면(화면 서버 쪽 사정) 기다림 시계를 열고, 상한을 넘었으면 지금 원본으로 심사한다
+  // 서버 사정이 1시간 이어졌고 지금도 물러나는 중이면 시도하지 않고 지금 원본으로 — 시도해 봐야 미룸뿐이다.
+  // 물러나는 중이 아니면 한 번 더 시도한다: 상한이 모델 시간 안이라 틱을 먹지 않는다(PR #1020 다시 보기 MAJOR-2)
+  if (shellRenderBackoff.retryAt > now() && serverTroubleExpired(now(), waitMaxMs)) return ready("wait_expired", "wait_limit");
+  /**
+   * 우리 쪽 사정 — 세지 않고 적지 않는다. 1시간 상한은 지금 미루는 그 까닭의 시계로만 본다:
+   *  - server(물러남·탈·붐빔·브라우저 안 뜸): 이 프로세스의 서버 사정 시계 — 서버가 제대로 답하면 지워진다
+   *  - candidate(서버 쪽·줄인 상한의 시간 초과, 원본 쓰기 일시 오류): 그 껍데기의 시계 — 그 껍데기의 기록이 적히면 지워진다
+   *  - none(틱에 그릴 시간이 없음·취소): 시계를 열지도 보지도 않는다 — 다음 틱에 그린다
+   */
   const deferred = (reason: Exclude<ShellRenderWaitReason, "render_wait">, code: string,
-    mark: { clock: boolean; retryAt?: number; full?: boolean }): ShellRenderStep => {
-    noteWaiting(key, now(), mark);
-    if (expired(now())) return ready("wait_expired", code);
+    mark: { cause: "server" | "candidate" | "none"; retryAt?: number; full?: boolean }): ShellRenderStep => {
+    const at = now();
+    if (mark.cause === "server") noteServerTrouble(at);
+    if (mark.cause === "candidate" || mark.full) noteWaiting(key, at, { clock: mark.cause === "candidate", full: mark.full });
+    const since = waitingEntry(key, at)?.since;
+    const expired = mark.cause === "server" ? serverTroubleExpired(at, waitMaxMs)
+      : mark.cause === "candidate" ? since !== undefined && at - since >= waitMaxMs : false;
+    if (expired) return ready("wait_expired", code);
     return { kind: "wait", reason, code, ...(mark.retryAt ? { retryAt: mark.retryAt } : {}) };
   };
   const record = async (outcome: Parameters<typeof setRenderedPage>[1], renderMs: number, code?: string): Promise<ShellRenderStep> => {
@@ -210,7 +249,7 @@ export async function ensureShellRender(document: CrawlDocument, options: { leas
       // 그 글이 DB 에 들어가지 않는다 — 다시 해도 같다. 그 후보만 그리지 않은 것으로 지금 원본으로 심사한다
       if (permanentWriteError(state)) return ready("record_failed", `record_failed_${state}`);
       // 일시 오류(잠금 시간 초과·직렬화·교착·연결…) — 그릴 수 있는 후보를 껍데기로 심사하지 않는다. 그 후보만 다음 틱에
-      return deferred("render_deferred", `record_deferred_${state ?? "unknown"}`, { clock: true });
+      return deferred("render_deferred", `record_deferred_${state ?? "unknown"}`, { cause: "candidate" });
     }
     waitingSince.delete(key);
     // 그리는 사이 원본이 다시 수집되어 사라졌다 — 다음 틱이 새 원본을 본다
@@ -240,18 +279,19 @@ export async function ensureShellRender(document: CrawlDocument, options: { leas
     }
   });
   // 틱에 그릴 시간이 없었을 뿐이다 — 서버 사정이 아니므로 기다림 시계를 열지 않는다
-  if (outcome === "window") return deferred("render_window", "render_window", { clock: false });
-  if (outcome === "backoff") return deferred("render_deferred", "render_backoff", { clock: true, retryAt: shellRenderBackoff.retryAt });
+  if (outcome === "window") return deferred("render_window", "render_window", { cause: "none" });
+  if (outcome === "backoff") return deferred("render_deferred", "render_backoff", { cause: "server", retryAt: shellRenderBackoff.retryAt });
   const { result, renderMs, timeoutMs } = outcome;
   const outage = (code: string) => {
     shellRenderBackoff.failures += 1;
     shellRenderBackoff.retryAt = now() + qwenBackoffMs(shellRenderBackoff.failures);
-    return deferred("render_deferred", code, { clock: true, retryAt: shellRenderBackoff.retryAt });
+    return deferred("render_deferred", code, { cause: "server", retryAt: shellRenderBackoff.retryAt });
   };
   if (result.ok) {
     shellRenderBackoff.failures = 0;
     shellRenderBackoff.retryAt = 0;
     clearServerTimeouts();
+    clearServerTrouble();
     return record(renderedPageSuccess(document, { text: result.text, textLength: result.textLength, finalUrl: result.finalUrl, status: result.status }, now()),
       renderMs);
   }
@@ -259,22 +299,23 @@ export async function ensureShellRender(document: CrawlDocument, options: { leas
     // 브라우저가 뜨지 않음 — 그 페이지가 아니라 m1 의 일이다(리뷰 MINOR). 탈로 본다
     if (result.code === "page_browser_failed") return outage(result.code);
     // 서버 쪽 그리기 상한(40초) 초과 — 느린 페이지일 수도, m1 과부하일 수도 있다. 후보 탓으로 세지 않는다. 이어지면 과부하로 보고 물러난다
-    if (result.code === "page_timeout") return noteServerTimeout(key) ? outage(result.code) : deferred("render_deferred", result.code, { clock: true });
-    // 그 페이지의 실패 — 서버는 살아 있다(연속 탈 수를 푼다). 후보의 시도로 센다
+    if (result.code === "page_timeout") return noteServerTimeout(key) ? outage(result.code) : deferred("render_deferred", result.code, { cause: "candidate" });
+    // 그 페이지의 실패 — 서버는 살아 있다(연속 탈 수·서버 사정을 푼다). 후보의 시도로 센다
     shellRenderBackoff.failures = 0;
     clearServerTimeouts();
+    clearServerTrouble();
     return record(renderedPageFailure(document, result.code, now()), renderMs, result.code);
   }
   // 취소(틱 끝·워커 멈춤)는 그 후보 탓도 서버 탓도 아니다 — 적지 않고 다음 틱에(시계를 열지 않는다)
-  if (result.code === "render_cancelled") return deferred("render_window", result.code, { clock: false });
+  if (result.code === "render_cancelled") return deferred("render_window", result.code, { cause: "none" });
   if (result.kind === "busy") {
     clearServerTimeouts();
     shellRenderBackoff.retryAt = Math.max(shellRenderBackoff.retryAt, now() + SHELL_RENDER_BUSY_PAUSE_MS);
-    return deferred("render_deferred", result.code, { clock: true, retryAt: shellRenderBackoff.retryAt });
+    return deferred("render_deferred", result.code, { cause: "server", retryAt: shellRenderBackoff.retryAt });
   }
   // 틱 끝 때문에 줄인 상한의 시간 초과 — 느린 페이지 하나로는 물러나지 않는다(다음에는 온전한 상한으로 그린다). 서로 다른 껍데기에서 이어지면
   // 화면 서버가 멈춘 것으로 보고 물러난다 — CLI 40초 틱은 늘 줄인 상한이라 이것이 아니면 멈춘 서버에 매 틱 상한만큼을 잃는다(다시 보기 MINOR-A)
   if (result.code === "render_timeout" && timeoutMs < SHELL_RENDER_REQUEST_MS) return noteServerTimeout(key) ? outage("render_timeout_shortened")
-    : deferred("render_window", "render_timeout_shortened", { clock: true, full: true });
+    : deferred("render_window", "render_timeout_shortened", { cause: "candidate", full: true });
   return outage(result.code);
 }
