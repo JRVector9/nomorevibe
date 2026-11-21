@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vite
 import { db } from '@/lib/db';
 import { crawlCandidates, modelCapacityRequests, secondReviews } from '@/lib/db/schema';
 import { runSecondReviewConsumer } from '@/lib/crawl/consumers/second';
+import { setRuntimeSettingsForTest } from '@/lib/operations/runtime-settings-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 import { pinReviewRanks } from '../review-task-ranks-fixture';
 
@@ -17,11 +18,21 @@ const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: ()
   connection: { application_name: 'ai2-priority-query-fixture' } });
 const candidates = new Map<number, string>(), votes = new Set<number>(), requests = new Set<string>();
 let baseline: unknown, serial = 0;
+// 장부 control·ai2 단계 행의 updated_at — 2차 심사 대기 시간은 그 뒤만 센다(DRAIN·단계 멈춤 제외). 이 파일은 한 시간 전부터 열린 것으로 두고 끝나면 되돌린다
+let opened: { control: string | null; stage: string | null } = { control: null, stage: null };
+const openSince = async (control: string, stage = control) => {
+  await admin`UPDATE model_capacity_control SET updated_at=clock_timestamp()-${control}::interval WHERE id=1`;
+  await admin`UPDATE pipeline_stage_modes SET updated_at=clock_timestamp()-${stage}::interval WHERE stage='ai2'`;
+};
 async function ledger() {
   return (await admin`SELECT to_jsonb(r) AS value FROM model_capacity_requests r ORDER BY queue_ordinal`).map(row => row.value);
 }
 beforeAll(async () => {
   ensureSchema(); baseline = await ledger();
+  const [control] = await admin`SELECT updated_at::text AS at FROM model_capacity_control WHERE id=1`;
+  const [stage] = await admin`SELECT updated_at::text AS at FROM pipeline_stage_modes WHERE stage='ai2'`;
+  opened = { control: control?.at ?? null, stage: stage?.at ?? null };
+  await openSince('1 hour');
   // The global pending scan must never claim unrelated fixture work.
   expect(await admin`SELECT id FROM second_reviews WHERE status='pending'`).toEqual([]);
 });
@@ -33,12 +44,19 @@ afterEach(async () => {
     for (const id of votes) await tx`DELETE FROM second_reviews WHERE id=${id} AND candidate_id=ANY(${[...candidates.keys()]})`;
     for (const [id, repo] of candidates) await tx`DELETE FROM crawl_candidates WHERE id=${id} AND repo=${repo}`;
   });
-  requests.clear(); votes.clear(); candidates.clear(); lifecycle.execute.mockReset();
+  requests.clear(); votes.clear(); candidates.clear(); lifecycle.execute.mockReset(); setRuntimeSettingsForTest(null);
   expect(await ledger()).toEqual(baseline);
 });
 // PR C1: 2차 소비자는 「작업 ↔ 모델」 투표자 순위가 없으면 쉰다 — 이 시험의 투표자(query-direct, 대체 query-backup)를 칸 1 의 1·2순위로 고정한다
 beforeEach(() => { pinReviewRanks({ second: [[{ provider: 'local-direct', model: 'query-direct' }, { provider: 'local-direct', model: 'query-backup' }]] }); });
-afterAll(async () => { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); });
+// 2차 심사 대기 시간(runtime_settings jobs.second-review.reviewWaitMs, 2026-11-21) — 이 파일은 15초로 켠다(아래 시험의 기본 나이 16초가 넘긴다). 기본 0 은 대기 hint 가 없다
+beforeEach(() => { setRuntimeSettingsForTest({ version: 1, jobs: { 'second-review': { reviewWaitMs: 15_000 } } }); });
+afterAll(async () => {
+  try {
+    if (opened.control) await admin`UPDATE model_capacity_control SET updated_at=${opened.control}::timestamptz WHERE id=1`;
+    if (opened.stage) await admin`UPDATE pipeline_stage_modes SET updated_at=${opened.stage}::timestamptz WHERE stage='ai2'`;
+  } finally { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); }
+});
 async function vote(fallback = false) {
   const repo = `${prefix}/app-${++serial}`;
   const [candidate] = await db.insert(crawlCandidates).values({ repo, productUrl: `https://priority-${serial}.example`,
@@ -52,7 +70,7 @@ async function vote(fallback = false) {
   return child;
 }
 async function request(row: Awaited<ReturnType<typeof vote>>, options: {
-  state?: 'waiting' | 'reserved'; ageMs?: number; ttlMs?: number; instanceId?: string; bootId?: string;
+  state?: 'waiting' | 'reserved' | 'withdrawn'; ageMs?: number; ttlMs?: number; instanceId?: string; bootId?: string;
   provider?: string; model?: string; routeId?: string; logicalVote?: number; logicalWorkKey?: null;
 } = {}) {
   const requestId = randomUUID(), state = options.state ?? 'waiting', logical = `ai2:${row.candidateId}:${options.logicalVote ?? row.fallbackForId ?? row.id}`;
@@ -70,7 +88,7 @@ function run() {
   return runSecondReviewConsumer({ owner, once: true });
 }
 const calls = () => lifecycle.execute.mock.calls.map(([input]) => input.secondReviewId as number);
-it('selects only live owned root engine-direct waiters aged 15 seconds and runs a reservation first', async () => {
+it('selects only live owned root API waiters past the review wait time and runs a reservation first', async () => {
   // Every negative has an earlier queue ordinal than the eligible waiters. PR C1: abcllm-shaped engine-direct votes (made by a rank save)
   // can hand a long wait to the same voter slot's next rank too, so the aged abcllm root waiter is eligible and comes before `waiting`.
   const young = await vote(); await request(young, { ageMs: 1_000 });
@@ -91,6 +109,24 @@ it('selects only live owned root engine-direct waiters aged 15 seconds and runs 
   expect(await run()).toMatchObject({ attempted: 12, deferred: 0 });
   expect(calls().slice(0, 3)).toEqual([reserved.id, abc.id, fallback.id]);
   expect(new Set(calls()).size).toBe(12); expect(await ledger()).toEqual(before);
+});
+it('follows the review wait time: off finds no waiting hint, and a re-queued vote counts its wait before the queue expiry', async () => {
+  // young: 1초 전에 줄에 선 표. requeued: 40초 전에 줄에 섰다가 대기 만료로 거둬진(withdrawn) 행 + 1초 전에 다시 선 행 — 이어 세면 40초
+  const young = await vote(); await request(young, { ageMs: 1_000 });
+  const requeued = await vote(); await request(requeued, { state: 'withdrawn', ageMs: 40_000, ttlMs: -1_000 }); await request(requeued, { ageMs: 1_000 });
+  const reserved = await vote(); await request(reserved, { state: 'reserved' });
+  const before = await ledger();
+  await run();
+  expect(calls().slice(0, 3)).toEqual([reserved.id, requeued.id, young.id]);
+  // 장부를 10초 전에 다시 열었다(DRAIN 뒤) — 그 앞의 40초는 세지 않아 대기 hint 가 없다(PR #1023 리뷰 MINOR 4)
+  lifecycle.execute.mockReset(); await openSince('10 seconds', '1 hour');
+  try { await run(); } finally { await openSince('1 hour'); }
+  expect(calls().slice(0, 3)).toEqual([reserved.id, young.id, requeued.id]);
+  // 꺼짐(기본 0): 넘길 대기 표가 없으니 대기 hint 를 찾지 않는다 — 예약 다음은 보통 차례(id 순)
+  lifecycle.execute.mockReset(); setRuntimeSettingsForTest({});
+  await run();
+  expect(calls().slice(0, 3)).toEqual([reserved.id, young.id, requeued.id]);
+  expect(await ledger()).toEqual(before);
 });
 it('rotates multiple aged waiters behind the normal cursor while reservations keep arriving first', async () => {
   const first = await vote(), second = await vote(); await request(first); await request(second);

@@ -54,6 +54,9 @@ export const COLLECTOR_EVENTS: Record<string, CollectorEventDefinition> = {
   "agent_scan.queue_filled": { label: "개발 AI 조사 대기열 채우기", fields: ["upserted", "gone"] },
   "agent_scan.admin_consumed": { label: "관리자 추가 수집 완료 처리", fields: ["consumed"] },
   "ai_level.tick": { label: "AI 단계 확인 결과", fields: ["checked", "due", "verified", "restUsed"] },
+  // 제작자 이메일(관리자 전용, 0194) — 수만 싣는다. 주소는 어떤 로그에도 남기지 않는다
+  "ai_level.maintainer_emails": { label: "제작자 이메일 수집 결과", fields: ["repositories", "saved", "denied", "removed", "unguarded", "notPublic", "organization", "ownerUnknown", "fork", "noOwnerCommit", "noAddress"] },
+  "ai_level.maintainer_emails_failed": { label: "제작자 이메일 기록 오류", fields: ["repositories"], error: true },
   "ai_level.rate_limited": { label: "AI 단계 공급자 한도 대기", fields: [], waiting: true },
   "ai_level.graphql_low": { label: "AI 단계 공급자 잔량 부족", fields: ["remaining"], waiting: true },
   "product_stars.refreshed": { label: "저장소·스타 확인 결과", fields: ["examined", "updated", "ok", "missing", "empty", "blocked", "unknown", "renamed", "archived", "batches", "failed"] },

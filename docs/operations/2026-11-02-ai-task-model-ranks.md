@@ -235,10 +235,28 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
   이제 기본 `voters: []`, 칸은 비어도 된다).
 - **한 모델이 한 항목에 두 표를 내지 않는다**(PR A 의 남은 일 2): 저장이 막고(위 순위 규칙), 실행 쪽도 막는다 — 대체는 첫 표(root)가 든 칸의 다음 순위에서만 고르고
   (`secondReviewFallbacksFor`), 이미 그 항목에 표를 낸 모델·지금 투표자인 모델은 다시 뺀다(`withoutTakenModels`). 옛 행이 두 칸에 같은 모델을 가져도 앞 칸만 쓴다.
-- 대체가 생기는 곳 셋 모두 같은 칸 안이다: 표 실패(`recordSecondReview`), 엔진 직접 표의 준비 실패(`primary_preflight_failed`)·줄에서 15초 넘게 기다림
-  (`capacity_wait_timeout`, `fallbackWaitingSecondReview`). 뒤 둘은 예전에 local-direct 첫 표 + abcllm 대체만 받았다 — 이제 첫 표가 abcllm 형 직접 계약이어도 되고
+- 대체가 생기는 곳 셋 모두 같은 칸 안이다: 표 실패(`recordSecondReview`), 엔진 직접 표의 준비 실패(`primary_preflight_failed`)·줄에서 **2차 심사 대기 시간**보다
+  오래 기다림(`capacity_wait_timeout`, `fallbackWaitingSecondReview`). 뒤 둘은 예전에 local-direct 첫 표 + abcllm 대체만 받았다 — 이제 첫 표가 abcllm 형 직접 계약이어도 되고
   (`withdrawUndispatchedAi2ItemForFallback` 이 abcllm 도 물린다, AI2 소비자의 오래 기다린 줄 hint 도), 대체는 그 칸의 순위면 provider 를 가리지 않는다
   (정책 route 가 있고, API 는 계약이 그 모델을 가리키며, CLI 는 CLI 계약이 있어야 한다).
+- **줄 대기 넘김의 기준(2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」)**: 관리자 「실시간 한도 › 2차 심사 › 세부 칸」의
+  「심사 대기 시간」(runtime_settings `jobs.second-review.reviewWaitMs`, 이름표 「2차 심사 대기 시간(초)」, 0~3600초, **기본 0 = 넘기지 않음**). API 첫 표
+  (abcllm·local-direct)의 **계약 모양을 가리지 않는다** — abcllm 계약(오늘 운영 2차 순위 둘)·`direct-openai-chat-v1`·`openai-chat-total-bound-v1` 모두 같다.
+  기다림은 그 표가 그 모델로 마지막으로 보내진 뒤 처음 줄에 선 때부터 이어서 센다(`ai2QueueWaitStartSql` — 대기 만료 queueTtlMs·정책 판 바뀜·재시작으로 대기 행이
+  새로 서도 0 부터 다시 세지 않는다). 그 전(2026-11-21 오전 #1014 까지)에는 고정 15초·대기 행 하나의 나이였고, 실제로 넘긴 것은 `direct-openai-chat-v1` 표뿐이었다
+  (abcllm 표는 이 문서의 옛 문장과 달리 넘어가지 않았다). 물림·소비자 hint 가 같은 설정(30초 스냅숏)을 읽는다. CLI 첫 표는 여전히 넘기지 않는다.
+  - 「보냄」은 상태가 아니라 근거(`dispatched_at`·dispatch binding, 또는 dispatched·settled·indeterminate)로 가른다 — 사람 「검토 완료」·회수로 withdrawn 이 된
+    보낸 행도 보낸 행이다(PR #1023 리뷰 MINOR 1: 그 행을 줄에만 섰던 행으로 세면 방금 다시 줄에 선 표가 보내기 전부터 센 시간으로 바로 넘어갔다).
+  - 모델 장부가 닫혀 있던 시간(DRAIN·disabled)과 2차 단계가 멈췄던 시간은 세지 않는다(MINOR 4): 시작은 `model_capacity_control.updated_at`·
+    `pipeline_stage_modes`(ai2) `updated_at` 보다 앞설 수 없다. 두 칸은 상태가 바뀔 때만 움직이므로(OPEN 전환·DRAIN·정책 저장·OPEN 중 route 덧붙이기/빼기,
+    단계 전환) 배포 창 뒤에는 다시 연 때부터 센다. OPEN 중 route 저장(작업 ↔ 모델 순위·연결 저장)도 모두의 시계를 그때부터 다시 세게 한다 — 늦게 넘길 뿐이다.
+    남은 차이: 소비자 프로세스가 죽었거나 순위를 못 읽어 쉬던 시간은 장부에 따로 남지 않아 센다. 예약을 받았다가 쓰지 않은 행(reservation_cancelled·
+    reservation_expired)의 시간도 센다.
+  - **기본 0 의 부수 효과(MINOR 2)**: 0 이면 AI2 소비자의 「오래 기다린 대기 hint」도 찾지 않는다. 예전에는 행 나이 15초가 지난 abcllm 대기 표도 이 hint 로
+    쪽 맨 앞에서 다시 물어졌고(넘어가지는 않음), 거절되면 그 모델을 그 쪽 동안 쉬게 했다. 값을 켜면(예: 120초) 이어 센 기다림이 그 값을 넘긴 표에 hint 가 돌아온다.
+  - **되돌리기 주의(MINOR 3)**: 이 칸이 runtime_settings 저장 문서에 있으면, 이 칸을 모르는 옛 웹은 바꾸지 않은 칸의 문제도 거절 사유로 세어 **어떤 실시간 한도
+    저장도 거절한다**(`unknown_job_knob:second-review.reviewWaitMs`), 옛 화면에는 이 칸이 없어 지울 수도 없다. 웹을 이 판(PR #1023) 아래로 되돌리기 **전에**
+    새 웹 「실시간 한도 › 2차 심사 › 세부 칸」에서 「심사 대기 시간」을 「기본값으로」 돌려 저장 문서에서 키를 지운다. 옛 워커는 경고 한 번 뒤 이 칸을 무시한다.
 - 틱 머리: 순위 없음·표 못 읽음·모든 칸을 쓸 수 없음이면 `{ done: true, degraded }` 로 **정비(올리기·정리·재조정)도 하지 않는다** — 빈 투표자 목록으로 대기 표를
   `model_removed` 로 닫지 않는다. 표를 한 번도 못 읽은 프로세스의 올리기·정리·입력 검사는 `assignments_unavailable` 로 미룬다(`requireReviewTaskRanks`, 예전 배정 표 관문 자리).
   AI2 소비자는 그동안 5초씩 쉰다. `ai_task.ranks` 의 `served.<순위>` 는 그 순위가 표를 내는 칸 수다(호출 수가 아니다).
@@ -495,7 +513,8 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
    ~~LLM 보강(`LLM_ASSIST_BACKENDS`)~~(2026-11-11 순위로 — 위 「2026-11-11」), 카테고리 분류(connect 에이전트 — env CLI 계약·`CODEX_CLI`·`CLAUDE_CLI`, 분류 기본값 `classificationDefaultConfig`).
    CLI 계약을 DB 행으로 옮기려면 `CLI_DB_CONTRACT_ROUTES` 에 route 를 더하고 `cli-db-contracts.ts` 에 그 route 의 argv 상한을 적는다(connect 에이전트는
    `probeCliServingContracts` 를 부르므로 같은 버전 확인을 탄다).
-4. **2차의 줄 대기 대체**(`capacity_wait_timeout`)는 첫 표가 엔진 직접(local-direct·abcllm 형)일 때만이다 — CLI 첫 표는 줄에서 기다려도 다른 순위로 넘기지 않는다
+4. **2차의 줄 대기 대체**(`capacity_wait_timeout`)는 첫 표가 API(local-direct·abcllm — 계약 모양은 가리지 않는다)일 때만이고, 기준은 2026-11-21 부터
+   관리자 설정 「2차 심사 대기 시간」(`jobs.second-review.reviewWaitMs`, 기본 0 = 넘기지 않음 — 위 2차 절)이다. CLI 첫 표는 줄에서 기다려도 다른 순위로 넘기지 않는다
    (실패하면 표 실패 대체로 넘어간다). 1차의 포화 대체는 PR B 의 남은 일 3 처럼 앞 순위의 대기 행을 TTL 로 남긴다.
 5. **격리 replay**(인증 replay 도구 `scripts/pipeline-replay-fixed-input.ts`·`pipeline-replay-*`)는 아직 replay 설정 행의 firstReview·voters·fallbacks 를 선언·읽는다
    (`currentReplayDb` 갈래 — `first-reviewers.ts`·`second-review-voters.ts`). 운영 1·2차가 순위를 읽게 됐으니 replay manifest 도 순위를 선언하게 옮겨야

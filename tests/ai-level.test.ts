@@ -132,6 +132,17 @@ describe("GraphQL 질의와 읽기", () => {
     const scan = answers[0].kind === "found" ? answers[0].scan : null;
     expect(scan).toMatchObject({ defaultBranch: "main", headSha: SHA, commits: [{ authorLogin: "claude" }], pullRequests: [{ number: 3, authorType: "Bot" }] });
     expect(scan?.rootEntries.map((entry) => entry.path)).toEqual([".cursor", ".windsurfrules"]);
+    // 응답에 주인이 없으면 null(제작자 이메일은 모으지 않는다)
+    expect(scan?.owner).toBeNull();
+  });
+
+  it("지금 주인(owner { __typename login })을 같은 묶음 질의로 받는다 — 옮겨 간 저장소는 옛 이름으로 물어도 지금 주인이 온다", () => {
+    expect(aiLevelBatchQuery([{ owner: "kim", name: "tool" }])).toContain("fragment A on Repository { isFork owner { __typename login } defaultBranchRef");
+    const node = (owner: unknown) => ({ isFork: false, owner, defaultBranchRef: null, pullRequests: { nodes: [] }, root: null });
+    const scans = parseAiLevelBatch([{ owner: "kim", name: "tool" }, { owner: "kim", name: "moved" }, { owner: "kim", name: "broken" }],
+      { r0: node({ __typename: "User", login: "Kim" }), r1: node({ __typename: "Organization", login: "acme" }), r2: node({ login: 7 }) }, [])
+      .map((answer) => answer.kind === "found" ? answer.scan.owner : undefined);
+    expect(scans).toEqual([{ login: "Kim", type: "User" }, { login: "acme", type: "Organization" }, null]);
   });
 
   it("두 번째 질의 — 정해진 에이전트 폴더만, 두 겹과 PR 파일", () => {

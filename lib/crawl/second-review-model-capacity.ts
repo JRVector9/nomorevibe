@@ -7,9 +7,10 @@ import { findOwnPendingModelRequest, requestAi2ItemModelSlot, cancelReservedMode
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
 import { itemBindingHash } from '@/lib/jobs/items/types';
-import { ai2CallReroutesOnCapacityWait, prepareAi2GatewayCall, reviewWithReservedAi2Gateway, settleAi2GatewayNotStarted, type GatewayNotStarted,
+import { prepareAi2GatewayCall, reviewWithReservedAi2Gateway, settleAi2GatewayNotStarted, type GatewayNotStarted,
   type PreparedAi2GatewayCall } from './agent-review-gateway';
-import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelReservation, fallbackWaitingSecondReview, type SecondReviewModelClaim } from './second-review-ownership';
+import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelReservation, fallbackWaitingSecondReview, secondReviewRerouteWaitMs,
+  type SecondReviewModelClaim } from './second-review-ownership';
 import type { ReviewInput } from './agent-review-contract';
 import type { AgentReviewResult } from './agent-review';
 import { assertLiveReviewAdapterAllowed } from './review-fixture-transport';
@@ -52,10 +53,11 @@ export async function claimSecondReviewModelCapacity(intent: SecondReviewModelRe
     { candidateId: binding.candidateId, vote: binding.vote });
   if (slot.kind !== 'granted') {
     const reason = await capacityRefusalReason(request, slot.reason);
-    // 줄에서 15초 넘게 기다린 표를 같은 칸의 다음 순위로 넘기는 것은 장비 칸이 있는 엔진 직접 계약(direct-openai-chat-v1)의 표뿐이다 — abcllm 계약과 그 이름표만
-    // 바꾼 openai-chat-total-bound-v1 의 표는 예전처럼 기다린다(ai2CallReroutesOnCapacityWait, 2026-11-21 abcllm 이름표 정리 2단계). 예전 조건은 provider 가 local-direct 였다
-    if (reason === 'capacity' && ai2CallReroutesOnCapacityWait(call) && pending?.state === 'waiting'
-      && !signal?.aborted && await fallbackWaitingSecondReview(intent, pending.requestId))
+    // 줄에서 2차 심사 대기 시간(runtime_settings jobs.second-review.reviewWaitMs)보다 오래 기다린 표는 같은 칸의 다음 순위로 넘긴다 — 계약 모양
+    // (abcllm·direct-openai-chat-v1·openai-chat-total-bound-v1)을 가리지 않는다(2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」).
+    // 예전에는 고정 15초에 direct-openai-chat-v1 표만 넘겼다. 0 이면 넘기지 않는다(물림 TX 도 열지 않는다). 기다림은 장부가 같은 TX 에서 다시 잰다
+    if (reason === 'capacity' && pending?.state === 'waiting' && !signal?.aborted && secondReviewRerouteWaitMs() > 0
+      && await fallbackWaitingSecondReview(intent, pending.requestId))
       return { kind: 'capacity_fallback' };
     throw new ModelCapacityDeferredError(reason);
   }

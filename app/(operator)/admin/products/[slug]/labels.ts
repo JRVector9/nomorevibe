@@ -59,7 +59,7 @@ const HISTORY_ACTION_LABELS: Record<ProductHistoryKind, Record<string, string>> 
   admin: {
     "product-ban": "차단", "product-unban": "차단 해제", "repo-review-keep": "저장소 사라짐 · 유지", "repo-review-delist": "저장소 사라짐 · 내림",
     "product-auto-ban-uptime": "접속 실패 자동 내림",
-    "claim-invite": "클레임 초대 보냄", "product-refresh": "근거 갱신 예약", "update-hide": "업데이트 숨김", "update-restore": "업데이트 복원",
+    "claim-invite": "클레임 초대 보냄", "product-refresh": "근거 갱신 예약", "update-hide": "업데이트 숨김", "update-restore": "업데이트 복원", "maintainer-email-deny": "제작자 이메일 지움 · 다시 모으지 않음",
     "intro-keep": "소개 그대로 둠", "intro-edit": "소개 고침", "intro-request-edit": "소개 수정 요청 · 소개 고침",
     "intro-request-fixed": "소개 수정 요청 · 처리함", "intro-request-dismissed": "소개 수정 요청 · 둠", "audit-remove": "감사 · 내림", "audit-keep": "감사 · 유지", "takedown-remove": "내려달라는 요청 · 내림",
     "takedown-dismiss": "내려달라는 요청 · 둠", "candidate-approve": "후보 승인", "candidate-reject": "후보 거부",
