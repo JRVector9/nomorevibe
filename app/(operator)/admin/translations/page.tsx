@@ -12,6 +12,7 @@ import { formatDetailTime } from "@/lib/format/time";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { readReplicaOrHold } from "@/lib/operations/replica-hold";
 import { TranslationRetryForm } from "./TranslationRetryForm";
+import { SourceNativeRevertForm } from "./SourceNativeRevertForm";
 import { translationOwnerText } from "./owner";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { SettingsFieldsForm } from "@/app/(operator)/admin/models/limits/SettingsFieldsForm";
@@ -23,6 +24,10 @@ export const metadata: Metadata = { title: "공개 번역 — NoMoreVibe", robot
 const LOCALES = { en: "영어", "zh-Hans": "중국어 간체", "zh-Hant": "중국어 번체 (보관)", ja: "일본어" };
 const FIELDS = { tagline: "한 줄 소개", description: "설명" };
 const STATES = { failed: "실패", pending: "자동 처리 대기", ready: "번역 저장됨", reviewed: "검토값 저장됨", all: "전체" };
+// 목록 거르기: 저장 상태 + 「원문 유지」(모델이 이미 영어인 원문을 그대로 돌려준 행, provenance source_native)
+const FILTERS = { ...STATES, source_native: "원문 유지(이미 영어)" };
+const PROVENANCE: Record<string, string> = { machine: "기계 번역", source_native: "원문 유지 — 모델이 원문을 그대로 돌려줘 이미 영어로 보고 원문을 공개합니다",
+  maker: "메이커 작성", editor: "편집자 작성" };
 // 원문 글자 상한·최대 시도는 지금 판의 translation.product(관리자 실시간 한도)에서 — 문구가 저장된 값을 따라간다
 const reasonTexts = (policy: ProductTranslationPolicy): Record<string, string> => ({
   locale_retired: "번체 번역은 중단했습니다. 기존 데이터는 보관하며 재요청하지 않습니다.",
@@ -42,7 +47,8 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   if (!secret) throw new Error("admin_auth_unconfigured");
   const csrfToken = createHmac("sha256", secret).update(`product-translation-admin:${admin.login}:${admin.exp}`).digest("hex");
   const params = await searchParams;
-  const state = typeof params.state === "string" && Object.hasOwn(STATES, params.state) ? params.state as ProductTranslationStatus | "all" : "failed";
+  const filter = typeof params.state === "string" && Object.hasOwn(FILTERS, params.state) ? params.state as keyof typeof FILTERS : "failed";
+  const state: ProductTranslationStatus | "all" = filter === "source_native" ? "ready" : filter;
   const locale = typeof params.locale === "string" && Object.hasOwn(LOCALES, params.locale) ? params.locale as ProductTranslationLocale : undefined;
   const field = isProductTranslationField(params.field) ? params.field : undefined;
   const q = typeof params.q === "string" ? params.q.trim().slice(0, 120) : "";
@@ -51,10 +57,10 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   await ensureRuntimeSettings();
   const policy = productTranslationPolicy(), reasons = reasonTexts(policy);
   // 모델 호출 담당은 작업 배치 방식으로 정한다 — 새로 읽는 값이라 복제본에서만(못 읽으면 까닭과 함께 보류, 주 DB 로 넘기지 않는다)
-  const [queue, summary, batch, limits] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor }), productTranslationAdminSummary(),
+  const [queue, summary, batch, limits] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor, ...(filter === "source_native" ? { provenance: "source_native" as const } : {}) }), productTranslationAdminSummary(),
     readReplicaOrHold("admin.translation_owner_unavailable", () => readJobBatchMode()), readSettingsControl(TRANSLATION_LIMITS_CONTROL)]);
   const owner = translationOwnerText(batch.ok ? { ok: true, value: batch.value.mode } : batch);
-  const next = new URLSearchParams({ state, q });
+  const next = new URLSearchParams({ state: filter, q });
   if (locale) next.set("locale", locale);
   if (field) next.set("field", field);
   if (queue.nextCursor) next.set("cursor", queue.nextCursor);
@@ -64,10 +70,10 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
     <p className="text-[14px] leading-6 text-fg-2">공개 제품의 언어별 수요 기록입니다. 한국어 심사 사유 번역과 별개이며, 중단된 소개 검수를 재개하지 않습니다. {owner.page}</p>
     <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-[13px]">
       <caption className="pb-2 text-left text-fg-2">저장 상태 집계입니다. 현재 공개 준비 여부는 아래 원문 일치·보류 상태를 함께 확인하세요. 소진·재시도 대기는 실패 건수에 포함됩니다.</caption>
-      <thead><tr>{["언어·항목", "대기", "저장됨", "실패", "4회 소진", "재시도 대기", "현재 보류", "최고령 실패", "마지막 저장"].map((label) => <th key={label} className="px-2 py-2 font-semibold">{label}</th>)}</tr></thead>
+      <thead><tr>{["언어·항목", "대기", "저장됨", "원문 유지", "실패", "4회 소진", "재시도 대기", "현재 보류", "최고령 실패", "마지막 저장"].map((label) => <th key={label} className="px-2 py-2 font-semibold">{label}</th>)}</tr></thead>
       <tbody>{summary.map((row) => <tr key={`${row.locale}-${row.field}`} className="border-t border-line">
         <td className="px-2 py-2">{LOCALES[row.locale]} · {FIELDS[row.field]}</td>
-        {[row.pending, row.ready, row.failed, row.exhausted, row.retryWaiting, row.held].map((value, index) => <td key={index} className="px-2 py-2">{value.toLocaleString("ko-KR")}</td>)}
+        {[row.pending, row.ready, row.sourceNative, row.failed, row.exhausted, row.retryWaiting, row.held].map((value, index) => <td key={index} className="px-2 py-2">{value.toLocaleString("ko-KR")}</td>)}
         <td className="px-2 py-2">{formatDetailTime(row.oldestFailedAt)}</td><td className="px-2 py-2">{formatDetailTime(row.lastSavedAt)}</td>
       </tr>)}</tbody>
     </table></div>
@@ -85,7 +91,7 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
       </section>
     </details>
     <form action="/admin/translations" className="flex flex-wrap items-center gap-3 text-[14px]">
-      <label>상태<select name="state" defaultValue={state} className="ml-2 min-h-11 rounded-lg border border-line px-2">{Object.entries(STATES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>상태<select name="state" defaultValue={filter} className="ml-2 min-h-11 rounded-lg border border-line px-2">{Object.entries(FILTERS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>언어<select name="locale" defaultValue={locale ?? ""} className="ml-2 min-h-11 rounded-lg border border-line px-2"><option value="">활성 언어 전체</option>{Object.entries(LOCALES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>항목<select name="field" defaultValue={field ?? ""} className="ml-2 min-h-11 rounded-lg border border-line px-2"><option value="">전체</option>{Object.entries(FIELDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>제품<input name="q" defaultValue={q} maxLength={120} placeholder="이름·slug·ID" className="ml-2 min-h-11 rounded-lg border border-line px-2" /></label>
@@ -96,6 +102,7 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
     {queue.items.map((entry) => <section key={`${entry.productId}-${entry.locale}-${entry.field}-${entry.updatedAt}`} className="rounded-xl border border-line p-4 text-[13px]">
       <h2 className="text-[16px] font-semibold"><Link prefetch={false} href={`/admin/products/${entry.slug}`} className="underline">{entry.name}</Link> · {LOCALES[entry.locale]} · {FIELDS[entry.field]}</h2>
       <p className="mt-2">{STATES[entry.status]} · 시도 {entry.attempts}/{policy.maxAttempts} · 오류 {entry.errorCode ?? "없음"}</p>
+      {(entry.status === "ready" || entry.status === "reviewed") && <p className="mt-1" data-provenance={entry.provenance}>출처: {PROVENANCE[entry.provenance] ?? entry.provenance}</p>}
       <p className="mt-1 text-fg-2">상태 변경 {formatDetailTime(entry.updatedAt)} · 다음 시도 {formatDetailTime(entry.retryAt)} · 모델 {entry.model || "없음"}</p>
       <p className="mt-2 text-fg-2">{entry.sourceMatches ? "현재 원문과 일치합니다." : "현재 원문과 다릅니다. 저장된 번역은 공개에 사용되지 않습니다."} {reasons[entry.recoveryReason]}</p>
       <details className="mt-3"><summary className="cursor-pointer text-fg-2">원문·저장본·해시 확인</summary>
@@ -107,6 +114,8 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
         </div>
       </details>
       {entry.recovery && <TranslationRetryForm item={entry} csrfToken={csrfToken} expiresAt={admin.exp} accepted={owner.accepted} />}
+      {entry.status === "ready" && entry.provenance === "source_native" && entry.sourceMatches
+        && <SourceNativeRevertForm item={entry} csrfToken={csrfToken} expiresAt={admin.exp} />}
     </section>)}
     {queue.nextCursor && <Link prefetch={false} href={`/admin/translations?${next}`} className="inline-block min-h-11 py-3 text-[14px] underline">다음 기록</Link>}
   </main>;

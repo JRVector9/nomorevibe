@@ -115,7 +115,8 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
             const entries = completedBatch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
               if (!response.ok) return { task, result: { ok: false, error: response.error, model } };
               const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
-              return { task, result: checked.ok ? { ok: true, text: checked.text, model } : { ok: false, error: `rejected:${checked.reason}`, model } };
+              return { task, result: checked.ok ? { ok: true, text: checked.text, model, ...(checked.sourceNative ? { sourceNative: true as const } : {}) }
+                : { ok: false, error: `rejected:${checked.reason}`, model } };
             });
             const stored = await (outcome.expectation ? recordProductTranslations(entries, lease, outcome.expectation)
               : recordProductTranslations(entries, lease));

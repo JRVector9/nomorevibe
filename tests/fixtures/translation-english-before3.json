@@ -1,0 +1,672 @@
+[
+  {
+    "i": 0,
+    "j": 0,
+    "locale": "en",
+    "name": "Lichii",
+    "src": "매우 실험적인 닌텐도 스위치2 에뮬레이터",
+    "out": "A very experimental Nintendo Switch 2 emulator",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 0,
+    "j": 3,
+    "locale": "en",
+    "name": "ff-ruyijs",
+    "src": "실제 Firefox 엔진으로 파이썬에서 사이트 JavaScript를 실행하는 AI 브라우저",
+    "out": "An AI browser that runs site JavaScript in Python using the real Firefox engine",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 1,
+    "j": 2,
+    "locale": "en",
+    "name": "TagAction",
+    "src": "시맨틱 HTML 태그를 기대대로 동작하게 하는 작은 스크립트, 클래스나 빌드 단계, 페이지 스크립트가 필요 없습니다",
+    "out": "A small script that makes semantic HTML tags behave as expected, with no classes or build step, and no page scripts required",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 2,
+    "j": 1,
+    "locale": "en",
+    "name": "BrainBridge",
+    "src": "Open memory for AI agents. It survives sessions and compression, and moves between accounts, frontier models and even the agents your team shares.",
+    "out": "Open memory for AI agents. It survives sessions and compression, and moves between accounts, frontier models and even the agents your team shares.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 3,
+    "j": 0,
+    "locale": "en",
+    "name": "Somalimed",
+    "src": "무료·신뢰성 있는 의학 정보가 소말리어·덴마크어·영어·아랍어로 제공됩니다, 약학전문가가 환자와 가족을 위해 만들었습니다",
+    "out": "Free and reliable medical information is provided in Somali, Danish, English, and Arabic, created by a pharmacy professional for patients and their families.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 3,
+    "j": 3,
+    "locale": "en",
+    "name": "お知らせ・ルール",
+    "src": "사내 공지와 규칙을 날짜별로 검색·확인하고 번역도 제공하는 연락 앱",
+    "out": "A communication app for searching and reviewing internal notices and rules by date, with translation provided.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 4,
+    "j": 2,
+    "locale": "en",
+    "name": "SPEED AD",
+    "src": "SPEED AD - 영업 프로세스의 낭비를 제로로 만드는 차세대 리드 획득 도구",
+    "out": "SPEED AD - A next-generation lead acquisition tool that eliminates waste in the sales process",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 5,
+    "j": 1,
+    "locale": "en",
+    "name": "Seltrax",
+    "src": "파키스탄에서 테마·착불 결제·택배 발송·분석 기능이 포함된 온라인 스토어를 플러그인·코드 없이 월 1,999루피에 구축",
+    "out": "Build an online store in Pakistan with themes, cash on delivery, shipping, and analytics for 1,999 rupees per month, without plugins or code.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 6,
+    "j": 0,
+    "locale": "en",
+    "name": "TCG Booster Box Prices",
+    "src": "TCGplayer에서 매직, 포켓몬, 원피스 등 27개 게임의 부스터 박스·케이스·팩·덱·예약 가격을 비교",
+    "out": "Compare booster box, case, pack, deck, and pre-order prices for 27 games including Magic, Pokémon, and One Piece on TCGplayer",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 6,
+    "j": 3,
+    "locale": "en",
+    "name": "Propiedad Conecta",
+    "src": "원하는 부동산을 올리고 도움 가능한 부동산 중개인과 연결해 줍니다",
+    "out": "List your desired property and get connected with real estate agents who can help",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 7,
+    "j": 2,
+    "locale": "en",
+    "name": "PacificDB v1.2 Release",
+    "src": "PacificDB Community는 JSON 문서·벡터 검색·재개 미디어·검증 백업·RF3 복제를 하나의 자체 호스팅 DB에 통합합니다",
+    "out": "PacificDB Community integrates JSON document, vector search, resumable media, verified backup, and RF3 replication into a single self-hosted DB.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 8,
+    "j": 1,
+    "locale": "en",
+    "name": "Road to Six",
+    "src": "측정 가능한 AI와 비용 관리, 릴리즈 거버넌스를 기반으로 한 근거 기반 예측",
+    "out": "Evidence-based forecasting based on measurable AI and cost management, and release governance.",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 9,
+    "j": 0,
+    "locale": "en",
+    "name": "AI GIF Generator & Maker: Text or Image to GIF",
+    "src": "프롬프트나 사진을 AI GIF 메이커로 변환해 애니메이션 GIF를 만들고 미리보기 후 원본 파일을 다운로드",
+    "out": "Convert a prompt or photo into an animated GIF with the AI GIF Maker, preview it, and then download the original file.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 9,
+    "j": 3,
+    "locale": "en",
+    "name": "ArmorPaint",
+    "src": "ArmorPaint는 물리 기반 텍스처 페인팅을 위한 소프트웨어입니다",
+    "out": "ArmorPaint is software for physically based texture painting.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 10,
+    "j": 2,
+    "locale": "en",
+    "name": "Docs",
+    "src": "기본적이고 접근성 높은 원자 디자인 시스템, 프레임워크 없이 사용 가능",
+    "out": "A basic and accessible atomic design system, usable without a framework",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 11,
+    "j": 1,
+    "locale": "en",
+    "name": "Maritime zones",
+    "src": "지도에서 해양 구역·인근 영토·해안 거리 등을 탐색하고 JavaScript 예제를 활용",
+    "out": "Explore maritime zones, nearby territories, and coastal distances on the map, and use JavaScript examples",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 12,
+    "j": 0,
+    "locale": "en",
+    "name": "Ollama-C",
+    "src": "Ollama용 C99 클라이언트 라이브러리, ollama‑python 포트",
+    "out": "C99 client library for Ollama, a port of ollama‑python",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 12,
+    "j": 3,
+    "locale": "en",
+    "name": "מעבדת הפונקציות",
+    "src": "그래픽 인터랙티브 학습 – 15문제와 점수·피드백",
+    "out": "Graphical interactive learning – 15 problems with score and feedback",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 13,
+    "j": 2,
+    "locale": "en",
+    "name": "nebel.",
+    "src": "1형 당뇨 환자 체험 하루, 가족·친구용 학습 도구, 의료기기 아님",
+    "out": "A day in the life of a type 1 diabetes patient, a learning tool for family and friends, not a medical device",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 14,
+    "j": 1,
+    "locale": "en",
+    "name": "PICO 檢索語法轉換器",
+    "src": "PICO 키워드를 PubMed, Embase.com (Elsevier), Ovid MEDLINE 세 가지 검색 문법으로 변환하는 교육 도구",
+    "out": "An educational tool that converts PICO keywords into the search syntaxes of PubMed, Embase.com (Elsevier), and Ovid MEDLINE.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 15,
+    "j": 0,
+    "locale": "en",
+    "name": "FUTURESCOUT AI",
+    "src": "NEAR AI Cloud에서 동작하는 AI 에이전트가 반도체·AI·로봇 분야의 증거 기반 기술 연구를 수행",
+    "out": "AI agents running on NEAR AI Cloud perform evidence-based technology research in the semiconductor, AI, and robotics fields",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 15,
+    "j": 3,
+    "locale": "en",
+    "name": "Oren",
+    "src": "토큰화된 주식 포트폴리오와 투자 보조 파일럿",
+    "out": "Tokenized stock portfolio and investment assistant pilot",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 16,
+    "j": 2,
+    "locale": "en",
+    "name": "Хлыстопад",
+    "src": "채찍으로 트루퍼를 때리고, 영웅 고용·보스 격파·아이템 수집, 스트리밍 시 배경음악으로 재생돼 영혼이 두 배로 떨어진다",
+    "out": "Whip troopers, hire heroes, defeat bosses, collect items, and play as background music during streaming to drop souls twice as fast",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 17,
+    "j": 1,
+    "locale": "en",
+    "name": "Riichi Manager",
+    "src": "리치 마작 토너먼트 관리와 점수 계산기",
+    "out": "Riichi mahjong tournament management and score calculator",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 18,
+    "j": 0,
+    "locale": "en",
+    "name": "ElvasGuesser",
+    "src": "휴대폰으로 친구와 함께 즐기는 위치 기반 게임",
+    "out": "A location-based game to enjoy with friends on your mobile phone",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 18,
+    "j": 3,
+    "locale": "en",
+    "name": "Clínica Alba",
+    "src": "Clínica Alba: 가상의 의료센터, 웹·텔레그램 채팅 AI 예약 에이전트 시연",
+    "out": "Clínica Alba: a virtual medical center with a web and Telegram chat AI booking agent demo",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 19,
+    "j": 2,
+    "locale": "en",
+    "name": "Delta Salud",
+    "src": "베네수엘라 최초의 플랫폼으로 전문의와 환자를 연결합니다",
+    "out": "Venezuela's first platform connecting specialists and patients",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 20,
+    "j": 1,
+    "locale": "en",
+    "name": "Opening Night",
+    "src": "친구 한 그룹만을 위한 개인 영화 관람 앱",
+    "out": "A personal movie viewing app for a single group of friends.",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 21,
+    "j": 0,
+    "locale": "en",
+    "name": "Quai",
+    "src": "벨기에 대중교통 출발 정보를 실시간으로 안경에 표시",
+    "out": "Quai displays real-time Belgian public transport departure information on your glasses.",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 21,
+    "j": 3,
+    "locale": "en",
+    "name": "DeepVisor",
+    "src": "DeepVisor는 모든 기업의 디지털 광고를 간편하게 합니다. 메타 광고를 오늘 시작하고 베타 기간은 무료",
+    "out": "DeepVisor makes digital advertising simple for every business. Start with Meta ads today and enjoy a free beta period.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 22,
+    "j": 2,
+    "locale": "en",
+    "name": "Account Intel",
+    "src": "공개 계정 목록 순위·실시간 LLM으로 캠페인 초안·코드 검증 후 판매자 승인",
+    "out": "Ranks public account lists and drafts campaigns with real-time LLM, then verifies code for seller approval.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 23,
+    "j": 1,
+    "locale": "en",
+    "name": "Virtual Bookshelf",
+    "src": "책·팟캐스트·음악·동영상·링크·실시간 주식 티커까지 한 곳에 모아 공유할 수 있는 링크 하나로 전시",
+    "out": "One link to display and share books, podcasts, music, videos, links, and live stock tickers all in one place.",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 24,
+    "j": 0,
+    "locale": "en",
+    "name": "24H RACE LIVE",
+    "src": "24시간 노르드슐라이페, 팀 전체 시점을 동시에 제공, 시점 전환·채팅으로 커뮤니티와 연결",
+    "out": "24-hour Nordschleife, providing a full team perspective simultaneously, connecting with the community through perspective switching and chat",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 24,
+    "j": 3,
+    "locale": "en",
+    "name": "scarlet",
+    "src": "Scarlet은 macOS와 Windows용 AI 영상 편집기입니다",
+    "out": "Scarlet is an AI video editor for macOS and Windows",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 25,
+    "j": 1,
+    "locale": "en",
+    "name": "Lichii",
+    "src": "매우 실험적인 닌텐도 스위치2 에뮬레이터",
+    "out": "A highly experimental Nintendo Switch 2 emulator",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 26,
+    "j": 0,
+    "locale": "en",
+    "name": "ff-ruyijs",
+    "src": "실제 Firefox 엔진으로 파이썬에서 사이트 JavaScript를 실행하는 AI 브라우저",
+    "out": "An AI browser that runs site JavaScript in Python using the real Firefox engine",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 26,
+    "j": 3,
+    "locale": "en",
+    "name": "TagAction",
+    "src": "시맨틱 HTML 태그를 기대대로 동작하게 하는 작은 스크립트, 클래스나 빌드 단계, 페이지 스크립트가 필요 없습니다",
+    "out": "A small script that makes semantic HTML tags behave as expected, with no classes, build step, or page scripts required",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 27,
+    "j": 2,
+    "locale": "en",
+    "name": "BrainBridge",
+    "src": "Open memory for AI agents. It survives sessions and compression, and moves between accounts, frontier models and even the agents your team shares.",
+    "out": "Open memory for AI agents. It survives sessions and compression, and moves between accounts, frontier models and even the agents your team shares.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 28,
+    "j": 1,
+    "locale": "en",
+    "name": "Somalimed",
+    "src": "무료·신뢰성 있는 의학 정보가 소말리어·덴마크어·영어·아랍어로 제공됩니다, 약학전문가가 환자와 가족을 위해 만들었습니다",
+    "out": "Free and reliable medical information is provided in Somali, Danish, English, and Arabic, created by a pharmacy professional for patients and their families.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 29,
+    "j": 0,
+    "locale": "en",
+    "name": "お知らせ・ルール",
+    "src": "사내 공지와 규칙을 날짜별로 검색·확인하고 번역도 제공하는 연락 앱",
+    "out": "A communication app for searching and reviewing internal notices and rules by date, with translation support.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 29,
+    "j": 3,
+    "locale": "en",
+    "name": "SPEED AD",
+    "src": "SPEED AD - 영업 프로세스의 낭비를 제로로 만드는 차세대 리드 획득 도구",
+    "out": "SPEED AD - a next-generation lead acquisition tool that eliminates waste in the sales process.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 30,
+    "j": 2,
+    "locale": "en",
+    "name": "Seltrax",
+    "src": "파키스탄에서 테마·착불 결제·택배 발송·분석 기능이 포함된 온라인 스토어를 플러그인·코드 없이 월 1,999루피에 구축",
+    "out": "Build an online store in Pakistan for 1,999 rupees per month, including themes, pay-on-delivery, courier shipping, and analytics, with no plugins or code required",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 31,
+    "j": 1,
+    "locale": "en",
+    "name": "TCG Booster Box Prices",
+    "src": "TCGplayer에서 매직, 포켓몬, 원피스 등 27개 게임의 부스터 박스·케이스·팩·덱·예약 가격을 비교",
+    "out": "",
+    "ok": false,
+    "reason": "batch_invalid_output"
+  },
+  {
+    "i": 32,
+    "j": 0,
+    "locale": "en",
+    "name": "Propiedad Conecta",
+    "src": "원하는 부동산을 올리고 도움 가능한 부동산 중개인과 연결해 줍니다",
+    "out": "List the real estate you want and get connected with real estate agents who can help.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 32,
+    "j": 3,
+    "locale": "en",
+    "name": "PacificDB v1.2 Release",
+    "src": "PacificDB Community는 JSON 문서·벡터 검색·재개 미디어·검증 백업·RF3 복제를 하나의 자체 호스팅 DB에 통합합니다",
+    "out": "PacificDB Community integrates JSON document, vector search, resumable media, verified backup, and RF3 replication into a single self-hosted DB.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 33,
+    "j": 2,
+    "locale": "en",
+    "name": "Road to Six",
+    "src": "측정 가능한 AI와 비용 관리, 릴리즈 거버넌스를 기반으로 한 근거 기반 예측",
+    "out": "Evidence-based forecasting grounded in measurable AI and cost management, and release governance",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 34,
+    "j": 1,
+    "locale": "en",
+    "name": "AI GIF Generator & Maker: Text or Image to GIF",
+    "src": "프롬프트나 사진을 AI GIF 메이커로 변환해 애니메이션 GIF를 만들고 미리보기 후 원본 파일을 다운로드",
+    "out": "Convert prompts or photos into animated GIFs with the AI GIF maker, preview the result, and download the original file.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 35,
+    "j": 0,
+    "locale": "en",
+    "name": "ArmorPaint",
+    "src": "ArmorPaint는 물리 기반 텍스처 페인팅을 위한 소프트웨어입니다",
+    "out": "ArmorPaint is software for physically based texture painting.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 35,
+    "j": 3,
+    "locale": "en",
+    "name": "Docs",
+    "src": "기본적이고 접근성 높은 원자 디자인 시스템, 프레임워크 없이 사용 가능",
+    "out": "A basic and accessible atomic design system that can be used without a framework.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 36,
+    "j": 2,
+    "locale": "en",
+    "name": "Maritime zones",
+    "src": "지도에서 해양 구역·인근 영토·해안 거리 등을 탐색하고 JavaScript 예제를 활용",
+    "out": "Explore maritime zones, nearby territories, and coastal distances on the map, and use JavaScript examples",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 37,
+    "j": 1,
+    "locale": "en",
+    "name": "Ollama-C",
+    "src": "Ollama용 C99 클라이언트 라이브러리, ollama‑python 포트",
+    "out": "A C99 client library for Ollama, a port of ollama‑python.",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 38,
+    "j": 0,
+    "locale": "en",
+    "name": "מעבדת הפונקציות",
+    "src": "그래픽 인터랙티브 학습 – 15문제와 점수·피드백",
+    "out": "Graphical interactive learning – 15 problems with scores and feedback",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 38,
+    "j": 3,
+    "locale": "en",
+    "name": "nebel.",
+    "src": "1형 당뇨 환자 체험 하루, 가족·친구용 학습 도구, 의료기기 아님",
+    "out": "A day in the life of a type 1 diabetes patient, a learning tool for family and friends, not a medical device",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 39,
+    "j": 2,
+    "locale": "en",
+    "name": "PICO 檢索語法轉換器",
+    "src": "PICO 키워드를 PubMed, Embase.com (Elsevier), Ovid MEDLINE 세 가지 검색 문법으로 변환하는 교육 도구",
+    "out": "An educational tool that converts PICO keywords into the search syntax of PubMed, Embase.com (Elsevier), and Ovid MEDLINE.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 40,
+    "j": 1,
+    "locale": "en",
+    "name": "FUTURESCOUT AI",
+    "src": "NEAR AI Cloud에서 동작하는 AI 에이전트가 반도체·AI·로봇 분야의 증거 기반 기술 연구를 수행",
+    "out": "AI agents running on NEAR AI Cloud perform evidence-based technology research in the semiconductor, AI, and robotics fields.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 41,
+    "j": 0,
+    "locale": "en",
+    "name": "Oren",
+    "src": "토큰화된 주식 포트폴리오와 투자 보조 파일럿",
+    "out": "Tokenized stock portfolio and investment assistant pilot",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 41,
+    "j": 3,
+    "locale": "en",
+    "name": "Хлыстопад",
+    "src": "채찍으로 트루퍼를 때리고, 영웅 고용·보스 격파·아이템 수집, 스트리밍 시 배경음악으로 재생돼 영혼이 두 배로 떨어진다",
+    "out": "Whack troopers with a whip, hire heroes, defeat bosses, and collect items; played as background music during streaming, it makes your soul drop twice as fast",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 42,
+    "j": 2,
+    "locale": "en",
+    "name": "Riichi Manager",
+    "src": "리치 마작 토너먼트 관리와 점수 계산기",
+    "out": "Riichi Mahjong tournament management and score calculator",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 43,
+    "j": 1,
+    "locale": "en",
+    "name": "ElvasGuesser",
+    "src": "휴대폰으로 친구와 함께 즐기는 위치 기반 게임",
+    "out": "A location-based game to enjoy with friends on your mobile phone.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 44,
+    "j": 0,
+    "locale": "en",
+    "name": "Clínica Alba",
+    "src": "Clínica Alba: 가상의 의료센터, 웹·텔레그램 채팅 AI 예약 에이전트 시연",
+    "out": "Clínica Alba: a virtual medical center demonstrating a web and Telegram chat AI booking agent",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 44,
+    "j": 3,
+    "locale": "en",
+    "name": "Delta Salud",
+    "src": "베네수엘라 최초의 플랫폼으로 전문의와 환자를 연결합니다",
+    "out": "Venezuela's first platform connecting specialists with patients",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 45,
+    "j": 2,
+    "locale": "en",
+    "name": "Opening Night",
+    "src": "친구 한 그룹만을 위한 개인 영화 관람 앱",
+    "out": "A personal movie viewing app for a single group of friends",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 46,
+    "j": 1,
+    "locale": "en",
+    "name": "Quai",
+    "src": "벨기에 대중교통 출발 정보를 실시간으로 안경에 표시",
+    "out": "Quai displays real-time Belgian public transit departure information on your glasses.",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 47,
+    "j": 0,
+    "locale": "en",
+    "name": "DeepVisor",
+    "src": "DeepVisor는 모든 기업의 디지털 광고를 간편하게 합니다. 메타 광고를 오늘 시작하고 베타 기간은 무료",
+    "out": "DeepVisor makes digital advertising simple for every business. Start your Meta ads today and enjoy a free beta period.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 47,
+    "j": 3,
+    "locale": "en",
+    "name": "Account Intel",
+    "src": "공개 계정 목록 순위·실시간 LLM으로 캠페인 초안·코드 검증 후 판매자 승인",
+    "out": "Ranks public account lists and drafts campaigns in real time with LLM, then verifies code before seller approval.",
+    "ok": true,
+    "reason": null
+  },
+  {
+    "i": 48,
+    "j": 2,
+    "locale": "en",
+    "name": "Virtual Bookshelf",
+    "src": "책·팟캐스트·음악·동영상·링크·실시간 주식 티커까지 한 곳에 모아 공유할 수 있는 링크 하나로 전시",
+    "out": "One link to display and share books, podcasts, music, videos, links, and live stock tickers all in one place.",
+    "ok": false,
+    "reason": "english_uncertain"
+  },
+  {
+    "i": 49,
+    "j": 1,
+    "locale": "en",
+    "name": "24H RACE LIVE",
+    "src": "24시간 노르드슐라이페, 팀 전체 시점을 동시에 제공, 시점 전환·채팅으로 커뮤니티와 연결",
+    "out": "24-hour Nordschleife, simultaneous full team views, and community connection via view switching and chat",
+    "ok": false,
+    "reason": "english_uncertain"
+  }
+]

@@ -139,7 +139,8 @@ export function modelSlotCallsSql(slots: readonly SlotRef[], window: "24h" | "7d
   if (has("embedding")) branches.push(branch("embedding", productEmbeddings.model, productEmbeddings.embeddedAt, sql`false`, sql`${productEmbeddings}`));
   if (has("product-translate")) branches.push(branch("product-translate", productTranslations.model, productTranslations.updatedAt,
     sql`${productTranslations.status} = 'failed'`, sql`${productTranslations}`,
-    sql`${productTranslations.status} IN ('ready', 'failed') AND ${productTranslations.provenance}->>'kind' = 'machine'`));
+    // source_native rows are model calls too (the model kept an already-English source unchanged)
+    sql`${productTranslations.status} IN ('ready', 'failed') AND ${productTranslations.provenance}->>'kind' IN ('machine', 'source_native')`));
   if (has("reason-translate")) branches.push(branch("reason-translate", textTranslations.model, textTranslations.updatedAt,
     sql`${textTranslations.status} = 'failed'`, sql`${textTranslations}`));
   if (has("tagline-ko")) branches.push(branch("tagline-ko", productKoreanTaglines.model, productKoreanTaglines.updatedAt,
