@@ -10,6 +10,7 @@ import { reviewApprovalPredicate, reviewCandidatePredicate, starAutoApprovalPred
 import { createReviewInput, REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash } from "./agent-review-contract";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { firstReviewers, firstReviewIdentitySql } from "./first-reviewers";
+import { sameReviewerProviderSql } from "./reviewer-identity";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { firstReviewProviderPredicate, secondReviewInputMatches } from "./second-review-input";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
@@ -80,7 +81,7 @@ async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings
   const modelName = (model: SQL) => sql`regexp_replace(regexp_replace(lower(trim(${model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')`;
   const voterMatches = (provider: SQL, model: SQL, pool: CrawlSettings["secondReview"]["voters"]) => sql`exists(
     select 1 from jsonb_array_elements(${JSON.stringify(pool)}::jsonb) voter
-    where voter->>'provider'=${provider} and ${modelName(sql`voter->>'model'`)}=${modelName(model)})`;
+    where ${sameReviewerProviderSql(sql`voter->>'provider'`, provider)} and ${modelName(sql`voter->>'model'`)}=${modelName(model)})`;
   const newer = alias(crawlReviewAttempts, "admission_newer_first");
   const root = alias(secondReviews, "admission_root_vote");
   const readyAt = sql`greatest(${secondReviews.createdAt}, case when ${secondReviews.errorCode} is not null then ${secondReviews.reviewedAt}
@@ -185,7 +186,7 @@ async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings
         sql`not exists(select 1 from ${crawlReviewAttempts} admission_newer_first where ${newer.candidateId}=${crawlCandidates.id}
           and ${newer.kind}='automatic' and ${newer.state}='succeeded' and ${firstReviewProviderPredicate(settings, newer)}
           and ${newer.id} > ${crawlReviewAttempts.id}
-          and (${secondReviews.trigger}<>'ai_approved' or (${newer.provider}=${crawlReviewAttempts.provider} and ${newer.model}=${crawlReviewAttempts.model})))`,
+          and (${secondReviews.trigger}<>'ai_approved' or (${sameReviewerProviderSql(newer.provider, crawlReviewAttempts.provider)} and ${newer.model}=${crawlReviewAttempts.model})))`,
       )).orderBy(readyAt, asc(secondReviews.id)).limit(SECOND_WINDOW + 1));
     result.secondWindowLimited = rows.length > SECOND_WINDOW;
     result.secondVoteWindowLimited = result.secondWindowLimited;

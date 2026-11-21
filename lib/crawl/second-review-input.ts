@@ -11,20 +11,29 @@ import { loadReviewInput } from "./agent-review-repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { sameReviewModel } from "./review-model-identity";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
-import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
+import { secondReviewFallbacks, secondReviewVoterFor, secondReviewVoters } from "./second-review-voters";
+import { reviewerProviderMatchSql } from "./reviewer-identity";
 import { requireReviewTaskRanks } from "./review-task-ranks";
 import { reviewSemanticNow } from "./review-replay-context";
 import { secondReviewAssignmentMap, secondReviewHasWorkloadPool, secondReviewVoteEligible, secondReviewWorkloadMembership } from "./second-review-workload";
 import { appliedHeldQwenAttemptSql, heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
-/** Grok upstream decisions are usable only while that exact first reviewer is configured. */
+/**
+ * 2차가 붙을 수 있는 1차 판단의 심사자인가(시도 행 하나, TS) — 아래 SQL 과 같은 조건이다. claude-cli·abcllm 의 판단은 예전처럼 지금 1차 풀과 견주지 않고 받고,
+ * 그 밖(grok-cli·opencode-cli·local-direct)은 지금 1차 심사자의 것일 때만 받는다. 「지금 1차 심사자의 것」은 동등 규칙이다(first-reviewers.ts hasFirstReviewer).
+ */
+export function secondReviewFirstReviewer(pool: ReturnType<typeof firstReviewers>, attempt: { provider: string | null; model: string | null }): boolean {
+  return attempt.provider === "claude-cli" || attempt.provider === "abcllm" || hasFirstReviewer(pool, attempt);
+}
+/**
+ * secondReviewFirstReviewer 의 SQL. Grok·OpenCode·local-direct upstream decisions are usable only while that first reviewer is configured.
+ * 2026-11-21: local-direct 1차를 여기서도 받는다 — TS 쪽(secondReviewInputMatches·currentFirst)은 PR 3b-C 부터 받았는데 이 SQL 만 빠져 있어, local-direct 1차의
+ * 판단은 2차 입력 로더·올리기·발견 관문이 찾지 못했다(1차 계약을 local-direct 로 옮기면 2차가 통째로 멈춘다).
+ */
 export function firstReviewProviderPredicate(settings: CrawlSettings,
   attempts: { provider: AnyPgColumn; model: AnyPgColumn } = crawlReviewAttempts) {
-  const pool = firstReviewers(settings);
-  return or(inArray(attempts.provider, ["claude-cli", "abcllm"]),
-    firstReviewIdentitySql(pool.filter(reviewer => reviewer.provider === "grok-cli" || reviewer.provider === "opencode-cli"), attempts))!;
+  return or(inArray(attempts.provider, ["claude-cli", "abcllm"]), firstReviewIdentitySql(firstReviewers(settings), attempts))!;
 }
 
 /** Shared pure validation for a locked worker input and the bounded admission snapshot. */
@@ -45,14 +54,14 @@ export function secondReviewInputMatches(row: SecondReview, current: {
   const pool = row.fallbackForId ? secondReviewFallbacks(settings) : secondReviewVoters(settings);
   if (secondReviewHasWorkloadPool()
     ? !secondReviewWorkloadMembership(row, current.workloadAssignment)
-    : !pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return false;
+    : !secondReviewVoterFor(pool, row)) return false;
   if (row.fallbackForId && (!root || root.id !== row.fallbackForId || root.fallbackForId || root.candidateId !== row.candidateId
     || root.repo !== row.repo || root.firstAttemptId !== row.firstAttemptId || root.trigger !== row.trigger
     || root.publishedSlug !== row.publishedSlug || root.firstDecision !== row.firstDecision
     || (root.firstConfidence ?? null) !== (row.firstConfidence ?? null) || root.firstModel !== row.firstModel
     || root.generationKey !== row.generationKey || root.inputHash !== row.inputHash || root.status !== "resolved"
     || root.resolution !== "fallback" || (secondReviewHasWorkloadPool() ? !secondReviewWorkloadMembership(root, current.workloadAssignment)
-      : !secondReviewVoters(settings).some(voter => voter.provider === root.provider && sameReviewModel(voter.model, root.model))))) return false;
+      : !secondReviewVoterFor(secondReviewVoters(settings), root)))) return false;
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
     || (!row.fallbackForId && secondReviewHasWorkloadPool()
       && !secondReviewVoteEligible(row.model, current.workloadAssignment))) return false;
@@ -167,7 +176,7 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
   const workloadAssignment = secondReviewHasWorkloadPool()
     ? (await secondReviewAssignmentMap(executor, [row])).get(row.fallbackForId ?? row.id) : undefined;
   if (secondReviewHasWorkloadPool() ? !secondReviewWorkloadMembership(row, workloadAssignment)
-    : !pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
+    : !secondReviewVoterFor(pool, row)) return null;
   const input = await loadReviewInput(candidate, document, settings, executor);
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId
       && secondReviewHasWorkloadPool() && !secondReviewVoteEligible(row.model, workloadAssignment))) return null;
@@ -182,7 +191,9 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.state, "succeeded"),
       or(and(eq(crawlReviewAttempts.kind, "automatic"), firstReviewProviderPredicate(settings)),
         row.trigger === "ai_approved" ? heldQwenGateFirstSql(settings, appliedHeldQwenAttemptSql(candidate)) : undefined),
-      gateFirst ? sql`${crawlReviewAttempts.provider} IS NOT DISTINCT FROM ${gateFirst.provider} AND ${crawlReviewAttempts.model} IS NOT DISTINCT FROM ${gateFirst.model}` : undefined,
+      // 「그 1차 심사자」는 동등 규칙이다 — 이름표만 바뀐 같은 엔진의 더 새 판단이 있으면 그것이 최신이다(reviewer-identity.ts)
+      gateFirst ? sql`${gateFirst.provider === null ? sql`${crawlReviewAttempts.provider} IS NULL` : reviewerProviderMatchSql(crawlReviewAttempts.provider, gateFirst.provider)}
+        AND ${crawlReviewAttempts.model} IS NOT DISTINCT FROM ${gateFirst.model}` : undefined,
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
     [first] = await (lockGate ? firstQuery.for("share") : firstQuery);
     if (!first || first.id !== row.firstAttemptId || first.inputHash !== input.inputHash
