@@ -15,6 +15,8 @@ const ROUTE_JOB = {
   'crawl-agent-review': { job: 'crawl-agent-review', class: 'first', pool: 'reviewer' },
   'second-review': { job: 'second-review', class: 'second', pool: 'reviewer' },
 } as const;
+/** 접수 막힘이 재시작을 끌 수 있는 잡 — 이 잡의 단계를 읽지 않는 진행 읽기(역할 감독의 제 역할 읽기)는 막힘 집계를 건너뛴다 */
+export const CAPACITY_ADMISSION_BLOCK_JOBS: readonly string[] = [...new Set(Object.values(ROUTE_JOB).map(route => route.job))];
 
 /**
  * device: 장비(route 의 groupId) 칸이 다 찼다. device_cap: 낮은 순위(rank > 1) 경로가 우선 역할이 바쁜 동안 낮은 순위 상한(secondary_cap)에 막혔다.
