@@ -343,7 +343,9 @@ it('revisits an aged capacity waiter before the normal cursor reaches EOF', asyn
   const query = new PgDialect().sqlToQuery(mocks.waitingWhere.mock.calls[0][0]);
   expect(query.params).toEqual(expect.arrayContaining(['waiting', 'local-direct', 'abcllm', owner().instanceId, owner().bootId, 15_000]));
   // 그 표가 그 모델 줄에서 이어서 기다린 시간(대기 만료로 거둔 행 포함, 마지막으로 보낸 뒤부터) — ai2QueueWaitStartSql
-  for (const fragment of ['queued_at', 'queue_until', 'fallback_for_id', 'logical_work_key', "'withdrawn'", 'dispatched_at']) expect(query.sql).toContain(fragment);
+  // 보냄은 근거(dispatched_at·dispatch_binding)로 가르고, 장부 control·ai2 단계 행이 바뀐 때(DRAIN 뒤 다시 엶 등)보다 앞은 세지 않는다
+  for (const fragment of ['queued_at', 'queue_until', 'fallback_for_id', 'logical_work_key', "'withdrawn'", 'dispatched_at', 'dispatch_binding',
+    'model_capacity_control', 'pipeline_stage_modes']) expect(query.sql).toContain(fragment);
 });
 it('with the review wait time off (0, the default) never queries a waiting hint — reservations and the normal keyset still run', async () => {
   setRuntimeSettingsForTest({});
