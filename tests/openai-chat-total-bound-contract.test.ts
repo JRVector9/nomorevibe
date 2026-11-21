@@ -7,7 +7,7 @@ import { bindReviewTaskRank } from "@/lib/crawl/review-task-ranks";
 import { textRedirect, textWireFor } from "@/lib/crawl/agent-review-gateway";
 import { bindApiTaskRank, type AiTaskRank } from "@/lib/llm/ai-task-resolver";
 import { setAiTaskModelsForTest } from "@/lib/llm/ai-task-models-snapshot";
-import { cliEngineRevision } from "@/lib/llm/cli-engine-config";
+import { cliEngineEndpoint, cliEngineRevision } from "@/lib/llm/cli-engine-config";
 import { OPENAI_CHAT_TOTAL_BOUND_PROTOCOL, servingContractWireModel } from "@/lib/llm/direct-serving-contract";
 import { setServingContractSnapshotForTest, textRouteAccess } from "@/lib/llm/serving-contract-store";
 import { servingContractHash, validateAdminServingContract } from "@/lib/operations/admin-serving-contracts";
@@ -201,6 +201,27 @@ describe("rank binding", () => {
     setServingContractSnapshotForTest([contractRow(totalBoundContract("product-translate", { model: ledgerName, endpoint, extra: { engineModel: "engine-name" } })),
       contractRow(abcllmContract("product-translate", { model: "engine-name", endpoint }))]);
     expect(bindApiTaskRank("product-translate", rank)).toMatchObject({ binding: { identity: "engine-name", provider: "abcllm" } });
+  });
+
+  it("binds a CLI-engine rank (OpenCode) to a new-shape contract as it does to an abcllm one, and to no other local-direct shape", () => {
+    const base = "http://cli-engine.test:3031/v1", secret = "s".repeat(40);
+    const row = textRankRow("product-translate", "engine-name", { baseUrl: base, apiKey: secret });
+    const rank = { ...row, connection: { ...row.connection, kind: "cli" as const, cliTool: "opencode" } } as unknown as AiTaskRank;
+    const extra = { deploymentRevision: cliEngineRevision({ connectionId: TEST_CONNECTION_ID }), endpoint: cliEngineEndpoint(base) };
+    const stored = (contract: Record<string, unknown>) => ({ ...contractRow(contract), auth: "stored" as const, apiKey: secret });
+    setServingContractSnapshotForTest([stored(totalBoundContract("product-translate", { model: "engine-name", ...extra }))]);
+    const next = bindApiTaskRank("product-translate", rank);
+    expect(next).toMatchObject({ unusable: null, binding: { identity: "engine-name", engineModel: "engine-name", provider: "local-direct",
+      cliEngine: { connectionId: TEST_CONNECTION_ID } } });
+    setServingContractSnapshotForTest([stored(abcllmContract("product-translate", { model: "engine-name", ...extra }))]);
+    const old = bindApiTaskRank("product-translate", rank);
+    expect(old).toMatchObject({ unusable: null, binding: { identity: "engine-name", provider: "abcllm", cliEngine: { connectionId: TEST_CONNECTION_ID } } });
+    expect({ ...next.binding, provider: "abcllm" }).toEqual(old.binding);
+    // direct-openai-chat-v1 은 CLI 엔진 계약이 되지 못한다(예전 그대로)
+    setServingContractSnapshotForTest([stored({ version: 1, protocol: "direct-openai-chat-v1", routeId: "product-translate", provider: "local-direct", model: "engine-name",
+      responseModel: "served", ...extra, tokenizerEndpoint: "http://cli-engine.test:3031/tokenize", backendId: "backend", physicalGroup: "device",
+      totalTokenBound: 50_000, requestTokenBound: 32_000, maxOutputTokens: 1024 })]);
+    expect(bindApiTaskRank("product-translate", rank)).toMatchObject({ binding: null, unusable: "cli_contract_missing" });
   });
 
   it("binds a review rank to a new-shape contract the same way", () => {
