@@ -82,7 +82,7 @@ target AS (
   FOR UPDATE OF t SKIP LOCKED
 ), updated AS (
   UPDATE product_translations t
-  SET status = 'failed', text = NULL, error_code = 'source_native_reverted', attempts = GREATEST(t.attempts, settings.max_attempts),
+  SET status = 'failed', text = NULL, error_code = 'source_native_reverted', attempts = GREATEST(t.attempts, 4, settings.max_attempts),
     retry_at = NULL, source_locale = NULL, provenance = jsonb_set(t.provenance, '{kind}', '"machine"'), updated_at = now()
   FROM target, settings
   WHERE (t.product_id, t.locale, t.field) = (target.product_id, target.locale, target.field)

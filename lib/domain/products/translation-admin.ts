@@ -187,7 +187,8 @@ export function revertSourceNativeTranslation(input: SourceNativeRevertInput): P
     const [row] = await tx.select(selection).from(t).innerJoin(products, eq(products.id, t.productId)).where(predicate).for("update", { of: t });
     if (!row || row.status !== "ready" || row.provenance !== "source_native" || row.sourceHash !== input.expectedSourceHash
       || row.updatedAt !== input.expectedUpdatedAt) throw new ProductTranslationAdminError("conflict");
-    const attempts = Math.max(row.attempts, productTranslationPolicy().maxAttempts);
+    // 고르기는 attempts < min(maxAttempts, 4) — 4 이상이면 나중에 maxAttempts 를 낮췄다 올려도 다시 집히지 않는다(리뷰 #1019)
+    const attempts = Math.max(row.attempts, 4, productTranslationPolicy().maxAttempts);
     const updated = await tx.update(t).set({ status: "failed", text: null, errorCode: "source_native_reverted", attempts, retryAt: null,
       sourceLocale: null, provenance: sql`jsonb_set(${t.provenance}, '{kind}', '"machine"')`, updatedAt: sql`now()` })
       .where(and(predicate, eq(t.status, "ready"), sql`${t.provenance}->>'kind' = 'source_native'`, eq(t.sourceHash, input.expectedSourceHash),
