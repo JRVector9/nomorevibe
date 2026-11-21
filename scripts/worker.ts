@@ -271,8 +271,9 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
           // 잡이 continuation:"ready" 로 남은 일을 알려 runner 가 같은 잡을 다시 요청해 두었으면(RunResult.continuation) 1초 뒤 줄을 다시 돈다 —
           // 기본 5초 쉼이 틱 사이 물리 슬롯을 놀리고 줄에 남긴 예약(TTL 30초)을 만료시키지 않게. 잡 이름을 보지 않는다: 어느 잡이 이어 돌 수
           // 있는지는 runner 가 정한다(lib/jobs/runner.ts). 미룬(deferred) 틱은 요청을 남긴 채 lease 만 놓으므로 기존 poll 간격에 다시 본다 —
-          // stage_blocked(AI2 items 모드의 second-review 정비 틱)도 같다. 예전의 1초 재실행 특례(2026-10-31 삭제)는 items 모드에서
-          // reviewer 줄이 1초마다 enqueue/close/reconcile TX 를 되풀이해 풀을 눌렀다; items 모드의 건 처리는 consumer 가 1초 idle 로 집는다
+          // model_capacity 미룸이 장부 예약(TTL 30초)을 제때 집는 길이라 여기에 백오프를 걸지 않는다. 오래 이어지는 상태를 미룸으로 내면
+          // poll 마다 같은 일을 되풀이한다: AI2 items 모드의 second-review 정비 틱이 그랬다(예전의 1초 재실행 특례는 2026-10-31 삭제, 5초 poll 도
+          // enqueue/close/reconcile 쿼리를 일정의 6배로 돌렸다) — 2026-11-21 부터 그 틱은 완료 틱이라 정기 요청(60초)을 기다린다
           if (result.status === 'completed' && result.continuation === true) stageRefill = true;
           dependencies.log?.('worker.job', { role: options.role, name, status: result.status });
         } catch (error) {

@@ -115,8 +115,10 @@ async function lockSecondReviewRows(tx: ProductTransaction, row: SecondReview): 
     eq(secondReviews.id, row.id),
     row.firstAttemptId ? eq(secondReviews.firstAttemptId, row.firstAttemptId) : undefined,
     row.fallbackForId ? eq(secondReviews.id, row.fallbackForId) : undefined,
-    row.firstAttemptId ? sql`${secondReviews.id} IN (SELECT g.fallback_for_id FROM second_reviews g
-      WHERE g.first_attempt_id = ${row.firstAttemptId} AND g.fallback_for_id IS NOT NULL)` : undefined,
+    // = ANY(ARRAY(…)): 뜻은 IN (SELECT …) 과 같다(NULL 은 하위 질의가 뺀다). IN 꼴은 OR 의 한 가지로 인덱스 조건이 되지 못해 문장 전체가 표를 읽었다 —
+    // 배열은 한 번 계산된 값이라 id 인덱스 조건이 되고, 네 가지가 모두 인덱스(second_reviews_first_attempt_idx 포함)로 묶인다(2026-11-21 W1-2)
+    row.firstAttemptId ? sql`${secondReviews.id} = ANY(ARRAY(SELECT g.fallback_for_id FROM second_reviews g
+      WHERE g.first_attempt_id = ${row.firstAttemptId} AND g.fallback_for_id IS NOT NULL))` : undefined,
   )).orderBy(secondReviews.id).for("update");
 }
 

@@ -5,7 +5,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "@/lib/crawl/second-review-transport";
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, reconcileStaleSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
-import { admitLegacySecondReview, canStartLegacySecondReview } from "@/lib/crawl/second-review-ownership";
+import { admitLegacySecondReview, canStartLegacySecondReview, legacySecondReviewStage } from "@/lib/crawl/second-review-ownership";
 import { assertReviewFixtureSettings } from "../review-fixture-transport";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { secondReviewRankTick } from "@/lib/crawl/second-review-voters";
@@ -68,8 +68,16 @@ export async function secondReviewCandidates(ctx: JobContext<SecondReviewCursor>
 /** 대기 중인 2차 표를 행에 적힌 모델로 본다 — 위 틱의 나머지다 */
 async function reviewPendingVotes(ctx: JobContext<SecondReviewCursor>, lease: JobLease, startedAt: number,
   { enqueued, closed, reopened, reconciled }: { enqueued: number; closed: number; reopened: number; reconciled: number }): Promise<JobOutcome<SecondReviewCursor>> {
-  if (!await canStartLegacySecondReview(lease)) {
-    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive", reconciled });
+  const stage = await legacySecondReviewStage(lease);
+  if (stage !== "legacy") {
+    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive", enqueued, closed, reopened, reconciled });
+    // items: 표 심사는 item 소비자 몫이고 이 잡의 일은 위 정비가 전부다 — 그 정비를 던지지 않고 마쳤으니 완료 틱으로 끝낸다(2026-11-21).
+    // stage_blocked 로 미루면 요청이 남아 워커 줄이 poll(5초)마다 정비 쿼리를 되풀이했고(일정은 60초), 성공 시각도 옮겨지지 않았다.
+    // 다음 틱은 scheduler 의 정기 요청(60초)과 1차 기록이 부르는 requestJob 이 깨운다 — 단계가 legacy 로 돌아와도 그 요청이 집는다.
+    // 보통의 표 기록은 이 잡을 부르지 않는다(대체 표를 넣을 때만 부른다): 표가 끝난 뒤의 닫기·재시도는 정기 요청을 기다린다.
+    // 발행은 표 기록 TX 가 crawl-publish 를 직접 요청하므로 늦어지지 않는다. 적체가 쌓였을 때 정비의 틱당 상한은 60초에 한 번꼴로 돈다.
+    if (stage === "items") return { done: true };
+    // draining 은 전환 중이라 곧 풀린다 — 종전대로 요청을 남겨 다음 poll 이 다시 본다
     return { done: false, deferred: "stage_blocked" };
   }
   const queue = [...await pendingSecondReviews(FETCH)];

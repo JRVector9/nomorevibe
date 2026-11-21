@@ -11,6 +11,7 @@ import { csrfForToken, newPublicSession } from "@/lib/domain/accounts/session";
 import { crawlDocuments } from "@/lib/db/schema";
 import { clearAllMemos } from "@/lib/cache/memo";
 import { ensureSchema, resetTables } from "./setup";
+import { clearRepositoryIdentityAnchors } from "./repository-identity-anchors-fixture";
 
 vi.mock("server-only", () => ({}));
 
@@ -45,6 +46,8 @@ beforeEach(async () => {
   await resetTables();
   await db.delete(crawlDocuments).where(sql`lower(${crawlDocuments.repo}) like 'hanul/%' or lower(${crawlDocuments.repo}) like 'old-hanul/%' or lower(${crawlDocuments.repo}) like 'alice/%'`);
   await db.execute(sql`TRUNCATE product_star_observation_runs, product_star_observations RESTART IDENTITY CASCADE`);
+  // 근거 표는 지울 수 없어 앞 시험이 본 저장소 id 가 남는다 — 출처를 지운 뒤에 비운다(같은 이름을 다른 id 로 쓰는 시험끼리 섞이지 않게)
+  await clearRepositoryIdentityAnchors();
   clearAllMemos();
   upstream = {};
   githubCalls = [];
