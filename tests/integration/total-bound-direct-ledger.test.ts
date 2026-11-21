@@ -73,6 +73,8 @@ const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Loopback 엔진: /v1/chat/completions 는 완결 응답·429·500·무응답, /tokenize 는 vLLM 꼴(count·max_model_len·tokens). 받은 요청을 그대로 남긴다. */
 const engine = { mode: "ok" as "ok" | "hang" | 429 | 500, content: "[]", tokens: 90,
+  /** 엔진이 보고하는 사용량(없으면 90 + 20) — 요청 상한 사후 대조 시험이 바꾼다 */
+  usage: null as { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null,
   requests: [] as { path: string; headers: IncomingHttpHeaders; body: string }[] };
 const server = createServer((request, response) => {
   const chunks: Buffer[] = [];
@@ -85,7 +87,7 @@ const server = createServer((request, response) => {
     if (engine.mode !== "ok") { response.statusCode = engine.mode; if (engine.mode === 429) response.setHeader("retry-after", "2"); response.end("{}"); return; }
     response.end(JSON.stringify({ id: "total-bound-response", object: "chat.completion", created: 1, model: RESPONSE_MODEL,
       choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: engine.content } }],
-      usage: { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 } }));
+      usage: engine.usage ?? { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 } }));
   });
 });
 let origin = "";
@@ -99,7 +101,8 @@ function pinContracts(extra: Partial<Record<TotalBoundRoute, Record<string, unkn
 }
 
 type Dispatched = ModelCapacityDispatch & { binding: { provider: string; routeId: string; chargedTokens: number }; bindingHash: string };
-type Sent = { terminal: object | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected };
+/** result: 심사·text 경로의 판단(분류는 categories) — 요청 상한 사후 대조 시험이 읽는다 */
+type Sent = { terminal: object | null; notStarted?: GatewayNotStarted; rejected?: GatewayHttpRejected; result?: unknown; categories?: unknown };
 type Started = { request: ModelCapacityRequest; wireHash: string; dispatch: Dispatched;
   send(options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<Sent>; settle(terminal: object): Promise<{ kind: "settled" | "already_settled" }> };
 type StartOptions = { timeoutMs?: number; model?: string };
@@ -379,7 +382,7 @@ beforeAll(async () => {
   const address = server.address(); if (!address || typeof address === "string") throw new Error("local_address");
   origin = `http://127.0.0.1:${address.port}`;
 }, 240_000);
-afterEach(() => { engine.mode = "ok"; engine.tokens = 90; engine.requests.length = 0; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+afterEach(() => { engine.mode = "ok"; engine.tokens = 90; engine.usage = null; engine.requests.length = 0; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 afterAll(async () => {
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   delete (globalThis as { db?: unknown }).db; delete (globalThis as { pgClient?: unknown }).pgClient;
@@ -469,6 +472,48 @@ describe.each(FLOWS.map(flow => [flow.name, flow] as const))("%s", (_name, flow)
       evidence: { kind: "operator_review", requestId: started.request.requestId, fromState: "indeterminate" } });
     expect(await row(started.request.requestId)).toMatchObject({ state: "withdrawn", provider: "local-direct", terminal_evidence: { kind: "operator_review", operator } });
     expect(await events(started.request.requestId)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_indeterminate", "dispatch_reviewed"]);
+  });
+});
+
+/**
+ * 요청 상한 사후 대조(abcllm 이름표 정리 2단계 — 1단계 리뷰의 시험 공백, agent-review-gateway.ts 의 directBudgetExceeded·2차 budget): tokenizer 묶음을 둔 새 모양
+ * 계약에서 엔진이 보고한 사용량이 「입력 + 출력 상한 ≤ requestTokenBound」를 어기면 terminal 은 그대로 정산하고 결과는 판단으로 받지 않는다. 상한 안이면 받는다.
+ * 사후 대조를 #1012 이전 꼴(direct-openai-chat-v1 만 보기)로 되돌리면 상한을 넘긴 응답을 판단으로 받아 이 시험이 실패한다.
+ */
+/** 위 흐름의 응답 글 중 그 경로의 판단으로 읽히지 않는 셋(장부 시험은 결과를 보지 않는다)만 읽히는 답으로 바꾼다 — 상한 안의 응답이 판단이 됨을 보려고 */
+const TAKEN_CONTENT: Partial<Record<TotalBoundRoute, string>> = {
+  "product-search-verify": JSON.stringify({ checks: [{ keyword: "budget app", fits: true }, { keyword: "expense tracker", fits: true }] }),
+  "crawl-tagline": JSON.stringify({ tagline: "Track expenses and budgets in one place", source: "page" }),
+  "crawl-publish-classify": JSON.stringify({ results: [{ id: 0, category: "Productivity", reason: "fixture answer" }] }),
+};
+const exceeded = (flow: Flow, sent: Sent): boolean => {
+  if (flow.routeId === "crawl-publish-classify") return sent.categories === null;
+  const failure = flow.routeId === "crawl-agent-review" || flow.routeId === "second-review"
+    ? { ok: false, error: "invalid_output", detail: "request_token_bound_exceeded" } : { ok: false, error: "invalid_output" };
+  return JSON.stringify(sent.result) === JSON.stringify(failure);
+};
+describe.each(FLOWS.map(flow => [flow.name, flow] as const))("request bound post-check with a tokenizer block: %s", (_name, flow) => {
+  it("takes a response within the bound, and settles but never takes one whose reported usage breaks the bound", async () => {
+    pinContracts({ [flow.routeId]: { tokenizer: { endpoint: `${origin}/tokenize`, requestTokenBound: 32_000 } } });
+    engine.content = TAKEN_CONTENT[flow.routeId] ?? flow.content;
+    const within = await flow.start(++serial), taken = await within.send();
+    // 보내기 전 tokenizer 확인을 거쳤다(심사는 준비에서, text·분류는 전송 직전에)
+    expect(engine.requests.map(request => request.path)).toEqual(["/tokenize", "/v1/chat/completions"]);
+    expect(taken.terminal).not.toBeNull();
+    expect(exceeded(flow, taken)).toBe(false);
+    if (flow.routeId === "crawl-publish-classify") expect(taken.categories).not.toBeNull();
+    else expect(taken.result).toMatchObject({ ok: true });
+    expect(await within.settle(taken.terminal!)).toEqual({ kind: "settled" });
+
+    // 엔진이 받은 입력을 31,990 토큰으로 보고한다 — 출력 상한(보낸 max_tokens)을 더하면 32,000 을 넘는다. 총량 C(65,536) 안이라 terminal 은 유효하다
+    engine.requests.length = 0; engine.usage = { prompt_tokens: 31_990, completion_tokens: 20, total_tokens: 32_010 };
+    const over = await flow.start(++serial), refused = await over.send();
+    expect(engine.requests.map(request => request.path)).toEqual(["/tokenize", "/v1/chat/completions"]);
+    expect(refused.terminal).not.toBeNull();
+    expect(exceeded(flow, refused)).toBe(true);
+    expect(await over.settle(refused.terminal!)).toEqual({ kind: "settled" });
+    expect(await row(over.request.requestId)).toMatchObject({ state: "settled", provider: "local-direct",
+      terminal_evidence: { actualUsage: { inputTokens: 31_990, outputTokens: 20, totalTokens: 32_010 } } });
   });
 });
 
