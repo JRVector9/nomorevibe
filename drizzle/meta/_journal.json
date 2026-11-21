@@ -1303,6 +1303,20 @@
       "when": 1794960000000,
       "tag": "0190_multilingual_search_query",
       "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1795219200000,
+      "tag": "0191_repository_identity_anchors",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1795219200001,
+      "tag": "0192_online_missing_indexes",
+      "breakpoints": true
     }
   ]
 }

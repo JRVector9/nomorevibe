@@ -20,6 +20,9 @@ import { readModelCapacityLedgerRetentionDays } from "@/lib/llm/capacity-retenti
  *    그 이벤트 전부. 열린 행·결과 미확정 행, 아직 열린 생성(generationHash)·논리 작업 열쇠(logical_work_key)에 묶인 행, 처리 중인 LLM 보조 작업·
  *    적용 전 소개 교정이 가리키는 행은 남긴다. 이벤트 표의 추가 전용 트리거는 0187 이 이 트랜잭션 설정(nmv.capacity_retention)에만 DELETE 를 연다.
  * ⑥ 이 모두를 한 잡에서 — 발굴 근거(최근 24시간 + 저장소마다 최근 서로 다른 commit 5개), 스캔(7일 · 보존 집합 밖), 가동 집계(KST 오늘 − 40일 전).
+ *
+ * 저장소 id 근거 표(repository_identity_anchors, 0191)는 이 잡의 대상이 아니다 — 지우지 않는 표다(DB 가 DELETE·TRUNCATE 를 거절한다). 여기에 넣지 않는다.
+ * ④의 줄이기는 id·node_id 를 그대로 두므로 근거 트리거(id 가 바뀔 때만 돈다)도 부르지 않는다.
  */
 
 /**

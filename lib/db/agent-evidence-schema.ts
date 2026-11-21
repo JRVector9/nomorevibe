@@ -12,7 +12,9 @@ export const agentRepositoryScans = pgTable('agent_repository_scans', {
   coverage: jsonb('coverage').$type<{ limited: boolean; repositoryFork?: boolean | null }>().notNull().default({ limited: false }),
   startedAt: timestamp('started_at').notNull().defaultNow(), completedAt: timestamp('completed_at'),
   lastErrorCode: varchar('last_error_code', { length: 60 }), nextAttemptAt: timestamp('next_attempt_at').notNull().defaultNow(),
-}, table => [uniqueIndex('agent_scans_identity_idx').on(table.githubRepositoryId, table.commitSha, table.detectorVersion, table.scopeHash), index('agent_scans_due_idx').on(table.state, table.nextAttemptAt), index('agent_scans_repository_idx').on(table.repositoryKey)]);
+}, table => [uniqueIndex('agent_scans_identity_idx').on(table.githubRepositoryId, table.commitSha, table.detectorVersion, table.scopeHash), index('agent_scans_due_idx').on(table.state, table.nextAttemptAt), index('agent_scans_repository_idx').on(table.repositoryKey),
+  // 0192: 저장소의 최신 스캔 한 줄(repository_key = … AND scope = '' ORDER BY started_at DESC, id DESC LIMIT 1)을 정렬 없이 읽는다
+  index('agent_scans_repository_latest_idx').on(table.repositoryKey, table.scope, table.startedAt.desc(), table.id.desc())]);
 export const agentRepositoryObservations = pgTable('agent_repository_observations', {
   id: serial('id').primaryKey(), scanId: integer('scan_id').notNull().references(() => agentRepositoryScans.id, { onDelete: 'cascade' }),
   observationKey: varchar('observation_key', { length: 64 }).notNull(), facts: jsonb('facts').$type<AgentObservation>().notNull(), observedAt: timestamp('observed_at').notNull().defaultNow(),

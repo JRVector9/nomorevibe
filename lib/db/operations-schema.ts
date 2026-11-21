@@ -102,6 +102,8 @@ export const pipelineItemLeases = pgTable('pipeline_item_leases', {
   check('pipeline_item_leases_owner_check', sql`(${table.ownerInstanceId} is null and ${table.ownerBootId} is null and ${table.token} is null and ${table.leaseUntil} is null) or (${table.ownerInstanceId} is not null and char_length(btrim(${table.ownerInstanceId})) > 0 and ${table.ownerBootId} is not null and ${table.token} is not null and ${table.leaseUntil} is not null and ${table.itemEpoch} >= 1)`),
   check('pipeline_item_leases_epoch_check', sql`${table.stageEpoch} between 1 and 9007199254740991 and ${table.itemEpoch} between 0 and 9007199254740991`),
   index('pipeline_item_leases_expiry_idx').on(table.stage, table.leaseUntil, table.workKey).where(sql`${table.token} is not null`),
+  // 0192: 2차 표 아이템 점검(second-review.ts candidateItemsBusy)의 binding->>'candidateId' 가지. 식·술어는 쿼리와 글자 그대로다
+  index('pipeline_item_leases_ai2_candidate_idx').on(sql`(${table.binding}->>'candidateId')`).where(sql`${table.stage} = 'ai2'`),
 ]);
 
 /**
@@ -196,6 +198,8 @@ export const modelCapacityRequests = pgTable('model_capacity_requests', {
   uniqueIndex('model_capacity_requests_ai2_cli_claim_idx').on(sql`(dispatch_binding->'item'->>'workKey')`, sql`(dispatch_binding->'item'->>'token')`, sql`(dispatch_binding->'item'->>'itemEpoch')`).where(sql`dispatch_binding->>'kind' IN ('ai2_item_gateway','ai2_item_cli')`),
   // 0151: indeterminate 는 살아 있는 행이 아니다 — 같은 logical/work key 의 재접수를 막지 않는다(lib/llm/capacity-states.ts). 칸 점유는 0172 아래.
   uniqueIndex('model_capacity_requests_logical_active_idx').on(table.logicalWorkKey).where(sql`${table.logicalWorkKey} is not null and ${table.state} in ${sql.raw(MODEL_CAPACITY_OCCUPYING_STATES_SQL)}`),
+  // 0192: 상태를 가리지 않는 logical_work_key 찾기 — fence 의 「같은 단계를 이미 보냄」 가지(보낸 상태에는 settled·indeterminate 가 들어 위 색인이 받치지 못한다)
+  index('model_capacity_requests_logical_key_idx').on(table.logicalWorkKey).where(sql`${table.logicalWorkKey} is not null`),
   uniqueIndex('model_capacity_requests_live_work_idx').on(table.ownerInstanceId, table.ownerBootId, table.workKey).where(sql`${table.state} in ${sql.raw(MODEL_CAPACITY_LIVE_STATES_SQL)}`),
   index('model_capacity_requests_settled_at_idx').on(table.settledAt).where(sql`${table.state} = 'settled'`),
   index('model_capacity_requests_withdrawn_at_idx').on(table.updatedAt).where(sql`${table.state} = 'withdrawn'`),
