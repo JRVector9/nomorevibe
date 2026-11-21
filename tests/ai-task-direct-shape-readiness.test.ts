@@ -49,6 +49,25 @@ describe("새 계약의 모양", () => {
     expect(ready).toMatchObject({ provider: "abcllm", appendRoute: { routeId: "second-review", provider: "abcllm" }, warnings: [] });
   });
 
+  it("관문이 열려 있어도 경로가 아직 전환 전(켜진 abcllm 계약이 남음)이면 abcllm 형 — 일부만 옮긴 경로도 같다; 전환 도구가 끝낸 경로는 새 모양", () => {
+    const abcllm = (model: string) => ({ routeId: "crawl-tagline", model, provider: "abcllm", protocol: "abcllm-crawl-tagline-total-bound-v1",
+      endpoint: "http://supa.test:8000/v1/chat/completions", transport: "direct" });
+    const direct = (model: string) => ({ routeId: "crawl-tagline", model, provider: "local-direct", protocol: TOTAL_BOUND_PROTOCOL_NAME,
+      endpoint: "http://supa.test:8000/v1/chat/completions", transport: "direct" });
+    const unconverted = aiRankReadiness(aiTask("crawl-tagline")!, 1, gpu, "qwen-next", input({ contracts: [abcllm("other-model")] }));
+    expect(unconverted.createContract).toEqual({ routeId: "crawl-tagline", replacesGateway: false, identity: "qwen-next", engineModel: null });
+    expect(unconverted).toMatchObject({ provider: "abcllm", appendRoute: { provider: "abcllm" } });
+    expect(unconverted.warnings).toEqual([expect.stringContaining("crawl-tagline: 이 경로는 아직 전환 전 — abcllm 모양으로 저장합니다(켜진 abcllm 계약 1개)")]);
+    const partial = aiRankReadiness(aiTask("crawl-tagline")!, 1, gpu, "qwen-next", input({ contracts: [abcllm("other-model"), direct("third-model")] }));
+    expect(partial).toMatchObject({ provider: "abcllm", createContract: { identity: "qwen-next" }, appendRoute: { provider: "abcllm" } });
+    expect(partial.createContract).not.toHaveProperty("provider");
+    const converted = aiRankReadiness(aiTask("crawl-tagline")!, 1, gpu, "qwen-next", input({ contracts: [direct("other-model"), direct("third-model")] }));
+    expect(converted).toMatchObject({ provider: "local-direct", createContract: { provider: "local-direct" }, appendRoute: { provider: "local-direct" }, warnings: [] });
+    // 2차도 전환 도구가 끝낸 경로면 새 모양
+    const ai2 = aiRankReadiness(aiTask("second-review")!, 1, gpu, "qwen-next", input({ contracts: [{ ...direct("voter"), routeId: "second-review" }] }));
+    expect(ai2).toMatchObject({ provider: "local-direct", createContract: { routeId: "second-review", provider: "local-direct" } });
+  });
+
   it("같은 모델 계약이 다른 서버에 있으면 연결로 가른 장부 이름의 새 모양 계약 — 한 줄의 뒤 순위가 앞 순위의 새 계약을 본다", () => {
     const ready = aiRanksReadiness(aiTask("crawl-tagline")!, [{ rank: 1, connection: gpu, model: "qwen-next" }, { rank: 2, connection: supa, model: "qwen-next" }], input());
     const alias = aiTaskAliasIdentity("qwen-next", SUPA)!;

@@ -6,7 +6,7 @@ import { readbackEngine, saveServingContract, type ContractSaveState } from "./a
 /**
  * 손 입력 틀 — 직접 연결 모양(openai-chat-total-bound-v1, provider local-direct, 2026-11-21 2단계): API 주소·모델·총량 상한만 적는다(장비 이름 칸 없음).
  * 선택 칸(engineModel·maxOutputTokens·tokenizer 묶음, 경로에 따라 reasoningTokenReserve·rateLimitBackoff)은 필요할 때만 더한다. 저장은 계약을 읽는 모든 프로세스가
- * 새 판일 때만 받는다(contract_reader_gate_closed). routeId 는 저장 때 고른 경로로 맞춘다.
+ * 새 판이고(contract_reader_gate_closed) 그 경로에 켜진 abcllm 계약이 없을 때만 받는다(contract_route_not_converted — 전환은 전환 칸으로). routeId 는 저장 때 고른 경로로 맞춘다.
  */
 const DIRECT_TEMPLATE = { version: 1, protocol: "openai-chat-total-bound-v1", routeId: "crawl-agent-review", provider: "local-direct",
   model: "", responseModel: "", deploymentRevision: "", endpoint: "http://host:port/v1/chat/completions", totalTokenBound: 0 };

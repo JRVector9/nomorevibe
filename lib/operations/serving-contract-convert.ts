@@ -269,7 +269,7 @@ export async function applyServingContractConversion(input: { action: Conversion
     for (const target of plan.targets) {
       const result = await saveServingContractTx(tx, { routeId: input.routeId, contract: target.next, auth: target.nextAuth as "none" | "stored",
         transport: target.nextTransport as "direct", note: `${verb} · 앞 계약 #${target.id}${target.restoreId ? ` · 되살린 계약 #${target.restoreId}` : ""}`,
-        ...(state.gate ? { contractReaderGate: state.gate } : {}) }, actor);
+        ...(state.gate ? { contractReaderGate: state.gate } : {}), viaConversion: input.action === "convert" }, actor);
       if (result.contractHash !== target.nextHash) throw new Error("serving_contract_convert_plan_changed");
       saved.push(Object.freeze({ model: target.model, previousId: target.id, id: result.id, previousHash: target.contractHash, contractHash: result.contractHash }));
     }

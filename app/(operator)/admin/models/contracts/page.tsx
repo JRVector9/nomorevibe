@@ -38,13 +38,15 @@ export default async function ServingContractsPage() {
       <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
       <p className="text-[13px] text-fg-3">모델을 어디로(주소) 어떻게(응답 모델·토큰 한도·인증) 부르는지의 계약입니다. 저장하면 배포 없이 각 앱이 30초 안에 다음 작업부터 씁니다.
         계약은 여기 저장한 것만 쓰며, 끄면 그 경로·모델은 다시 저장할 때까지 호출하지 않습니다. 용량 경로(정책)는 따로 있어야 실제로 호출됩니다.
-        abcLLM 게이트웨이는 제거됐으므로 엔진 직접 연결 계약만 호출됩니다. 새 계약은 「API 주소 + 모델」만 적는 직접 연결 모양(openai-chat-total-bound-v1, local-direct)이고,
-        계약을 읽는 프로세스 중 옛 판이 있으면 예전 abcllm 형으로 만듭니다.</p>
+        abcLLM 게이트웨이는 제거됐으므로 엔진 직접 연결 계약만 호출됩니다. 「API 주소 + 모델」만 적는 직접 연결 모양(openai-chat-total-bound-v1, local-direct)은
+        아래 전환 칸으로 경로를 옮긴 뒤(또는 계약이 없던 새 경로)에만 저장이 만듭니다. 이 경로가 아직 전환 전이면 abcllm 모양으로 저장하고,
+        계약을 읽는 프로세스 중 옛 판이 있어도 abcllm 모양입니다.</p>
       {!secretBoxReady() && <p className="text-[13px]">이 서버에는 키 암호화 설정이 없어 「키 저장」 방식은 쓸 수 없습니다.</p>}
     </header>
     <section className="grid gap-2">
       <h2 className="text-[18px] font-semibold">엔진 연결 (주소·키·모델만)</h2>
-      <p className="text-[13px] text-fg-3">고른 등록부 모델의 주소와 엔진 모델명을 바꾸고(abcLLM 이름표 없이), 고른 경로마다 엔진 직접 계약(직접 연결 모양)을 만듭니다.
+      <p className="text-[13px] text-fg-3">고른 등록부 모델의 주소와 엔진 모델명을 바꾸고(abcLLM 이름표 없이), 고른 경로마다 엔진 직접 계약을 만듭니다(전환한 경로는 직접 연결 모양,
+        아직 전환 전인 경로는 abcllm 모양).
         저장 전에 서버가 엔진의 모델 목록을 다시 읽어 모델과 최대 길이를 확인합니다. 같은 모델의 abcllm 용량 경로가 있으면 그 예산·장비로 직접 연결 경로를 덧붙이고,
         없으면 그 호출은 정책을 추가할 때까지 보류됩니다.</p>
       <EngineConnectForm models={connectable} routes={ENGINE_CONNECT_ROUTES} />

@@ -7,7 +7,7 @@ import { OPENAI_CHAT_TOTAL_BOUND_PROTOCOL } from "@/lib/llm/direct-serving-contr
 import { ensureServingContracts, servingContractAuth, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { contractReaderGateText, readContractReaderGate } from "./contract-reader-gate";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
-import { newEngineContractProvider, type EngineContractProvider } from "./engine-contract-shape";
+import { engineContractShape, engineContractShapeText, routeContractState, type EngineContractProvider } from "./engine-contract-shape";
 import { readbackServingEndpoint, saveServingContractTx, validateAdminServingContract } from "./admin-serving-contracts";
 import { saveRegistryOverrideTx } from "./admin-model-registry";
 
@@ -15,10 +15,10 @@ import { saveRegistryOverrideTx } from "./admin-model-registry";
  * 엔진 연결: an OpenAI-compatible engine address + key + engine model, applied to one existing registry key in one step.
  * - The registry definition of that key keeps its equipment, adapter, limits and purposes; only its address and engine
  *   model name change, and the gateway label goes (the engine expects its own model name on the wire).
- * - Each chosen gateway route gets a direct contract (transport direct, the stored or no key). When every process that reads contracts runs a
- *   release that reads the engine-direct total-bound shape (lib/operations/contract-reader-gate.ts, 2026-11-21 stage 2), that contract is
- *   openai-chat-total-bound-v1 with provider local-direct (ledger rows and capacity policy routes are (route, local-direct, model));
- *   otherwise it is the route's plain abcllm total-bound shape as before (engine-contract-shape.ts). The engine's own model list
+ * - Each chosen gateway route gets a direct contract (transport direct, the stored or no key). It is openai-chat-total-bound-v1 with provider
+ *   local-direct (ledger rows and capacity policy routes are (route, local-direct, model)) only when every process that reads contracts runs a
+ *   release that reads that shape (lib/operations/contract-reader-gate.ts) and the route has no enabled abcllm contract left (converted by the
+ *   stage-3 tool, or a fresh route — engine-contract-shape.ts); otherwise it is the route's plain abcllm total-bound shape as before. The engine's own model list
  *   is read on the server first: the model must be there, and its maximum length becomes the contract's total bound.
  *   Engines whose /models omits max_model_len (mlx_lm.server, the M3 mlx-serve proxy) take the operator-typed bound instead;
  *   a typed bound that differs from a served one is refused, never picked over. The origin stays in the contract.
@@ -35,7 +35,7 @@ export type EngineConnectInput = { registryKey: string; baseUrl: string; auth: "
 export type EngineConnectBoundOrigin = "engine" | "operator";
 export type EngineConnectResult = { registryId: number; contracts: { routeId: string; id: number; provider: EngineContractProvider }[]; stages: string[]; requestModel: string;
   responseModel: string; firstReviewRenamed: boolean; missingPolicyRoutes: string[]; totalTokenBound: number; totalTokenBoundFrom: EngineConnectBoundOrigin;
-  /** 새 모양(local-direct)을 만들지 않은 까닭(관문이 닫힘) — 모두 새 모양이면 null */
+  /** 새 모양(local-direct)을 만들지 않은 까닭(관문이 닫힘·경로가 아직 전환 전) — 모두 새 모양이거나 까닭이 없으면 null */
   directShapeNote: string | null };
 
 /** Routes whose contract is the plain total-bound shape (AI2 has its own adapter contract and is configured separately). */
@@ -219,9 +219,17 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   if (input.auth === "stored" && !key) throw new Error("serving_contract_key_required");
   const { responseModel, totalTokenBound, totalTokenBoundFrom } = await probeEngineContract({ endpoint: `${base}/chat/completions`, engineModel,
     apiKey: key ?? null, maxModelLen: input.maxModelLen }, request);
-  // 새 계약의 모양 — 계약을 읽는 모든 프로세스가 새 판이면 엔진 직접 총량 상한(local-direct). 저장 TX 가 관문을 다시 본다
+  // 새 계약의 모양 — 계약을 읽는 모든 프로세스가 새 판이고 그 경로가 전환 뒤(또는 새 경로)면 엔진 직접 총량 상한(local-direct). 저장 TX 가 다시 본다
   const gate = await readContractReaderGate();
-  const providerOf = (route: string) => newEngineContractProvider(route, gate.ok);
+  const snapshotRows = servingContractSnapshot().rows.map(row => {
+    const contract = row.contract && typeof row.contract === "object" ? row.contract as { provider?: unknown; protocol?: unknown } : {};
+    return { routeId: row.routeId, provider: contract.provider, protocol: contract.protocol };
+  });
+  const shapes = new Map(routes.map(route => {
+    const state = routeContractState(snapshotRows, route);
+    return [route, { state, shape: engineContractShape(route, gate.ok, state) }] as const;
+  }));
+  const providerOf = (route: string) => shapes.get(route)?.shape.provider ?? "abcllm";
   const definition: ModelDefinition = { ...current, baseUrl: base, model: engineModel, displayName: current.displayName.includes("직접")
     ? current.displayName : `${current.displayName} · 직접 연결`.slice(0, 200) };
   delete (definition as { gatewayLabel?: string }).gatewayLabel;
@@ -271,8 +279,13 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   const policy = await policyRoutes();
   const missingPolicyRoutes = routes.filter(route => policy === null || !policy.some(row => row.routeId === route && row.provider === providerOf(route) && row.model === engineModel))
     .map(route => `${route} / ${providerOf(route)} / ${engineModel}`);
-  const directShapeNote = routes.some(route => providerOf(route) === "abcllm" && newEngineContractProvider(route, true) === "local-direct")
-    ? `새 계약은 abcllm 형으로 만들었습니다 — 직접 연결(local-direct) 모양은 모든 프로세스가 새 판일 때만 만듭니다. ${contractReaderGateText(gate)}` : null;
+  const notes = routes.flatMap(route => {
+    const entry = shapes.get(route)!;
+    if (entry.shape.reason === "route_unconverted") return [engineContractShapeText(route, entry.shape, entry.state)!];
+    return entry.shape.reason === "gate_closed" && engineContractShape(route, true, entry.state).provider === "local-direct" ? ["gate"] : [];
+  });
+  const directShapeNote = notes.length ? [...notes.filter(note => note !== "gate"), ...notes.includes("gate")
+    ? [`새 계약은 abcllm 형으로 만들었습니다 — 직접 연결(local-direct) 모양은 모든 프로세스가 새 판일 때만 만듭니다. ${contractReaderGateText(gate)}`] : []].join(" ") : null;
   return { ...saved, stages: stageIds, requestModel: engineModel, responseModel, firstReviewRenamed: renameAi1, missingPolicyRoutes, totalTokenBound, totalTokenBoundFrom,
     directShapeNote };
 }

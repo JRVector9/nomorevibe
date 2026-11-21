@@ -28,6 +28,7 @@ const REASONS: Record<string, string> = {
   model_purpose_duplicate: "한 용도(purpose)를 두 모델이 맡게 됩니다. 한 모델에만 두세요.",
   stage_pools_incompatible: "저장된 단계별 모델 선택과 맞지 않습니다(없는 키나 다른 어댑터). 단계 선택을 먼저 바꿔주세요.",
   contract_reader_gate_closed: "계약을 읽는 프로세스 중 옛 판이 있어 직접 연결(local-direct) 새 모양을 저장하지 않았습니다. 모두 새 판으로 배포된 뒤 다시 저장해주세요.",
+  contract_route_not_converted: "이 경로에는 아직 켜진 abcllm 계약이 있어 직접 연결 모양을 따로 저장하지 않습니다. 「abcllm 계약 → 직접 연결 전환」으로 경로를 옮겨주세요.",
   serving_contract_convert_input_invalid: "경로·모델 값을 확인해주세요.",
   serving_contract_convert_plan_changed: "미리 본 뒤 계약·정책이 바뀌었습니다. 미리 보기를 다시 해주세요.",
   model_capacity_route_conflict: "용량 정책에 같은 경로·모델 route 가 다른 예산·장비로 있습니다.",

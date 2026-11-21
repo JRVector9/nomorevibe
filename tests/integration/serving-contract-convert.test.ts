@@ -132,7 +132,7 @@ describe("저장이 새 모양을 만든다", () => {
   const ENGINE = "http://eng.test:8000/v1";
   const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const target = String(input), method = init?.method ?? "GET";
-    if (target === `${ENGINE}/models`) return Response.json({ data: [{ id: "Qwen-X", max_model_len: 32768 }] });
+    if (target === `${ENGINE}/models`) return Response.json({ data: ["Qwen-X", "Qwen-Y", "Qwen-Z"].map(id => ({ id, max_model_len: 32768 })) });
     if (target === `${ENGINE}/chat/completions` && method === "POST") {
       const body = JSON.parse(String(init?.body)) as { model: string };
       return Response.json({ object: "chat.completion", model: `${body.model}-served`, choices: [{ message: { content: "OK" } }] });
@@ -142,14 +142,21 @@ describe("저장이 새 모양을 만든다", () => {
   const EMPTY_REVISION = createHash("sha256").update("[]").digest("hex");
   beforeEach(() => installPolicy({ version: 1, maxWaiting: 64, queueTtlMs: 60_000, reservationTtlMs: 60_000,
     routes: [{ routeId: "base-a", provider: "fixture", model: "m", providerBudgetId: "acct", groupId: "dev-a" }] }));
-  async function saveRank() {
+  async function saveRank(model = "Qwen-X") {
     setAiTaskDepsForTest({ request: fakeFetch, now: () => Date.now(), current: async () => [] });
     const actions = await import("@/app/(operator)/admin/models/tasks/actions");
-    expect(await actions.saveAiConnectionAction(null, form({ kind: "api", label: "엔진", baseUrl: `${ENGINE}/`, apiKey: KEY, deviceId: "eng-dev", capacitySlots: "2" })))
-      .toMatchObject({ ok: true });
-    const [connection] = await client<{ id: string }[]>`SELECT id FROM ai_connections WHERE label = '엔진'`;
-    return actions.saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: EMPTY_REVISION, rank1Connection: connection.id, rank1Model: "Qwen-X" }));
+    let [connection] = await client<{ id: string }[]>`SELECT id FROM ai_connections WHERE label = '엔진'`;
+    if (!connection) {
+      expect(await actions.saveAiConnectionAction(null, form({ kind: "api", label: "엔진", baseUrl: `${ENGINE}/`, apiKey: KEY, deviceId: "eng-dev", capacitySlots: "2" })))
+        .toMatchObject({ ok: true });
+      [connection] = await client<{ id: string }[]>`SELECT id FROM ai_connections WHERE label = '엔진'`;
+    }
+    const view = await (await import("@/lib/operations/admin-ai-tasks-repository")).readAiTasksAdminView();
+    const revision = view.slots.find(slot => slot.task.id === "crawl-tagline" && slot.slot === 1)?.revision ?? EMPTY_REVISION;
+    return actions.saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision, rank1Connection: connection.id, rank1Model: model }));
   }
+  const enabledShape = async (model: string) => (await client<{ provider: string }[]>`SELECT contract->>'provider' AS provider FROM model_serving_contracts
+    WHERE enabled AND route_id = 'crawl-tagline' AND model = ${model}`)[0]?.provider;
 
   it("관문이 열려 있으면 순위 저장이 엔진 직접 총량 상한 계약(장비 이름 없음)과 (경로, local-direct, 모델) route 를 만든다", async () => {
     await observeNewRelease();
@@ -186,6 +193,35 @@ describe("저장이 새 모양을 만든다", () => {
     expect(contract.contract).toMatchObject({ provider: "abcllm", protocol: "abcllm-crawl-tagline-total-bound-v1", deploymentRevision: "direct-eng-dev-Qwen-X-C32768" });
   });
 
+  it("관문이 열려 있어도 경로가 아직 전환 전이면 abcllm 형 — 일부만 옮긴 동안도 abcllm 형, 전환 도구가 경로를 끝낸 뒤에야 새 모양", async () => {
+    await observeNewRelease();
+    await installPolicy({ version: 1, maxWaiting: 64, queueTtlMs: 60_000, reservationTtlMs: 60_000, routes: ["model-a", "model-b"].map(model =>
+      ({ routeId: "crawl-tagline", provider: "abcllm", model, providerBudgetId: "eng-dev", groupId: "eng-dev" })) });
+    const { saveAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    for (const model of ["model-a", "model-b"]) await saveAdminServingContract({ routeId: "crawl-tagline",
+      contract: abcllmContract("crawl-tagline", { model, endpoint: `${origin}/v1/chat/completions` }), auth: "none", transport: "direct" }, "operator");
+    // 전환 전: 평범한 순위 저장은 경로를 옮기지 않는다
+    const before = await saveRank("Qwen-X");
+    expect(before).toMatchObject({ ok: true });
+    expect(JSON.stringify(before)).toContain("crawl-tagline: 이 경로는 아직 전환 전 — abcllm 모양으로 저장합니다(켜진 abcllm 계약 2개)");
+    expect(await enabledShape("Qwen-X")).toBe("abcllm");
+    const { applyServingContractConversion, planServingContractConversion } = await import("@/lib/operations/serving-contract-convert");
+    const convert = async (model: string | null) => applyServingContractConversion({ action: "convert", routeId: "crawl-tagline", model,
+      planHash: (await planServingContractConversion({ action: "convert", routeId: "crawl-tagline", model })).planHash }, "operator");
+    // 일부만 옮김: 아직 abcllm 형
+    await convert("model-a");
+    expect(await enabledShape("model-a")).toBe("local-direct");
+    expect(JSON.stringify(await saveRank("Qwen-Y"))).toContain("이 경로는 아직 전환 전");
+    expect(await enabledShape("Qwen-Y")).toBe("abcllm");
+    // 경로를 끝까지 옮기면(켜진 abcllm 계약 0) 새 저장이 새 모양이다
+    expect((await convert(null)).saved.map(row => row.model).sort()).toEqual(["Qwen-X", "Qwen-Y", "model-b"]);
+    const after = await saveRank("Qwen-Z");
+    expect(after).toMatchObject({ ok: true });
+    expect(JSON.stringify(after)).not.toContain("전환 전");
+    expect(await enabledShape("Qwen-Z")).toBe("local-direct");
+    expect((await controlRow()).policy.routes).toContainEqual({ routeId: "crawl-tagline", provider: "local-direct", model: "Qwen-Z", providerBudgetId: "eng-dev", groupId: "eng-dev" });
+  });
+
   it("손 입력 저장도 관문이 닫혀 있으면 새 모양을 받지 않는다(abcllm 형은 그대로 받는다)", async () => {
     const { saveAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
     const direct = totalBoundContract("crawl-tagline", { endpoint: `${origin}/v1/chat/completions` });
@@ -194,6 +230,15 @@ describe("저장이 새 모양을 만든다", () => {
     await saveAdminServingContract({ routeId: "crawl-tagline", contract: abcllmContract("crawl-tagline", { endpoint: `${origin}/v1/chat/completions` }),
       auth: "none", transport: "direct" }, "operator");
     await observeNewRelease();
+    // 관문이 열려도 켜진 abcllm 계약이 남은 경로에는 손으로 새 모양을 저장하지 않는다 — 전환 도구로만 옮긴다
+    await expect(saveAdminServingContract({ routeId: "crawl-tagline", contract: direct, auth: "none", transport: "direct" }, "operator"))
+      .rejects.toThrow("contract_route_not_converted");
+    const { saveServingContract } = await import("@/app/(operator)/admin/models/contracts/actions");
+    expect((await saveServingContract(null, form({ routeId: "crawl-tagline", contract: JSON.stringify(direct), auth: "none", transport: "direct" })))?.issues?.[0])
+      .toContain("「abcllm 계약 → 직접 연결 전환」으로 경로를 옮겨주세요");
+    // 그 경로의 abcllm 계약이 없으면(새 경로) 받는다
+    const { disableAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    expect(await disableAdminServingContract("crawl-tagline", "fixture-model", "operator")).toBe(true);
     await expect(saveAdminServingContract({ routeId: "crawl-tagline", contract: direct, auth: "none", transport: "direct" }, "operator")).resolves.toMatchObject({ id: expect.any(Number) });
   });
 });

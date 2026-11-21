@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { OPENAI_CHAT_TOTAL_BOUND_PROTOCOL } from "@/lib/llm/direct-serving-contract";
 import { engineRouteContract, ENGINE_CONNECT_ROUTES } from "@/lib/operations/admin-engine-connect";
 import { servingContractHash, validateAdminServingContract } from "@/lib/operations/admin-serving-contracts";
-import { DIRECT_SHAPE_SAVE_EXCLUDED_ROUTES, isTotalBoundShape, newEngineContractProvider, TOTAL_BOUND_PROTOCOL_NAME } from "@/lib/operations/engine-contract-shape";
+import { DIRECT_SHAPE_SAVE_EXCLUDED_ROUTES, engineContractShape, engineContractShapeText, isTotalBoundShape, routeContractState,
+  TOTAL_BOUND_PROTOCOL_NAME } from "@/lib/operations/engine-contract-shape";
 import { conversionRefusalText, totalBoundContractFromAbcllm } from "@/lib/operations/serving-contract-convert";
 import { abcllmContract, TOTAL_BOUND_ROUTES, totalBoundContract, type TotalBoundRoute } from "./total-bound-direct-fixture";
 
@@ -63,14 +64,30 @@ describe("abcllm 계약 → 엔진 직접 총량 상한 계약", () => {
 });
 
 describe("저장이 새로 만드는 엔진 직접 계약", () => {
-  it("관문이 열리면 local-direct(2차·CLI 엔진은 abcllm 형 그대로), 닫히면 abcllm 형", () => {
+  it("새 모양은 관문이 열리고 그 경로에 켜진 abcllm 계약이 없을 때만(전환 뒤·새 경로) — 전환 전·일부만 옮긴 경로는 abcllm 형", () => {
     expect(TOTAL_BOUND_PROTOCOL_NAME).toBe(OPENAI_CHAT_TOTAL_BOUND_PROTOCOL);
     expect(DIRECT_SHAPE_SAVE_EXCLUDED_ROUTES).toEqual(["second-review"]);
-    expect(newEngineContractProvider("crawl-tagline", true)).toBe("local-direct");
-    expect(newEngineContractProvider("crawl-agent-review", true)).toBe("local-direct");
-    expect(newEngineContractProvider("crawl-tagline", false)).toBe("abcllm");
-    expect(newEngineContractProvider("second-review", true)).toBe("abcllm");
-    expect(newEngineContractProvider("crawl-publish-classify", true, true)).toBe("abcllm");
+    const abcllm = { routeId: "crawl-tagline", provider: "abcllm", protocol: "abcllm-crawl-tagline-total-bound-v1" };
+    const direct = { routeId: "crawl-tagline", provider: "local-direct", protocol: OPENAI_CHAT_TOTAL_BOUND_PROTOCOL };
+    const other = [{ routeId: "cli:opencode-cli:crawl-tagline", provider: "abcllm" }, { routeId: "local-direct:crawl-tagline", provider: "local-direct" },
+      { routeId: "crawl-tagline", provider: "local-direct", protocol: "direct-openai-chat-v1" }];
+    const state = (...rows: Record<string, unknown>[]) => routeContractState([...rows, ...other] as never, "crawl-tagline");
+    const fresh = state(), unconverted = state(abcllm, abcllm), partial = state(abcllm, direct), converted = state(direct, direct);
+    expect([fresh, unconverted, partial, converted]).toEqual([{ abcllm: 0, direct: 0 }, { abcllm: 2, direct: 0 }, { abcllm: 1, direct: 1 }, { abcllm: 0, direct: 2 }]);
+    // 관문이 열려 있어도 전환 전·일부만 옮긴 경로는 abcllm 형 — 전환 도구가 경로를 끝까지 옮긴 뒤나 새 경로만 새 모양
+    expect(engineContractShape("crawl-tagline", true, unconverted)).toEqual({ provider: "abcllm", reason: "route_unconverted" });
+    expect(engineContractShape("crawl-tagline", true, partial)).toEqual({ provider: "abcllm", reason: "route_unconverted" });
+    expect(engineContractShape("crawl-tagline", true, converted)).toEqual({ provider: "local-direct", reason: null });
+    expect(engineContractShape("crawl-tagline", true, fresh)).toEqual({ provider: "local-direct", reason: null });
+    expect(engineContractShape("crawl-tagline", false, converted)).toEqual({ provider: "abcllm", reason: "gate_closed" });
+    // 새 경로라도 2차·CLI 엔진은 abcllm 형, 전환 도구로 옮긴 경로면 새 모양
+    expect(engineContractShape("second-review", true, fresh)).toEqual({ provider: "abcllm", reason: "excluded" });
+    expect(engineContractShape("crawl-publish-classify", true, fresh, true)).toEqual({ provider: "abcllm", reason: "excluded" });
+    expect(engineContractShape("second-review", true, converted)).toEqual({ provider: "local-direct", reason: null });
+    expect(engineContractShape("crawl-publish-classify", true, converted, true)).toEqual({ provider: "local-direct", reason: null });
+    expect(engineContractShapeText("crawl-tagline", engineContractShape("crawl-tagline", true, partial), partial))
+      .toContain("crawl-tagline: 이 경로는 아직 전환 전 — abcllm 모양으로 저장합니다(켜진 abcllm 계약 1개)");
+    expect(engineContractShapeText("crawl-tagline", engineContractShape("crawl-tagline", false, fresh), fresh)).toBeNull();
     expect(isTotalBoundShape({ provider: "local-direct", protocol: OPENAI_CHAT_TOTAL_BOUND_PROTOCOL })).toBe(true);
     expect(isTotalBoundShape({ provider: "local-direct", protocol: "direct-openai-chat-v1" })).toBe(false);
     expect(isTotalBoundShape({ provider: "abcllm", protocol: OPENAI_CHAT_TOTAL_BOUND_PROTOCOL })).toBe(false);
