@@ -9,6 +9,7 @@ import { textLocalDirectDispatchSql } from "@/lib/llm/gateway-local-direct-bindi
 import { opencodeCliLogicalSql, opencodeCliDispatchSql } from "@/lib/llm/opencode-cli-binding-sql";
 import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql } from "@/lib/llm/opencode-task-binding-sql";
 import { japaneseProductLogicalSql, japaneseProductMembersSql, japaneseProductDispatchSql } from "@/lib/llm/japanese-product-translation-sql";
+import { japaneseAbcllmProductLogicalSql, japaneseAbcllmProductMembersSql, japaneseAbcllmProductDispatchSql } from "@/lib/llm/japanese-abcllm-product-translation-sql";
 
 /**
  * 0158(2026-10-31): 종료 근거 회수(0096)의 kind 목록에 없던 publication_classify_cli(0125)·local_model_direct(0118)를 같은 회수 길에 올린다.
@@ -77,6 +78,12 @@ it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the co
   const checks = getTableConfig(modelCapacityRequests).checks;
   for (const [name, branch] of Object.entries(targets)) {
     let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+    // 0193 appends the abcllm twin of the 0184 Japanese branch last.
+    const japaneseAbcllm = name === "model_capacity_requests_dispatch_check" ? japaneseAbcllmProductDispatchSql
+      : name === "model_capacity_requests_members_check" ? japaneseAbcllmProductMembersSql : japaneseAbcllmProductLogicalSql;
+    const japaneseAbcllmTail = `) OR (${japaneseAbcllm})`;
+    expect(expression.startsWith("(") && expression.endsWith(japaneseAbcllmTail), `${name}: 0193 additive tail present`).toBe(true);
+    expression = expression.slice(1, -japaneseAbcllmTail.length);
     const japanese = name === "model_capacity_requests_dispatch_check" ? japaneseProductDispatchSql
       : name === "model_capacity_requests_members_check" ? japaneseProductMembersSql : japaneseProductLogicalSql;
     const japaneseTail = `) OR (${japanese})`;

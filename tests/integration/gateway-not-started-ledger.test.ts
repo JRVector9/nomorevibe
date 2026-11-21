@@ -2,6 +2,7 @@ import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
 import { gatewayHttpRejectedTerminalSql, gatewayHttpRejectedEventTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
 import { japaneseProductLogicalSql, japaneseProductMembersSql, japaneseProductDispatchSql, japaneseProductTerminalSql, japaneseProductEventSql } from "@/lib/llm/japanese-product-translation-sql";
+import { japaneseAbcllmProductLogicalSql, japaneseAbcllmProductMembersSql, japaneseAbcllmProductDispatchSql, japaneseAbcllmProductTerminalSql, japaneseAbcllmProductEventSql } from "@/lib/llm/japanese-abcllm-product-translation-sql";
 import { randomBytes, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -47,7 +48,7 @@ import type { Ai2GatewayServingContract } from "@/lib/crawl/second-review-servin
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { directContractRow } from "./direct-engine-fixtures";
-import { ledgerCheckDefs } from "./ledger-check-defs";
+import { ledgerCheckDefs, widenWebsearchQueryLocales } from "./ledger-check-defs";
 
 /**
  * F2 결함 1·3 실제 DB driver(0102). fetch 를 부르지 않은 AI1·AI2 gateway dispatch 는 같은 owner handle 의 not_started 증인으로 settled 가 되고
@@ -526,6 +527,10 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       // Compare the historical expression before 0190 widened the websearch locale list.
       let full = new PgDialect().sqlToQuery(check.value).sql.replaceAll(
         "sourceLocale' IN ('ko','zh-Hans','zh-Hant','ja','han')", "sourceLocale' IN ('ko','zh-Hans','zh-Hant')");
+      // 0193 appends the abcllm twin of the 0184 Japanese branch last on both terminal CHECKs.
+      const japaneseAbcllmTail = `) OR (${events ? japaneseAbcllmProductEventSql : japaneseAbcllmProductTerminalSql})`;
+      expect(full.startsWith("(") && full.endsWith(japaneseAbcllmTail), `${name}: 0193 tail present`).toBe(true);
+      full = full.slice(1, -japaneseAbcllmTail.length);
       // 0184 appends Japanese after the complete 0174 predecessor on both terminal CHECKs.
       const japaneseTail = `) OR (${events ? japaneseProductEventSql : japaneseProductTerminalSql})`;
       expect(full.startsWith("(") && full.endsWith(japaneseTail), `${name}: 0184 tail present`).toBe(true);
@@ -724,6 +729,18 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const branch = japanese[name];
       expect(current0184[name], `${name}: 0184 preserves every earlier ordinal`).toBe(branch
         ? `CHECK (${inner(current0175[name])} OR (${branch}))` : current0175[name]);
+    }
+    // 0193 adds the same five Japanese product branches once more with provider abcllm (production records product-translate as abcllm).
+    await migrateThrough(193);
+    const current0193 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const japaneseAbcllm: Record<string, string> = { model_capacity_requests_logical_check: japaneseAbcllmProductLogicalSql,
+      model_capacity_requests_members_check: japaneseAbcllmProductMembersSql, model_capacity_requests_dispatch_check: japaneseAbcllmProductDispatchSql,
+      model_capacity_requests_terminal_check: japaneseAbcllmProductTerminalSql, model_capacity_events_terminal_check: japaneseAbcllmProductEventSql };
+    // 0190 (between 0184 and 0193) rewrites only the websearch source-locale list inside existing leaves.
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = japaneseAbcllm[name], previous = widenWebsearchQueryLocales(current0184[name]);
+      expect(current0193[name], `${name}: 0193 preserves every earlier ordinal`).toBe(branch
+        ? `CHECK (${inner(previous)} OR (${branch}))` : previous);
     }
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
