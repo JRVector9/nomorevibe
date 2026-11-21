@@ -10,6 +10,7 @@ import { operatorReviewEventSql } from "@/lib/llm/operator-review-sql";
 import { gatewayLocalDirectMembersSql } from "@/lib/llm/gateway-local-direct-sql";
 import { publicationClassifyReleaseLogicalSql } from "@/lib/llm/dispatch-release-kinds-sql";
 import { japaneseProductMembersSql } from "@/lib/llm/japanese-product-translation-sql";
+import { japaneseAbcllmProductMembersSql } from "@/lib/llm/japanese-abcllm-product-translation-sql";
 
 const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as {
   entries: { idx: number; tag: string }[];
@@ -152,7 +153,9 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const expression = new PgDialect().sqlToQuery(check.value).sql;
   const release = history.find(entry => entry.idx === 158)!;
   expect(release.tag).toBe("0158_release_branch_kinds");
-  expect(latest.tag).toBe("0184_japanese_product_translation");
+  // 0193 은 0184 의 일본어 가지를 provider abcllm 으로 한 번 더 붙인다(운영 장부의 product-translate 행은 abcllm 이다).
+  expect(latest.tag).toBe("0193_japanese_abcllm_product_translation");
+  expect(history.at(-2)!.tag).toBe("0184_japanese_product_translation");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
@@ -173,7 +176,7 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const publicationApi = history.find(entry => entry.idx === 166)!;
   expect(publicationApi.tag).toBe("0166_publication_classify_api");
   expect(publicationApi.expression).toBe(`(${release.expression}) OR (${publicationApiLogicalSql})`);
-  expect(expression).toBe(`((${publicationApi.expression}) OR (${opencodeTaskMembersSql})) OR (${japaneseProductMembersSql})`);
+  expect(expression).toBe(`(((${publicationApi.expression}) OR (${opencodeTaskMembersSql})) OR (${japaneseProductMembersSql})) OR (${japaneseAbcllmProductMembersSql})`);
 });
 
 it("0168은 검토된 정본의 네 규칙만 기존 ordinal 다음에 추가하고 source·hash를 재검증한다", () => {

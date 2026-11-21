@@ -43,9 +43,11 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import type { FirstReviewer } from "./agent-review";
 import { ai1WithinLiveCallWindowSql } from "./ai1-live-call";
-import { firstReviewRankState, firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer,
+import { firstReviewRankState, firstReviewers, firstReviewerKey, firstReviewIdentitySql, firstReviewExactSql, hasFirstReviewer, currentFirstReviewer,
+  exactFirstReviewer, selectFirstReviewer,
   type FirstReviewPoolPosition } from "./first-reviewers";
 import { firstReviewLiveLedgerSql } from "./first-review-member-cap";
+import { sameReviewer, sameReviewerProviderSql } from "./reviewer-identity";
 import { chooseReviewWorkloadMember, ensureReviewTaskRanks, reviewPoolCappedKeys, reviewPoolSlotCaps } from "./review-task-ranks";
 import { logger } from "@/lib/observability/logger";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
@@ -101,12 +103,13 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
         AND ${ai1WithinLiveCallWindowSql(sql`provider`, sql`coalesce(dispatched_at, updated_at)`)})
     UNION ALL (SELECT provider, model FROM model_capacity_requests
       WHERE logical_work_key = ${logicalKey} AND state = 'waiting' AND queue_until > clock_timestamp()
-        AND ${firstReviewIdentitySql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
+        AND ${firstReviewExactSql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
   // 이미 승인한 후보의 근거만 늘었다 — 그 승인을 낸 모델을 고른다. claim 이 그 판단을 모델 호출 없이 잇는다(semantic_reuse, first-review-evidence.ts).
   // 호출이 없으니 칸 수·포화를 보지 않는다. 쉬거나 막힌 모델이면 예전처럼 새로 고른다
   if (!active.length && !attempts[0]?.live) {
     const carried = await evidenceGrowthApproval(context, executor);
-    const keep = carried && pool.find(row => row.provider === carried.provider && row.model === carried.model);
+    // 그 승인을 낸 심사자의 지금 자리 — 이름표만 바뀐 같은 엔진(abcllm → local-direct)이면 그 구성원이 잇는다(reviewer-identity.ts)
+    const keep = carried && currentFirstReviewer(pool, carried);
     if (keep && !blocked.has(firstReviewerKey(keep))) return keep;
   }
   // New work only: retain every existing waiting/reserved/dispatched/live binding.
@@ -403,12 +406,12 @@ function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: st
   const slots = sql`jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v`;
   // 대체 모델의 표는 그 모델이 지금도 대체 모델일 때만 칸을 채운다 — 설정에서 뺀 직후 정리 전에 옛 승인으로 발행되지 않게(codex 2차 P1)
   const currentFallback = sql`(g.fallback_for_id IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
-    WHERE f->>'provider' = g.provider AND ${sameModelName(sql`f->>'model'`)} = ${sameModelName(sql`g.model`)}))`;
+    WHERE ${sameReviewerProviderSql(sql`f->>'provider'`, sql`g.provider`)} AND ${sameModelName(sql`f->>'model'`)} = ${sameModelName(sql`g.model`)}))`;
   return sql`(EXISTS (SELECT 1 FROM ${slots})
     AND NOT EXISTS (SELECT 1 FROM ${slots}
       WHERE NOT EXISTS (SELECT 1 FROM ${secondReviews} g LEFT JOIN ${secondReviews} root ON root.id = g.fallback_for_id
         WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved' AND g.status = 'agreed' AND g.second_decision = 'approve'
-          AND coalesce(root.provider, g.provider) = v->>'provider'
+          AND ${sameReviewerProviderSql(sql`coalesce(root.provider, g.provider)`, sql`v->>'provider'`)}
           AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}))
     AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved'
       AND g.status IN ('pending', 'failed', 'needs_human')))`;
@@ -1215,7 +1218,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
     if (reserved && "expected" in reserved && (!isDeepStrictEqual(current, reserved.expected.context.input)
       || !isDeepStrictEqual(locked, reserved.expected.context) || authority.kind !== "item"
       || !isDeepStrictEqual(authority.owner, reserved.expected.owner)
-      || !hasFirstReviewer(configuredPool, input))) return { kind: "skipped", reason: "input_changed" };
+      || !exactFirstReviewer(configuredPool, input))) return { kind: "skipped", reason: "input_changed" };
     if (input.provider !== "rules") {
       // Under the candidate lock: pinned work must keep its model; a never-sent candidate may keep the
       // reviewer it was rerouted to (every other pool model is treated as "avoid" for this re-check only).
@@ -1306,12 +1309,14 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       if (retryState.waiting) {
         return { kind: "skipped", reason: "retry_wait" };
       }
+      // 판단을 잇는 것(semantic_reuse — 호출 없이 새 행)은 같은 심사자의 기록이면 된다: 이름표만 바뀐 같은 엔진의 판단도 잇는다(reviewer-identity.ts).
+      // 위의 direct_reuse 는 그 행 자체를 receipt·item binding 에 묶으므로 글자 그대로 같은 행만 받는다
       const sameInput = rows.find(row => row.inputHash === current.inputHash && row.state === "succeeded"
-        && row.provider === input.provider && row.model === input.model
+        && sameReviewer(row, input)
         && row.promptVersion === REVIEW_PROMPT_VERSION && row.rulesVersion === REVIEW_RULES_VERSION && row.outcome);
       // 이미 승인된 후보의 근거(스캔 결과)만 늘었으면 같은 모델의 그 승인을 잇는다 — 원본이 바뀌었으면 새로 심사한다(first-review-evidence.ts)
       const grown = sameInput || input.provider === "rules" ? null : await evidenceGrowthApproval(locked, tx);
-      const reusable = sameInput ?? (grown && grown.provider === input.provider && grown.model === input.model ? grown : undefined);
+      const reusable = sameInput ?? (grown && sameReviewer(grown, input) ? grown : undefined);
       // Fresh scans may replace observation IDs without changing semantic evidence.
       const copiedOutcome = reusable ? carriedReviewOutcome(reusable, current) : undefined;
       if (consumer && !reusable && input.provider !== "rules" && capacity?.mode === "disabled")

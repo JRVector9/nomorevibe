@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { startupGatewayServingContracts } from "./gateway-serving-contract-config";
 import { DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, resolveProviderServingContract, servingContractProvider,
-  type GatewayContractProvider } from "./direct-serving-contract";
+  totalBoundDirectServingContractSchema, type GatewayContractProvider } from "./direct-serving-contract";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 /** abcLLM 총량 상한 계약 — 칸 순서·값 그대로(저장된 계약의 hash 가 바뀌지 않는다). */
@@ -22,7 +22,13 @@ export const textProfileServingContractSchema = z.object({
 export type TextProfileGatewayServingContract = Readonly<z.infer<typeof textProfileServingContractSchema>>;
 /** 엔진 직접 계약(PR 3b-E) — AI1·AI2 와 같은 direct-openai-chat-v1 모양, provider local-direct. 같은 route_id 아래 관리 화면(model_serving_contracts)에 둔다. */
 export const textProfileDirectServingContractSchema = directServingContractSchema("product-search-profile", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
-export const textProfileRouteServingContractSchema = z.discriminatedUnion("protocol", [textProfileServingContractSchema, textProfileDirectServingContractSchema]);
+/**
+ * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계): 장비 이름·tokenizer 칸 없이
+ * 「API 주소 + 모델 + 총량 상한」만 적고, 위 abcllm 계약과 같은 wire 를 보낸다(lib/llm/direct-serving-contract.ts).
+ */
+export const textProfileTotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("product-search-profile");
+export const textProfileRouteServingContractSchema = z.discriminatedUnion("protocol", [textProfileServingContractSchema, textProfileDirectServingContractSchema,
+  textProfileTotalBoundDirectServingContractSchema]);
 export type TextProfileServingContract = Readonly<z.infer<typeof textProfileRouteServingContractSchema>>;
 /** 모양·hash 검사는 배포를 승인하지 않는다. raw 계약의 hash 는 합 스키마로 파싱해도 같다(같은 칸 순서). */
 export function textProfileServingContractHash(value: TextProfileServingContract): string {
