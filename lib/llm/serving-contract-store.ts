@@ -6,6 +6,7 @@ import { publishRuntimeSettingsSnapshot, runtimeSettings, runtimeSettingsSnapsho
   type RuntimeSettingsSnapshot } from "@/lib/operations/runtime-settings-store";
 import { overlaidModelDefinitions, setModelRegistryOverlay, setModelRoutePolicyOverlay } from "./model-registry";
 import { activeTextTaskRank } from "./ai-task-rank-scope";
+import { isTotalBoundDirectContract } from "./direct-serving-contract";
 import { aiTaskModelRows, type AiTaskConnectionSnapshot } from "./ai-task-models-snapshot";
 import { aiTask } from "./ai-tasks";
 import { aiTaskExecutionReadState, readAiTaskExecutionConfig } from "./ai-task-execution-snapshot";
@@ -234,7 +235,8 @@ function reviewRankConnection(routeId: string, row: StoredServingContract | unde
     base = url.pathname === "/v1/chat/completions" ? `${url.origin}/v1` : null;
   } catch { base = null; }
   if (!base) return null;
-  const wire = field("provider") === "local-direct" ? field("model") : field("engineModel") ?? field("model");
+  // 엔진에 나가는 이름: abcllm 형과 openai-chat-total-bound-v1 은 engineModel(없으면 model), 그 밖의 local-direct 계약은 model 이다
+  const wire = field("provider") === "local-direct" && !isTotalBoundDirectContract(contract) ? field("model") : field("engineModel") ?? field("model");
   let candidates = aiTaskModelRows().filter(rank => rank.task === task && rank.enabled);
   // Live review entrypoints ensure this snapshot before selecting a pool. Pure legacy accessors
   // that have not selected any task member keep their existing contract-auth behavior.

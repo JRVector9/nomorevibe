@@ -12,6 +12,7 @@ import { parseGatewayServingContract, registeredGatewayServingContractSchema, ty
 import { ensureServingContracts, servingContractRowAccess, servingContractSnapshot, type StoredServingContract } from "@/lib/llm/serving-contract-store";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { servingContractWireModel } from "@/lib/llm/direct-serving-contract";
 import { canonicalReviewModel } from "./review-model-identity";
 import { aiTaskExecutionReadState, ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from "@/lib/llm/ai-task-execution-snapshot";
 import { chooseTaskWorkloadMember } from "@/lib/llm/ai-task-workload-selector";
@@ -24,7 +25,7 @@ import { aiTaskPoolFeatures, type AiTaskExecutionConfig, type AiTaskPoolMember, 
  *   예전의 crawl_settings.firstReview·firstReviewAdditional·secondReview.voters·fallbacks, 배정 표(ai1·ai2), 등록부 기본 후보는 읽지 않는다.
  * - 순위 하나를 그 연결이 가리키는 것에 묶는다:
  *   API 연결 → 그 경로(crawl-agent-review·second-review)의 켜진 계약 중 끝점 = `<연결 주소>/chat/completions`, 엔진 모델(engineModel 또는 model) = 순위 모델인 것.
- *     abcllm 형(total-bound, transport direct — 엔진에 바로 보낸다)을 먼저, local-direct(direct-openai-chat-v1) 를 다음으로 쓴다. 장부 이름(identity) = 계약 행의 model
+ *     abcllm 형(total-bound, transport direct — 엔진에 바로 보낸다)을 먼저, local-direct(direct-openai-chat-v1·openai-chat-total-bound-v1) 를 다음으로 쓴다. 장부 이름(identity) = 계약 행의 model
  *     (같은 모델을 다른 연결에도 두면 `<모델>@<연결 8자>`). 보내는 키는 연결의 키다(serving-contract-store textRouteAccess).
  *   CLI 연결 → claude-cli·grok-cli, identity = 순위 모델. 계약은 순위 저장이 만든 DB CLI 계약(cli:<provider>:<route>)뿐이고 버전은 워커가 부를 때 견준다.
  * - 쓸 수 없는 순위(계약 없음·꺼짐·키를 못 엶·CLI 계약 없음·버전 다름)는 까닭을 남긴다. identity 를 아는 순위(계약은 있는데 닫힘, CLI)는 「지금 심사자」
@@ -72,7 +73,8 @@ export function reviewRouteContracts(routeId: ReviewTaskRoute): RouteContract[] 
     if (!parsed || parsed.model !== row.model) return [];
     const provider = parsed.provider === "local-direct" ? "local-direct" as const : "abcllm" as const;
     if (provider === "abcllm" && row.transport !== "direct") return [];
-    const wireModel = provider === "local-direct" ? parsed.model : text(parsed, "engineModel") ?? parsed.model;
+    // 엔진에 나가는 이름(순위 모델과 견준다): abcllm 형과 openai-chat-total-bound-v1 은 engineModel(없으면 model), 그 밖의 local-direct 는 model
+    const wireModel = servingContractWireModel(parsed as { provider?: unknown; protocol?: unknown; model: string; engineModel?: unknown });
     return [{ row, provider, endpointBase: endpointBase(text(parsed, "endpoint")), wireModel }];
   });
 }

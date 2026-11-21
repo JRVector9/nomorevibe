@@ -1,6 +1,7 @@
 import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { FirstReviewer } from "./agent-review";
 import { sameUnderlyingModel } from "./review-model-identity";
+import { sameReviewer, sameReviewerSql } from "./reviewer-identity";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, type ModelCapacityDeferredReason } from "@/lib/llm/capacity-deferred";
 import { firstReviewRanks, firstReviewRanksDegraded, settingsReviewersActive, type ReviewRankDegraded, type ReviewRankResolution } from "./review-task-ranks";
 import { z } from "zod";
@@ -62,10 +63,28 @@ export function legacyFirstReviewers(settings: FirstReviewSettings, fallback: Fi
 }
 
 export const firstReviewerKey = (reviewer: { provider: string; model: string }): string => JSON.stringify([reviewer.provider, reviewer.model]);
+/**
+ * 남은 기록(시도 행)의 심사자가 지금 1차 심사자인가 — 기록의 유효 판정이다. 엔진 직접 묶음(abcllm·local-direct)은 같은 장부 이름이면 같은 심사자다
+ * (reviewer-identity.ts — 계약을 local-direct 로 다시 저장해도 이미 낸 1차가 그대로 센다). 지금 부를 심사자를 가를 때는 exactFirstReviewer 를 쓴다.
+ */
 export const hasFirstReviewer = (pool: FirstReviewer[], reviewer: { provider: string | null; model: string | null }): boolean =>
-  pool.some(current => current.provider === reviewer.provider && current.model === reviewer.model);
+  pool.some(current => sameReviewer(current, reviewer));
+/** 그 기록을 낸 심사자의 지금 자리(풀 구성원) — 글자 그대로 같은 구성원이 먼저다. 없으면 undefined. */
+export const currentFirstReviewer = (pool: FirstReviewer[], reviewer: { provider: string | null; model: string | null }): FirstReviewer | undefined =>
+  exactFirstReviewer(pool, reviewer) ?? pool.find(current => sameReviewer(current, reviewer));
+/**
+ * 글자 그대로 같은 풀 구성원 — **지금 보내는 호출**(장부의 살아 있는 의도·진행 중 시도·claim 이 부를 심사자)의 identity 다. 장부 행·정책 route·계약·binding 은
+ * 부른 이름표로 끝나므로 여기에는 동등 규칙을 쓰지 않는다.
+ */
+export const exactFirstReviewer = (pool: FirstReviewer[], reviewer: { provider: string | null; model: string | null }): FirstReviewer | undefined =>
+  pool.find(current => current.provider === reviewer.provider && current.model === reviewer.model);
 
+/** hasFirstReviewer 의 SQL — 시도 행(crawl_review_attempts)의 (provider, model) 이 지금 1차 심사자의 것인가(동등 규칙). */
 export function firstReviewIdentitySql(pool: FirstReviewer[], columns: { provider: SQLWrapper; model: SQLWrapper }): SQL {
+  return pool.length ? sql`(${sql.join(pool.map(reviewer => sameReviewerSql(columns, reviewer)), sql` OR `)})` : sql`false`;
+}
+/** exactFirstReviewer 의 SQL — 장부 행(model_capacity_requests)처럼 부른 이름표 그대로 견주는 자리. */
+export function firstReviewExactSql(pool: FirstReviewer[], columns: { provider: SQLWrapper; model: SQLWrapper }): SQL {
   return pool.length ? sql`(${sql.join(pool.map(reviewer => sql`(${columns.provider} = ${reviewer.provider} AND ${columns.model} = ${reviewer.model})`), sql` OR `)})` : sql`false`;
 }
 
@@ -93,11 +112,11 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
   if (!pool.length || !Number.isSafeInteger(candidateId) || candidateId < 1) return null;
   if (active.length) {
     const identities = new Set(active.map(row => JSON.stringify([row.provider, row.model])));
-    if (identities.size !== 1 || !hasFirstReviewer(pool, active[0])) return null;
-    return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
+    // 살아 있는 의도·진행 중 시도는 부른 이름표 그대로 묶는다(exactFirstReviewer) — 다른 이름표로 같은 후보를 한 번 더 보내지 않는다
+    return identities.size === 1 ? exactFirstReviewer(pool, active[0]) ?? null : null;
   }
   const latest = attempts[0];
-  if (latest?.live === true) return pool.find(row => row.provider === latest.provider && row.model === latest.model) ?? null;
+  if (latest?.live === true) return exactFirstReviewer(pool, latest) ?? null;
   return pool.find(reviewer => !avoid.blocked.has(firstReviewerKey(reviewer))) ?? null;
 }
 
