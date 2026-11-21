@@ -562,6 +562,11 @@ export type AiReadinessInput = Readonly<{
    * (관측이 하나도 없거나 읽지 못한 것은 이름 댈 프로세스가 없어 null — 경고 없이 abcllm 형)
    */
   directShape?: Readonly<{ open: boolean; text: string | null }>;
+  /**
+   * 경로의 전환 상태를 셀 계약 행 — 저장 전의 DB 행이다(aiRanksReadiness 가 원래 contracts 를 넘긴다). 같은 저장의 앞 순위가 만들 계약은 세지 않는다:
+   * 새 경로에서 1순위 API 가 만든 새 모양 계약이 2순위 CLI 엔진을 「전환된 경로」로 보이게 하지 않는다. 없으면 contracts 로 센다
+   */
+  routeStateContracts?: AiReadinessInput["contracts"];
   /** CLI 계약을 DB 행으로 만드는 route(cli-serving-contract CLI_DB_CONTRACT_ROUTES — 1차·2차·Grok 로그인 유지, PR C1). 없으면 빈 목록 */
   cliContractRoutes?: readonly string[];
   policy: Readonly<{ mode: string; routes: readonly AiPolicyRoute[]; groupLimits: Readonly<Record<string, number>> }> | null;
@@ -625,7 +630,7 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
   const budgetFor = (deviceId: string) => policyRoutes.find(route => route.groupId === deviceId)?.providerBudgetId ?? deviceId;
   /** 새로 만들 엔진 직접 계약의 모양(관문 + 그 경로의 전환 상태 — engine-contract-shape.ts) */
   const shapeFor = (route: string, cliEngine = false) => {
-    const state = routeContractState(input.contracts, route);
+    const state = routeContractState(input.routeStateContracts ?? input.contracts, route);
     return { state, shape: engineContractShape(route, input.directShape?.open ?? false, state, cliEngine) };
   };
   /** abcllm 형으로 만들 때의 알림 — 경로가 아직 전환 전이거나, 관문이 옛 판 프로세스 때문에 닫혔을 때(열렸다면 새 모양이었을 경로만) */
@@ -945,7 +950,8 @@ export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ ran
   const contracts = [...input.contracts];
   const localContracts = [...input.localContracts ?? []];
   return ranks.map(entry => {
-    const ready = aiRankReadiness(task, entry.rank, entry.connection, entry.model, { ...input, contracts, localContracts }, entry.reasoningEffort);
+    const ready = aiRankReadiness(task, entry.rank, entry.connection, entry.model, { ...input, contracts, localContracts,
+      routeStateContracts: input.routeStateContracts ?? input.contracts }, entry.reasoningEffort);
     // 앞 순위가 만들 로컬 계약은 뒤 순위가 다시 쓴다(같은 연결·모델이면 같은 계약)
     if (ready.createLocalContract) localContracts.push({ backendId: ready.createLocalContract.backendId, model: ready.createLocalContract.model,
       endpoint: ready.createLocalContract.endpoint, physicalGroup: ready.createLocalContract.physicalGroup,
