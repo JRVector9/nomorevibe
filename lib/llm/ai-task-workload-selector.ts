@@ -77,7 +77,8 @@ export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate
         const cliEngineTask = aiTaskUsesCliEngine(config.task, member.connection);
         const cliMetadata = candidate as T & CliEngineCandidateMetadata;
         if (cliEngineTask) {
-          if (candidate.provider !== "abcllm" || cliMetadata.options === undefined) return [];
+          // CLI 엔진 묶음은 abcllm 형 계약이거나 엔진 직접 총량 상한 계약(local-direct)에서만 나온다(bindCliEngineTaskRank)
+          if (!["abcllm", "local-direct"].includes(candidate.provider) || cliMetadata.options === undefined) return [];
           const configured = configuredCliEngineSource(member);
           const captured = configuredCliEngineSource({ connectionId: candidate.connectionId, options: cliMetadata.options });
           if (!configured || !captured || !cliMetadata.cliEngine

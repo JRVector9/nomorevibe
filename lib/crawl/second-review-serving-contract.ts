@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { startupGatewayServingContracts } from "@/lib/llm/gateway-serving-contract-config";
 import { AI2_DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, selectServingContract,
-  servingContractMatchesSelection } from "@/lib/llm/direct-serving-contract";
+  servingContractMatchesSelection, totalBoundDirectServingContractSchema } from "@/lib/llm/direct-serving-contract";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 const tokenizerEndpoint = z.url().refine(value => {
@@ -37,11 +37,17 @@ const legacyAi2GatewayServingContractSchema = z.object({
  */
 export const ai2DirectServingContractSchema = directServingContractSchema("second-review",
   [AI2_DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_OPENAI_CHAT_PROTOCOL] as const);
+/**
+ * AI2 의 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계). abcllm raw 계약과 같은
+ * wire 를 보낸다. raw 계약의 requestBudget(tokenizer 로 요청 상한 확인)은 이 모양의 tokenizer 묶음 + maxOutputTokens 로 옮겨 적는다.
+ */
+export const ai2TotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("second-review");
 export const ai2GatewayServingContractSchema = z.discriminatedUnion("protocol", [
-  legacyAi2GatewayServingContractSchema, ai2DirectServingContractSchema,
+  legacyAi2GatewayServingContractSchema, ai2DirectServingContractSchema, ai2TotalBoundDirectServingContractSchema,
 ]);
 export type Ai2GatewayServingContract = Readonly<z.infer<typeof ai2GatewayServingContractSchema>>;
 export type Ai2DirectServingContract = Readonly<z.infer<typeof ai2DirectServingContractSchema>>;
+export type Ai2TotalBoundDirectServingContract = Readonly<z.infer<typeof ai2TotalBoundDirectServingContractSchema>>;
 
 /** Shape/hash validation does not approve a deployment or issue transport authority. */
 export function ai2GatewayServingContractHash(value: Ai2GatewayServingContract): string {
@@ -66,4 +72,13 @@ export function selectAi2ServingContract(contracts: readonly Ai2GatewayServingCo
 export function resolveAi2GatewayServingContract(model: string, provider: string = "abcllm"): Ai2GatewayServingContract | null {
   if (provider !== "abcllm" && provider !== "local-direct") return null;
   return selectAi2ServingContract([...configured.values()], model, provider);
+}
+/**
+ * 선택이 가리키는 2차 계약의 provider — provider 를 주지 않은 준비 호출의 기본값이다(text 경로의 `<route>ServingProvider` 와 같은 규칙).
+ * abcllm 계약이 닿으면 abcllm(예전 그대로), 없고 local-direct 계약 하나가 닿으면 local-direct, 둘 다 없으면 abcllm(준비가 예전처럼 미룬다).
+ * 심사자 identity 는 여기서 정하지 않는다 — 순위·표가 정한 provider 가 있으면 호출자가 그것을 넘긴다.
+ */
+export function ai2ServingProvider(model: string): "abcllm" | "local-direct" {
+  if (resolveAi2GatewayServingContract(model, "abcllm")) return "abcllm";
+  return resolveAi2GatewayServingContract(model, "local-direct") ? "local-direct" : "abcllm";
 }

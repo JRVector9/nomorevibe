@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { startupGatewayServingContracts } from "@/lib/llm/gateway-serving-contract-config";
-import { DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, selectServingContract } from "@/lib/llm/direct-serving-contract";
+import { DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, selectServingContract,
+  totalBoundDirectServingContractSchema } from "@/lib/llm/direct-serving-contract";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 /**
@@ -26,8 +27,13 @@ export const ai1RawGatewayServingContractSchema = z.object({
 }).strict();
 /** AI1 의 직접 계약 — AI2 와 같은 공통 direct-openai-chat-v1 모양(tokenizer 로 요청 상한을 확인한다). */
 export const ai1DirectServingContractSchema = directServingContractSchema("crawl-agent-review", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
+/**
+ * AI1 의 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계). abcllm raw 계약과 같은
+ * wire(게이트웨이 칸 포함, engineModel)를 보내고, tokenizer 묶음이 있을 때만 요청 상한을 먼저 확인한다.
+ */
+export const ai1TotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("crawl-agent-review");
 export const ai1GatewayServingContractSchema = z.discriminatedUnion("protocol", [
-  ai1RawGatewayServingContractSchema, ai1DirectServingContractSchema,
+  ai1RawGatewayServingContractSchema, ai1DirectServingContractSchema, ai1TotalBoundDirectServingContractSchema,
 ]);
 export type Ai1GatewayServingContract = Readonly<z.infer<typeof ai1GatewayServingContractSchema>>;
 export type Ai1DirectServingContract = Readonly<z.infer<typeof ai1DirectServingContractSchema>>;
