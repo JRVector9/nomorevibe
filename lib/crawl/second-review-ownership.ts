@@ -357,7 +357,9 @@ async function claimReview(id: number, authority: ClaimAuthority,
           || gateway.call.servingContractHash !== ai2GatewayServingContractHash(serving)
           || gateway.call.totalTokenBound !== serving.totalTokenBound)
           throw new ModelCapacityDeferredError("provider_contract_unavailable");
-        if (serving.provider === "local-direct") {
+        // 장비 이름 칸을 가진 직접 계약(direct-openai-chat-v1)만 장부 매핑의 장비를 견준다. 그 칸이 없는 엔진 직접 총량 상한 계약
+        // (openai-chat-total-bound-v1)은 abcllm 계약처럼 매핑 유무만 장부 입장이 본다.
+        if (serving.provider === "local-direct" && "backendId" in serving) {
           const route = capacity?.policy?.routes.find(route => route.routeId === "second-review"
             && route.provider === serving.provider && route.model === binding.reviewer.model);
           if (!route || route.groupId !== serving.physicalGroup || route.providerBudgetId !== serving.backendId)

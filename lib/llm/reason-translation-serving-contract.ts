@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ABCLLM_STRICT_TERMINAL_OPT_IN, startupGatewayServingContracts } from "./gateway-serving-contract-config";
 import { DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, resolveProviderServingContract, servingContractProvider,
-  type GatewayContractProvider } from "./direct-serving-contract";
+  totalBoundDirectServingContractSchema, type GatewayContractProvider } from "./direct-serving-contract";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 /** abcLLM 총량 상한 계약 — 칸 순서·값 그대로(저장된 계약의 hash 가 바뀌지 않는다). */
@@ -29,7 +29,13 @@ export const reasonTranslationServingContractSchema = z.object({
 export type ReasonTranslationGatewayServingContract = Readonly<z.infer<typeof reasonTranslationServingContractSchema>>;
 /** 엔진 직접 계약(PR 3b-E) — direct-openai-chat-v1, provider local-direct. 게이트웨이가 없어 엄격 terminal opt-in 표시가 없다(엔진 완결 응답이 terminal). */
 export const reasonTranslationDirectServingContractSchema = directServingContractSchema("reason-translate", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
-export const reasonTranslationRouteServingContractSchema = z.discriminatedUnion("protocol", [reasonTranslationServingContractSchema, reasonTranslationDirectServingContractSchema]);
+/**
+ * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계): 장비 이름·tokenizer 칸 없이
+ * 「API 주소 + 모델 + 총량 상한」만 적고, 위 abcllm 계약과 같은 wire 를 보낸다(lib/llm/direct-serving-contract.ts).
+ */
+export const reasonTranslationTotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("reason-translate", { reasoningTokenReserve: true });
+export const reasonTranslationRouteServingContractSchema = z.discriminatedUnion("protocol", [reasonTranslationServingContractSchema, reasonTranslationDirectServingContractSchema,
+  reasonTranslationTotalBoundDirectServingContractSchema]);
 export type ReasonTranslationServingContract = Readonly<z.infer<typeof reasonTranslationRouteServingContractSchema>>;
 /** 모양·hash 검사는 배포를 승인하지 않는다. raw 계약의 hash 는 합 스키마로 파싱해도 같다(같은 칸 순서). */
 export function reasonTranslationServingContractHash(value: ReasonTranslationServingContract): string {
