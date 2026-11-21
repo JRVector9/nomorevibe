@@ -1,6 +1,8 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import type { CrawlDocument } from "@/lib/db/schema";
 import { loadReviewDocument, reviewReadmeState } from "./review-document";
+import { ensureShellRender } from "./shell-render-document";
 import { getSettings } from "@/lib/crawl/settings";
 import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
@@ -12,7 +14,7 @@ import { reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
 import { reviewGatewayTimeoutMs, reviewWithGateway, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { grokReviewTimeoutMs, reviewWithGrokCli } from "@/lib/crawl/agent-review-grok";
 import { reviewSemanticNow } from "../review-replay-context";
-import { prepareAgentReview } from "../agent-review-preparation";
+import { prepareAgentReview, prepareAgentReviewRules, ruleGateReason } from "../agent-review-preparation";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonAgentReviewModelCapacity,
@@ -136,7 +138,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       if (!await canStartLegacyAgentReview(lease)) stageBlocked = true;
       return skip(candidate, stageBlocked ? "stage_inactive" : "item_owned");
     }
-    const document = await loadReviewDocument(candidate.repo, lease);
+    let document = await loadReviewDocument(candidate.repo, lease);
     if (!document) return skip(candidate, "document_missing");
     // README 를 받지 못한 후보를 빈 README 로 모델에 보내지 않는다(2026-11-17 설치형 보류 535건). 기다림은 후보 탓이 아니라 세지 않는다 —
     // 횟수를 다 쓰면 까닭을 남긴 채 README 없이 심사한다
@@ -147,12 +149,37 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       { repo: candidate.repo, error: readme.error, attempts: readme.attempts });
     // 입력이 상한보다 큰 후보 하나가 틱 전체를 던지게 두면 커서가 그 후보 앞에 멈춰 뒤의 후보와 새 후보가 모두 굶는다 — 이 후보만 건너뛴다.
     // 같은 후보가 거듭 건너뛰어지면 상한(first-review-skips.ts)이 쪽에서 빼고 사람에게 넘긴다(2차 표·갈림 판가름도 같은 오류를 후보 탓으로 닫는다)
-    let input: Awaited<ReturnType<typeof loadReviewInput>>;
-    try { input = await loadReviewInput(candidate, document, settings); }
-    catch (error) {
-      if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
-      return skip(candidate, "input_too_large");
-    }
+    const loadInput = async (from: CrawlDocument) => {
+      try { return await loadReviewInput(candidate, from, settings); }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
+        return null;
+      }
+    };
+    const unrenderedInput = await loadInput(document);
+    if (!unrenderedInput) return skip(candidate, "input_too_large");
+    // JS 앱 껍데기(제목·로딩 문구뿐)는 화면 서버로 한 번 그려 그린 글로 심사한다(shell-render.ts). 기다림은 후보 탓이 아니라 세지 않는다 —
+    // 페이지 실패가 두 번이거나 우리 쪽 사정(화면 서버 탈·붐빔)으로 1시간을 기다렸으면 지금처럼 수집 본문으로 심사한다.
+    // 모델을 부르지 않을 후보(스팸 의심·규칙 거절·이미 등재·근거 보류)는 그리지 않는다 — 같은 규칙 갈림을 그리기 전에 본다(983-A).
+    // 그린 글은 그 갈림에 들어가지 않으므로 아래 prepareAgentReview 가 같은 답을 낸다.
+    // 그리기는 그린 뒤 같은 틱에 모델을 부를 수 있게 「틱 끝 − 가장 짧은 모델 상한 − 여유」 안으로 줄인다(CLI 40초 틱에서 그리기가 틱을 다 먹지 않게,
+    // PR #1020 리뷰 MAJOR). 앞 틱에서 줄에 세운 후보(hint — 예약을 쥐고 있다)는 그리지 않는다: 그리는 사이 예약이 만료되거나 입력이 바뀌어
+    // pending_hint_mismatch 가 되지 않게, 줄에 설 때의 입력 그대로 심사한다
+    const unrendered = { document, input: unrenderedInput };
+    const shell = await ensureShellRender(document, { lease, deadlineAt: deadlineAt - 2_000, modelDeadlineAt: deadlineAt - minimumCeiling - 3_000,
+      signal: ctx.signal, ...(hint ? { skip: "pending_reservation" } : {}),
+      gate: async () => ruleGateReason(await prepareAgentReviewRules({ candidate, document: unrendered.document, settings, input: unrendered.input })) });
+    if (shell.kind === "wait") return skip(candidate, shell.reason, { ...(shell.code ? { code: shell.code } : {}),
+      ...(shell.retryAt ? { retryAt: new Date(shell.retryAt).toISOString() } : {}) });
+    if (shell.rendered) ctx.log("crawl.agent_review_shell_render", { repo: candidate.repo, ok: shell.rendered.ok, code: shell.rendered.code ?? null,
+      renderMs: shell.rendered.renderMs, used: shell.state.kind === "rendered", state: shell.state.kind });
+    if (shell.skipped) ctx.log("crawl.agent_review_shell_render_skipped", { repo: candidate.repo, reason: shell.skipped, code: shell.code ?? null,
+      state: shell.state.kind });
+    // 그린 기록이 붙은 새 원본이면 입력을 다시 만든다(그린 글이 pageText 가 된다)
+    const renderedDocument = shell.document !== document ? shell.document : null;
+    if (renderedDocument) document = renderedDocument;
+    const input = renderedDocument ? await loadInput(renderedDocument) : unrenderedInput;
+    if (!input) return skip(candidate, "input_too_large");
     if (input.validUntil <= reviewSemanticNow()) return skip(candidate, "input_expired");
     // 순위대로 고른다: 고른 모델이 이 틱에 이 모델만의 까닭으로 거절되면 그 모델을 쉬게 하고 다음 순위로 — 순위 수만큼만 돈다
     for (let rank = 0; rank <= pool.length; rank++) {

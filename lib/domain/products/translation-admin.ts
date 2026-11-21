@@ -25,6 +25,7 @@ const selection = {
   productId: t.productId, slug: products.slug, name: products.name, locale: t.locale, field: t.field, status: t.status,
   sourceHash: t.sourceHash, sourceLocale: t.sourceLocale, text: t.text, attempts: t.attempts, errorCode: t.errorCode,
   model: t.model, updatedAt: iso(t.updatedAt), retryAt: iso(t.retryAt),
+  provenance: sql<string>`coalesce(${t.provenance}->>'kind', 'machine')`,
   source: { id: products.id, name: products.name, tagline: products.tagline, description: products.description },
   eligible: sql<boolean>`(${productTranslationEligible})`,
   productStatus: products.status,
@@ -36,12 +37,16 @@ const selection = {
 export type ProductTranslationAdminFilter = {
   state?: ProductTranslationStatus | "all"; locale?: ProductTranslationLocale; field?: ProductTranslationField;
   q?: string; cursor?: string; limit?: number;
+  /** provenance.kind filter — "source_native" lists the rows published as the unchanged, already-English source */
+  provenance?: "source_native";
 };
 export type ProductTranslationAdminItem = {
   productId: number; slug: string; name: string; locale: ProductTranslationLocale; field: ProductTranslationField;
   status: ProductTranslationStatus; sourceHash: string; currentSourceHash: string; sourceText: string;
   sourceLocale: string | null; text: string | null; attempts: number; errorCode: string | null; model: string;
   updatedAt: string; retryAt: string | null; eligible: boolean; sourceMatches: boolean;
+  /** provenance.kind — source_native: the model kept an already-English source; the page shows the source, not a translation */
+  provenance: string;
   holdReason: "product_not_public" | "takedown_pending" | "intro_editor_hold" | null;
   recovery: "retry" | "new_source" | null; recoveryReason: string;
 };
@@ -49,7 +54,7 @@ export type ProductTranslationAdminItem = {
 function item(row: {
   productId: number; slug: string; name: string; locale: ProductTranslationLocale; field: ProductTranslationField;
   status: ProductTranslationStatus; sourceHash: string; sourceLocale: string | null; text: string | null;
-  attempts: number; errorCode: string | null; model: string; updatedAt: string | null; retryAt: string | null;
+  attempts: number; errorCode: string | null; model: string; updatedAt: string | null; retryAt: string | null; provenance: string;
   source: { id: number; name: string; tagline: string; description: string }; eligible: boolean;
   productStatus: string; takedownPending: boolean; introHold: boolean;
 }, now: Date): ProductTranslationAdminItem {
@@ -85,6 +90,7 @@ export function productTranslationAdminQueue(input: ProductTranslationAdminFilte
   const predicate = and(state === "all" ? undefined : eq(t.status, state),
     input.locale && LOCALES.includes(input.locale) ? eq(t.locale, input.locale) : inArray(t.locale, PRODUCT_TRANSLATION_LOCALES),
     isProductTranslationField(input.field) ? eq(t.field, input.field) : undefined,
+    input.provenance === "source_native" ? sql`${t.provenance}->>'kind' = 'source_native'` : undefined,
     pattern ? sql`(${products.slug} ilike ${pattern} or ${products.name} ilike ${pattern} or ${products.id}::text ilike ${pattern})` : undefined);
   const position = cursor(input.cursor);
   const after = position ? sql`(${t.updatedAt}, ${t.productId}, ${t.locale}, ${t.field}) >
@@ -106,6 +112,7 @@ export function productTranslationAdminSummary() {
   return onPrimary(() => db.select({ locale: t.locale, field: t.field,
     pending: sql<number>`count(*) filter (where ${t.status} = 'pending')::int`,
     ready: sql<number>`count(*) filter (where ${t.status} in ('ready', 'reviewed'))::int`,
+    sourceNative: sql<number>`count(*) filter (where ${t.status} in ('ready', 'reviewed') and ${t.provenance}->>'kind' = 'source_native')::int`,
     failed: sql<number>`count(*) filter (where ${t.status} = 'failed')::int`,
     exhausted: sql<number>`count(*) filter (where ${t.status} = 'failed' and ${t.attempts} >= ${productTranslationPolicy().maxAttempts})::int`,
     retryWaiting: sql<number>`count(*) filter (where ${t.status} = 'failed' and ${t.attempts} < ${productTranslationPolicy().maxAttempts} and ${t.retryAt} > now())::int`,
@@ -155,5 +162,41 @@ export function retryProductTranslation(input: ProductTranslationRetryInput): Pr
       detail: { locale: input.locale, field: input.field, kind: current.recovery, attempts: row.attempts,
         sourceHash: row.sourceHash, currentSourceHash: current.currentSourceHash, reason: input.reason.trim() } }));
     return { slug: product.slug, kind: current.recovery };
+  }));
+}
+
+export type SourceNativeRevertInput = {
+  productId: number; locale: ProductTranslationLocale; field: ProductTranslationField; expectedSourceHash: string; expectedUpdatedAt: string;
+  reason: string; adminLogin: string;
+};
+/**
+ * One ready source_native row (the model kept the source, published as already English) back to failed with no text.
+ * Same end state as the operator rollback SQL (scripts/ops/product-translation-english-sql.ts): error source_native_reverted,
+ * provenance machine, attempts raised to the live maxAttempts so neither the worker nor the retry form re-requests the same
+ * source. The public page falls back to the source with the pending label. Audited as product-translation-source-native-revert.
+ */
+export function revertSourceNativeTranslation(input: SourceNativeRevertInput): Promise<{ slug: string }> {
+  if (!Number.isSafeInteger(input.productId) || input.productId < 1 || !LOCALES.includes(input.locale) || !isProductTranslationField(input.field)
+    || !hash(input.expectedSourceHash) || !timestamp(input.expectedUpdatedAt)
+    || !input.reason.trim() || input.reason.length > 1000 || !input.adminLogin.trim() || input.adminLogin.length > 120) throw new ProductTranslationAdminError("invalid");
+  return onPrimary(() => db.transaction(async (tx) => {
+    // Same lock order as the worker and demand writer: product, then the translation row.
+    const [product] = await tx.select({ ...selection.source, slug: products.slug }).from(products).where(eq(products.id, input.productId)).for("share");
+    if (!product) throw new ProductTranslationAdminError("conflict");
+    const predicate = and(eq(t.productId, input.productId), eq(t.locale, input.locale), eq(t.field, input.field));
+    const [row] = await tx.select(selection).from(t).innerJoin(products, eq(products.id, t.productId)).where(predicate).for("update", { of: t });
+    if (!row || row.status !== "ready" || row.provenance !== "source_native" || row.sourceHash !== input.expectedSourceHash
+      || row.updatedAt !== input.expectedUpdatedAt) throw new ProductTranslationAdminError("conflict");
+    // 고르기는 attempts < min(maxAttempts, 4) — 4 이상이면 나중에 maxAttempts 를 낮췄다 올려도 다시 집히지 않는다(리뷰 #1019)
+    const attempts = Math.max(row.attempts, 4, productTranslationPolicy().maxAttempts);
+    const updated = await tx.update(t).set({ status: "failed", text: null, errorCode: "source_native_reverted", attempts, retryAt: null,
+      sourceLocale: null, provenance: sql`jsonb_set(${t.provenance}, '{kind}', '"machine"')`, updatedAt: sql`now()` })
+      .where(and(predicate, eq(t.status, "ready"), sql`${t.provenance}->>'kind' = 'source_native'`, eq(t.sourceHash, input.expectedSourceHash),
+        sql`${t.updatedAt} = ${input.expectedUpdatedAt}::timestamp`)).returning({ id: t.productId });
+    if (updated.length !== 1) throw new ProductTranslationAdminError("conflict");
+    await tx.insert(operationsAudit).values(await adminAuditRow(input.adminLogin, { action: "product-translation-source-native-revert", target: product.slug,
+      detail: { locale: input.locale, field: input.field, sourceHash: row.sourceHash, attempts: row.attempts, attemptsAfter: attempts,
+        text: row.text, reason: input.reason.trim() } }));
+    return { slug: product.slug };
   }));
 }

@@ -149,6 +149,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "contact_request.update": "문의 처리",
   "reaction.comment_review": "써봤어요 한 줄 검수",
   "product-translation-retry": "공개 번역 재요청",
+  "product-translation-source-native-revert": "공개 번역 원문 유지 되돌림",
+  "product-translation-english-requeue": "영어 번역 불확실 재대기(운영 SQL)",
+  "product-translation-source-native-rollback": "영어 원문 유지 일괄 되돌림(운영 SQL)",
   "talk-post-hide": "SNS 글 숨김",
   "talk-post-show": "SNS 글 다시 보이기",
   "talk-repository-exclude": "저장소를 화제에서 뺌",
@@ -247,6 +250,7 @@ export const ACTION_GROUPS = {
     "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "keyword-generation-retry", "export", "operator-name",
     "normalize-product-names", "revert-product-names",
     "feedback.review", "maker_reply.review", "contact_request.create", "contact_request.update", "reaction.comment_review", "product-translation-retry",
+    "product-translation-source-native-revert", "product-translation-english-requeue", "product-translation-source-native-rollback",
     "talk-post-hide", "talk-post-show", "talk-repository-exclude", "talk-repository-include", "talk-home-approved", "talk-home-talk_only", "talk-home-clear"] },
 } as const;
 export type ActionGroup = keyof typeof ACTION_GROUPS;
