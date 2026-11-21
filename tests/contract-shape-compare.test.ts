@@ -1,18 +1,24 @@
 import { createHash } from "node:crypto";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import "@/lib/crawl/agent-review-serving-contract";
 import "@/lib/crawl/second-review-serving-contract";
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import { setServingContractSnapshotForTest, type StoredServingContract } from "@/lib/llm/serving-contract-store";
 import { validateAdminServingContract } from "@/lib/operations/admin-serving-contracts";
-import { CONTEXT_STRATEGY_ROUTES, comparePair, itemsSimilarity, normalizeOutputText, parseShapeCompareArgs, planShapeCompare, runShapeCompare,
+import { CONTEXT_STRATEGY_ROUTES, comparePair, PRIVATE_ITEMS, itemsSimilarity, normalizeOutputText, parseShapeCompareArgs, planShapeCompare, runShapeCompare,
   SHAPE_COMPARE_LIMITS, shapeComparePlanLines, shapeCompareSummaryLines, STRICT_HEADER_ROUTES, summarizeShapeCompare, textSimilarity, wireFieldDiff,
   wireFieldDigest, type CallOutcome, type CallRecord, type CompareContractView, type CompareRoute, type CompareVariant, type ShapeCompareArgs,
   type ShapeCompareDeps } from "@/lib/operations/contract-shape-compare";
-import { evaluateResponse, preparedWireHash, variantHeaders, variantNeedsTokenizer, variantWire, type ParsedContract,
+import { evaluateResponse, preparedWireHash, redactedText, variantHeaders, variantNeedsTokenizer, variantWire, type ParsedContract,
   type SampleInput } from "@/lib/operations/contract-shape-compare-routes";
-import { endpointHost, routeKillSwitch, shapeCompareCallers, shapeCompareContracts } from "@/lib/operations/contract-shape-compare-run";
+import type { KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
+import { pinTextRanks, textContract, textRankRow } from "./text-task-ranks-fixture";
+import { endpointHost, externalContract, koreanTaglineSampleBatches, privateHost, responseStop, ROUTE_JOBS, routeKillSwitch, routeRanks, shapeCompareCallers,
+  shapeCompareContracts, type ContractContext, type RouteGates } from "@/lib/operations/contract-shape-compare-run";
 import { totalBoundContractFromAbcllm } from "@/lib/operations/serving-contract-convert";
 import { DEFAULT_CRAWL_SETTINGS, DEFAULT_CATEGORY_DEFINITIONS } from "@/lib/crawl/settings-schema";
 import { runContractShapeCompare } from "@/scripts/ops/contract-shape-compare";
@@ -55,28 +61,39 @@ const converted = (route: TotalBoundRoute, contract: Record<string, unknown>): P
   return mapped.contract as ParsedContract;
 };
 
-const ARGS: ShapeCompareArgs = Object.freeze({ route: "product-search-profile", model: null, samples: 3, execute: false, json: false, out: null });
+const ARGS: ShapeCompareArgs = Object.freeze({ route: "product-search-profile", model: null, samples: 3, maxPerContract: 5, execute: false, json: false, out: null });
 const view = (model: string, extra: Partial<CompareContractView> = {}): CompareContractView =>
-  Object.freeze({ model, wireModel: model, host: "engine.test:8000", cliEngine: false, tokenizer: [], ...extra });
+  Object.freeze({ model, wireModel: model, host: "engine.test:8000", cliEngine: false, tokenizer: [], bound: true, external: false, singleSlot: false,
+    delayMs: SHAPE_COMPARE_LIMITS.delayMs, ...extra });
 const outcome = (extra: Partial<CallOutcome> = {}): CallOutcome => Object.freeze({ refused: null, status: 200, transportError: null, latencyMs: 1000,
   finishReason: "stop", usage: { input: 100, output: 20, total: 120, reasoning: null }, accepted: true, failure: null, decision: null, items: ["가계부 앱"],
-  itemChecks: null, wireHash: "h", wireBytes: 10, wireFields: { model: "m", messages: "x" }, headers: [], ...extra });
+  itemChecks: null, itemPassed: null, stop: null, wireHash: "h", wireBytes: 10, wireFields: { model: "m", messages: "x" }, headers: [], ...extra });
+/** 계약 고르기 바깥 사정 — 기본은 모두 순위에 묶임·콕 집지 않음·429 없음·칸 모름 */
+const context = (models: readonly string[], extra: Partial<ContractContext> = {}): ContractContext => ({ explicit: false, recent429: new Map(), slots: new Map(),
+  ranks: { readable: true, bound: new Map(models.map(model => [model, { text: null, deviceId: "test-device" }])), disabled: new Set() }, ...extra });
+const GATES: RouteGates = { contractsDb: true, mode: "open", fenceActive: true, jobPaused: false, ranksReadable: true, boundCount: 1, disabledCount: 0 };
 const rec = (variant: CompareVariant, sample: string, extra: Partial<CallOutcome> = {}, contract = "model-a"): CallRecord =>
   Object.freeze({ ...outcome(extra), contract, sample, variant, order: variant === "abcllm" ? 1 : 2 });
+/** 응답 검사 결과(Evaluation)를 기록 모양으로 채우는 나머지 칸 */
+const outcomeTail = (variant: CompareVariant) => ({ refused: null, status: 200, transportError: null, latencyMs: 10, stop: null, wireHash: "h", wireBytes: 1,
+  wireFields: null, headers: [], contract: "model-a", sample: "s", variant, order: variant === "abcllm" ? 1 as const : 2 as const });
 
 // ── 인자 ───────────────────────────────────────────────────────────────────────────────────────────────
 
 describe("parseShapeCompareArgs", () => {
   it("takes the route, model, sample count and the two flags, with five samples by default", () => {
-    expect(parseShapeCompareArgs(["--route=second-review"])).toEqual({ route: "second-review", model: null, samples: 5, execute: false, json: false, out: null });
-    expect(parseShapeCompareArgs(["--route=crawl-tagline", "--model=gpt-oss-120b@0b0c0d0e", "--samples=20", "--execute", "--json", "--out=/tmp/x.json"]))
-      .toEqual({ route: "crawl-tagline", model: "gpt-oss-120b@0b0c0d0e", samples: 20, execute: true, json: true, out: "/tmp/x.json" });
+    expect(parseShapeCompareArgs(["--route=second-review"])).toEqual({ route: "second-review", model: null, samples: 5, maxPerContract: 5, execute: false,
+      json: false, out: null });
+    expect(parseShapeCompareArgs(["--route=crawl-tagline", "--model=gpt-oss-120b@0b0c0d0e", "--samples=20", "--max-per-contract=20", "--execute", "--json",
+      "--out=/tmp/x.json"])).toEqual({ route: "crawl-tagline", model: "gpt-oss-120b@0b0c0d0e", samples: 20, maxPerContract: 20, execute: true, json: true,
+      out: "/tmp/x.json" });
   });
   it("refuses unknown routes, unknown or repeated options, empty values and out-of-range sample counts", () => {
     for (const argv of [[], ["--route=nope"], ["--route=crawl-tagline", "--samples=0"], ["--route=crawl-tagline", "--samples=21"],
       ["--route=crawl-tagline", "--samples=5x"], ["--route=crawl-tagline", "--execute", "--execute"], ["--route=crawl-tagline", "--model="],
       ["--route=crawl-tagline", "--model= padded"], ["--route=crawl-tagline", "--force"], ["--route=crawl-tagline", "--route=second-review"],
-      ["--route=crawl-tagline", "--delay=0"]]) expect(parseShapeCompareArgs(argv), JSON.stringify(argv)).toBeNull();
+      ["--route=crawl-tagline", "--delay=0"], ["--route=crawl-tagline", "--max-per-contract=0"], ["--route=crawl-tagline", "--max-per-contract=21"]])
+      expect(parseShapeCompareArgs(argv), JSON.stringify(argv)).toBeNull();
   });
 });
 
@@ -90,14 +107,22 @@ describe("planShapeCompare", () => {
     expect(plan).toMatchObject({ chatCalls: 20, tokenizerCalls: 10, blocked: null });
     expect(plan.notes[0]).toContain("context_strategy");
   });
-  it(`refuses more than ${SHAPE_COMPARE_LIMITS.maxCalls} chat calls and says how many samples fit`, () => {
-    const plan = planShapeCompare({ route: "crawl-agent-review", model: null, samplesRequested: 9, refusals: [], killSwitch: null, samples: samples(9),
+  it(`refuses more than ${SHAPE_COMPARE_LIMITS.maxCalls} chat calls and says how many samples per contract fit`, () => {
+    const plan = planShapeCompare({ route: "crawl-agent-review", model: null, samplesRequested: 9, maxPerContract: 9, refusals: [], killSwitch: null, samples: samples(9),
       contracts: ["a", "b", "c", "d", "e"].map(name => view(name)) });
-    expect(plan).toMatchObject({ chatCalls: 90, blocked: "call_cap_exceeded" });
-    expect(plan.notes.join(" ")).toContain("--samples=8");
-    const fits = planShapeCompare({ route: "crawl-agent-review", model: null, samplesRequested: 8, refusals: [], killSwitch: null, samples: samples(8),
+    expect(plan).toMatchObject({ chatCalls: 90, perContractSamples: 9, blocked: "call_cap_exceeded" });
+    expect(plan.notes.join(" ")).toContain("--max-per-contract=8");
+    const fits = planShapeCompare({ route: "crawl-agent-review", model: null, samplesRequested: 8, maxPerContract: 8, refusals: [], killSwitch: null, samples: samples(8),
       contracts: ["a", "b", "c", "d", "e"].map(name => view(name)) });
     expect(fits).toMatchObject({ chatCalls: 80, blocked: null });
+  });
+  it("caps each contract at 5 samples (10 calls) by default on top of the total cap", () => {
+    const plan = planShapeCompare({ route: "crawl-agent-review", model: null, samplesRequested: 20, refusals: [], killSwitch: null, samples: samples(20),
+      contracts: [view("a"), view("b")] });
+    expect(plan).toMatchObject({ perContractSamples: 5, chatCalls: 20, blocked: null });
+    expect(plan.notes.join(" ")).toContain("계약마다 표본 5건까지만");
+    expect(planShapeCompare({ route: "crawl-agent-review", model: null, samplesRequested: 20, maxPerContract: 8, refusals: [], killSwitch: null,
+      samples: samples(20), contracts: [view("a")] })).toMatchObject({ perContractSamples: 8, chatCalls: 16 });
   });
   it("blocks on a kill switch, no contracts or no samples, and notes fewer samples than asked", () => {
     const base = { route: "reason-translate" as const, model: null, samplesRequested: 5, refusals: [] };
@@ -167,7 +192,7 @@ describe("comparison", () => {
     const lines = shapeCompareSummaryLines({ version: 1, route: "crawl-agent-review", model: null, execute: true, startedAt: "", finishedAt: "",
       plan: planShapeCompare({ route: "crawl-agent-review", model: null, samplesRequested: 3, refusals: [], killSwitch: null,
         contracts: [view("model-a", { host: "engine.test:8010" })], samples: [1, 2, 3].map(id => ({ id: `candidate:${id}`, label: "" })) }),
-      previews: [], records, pairs: [], summary });
+      previews: [], records, pairs: [], stops: [], summary });
     expect(lines.join("\n")).toContain("일치 1/3(33%, 같은 판정)");
     expect(lines.join("\n")).toContain("지연 중앙 abcllm 2.0초 · 새 모양 1.0초 (-1.0초)");
   });
@@ -184,7 +209,8 @@ describe("comparison", () => {
 
 // ── 실행 순서(가짜 deps, 네트워크 없음) ─────────────────────────────────────────────────────────────
 
-function fakeDeps(options: { contracts?: CompareContractView[]; samples?: number; killSwitch?: string | null } = {}) {
+function fakeDeps(options: { contracts?: CompareContractView[]; samples?: number; killSwitch?: string | null;
+  respond?: (contract: string, index: number, variant: CompareVariant) => Partial<CallOutcome> } = {}) {
   const calls: { contract: string; sample: string; variant: CompareVariant; start: number; end: number }[] = [];
   const previews: string[] = [], sleeps: number[] = [];
   let clock = 0, running = 0, overlapped = false;
@@ -203,7 +229,7 @@ function fakeDeps(options: { contracts?: CompareContractView[]; samples?: number
       await Promise.resolve();
       running--;
       calls.push({ contract, sample, variant, start, end: clock });
-      return outcome({ items: [variant === "abcllm" ? "가계부 앱" : "가계부 앱"] });
+      return outcome({ items: ["가계부 앱"], ...options.respond?.(contract, calls.filter(call => call.contract === contract).length, variant) });
     },
   };
   return { deps, calls, previews, sleeps, overlapped: () => overlapped };
@@ -245,7 +271,8 @@ describe("runShapeCompare", () => {
     expect(killed.calls).toEqual([]);
     expect(killed.previews).toEqual([]);
     const capped = fakeDeps({ samples: 20, contracts: [view("a"), view("b"), view("c")] });
-    expect(await runShapeCompare({ ...ARGS, samples: 20, execute: true }, capped.deps)).toMatchObject({ plan: { chatCalls: 120, blocked: "call_cap_exceeded" } });
+    expect(await runShapeCompare({ ...ARGS, samples: 20, maxPerContract: 20, execute: true }, capped.deps)).toMatchObject({ plan: { chatCalls: 120,
+      blocked: "call_cap_exceeded" } });
     expect(capped.calls).toEqual([]);
   });
 
@@ -262,6 +289,159 @@ describe("runShapeCompare", () => {
     expect(report).toMatchObject({ version: 1, route: "product-search-profile", execute: true });
     expect(report.records).toHaveLength(8);
     expect(out[0]).not.toMatch(/Bearer|apiKey|https?:\/\//);
+  });
+
+  it("--out writes the report and a per-call JSONL journal as 0600, even over an existing world-readable file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "shape-compare-")), file = join(dir, "report.json");
+    try {
+      await writeFile(file, "{}\n", { mode: 0o644 }); await chmod(file, 0o644);
+      await writeFile(`${file}.jsonl`, "old\n", { mode: 0o644 }); await chmod(`${file}.jsonl`, 0o644);
+      const out: string[] = [];
+      expect(await runContractShapeCompare(["--route=product-search-profile", "--execute", "--samples=2", `--out=${file}`], line => out.push(line), () => {},
+        fakeDeps({ samples: 2, respond: (contract, index) => contract === "model-b" && index === 1 ? { stop: "rate_limited", status: 429 } : {} }).deps)).toBe(0);
+      expect((await stat(file)).mode & 0o777).toBe(0o600);
+      expect((await stat(`${file}.jsonl`)).mode & 0o777).toBe(0o600);
+      const lines = (await readFile(`${file}.jsonl`, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { type: string });
+      expect(lines.map(line => line.type)).toEqual(["plan", "record", "record", "record", "record", "record", "stop"]);
+      expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ version: 1, stops: [{ contract: "model-b", reason: "rate_limited" }] });
+      expect(out.at(-1)).toContain(`${file}.jsonl`);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
+
+// ── 엔진·외부 API 보호 ────────────────────────────────────────────────────────────────────────────────
+
+describe("stop conditions", () => {
+  const two = [view("model-a"), view("model-b", { host: "other.test:8014" })];
+  it.each([
+    ["rate_limited", { status: 429, accepted: false, failure: "http_429", stop: "rate_limited" }],
+    ["retry_after", { status: 503, accepted: false, failure: "http_503", stop: "retry_after" }],
+    ["quota_exhausted", { stop: "quota_exhausted" }],
+  ] as const)("stops a contract on its first %s answer, records why and continues with the other contracts", async (reason, reply) => {
+    const fake = fakeDeps({ contracts: two, samples: 5, respond: (contract, index) => contract === "model-a" && index === 2 ? reply : {} });
+    const report = await runShapeCompare({ ...ARGS, samples: 5, execute: true }, fake.deps);
+    expect(fake.calls.filter(call => call.contract === "model-a")).toHaveLength(2);
+    expect(fake.calls.filter(call => call.contract === "model-b")).toHaveLength(10);
+    expect(report.stops).toEqual([{ contract: "model-a", reason, afterCalls: 2, skippedCalls: 8 }]);
+    expect(report.summary?.contracts.find(contract => contract.contract === "model-a")?.stopped).toMatchObject({ reason });
+    expect(report.summary?.overall.stopped).toBe(1);
+    expect(shapeCompareSummaryLines(report).join("\n")).toContain("남은 8회는 보내지 않았다");
+  });
+  it("stops after two consecutive timeouts, transport errors or 5xx engine failures, and a good answer resets the count", async () => {
+    const failing = fakeDeps({ contracts: two, respond: (contract, index) => contract !== "model-a" ? {}
+      : index === 1 ? { status: null, transportError: "timeout", accepted: false, failure: "timeout" }
+      : index === 2 ? { status: 503, accepted: false, failure: "http_503" } : {} });
+    const report = await runShapeCompare({ ...ARGS, execute: true }, failing.deps);
+    expect(report.stops).toEqual([{ contract: "model-a", reason: "consecutive_failures", afterCalls: 2, skippedCalls: 4 }]);
+    expect(failing.calls.filter(call => call.contract === "model-b")).toHaveLength(6);
+    const recovering = fakeDeps({ contracts: [view("model-a")], respond: (_contract, index) => index % 2 === 1
+      ? { status: null, transportError: "network", accepted: false, failure: "network" } : {} });
+    const kept = await runShapeCompare({ ...ARGS, execute: true }, recovering.deps);
+    expect(kept.stops).toEqual([]);
+    expect(recovering.calls).toHaveLength(6);
+  });
+  it("waits longer between calls to a single-slot engine", async () => {
+    const fake = fakeDeps({ contracts: [view("model-a", { singleSlot: true, delayMs: SHAPE_COMPARE_LIMITS.singleSlotDelayMs })], samples: 2 });
+    await runShapeCompare({ ...ARGS, samples: 2, execute: true }, fake.deps);
+    expect(fake.sleeps).toEqual([2000, 2000, 2000]);
+  });
+  it("reads the stop signals from the engine response: 429, Retry-After(-ms) and a verified zero remaining quota", () => {
+    const headers = (values: Record<string, string>) => new Headers(values);
+    expect(responseStop(429, headers({}))).toBe("rate_limited");
+    expect(responseStop(503, headers({ "Retry-After": "30" }))).toBe("retry_after");
+    expect(responseStop(200, headers({ "retry-after-ms": "500" }))).toBe("retry_after");
+    expect(responseStop(200, headers({ "x-minute-rate-limit": "10", "x-minute-rate-limit-remaining": "0" }))).toBe("quota_exhausted");
+    expect(responseStop(200, headers({ "x-minute-rate-limit": "10", "x-minute-rate-limit-remaining": "3" }))).toBeNull();
+    expect(responseStop(200, headers({}))).toBeNull();
+  });
+});
+
+describe("default exclusions", () => {
+  const rows = (models: readonly string[], extra: Record<string, Record<string, unknown>> = {}) => models.map(model =>
+    contractRow(abcllmContract("product-tagline-ko", { model, ...(extra[model] ?? {}) })));
+  it("tells private and tailnet hosts from external ones", () => {
+    for (const host of ["10.1.2.3", "172.16.0.1", "192.168.1.9", "127.0.0.1", "100.64.0.1", "100.127.255.254", "169.254.1.1", "::1", "fd00::1", "fe80::1",
+      "localhost", "m3-ultra", "gpu.tail1234.ts.net", "engine.internal", "box.local", "nas.lan", "x.home.arpa", "engine.test"]) expect(privateHost(host), host).toBe(true);
+    for (const host of ["8.8.8.8", "100.128.0.1", "172.32.0.1", "api.exaone.ai", "engine.example.com", "2001:4860::8888"]) expect(privateHost(host), host).toBe(false);
+    expect(externalContract({ endpoint: "http://100.64.0.1:8010/v1/chat/completions" })).toBeNull();
+    expect(externalContract({ endpoint: "https://api.example.com/v1/chat/completions" })).toBe("public_host");
+    expect(externalContract({ endpoint: "http://100.64.0.1:8010/v1/chat/completions", rateLimitBackoff: { initialBackoffMs: 60_000, maxBackoffMs: 600_000 } }))
+      .toBe("rate_limit_backoff");
+  });
+  it("excludes external-API and rank-less contracts unless named with --model, and never calls disabled-rank or recently-429 contracts", () => {
+    const external = { endpoint: "https://api.example.com/v1/chat/completions" };
+    const backoff = { extra: { rateLimitBackoff: { initialBackoffMs: 60_000, maxBackoffMs: 600_000, honorQuotaHeaders: true } } };
+    const all = rows(["bound", "stale", "exaone", "quota", "off", "limited", "single"], { exaone: external, quota: backoff });
+    const ctx = context(["bound", "exaone", "quota", "limited", "single"], { recent429: new Map([["limited", 7]]), slots: new Map([["single", 1], ["bound", 3]]) });
+    const withOff: ContractContext = { ...ctx, ranks: { ...ctx.ranks, disabled: new Set(["off"]) } };
+    const plain = shapeCompareContracts("product-tagline-ko", null, all, withOff);
+    expect(plain.contracts.map(contract => [contract.view.model, contract.view.singleSlot, contract.view.delayMs])).toEqual([
+      ["bound", false, SHAPE_COMPARE_LIMITS.delayMs], ["single", true, SHAPE_COMPARE_LIMITS.singleSlotDelayMs]]);
+    expect(plain.refusals.map(refusal => [refusal.model, refusal.reason])).toEqual([["exaone", "external_api"], ["limited", "recent_429"],
+      ["off", "rank_disabled"], ["quota", "external_api"], ["stale", "not_in_ranks"]]);
+    expect(plain.refusals.find(refusal => refusal.model === "exaone")?.detail).toContain("--model");
+    // --model 로 콕 집으면 순위 밖·외부 API 는 들어오고(보이는 표시와 함께), 꺼진 순위·최근 429 는 여전히 빠진다
+    const pick = (model: string) => shapeCompareContracts("product-tagline-ko", model, all, { ...withOff, explicit: true });
+    expect(pick("exaone").contracts.map(contract => contract.view)).toMatchObject([{ model: "exaone", external: true, bound: true }]);
+    expect(pick("quota").contracts.map(contract => contract.view)).toMatchObject([{ model: "quota", external: true }]);
+    expect(pick("stale").contracts.map(contract => contract.view)).toMatchObject([{ model: "stale", bound: false }]);
+    expect(pick("off").refusals.map(refusal => refusal.reason)).toEqual(["rank_disabled"]);
+    expect(pick("limited").refusals.map(refusal => refusal.reason)).toEqual(["recent_429"]);
+    const plan = planShapeCompare({ route: "product-tagline-ko", model: "stale", samplesRequested: 1, refusals: [], killSwitch: null,
+      contracts: pick("stale").contracts.map(contract => contract.view), samples: [{ id: "s", label: "" }] });
+    expect(plan.notes.join(" ")).toContain("묶이지 않은 계약을 --model 로 콕 집어 부른다: stale");
+  });
+  it("binds contracts to the current enabled ranks and lists the ones only disabled ranks point at", () => {
+    const other = "0b0c0d0e-0000-4000-8000-000000000002", otherBase = "http://other.test:8000/v1";
+    setServingContractSnapshotForTest([textContract("product-translate", "a-model"), textContract("product-translate", "b-model", { baseUrl: otherBase }),
+      textContract("product-translate", "c-model", { baseUrl: "http://third.test:8000/v1" })]);
+    pinTextRanks([textRankRow("product-translate", "a-model"), textRankRow("product-translate", "b-model", { rank: 2, connectionId: other, baseUrl: otherBase,
+      enabled: false })]);
+    try {
+      const ranks = routeRanks("product-translate");
+      expect(ranks.readable).toBe(true);
+      expect([...ranks.bound.keys()]).toEqual(["a-model"]);
+      expect(ranks.bound.get("a-model")?.text).toMatchObject({ identity: "a-model", provider: "abcllm" });
+      expect([...ranks.disabled]).toEqual(["b-model"]);
+    } finally { pinTextRanks(null); }
+  });
+});
+
+describe("item-checked and private outputs", () => {
+  it("counts a Korean-tagline or product-translation pair as agreeing only when every item passes the route's checker on both sides", () => {
+    const passing = rec("abcllm", "p", { items: ["문서를 빠르게 정리해요", "릴리스를 함께 계획해요"], itemPassed: [true, true], itemChecks: { passed: 2, total: 2 } });
+    const alsoPassing = rec("total-bound", "p", { items: ["문서를 빠르게 정리해요", "릴리스를 함께 계획해요"], itemPassed: [true, true] });
+    const oneFails = rec("total-bound", "p", { items: ["문서를 빠르게 정리해요", "릴리스를 함께 계획해요"], itemPassed: [true, false] });
+    expect(comparePair("product-tagline-ko", passing, alsoPassing)).toMatchObject({ agree: true, allItemsPassed: true });
+    expect(comparePair("product-tagline-ko", passing, oneFails)).toMatchObject({ agree: false, allItemsPassed: false, similarity: 1 });
+    expect(comparePair("product-translate", passing, oneFails)).toMatchObject({ agree: false });
+    // 항목 검사가 없는 글 경로는 예전 규칙 그대로
+    expect(comparePair("reason-translate", passing, oneFails)).toMatchObject({ agree: true, allItemsPassed: null });
+  });
+  it("records search-query translations as hash and length only and compares the real text in memory", async () => {
+    const contract = converted("search-query-translate", abcllmContract("search-query-translate")), sample = sampleFor("search-query-translate");
+    const wire = await variantWire("search-query-translate", contract, sample);
+    const body = (content: string) => JSON.stringify({ id: "chatcmpl-1", object: "chat.completion", created: 1, model: "served-fixture",
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } });
+    const a = await evaluateResponse("search-query-translate", contract, wire, sample, 200, body("household budget app"));
+    const b = await evaluateResponse("search-query-translate", contract, wire, sample, 200, body("household budget apps"));
+    expect(a.items).toEqual([redactedText("household budget app")]);
+    expect(a.items[0]).toMatch(/^sha256:[0-9a-f]{12}·20자$/);
+    expect(a[PRIVATE_ITEMS]).toEqual(["household budget app"]);
+    expect(JSON.stringify(a)).not.toContain("household");
+    const pair = comparePair("search-query-translate", { ...a, ...outcomeTail("abcllm") }, { ...b, ...outcomeTail("total-bound") });
+    expect(pair.similarity).toBeGreaterThan(0.9);
+    expect(pair).toMatchObject({ agree: true, exactSame: false });
+  });
+  it("never puts one product in two Korean-tagline samples, even when the packer skips long or solo-retry items", () => {
+    const task = (productId: number, extra: Partial<KoreanTaglineTask> = {}): KoreanTaglineTask => ({ productId, name: `P${productId}`, tagline: "Organize documents",
+      repoUrl: null, attempts: 0, lastError: null, qualityRejections: 0, ...extra });
+    const tasks = [task(1, { tagline: "x".repeat(1_300) }), task(2, { attempts: 99 }), task(3), task(4), task(5, { attempts: 99 }), task(6)];
+    const batches = koreanTaglineSampleBatches(tasks, 10);
+    const ids = batches.flat().map(entry => entry.productId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.sort()).toEqual([2, 3, 4, 5, 6]);
+    expect(koreanTaglineSampleBatches(tasks, 1)).toHaveLength(1);
   });
 });
 
@@ -280,25 +460,34 @@ describe("contract selection and kill switches", () => {
       stored(abcllmContract("second-review", { model: "gateway-auth" }), { auth: "gateway" }),
       stored({ ...abcllmContract("second-review", { model: "already" }), provider: "local-direct", protocol: "openai-chat-total-bound-v1" }),
       stored(abcllmContract("crawl-tagline", { model: "other-route" }))];
-    const { contracts, refusals } = shapeCompareContracts("second-review", null, rows);
+    const all = context(["a-model", "budget", "gateway-row", "gateway-auth", "already"]);
+    const { contracts, refusals } = shapeCompareContracts("second-review", null, rows, all);
+    const base = { cliEngine: false, bound: true, external: false, singleSlot: false, delayMs: SHAPE_COMPARE_LIMITS.delayMs };
     expect(contracts.map(contract => contract.view)).toEqual([
-      { model: "a-model", wireModel: "a-model", host: "engine.test:8000", cliEngine: false, tokenizer: [] },
-      { model: "budget", wireModel: "budget", host: "engine.test:8000", cliEngine: false, tokenizer: ["abcllm", "total-bound"] }]);
+      { model: "a-model", wireModel: "a-model", host: "engine.test:8000", tokenizer: [], ...base },
+      { model: "budget", wireModel: "budget", host: "engine.test:8000", tokenizer: ["abcllm", "total-bound"], ...base }]);
     expect(refusals.map(refusal => [refusal.model, refusal.reason])).toEqual([["already", "not_abcllm"], ["gateway-auth", "auth_gateway"],
       ["gateway-row", "transport_not_direct"]]);
     expect(JSON.stringify({ views: contracts.map(contract => contract.view), refusals })).not.toContain("k".repeat(40));
-    expect(shapeCompareContracts("second-review", "budget", rows).contracts.map(contract => contract.view.model)).toEqual(["budget"]);
+    expect(shapeCompareContracts("second-review", "budget", rows, all).contracts.map(contract => contract.view.model)).toEqual(["budget"]);
   });
-  it("respects the routes' own off switches and the deploy-window drain", () => {
+  it("respects the routes' own off switches, job pause, disabled or unreadable ranks, the DR fence and the deploy-window drain", () => {
     const settings = DEFAULT_CRAWL_SETTINGS;
-    expect(routeKillSwitch("product-search-profile", settings, "open", false)).toBe("serving_contracts_db_off");
-    expect(routeKillSwitch("product-search-profile", settings, "draining", true)).toBe("capacity_draining");
-    expect(routeKillSwitch("product-search-profile", { ...settings, enabled: false }, "open", true)).toBeNull();
-    expect(routeKillSwitch("crawl-tagline", { ...settings, enabled: false }, "open", true)).toBe("crawl_disabled");
-    expect(routeKillSwitch("crawl-agent-review", { ...settings, enabled: true, reviewMode: "off" }, "open", true)).toBe("review_off");
-    expect(routeKillSwitch("second-review", { ...settings, enabled: true, secondReview: { ...settings.secondReview, enabled: false } }, "disabled", true))
+    expect(routeKillSwitch("product-search-profile", settings, { ...GATES, contractsDb: false })).toBe("serving_contracts_db_off");
+    expect(routeKillSwitch("product-search-profile", settings, { ...GATES, fenceActive: false })).toBe("dr_fenced");
+    expect(routeKillSwitch("product-search-profile", settings, { ...GATES, mode: "draining" })).toBe("capacity_draining");
+    expect(routeKillSwitch("product-search-profile", { ...settings, enabled: false }, GATES)).toBeNull();
+    expect(routeKillSwitch("crawl-tagline", { ...settings, enabled: false }, GATES)).toBe("crawl_disabled");
+    expect(routeKillSwitch("crawl-agent-review", { ...settings, enabled: true, reviewMode: "off" }, GATES)).toBe("review_off");
+    expect(routeKillSwitch("second-review", { ...settings, enabled: true, secondReview: { ...settings.secondReview, enabled: false } }, { ...GATES, mode: "disabled" }))
       .toBe("second_review_off");
-    expect(routeKillSwitch("crawl-agent-review", { ...settings, enabled: true, reviewMode: "enforce" }, "open", true)).toBeNull();
+    expect(routeKillSwitch("product-translate", settings, { ...GATES, jobPaused: true })).toBe("job_paused");
+    expect(routeKillSwitch("product-translate", settings, { ...GATES, ranksReadable: false })).toBe("ranks_unreadable");
+    expect(routeKillSwitch("product-translate", settings, { ...GATES, boundCount: 0, disabledCount: 2 })).toBe("ranks_disabled");
+    expect(routeKillSwitch("product-translate", settings, { ...GATES, boundCount: 0, disabledCount: 0 })).toBeNull();
+    expect(routeKillSwitch("crawl-agent-review", { ...settings, enabled: true, reviewMode: "enforce" }, GATES)).toBeNull();
+    expect(ROUTE_JOBS["crawl-publish-classify"]).toBe("crawl-publish");
+    expect(ROUTE_JOBS["search-query-translate"]).toBeNull();
   });
 });
 
@@ -380,7 +569,7 @@ describe("shapeCompareCallers", () => {
     choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }], usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 } });
   function callersFor(route: TotalBoundRoute, rows: StoredServingContract[], send: (url: string, init: RequestInit) => Promise<Response>) {
     const base = { token: "fixture", loadedAt: Date.now(), rows, registry: [], runtime: null, devices: [] };
-    const { contracts } = shapeCompareContracts(route, null, rows);
+    const { contracts } = shapeCompareContracts(route, null, rows, context(rows.map(row => row.model)));
     return shapeCompareCallers({ route, base, contracts, samples: [{ view: { id: "sample:1", label: "" }, input: sampleFor(route) }] },
       send as unknown as Parameters<typeof shapeCompareCallers>[1]);
   }

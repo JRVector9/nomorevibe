@@ -17,7 +17,8 @@ import { checkProductTranslation, type ProductTranslationSource } from "@/lib/do
 import { isTotalBoundDirectContract } from "@/lib/llm/direct-serving-contract";
 import { ABCLLM_STRICT_TERMINAL_HEADER, ABCLLM_STRICT_TERMINAL_OPT_IN } from "@/lib/llm/gateway-serving-contract-config";
 import { modelCallTimeoutMs, modelRouteTimeoutMs } from "@/lib/llm/model-registry";
-import { SHAPE_COMPARE_LIMITS, truncateText, type CallUsage, type CompareRoute } from "./contract-shape-compare";
+import { createHash } from "node:crypto";
+import { PRIVATE_ITEMS, SHAPE_COMPARE_LIMITS, truncateText, type CallUsage, type CompareRoute } from "./contract-shape-compare";
 
 /**
  * 계약 모양 견줌(contract-shape-compare.ts)의 경로별 부분 — 그 경로 자신의 wire 함수·준비 함수·검사기를 그대로 쓴다. DB 를 읽지 않고, 네트워크는
@@ -181,7 +182,9 @@ export async function textPreflight(route: CompareRoute, contract: ParsedContrac
 // ── 응답 검사 ─────────────────────────────────────────────────────────────────────────────────────────
 
 export type Evaluation = Readonly<{ accepted: boolean; failure: string | null; decision: string | null; items: readonly string[];
-  itemChecks: Readonly<{ passed: number; total: number }> | null; finishReason: string | null; usage: CallUsage | null }>;
+  itemChecks: Readonly<{ passed: number; total: number }> | null; itemPassed: readonly boolean[] | null; finishReason: string | null; usage: CallUsage | null;
+  /** 기록에 싣지 않는 견줌용 글(검색어 번역 — items 에는 hash 와 길이만) */
+  readonly [PRIVATE_ITEMS]?: readonly string[] }>;
 
 const integer = (value: unknown): number | null => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 /** 응답 봉투에서 끝난 까닭·사용량·첫 답의 글(검사와 무관하게 보고용) */
@@ -217,18 +220,23 @@ async function reviewParse(input: ReviewInput, body: string): Promise<AgentRevie
 }
 
 const clip = (text: string) => truncateText(text, SHAPE_COMPARE_LIMITS.recordChars);
+/** 기록에 싣지 않을 글의 자리 표시 — 정규화하지 않은 글의 sha256 앞 12자와 글자 수 */
+export const redactedText = (text: string): string => `sha256:${createHash("sha256").update(text).digest("hex").slice(0, 12)}·${Array.from(text).length}자`;
 /**
  * 받은 응답을 그 경로가 하는 대로 검사한다. 상태가 200 이 아니면 http_<상태>. 판정 경로는 decision, 글 경로는 items(항목마다, 잘라서)를 채운다.
- * 공개 번역·한국어 소개는 잡이 항목마다 거는 검사기도 돌려 itemChecks 에 센다(통과한 항목은 잡이 저장할 글, 아니면 원 출력).
+ * 공개 번역·한국어 소개는 잡이 항목마다 거는 검사기도 돌려 itemPassed·itemChecks 에 남긴다(통과한 항목은 잡이 저장할 글, 아니면 원 출력).
+ * 검색어 번역은 기록에 hash·길이만 남긴다(redactedText).
  */
 export async function evaluateResponse(route: CompareRoute, contract: ParsedContract, wire: string, sample: SampleInput,
   status: number, body: string): Promise<Evaluation> {
   const facts = envelopeFacts(body);
   const base = { finishReason: facts.finishReason, usage: facts.usage };
-  const fail = (failure: string): Evaluation => Object.freeze({ ...base, accepted: false, failure, decision: null, items: Object.freeze([]), itemChecks: null });
-  const pass = (value: { decision?: string | null; items: readonly string[]; itemChecks?: { passed: number; total: number } | null }): Evaluation =>
+  const fail = (failure: string): Evaluation => Object.freeze({ ...base, accepted: false, failure, decision: null, items: Object.freeze([]), itemChecks: null,
+    itemPassed: null });
+  const pass = (value: { decision?: string | null; items: readonly string[]; itemPassed?: readonly boolean[] }): Evaluation =>
     Object.freeze({ ...base, accepted: true, failure: null, decision: value.decision ?? null, items: Object.freeze(value.items.map(clip)),
-      itemChecks: value.itemChecks ? Object.freeze({ ...value.itemChecks }) : null });
+      itemChecks: value.itemPassed ? Object.freeze({ passed: value.itemPassed.filter(Boolean).length, total: value.itemPassed.length }) : null,
+      itemPassed: value.itemPassed ? Object.freeze([...value.itemPassed]) : null });
   if (status !== 200) return fail(`http_${status}`);
   // 엔진 직접 계약(abcllm 의 transport direct · 새 모양)의 terminal 규칙 — 두 모양 모두 direct 로 검사한다(전송 함수의 directTransport 와 같다)
   const completed = nativeTerminal(body, contract as unknown as Parameters<typeof nativeTerminal>[1], true);
@@ -264,20 +272,19 @@ export async function evaluateResponse(route: CompareRoute, contract: ParsedCont
       const result = parseKoreanTaglines(content, items.length, items);
       if (!result.ok) return fail(result.error);
       const checks = result.outputs.map((output, index) => checkProductTranslation(output, sources[index], items[index].locale, items[index].field));
-      return pass({ items: checks.map((check, index) => check.ok ? check.text : result.outputs[index]),
-        itemChecks: { passed: checks.filter(check => check.ok).length, total: checks.length } });
+      return pass({ items: checks.map((check, index) => check.ok ? check.text : result.outputs[index]), itemPassed: checks.map(check => check.ok) });
     }
     case "tagline-ko": {
       const { items } = need(route, sample, "tagline-ko");
       const result = parseKoreanTaglines(content, items.length);
       if (!result.ok) return fail(result.error);
       const checks = result.outputs.map((output, index) => checkKoreanTaglineOutput(output, items[index]));
-      return pass({ items: checks.map((check, index) => check.ok ? check.line : result.outputs[index]),
-        itemChecks: { passed: checks.filter(check => check.ok).length, total: checks.length } });
+      return pass({ items: checks.map((check, index) => check.ok ? check.line : result.outputs[index]), itemPassed: checks.map(check => check.ok) });
     }
     case "query": {
+      // 사람이 친 검색어의 번역이라 기록에는 hash·길이만 두고, 견줌은 원문(PRIVATE_ITEMS, JSON 에 나가지 않는다)으로 메모리 안에서 한다
       const keywords = parseQueryTranslation(content);
-      return keywords ? pass({ items: [keywords] }) : fail("invalid_output");
+      return keywords ? Object.freeze({ ...pass({ items: [redactedText(keywords)] }), [PRIVATE_ITEMS]: Object.freeze([keywords]) }) : fail("invalid_output");
     }
     case "classify": {
       const { payload } = need(route, sample, "classify");
