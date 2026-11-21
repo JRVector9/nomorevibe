@@ -124,8 +124,78 @@ it('fails closed on unbound active/unknown AI2 requests and null reservation tim
     ) SELECT ${protectingCapacityExistsSql(sql`123`)} AS busy,
       EXISTS (SELECT 1 FROM (${staleReviewCapacityProbeSql(123)}) protected) AS probe_busy`);
     expect(row.busy).toBe(route === 'second-review');
-    expect(row.probe_busy).toBe(row.busy);
+    // 2026-11-21: 미리 거르기는 점유 상태만 읽는다. CHECK 밖 상태는 실제 표에 들어갈 수 없다 — 아래 시험이 CHECK 6값을 고정한다.
+    expect(row.probe_busy).toBe(state === 'unknown' ? false : row.busy);
   }
+});
+
+const LEDGER_STATES = ['waiting', 'withdrawn', 'reserved', 'dispatched', 'indeterminate', 'settled'] as const;
+/** logical key 없이 work_key 로 후보에 묶인 장부 행 — 전송 묶음 없이 넣을 수 있는 꼴 */
+function ledgerRow(candidateId: number, state: (typeof LEDGER_STATES)[number]) {
+  const held = state !== 'waiting' && state !== 'withdrawn';
+  return { requestId: randomUUID(), ownerInstanceId: 'ai2-stale-state-fixture', ownerBootId: randomUUID(), class: 'second' as const,
+    pool: 'reviewer' as const, routeId: 'second-review', provider: 'claude-cli', model: 'opus', providerBudgetId: 'fixture', groupId: 'fixture',
+    epoch: 1, revision: 1, policyHash: 'a'.repeat(64), state, token: held ? randomUUID() : null, reservedUntil: held ? hours(-1) : null,
+    queueUntil: hours(-1), workKey: `ai2:${candidateId}:1:${state}` };
+}
+
+it('reads only reserved and dispatched ledger rows into the protection probe, and the state CHECK admits no seventh value', async () => {
+  const candidateId = 987_654_321, rollback = new Error('ledger_state_fixture_rollback');
+  await expect(db.transaction(async tx => {
+    // settled 행은 종료 근거가 있어야 들어간다 — 이 TX 안에서만 행 검사 트리거를 끄고 되돌린다(상태 CHECK 는 그대로 산다).
+    await tx.execute(sql`ALTER TABLE model_capacity_requests DISABLE TRIGGER model_capacity_requests_zz_check_guard`);
+    for (const state of LEDGER_STATES) await tx.insert(modelCapacityRequests).values(ledgerRow(candidateId, state));
+    const stored = await tx.execute<{ state: string }>(sql`SELECT state FROM model_capacity_requests
+      WHERE work_key LIKE ${`ai2:${candidateId}:1:%`}`);
+    expect(stored.map(row => row.state).sort()).toEqual([...LEDGER_STATES].sort());
+    const probed = await tx.execute<{ state: string }>(staleReviewCapacityProbeSql(candidateId));
+    expect(probed.map(row => row.state).sort()).toEqual(['dispatched', 'reserved']);
+    throw rollback;
+  })).rejects.toBe(rollback);
+  // 좁힌 조건이 예전 조건과 같다는 근거 — state 는 NOT NULL 이고 검증된 CHECK 가 이 여섯 값만 받는다. 상태를 더하면 여기서 걸린다.
+  const [column] = await db.execute<{ attnotnull: boolean }>(sql`SELECT attnotnull FROM pg_attribute
+    WHERE attrelid = 'model_capacity_requests'::regclass AND attname = 'state'`);
+  const [check] = await db.execute<{ convalidated: boolean; definition: string }>(sql`SELECT convalidated, pg_get_constraintdef(oid) AS definition
+    FROM pg_constraint WHERE conrelid = 'model_capacity_requests'::regclass AND conname = 'model_capacity_requests_state_check'`);
+  expect(column.attnotnull).toBe(true);
+  expect(check.convalidated).toBe(true);
+  expect([...check.definition.matchAll(/'([a-z]+)'/g)].map(match => match[1]).sort()).toEqual([...LEDGER_STATES].sort());
+});
+
+it('does not protect a stale vote behind an indeterminate-only ledger row, while a dispatched row still does', async () => {
+  const value = await stalePublishedFixture('stale-unknown-only');
+  await saveSettings({ agentEvidence: { policyVersion: 'ai2-stale-unknown-only-v2' } }, 'fixture');
+  const hinted = async () => (await db.execute<{ candidate_id: number | string }>(staleSecondReviewHintSql(0, 25)))
+    .map(row => Number(row.candidate_id));
+  const cleanup = () => db.delete(modelCapacityRequests).where(eq(modelCapacityRequests.ownerInstanceId, 'ai2-stale-state-fixture'));
+  try {
+    await db.insert(modelCapacityRequests).values(ledgerRow(value.candidate.id, 'dispatched'));
+    expect(await hinted()).not.toContain(value.candidate.id);
+    expect(await reconcileStale()).toBe(0);
+    expect(await db.select().from(secondReviews)).toEqual([value.vote]);
+    await cleanup();
+    await db.insert(modelCapacityRequests).values(ledgerRow(value.candidate.id, 'indeterminate'));
+    expect(await hinted()).toContain(value.candidate.id);
+    expect(await db.execute(staleReviewCapacityProbeSql(value.candidate.id))).toHaveLength(0);
+    expect(await reconcileStale()).toBeGreaterThan(0);
+    expect((await db.select().from(secondReviews).orderBy(secondReviews.id)).map(row => row.status)).toEqual(['resolved', 'pending']);
+  } finally { await cleanup(); }
+});
+
+it('reaches the ledger through the occupying-state partial index once sequential scans are priced out', async () => {
+  type Plan = { 'Node Type': string; 'Relation Name'?: string; 'Index Name'?: string; Plans?: Plan[] };
+  const flatten = (plan: Plan): Plan[] => [plan, ...(plan.Plans ?? []).flatMap(flatten)];
+  await db.transaction(async tx => {
+    // 작은 시험 표에서는 계획기가 순차 읽기를 고른다 — 순차 읽기를 막고, 조건이 부분 색인 술어와 맞는지만 본다.
+    await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+    for (const query of [staleSecondReviewHintSql(0, 25), staleReviewCapacityProbeSql(123)]) {
+      const rows = await tx.execute<{ 'QUERY PLAN': { Plan: Plan }[] }>(sql`EXPLAIN (FORMAT JSON) ${query}`);
+      const nodes = flatten(rows[0]['QUERY PLAN'][0].Plan);
+      expect(nodes.some(node => node['Node Type'] === 'Seq Scan' && node['Relation Name'] === 'model_capacity_requests')).toBe(false);
+      // 어느 색인을 고를지는 통계에 달렸다 — 장부를 색인으로 읽는지만 고정한다(지금 술어에 맞는 것은 active_idx).
+      expect(nodes.some(node => node['Index Name']?.startsWith('model_capacity_requests_'))).toBe(true);
+    }
+  });
 });
 
 it('keeps reservations that expired after the callback tick for its original time check', async () => {
