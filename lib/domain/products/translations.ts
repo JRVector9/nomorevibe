@@ -184,7 +184,8 @@ export async function pendingProductTranslationBatch(memberKeys: readonly string
   });
 }
 
-export type ProductTranslationResult = { ok: true; text: string; model: string } | { ok: false; error: string; model: string };
+/** sourceNative: checkProductTranslation found the en result to be the unchanged, already-English source (provenance source_native). */
+export type ProductTranslationResult = { ok: true; text: string; model: string; sourceNative?: true } | { ok: false; error: string; model: string };
 
 export type ProductTranslationWriteExpectation = Readonly<{ kind: "product_translation_write" }>;
 type TranslationRole = ProductTranslationDispatchBinding["role"];
@@ -369,7 +370,14 @@ async function updateProductTranslation(tx: ProductTranslationTransaction, task:
   const { maxAttempts } = productTranslationPolicy();
   const error = current ? (result.ok ? null : result.error.slice(0, 60)) : source.eligible ? "stale_source" : "ineligible";
   const attempt = current && !result.ok && result.error === "tokenizer_unavailable" ? 0 : 1;
+  // A stored result names its kind: the unchanged already-English source (source_native, source_locale = target) or a machine translation.
+  const native = result.ok && result.sourceNative === true;
+  const kind = current && result.ok ? {
+    provenance: sql`jsonb_set(${t.provenance}, '{kind}', to_jsonb(${native ? "source_native" : "machine"}::text))`,
+    sourceLocale: native ? task.locale : detectTranslationSourceLocale(translationSourceText(source, task.field)),
+  } : {};
   const updated = await tx.update(t).set({
+    ...kind,
     text: current && result.ok ? result.text : null,
     status: current && result.ok ? "ready" : "failed", model: result.model.slice(0, 160), errorCode: error,
     attempts: current && (result.ok || result.error !== "source_too_long") ? task.attempts + attempt : maxAttempts,

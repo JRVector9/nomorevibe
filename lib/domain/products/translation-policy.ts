@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import type { ProductTranslation, ProductTranslationField, ProductTranslationLocale } from "@/lib/db/schema";
 import { hasEnglishEvidence } from "@/lib/i18n/content-language";
+import { clearlyNotEnglish, englishResultEvidence, TRANSLATION_REFUSAL, unchangedSourceLooksEnglish } from "./translation-english";
 import { DEFAULT_RUNTIME_SETTINGS, type ProductTranslationPolicy } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
@@ -96,6 +97,10 @@ export function selectProductTranslation(
   if (translation?.productId === source.id && translation.locale === locale && translation.field === field
     && translation.sourceHash === sourceHash && ["ready", "reviewed"].includes(translation.status)
     && translation.text && !translation.errorCode) {
+    // The model kept the current source unchanged as already English: show the source itself, ready, without a translation label.
+    if (translation.provenance?.kind === "source_native") {
+      return { text, lang: locale, translated: false, ready: true, pending: false, sourceHash, sourceLocale: locale, provenance: "source_native" };
+    }
     return { text: translation.text, lang: locale, translated: true, ready: true, pending: false, sourceHash, sourceLocale,
       provenance: translation.provenance?.kind };
   }
@@ -128,24 +133,28 @@ function tokensPreserved(source: string, output: string, pattern: RegExp): boole
   return original.size === translated.size && [...original].every(([token, count]) => translated.get(token) === count);
 }
 
-export type ProductTranslationCheck = { ok: true; text: string } | { ok: false; reason: string };
+/** sourceNative: the en result is the unchanged source, already English — stored as provenance source_native. */
+export type ProductTranslationCheck = { ok: true; text: string; sourceNative?: true } | { ok: false; reason: string };
 /** Exact source tokens already required by the validator; shared with the product-only model prompt. */
 export function productTranslationProtectedTokens(text: string): string[] {
   return [...new Set(text.match(/\b(?:[A-Z]{2,}[A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*)\b/g) ?? [])];
 }
 
+/** NFKC, collapsed whitespace, case and trailing sentence punctuation: "the model returned the source unchanged". */
+const sameProductText = (a: string, b: string) => {
+  const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/gu, " ").replace(/[\s.!?…。]+$/u, "").trim().toLowerCase();
+  return normalize(a) === normalize(b);
+};
+
 /**
  * Result validation has a known requested language; source detection does not.
- * Accept changed Latin prose without requiring English function words (short
- * taglines and names such as Pokémon often lack that evidence). This is a script
- * guard, not a detector for other Latin languages such as Spanish or German.
- * Keep this fallback out of source readiness and display language inference.
+ * en: a changed Latin-only result passes without English function words (short taglines and names such as
+ * Pokémon often lack them) unless it is clearly another Latin language or romanised Korean
+ * (translation-english.ts). An unchanged result means the model kept the source as English: it is
+ * accepted with `sourceNative` (stored as provenance source_native, rendered as the source itself) only
+ * when the shared evidence or the stricter unchanged-source rule agrees; otherwise english_uncertain.
+ * Keep these result rules out of source readiness and display language inference.
  */
-function hasEnglishResultEvidence(prose: string, text: string, original: string): boolean {
-  const normalize = (value: string) => value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
-  return hasEnglishEvidence(prose) || normalize(text) !== normalize(original);
-}
-
 export function checkProductTranslation(
   output: string, source: ProductTranslationSource, locale: ProductTranslationLocale, field: ProductTranslationField,
 ): ProductTranslationCheck {
@@ -156,7 +165,7 @@ export function checkProductTranslation(
   if ([...text].length > (field === "tagline" ? 360 : 8_000)) return { ok: false, reason: "too_long" };
   if (field === "tagline" && /[\r\n]/.test(text)) return { ok: false, reason: "multiline" };
   if (MARKUP.test(text) || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) return { ok: false, reason: "markup" };
-  if (BOILERPLATE.test(text)) return { ok: false, reason: "boilerplate" };
+  if (BOILERPLATE.test(text) || (TRANSLATION_REFUSAL.test(text) && !TRANSLATION_REFUSAL.test(original))) return { ok: false, reason: "boilerplate" };
   if (source.name.trim().length >= 2 && original.includes(source.name) && !text.includes(source.name)) return { ok: false, reason: "name_lost" };
   if (productTranslationProtectedTokens(original).some((token) => !text.includes(token))) return { ok: false, reason: "term_lost" };
   if (!tokensPreserved(original, text, NUMBERS)) return { ok: false, reason: "number_changed" };
@@ -165,7 +174,12 @@ export function checkProductTranslation(
   if (locale === "en") {
     if (!/[A-Za-z]{2,}/.test(prose)
       || (prose.match(/\p{L}/gu) ?? []).some((letter) => !/\p{Script=Latin}/u.test(letter))) return { ok: false, reason: "not_english" };
-    if (!hasEnglishResultEvidence(prose, text, original)) return { ok: false, reason: "english_uncertain" };
+    const evidence = englishResultEvidence(prose);
+    if (clearlyNotEnglish(evidence)) return { ok: false, reason: "not_english" };
+    if (sameProductText(text, original)) {
+      return hasEnglishEvidence(prose) || unchangedSourceLooksEnglish(evidence)
+        ? { ok: true, text: original.trim(), sourceNative: true } : { ok: false, reason: "english_uncertain" };
+    }
   } else if (locale === "ja") {
     if (!/[ぁ-ゖァ-ヺ]/u.test(prose) || /[가-힣]/u.test(prose)) return { ok: false, reason: "not_japanese" };
   } else {

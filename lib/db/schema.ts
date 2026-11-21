@@ -500,7 +500,8 @@ export const productTranslations = pgTable("product_translations", {
   sourceLocale: varchar("source_locale", { length: 16 }).$type<Locale>(),
   text: text("text"),
   status: varchar("status", { length: 16 }).$type<ProductTranslationStatus>().notNull().default("pending"),
-  provenance: jsonb("provenance").$type<{ kind: "machine" | "maker" | "editor"; source: string; policy: string }>().notNull(),
+  /** source_native: the en model result was the unchanged source, already English — rendered as the source, not as a translation. */
+  provenance: jsonb("provenance").$type<{ kind: "machine" | "maker" | "editor" | "source_native"; source: string; policy: string }>().notNull(),
   model: varchar("model", { length: 160 }).notNull().default(""),
   attempts: integer("attempts").notNull().default(0),
   errorCode: varchar("error_code", { length: 60 }),

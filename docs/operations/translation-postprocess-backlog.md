@@ -18,6 +18,14 @@
 - 측정 명령: `node --import tsx /home/ubuntu/.xaegis-hub/data/local-agent/jobs/347992d8-ed0b-4263-b8f8-5771268eaa18/scratch/replay.ts` (기존 검사기 git show 사본과 저장 응답 사용). 결과 및 실패 이력은 PR 본문과 개발사항 보고에 함께 보존한다.
 - 병합·배포·운영 설정 변경·운영 DB 쓰기 금지. 아래는 과거 작업 기록이며 이번 범위를 넓히지 않는다.
 
+### 2026-11-21 보강 (main 266bdd20 병합 뒤)
+- 11-17 결정 중 "스페인어·독일어 통과는 한계"를 고쳤다. `lib/domain/products/translation-english.ts`가 en 결과만 본다(표시·준비 판정의 공유 감지는 그대로).
+  - 거절·메타 답("I cannot translate…", "already in English", "N/A" 등)은 `boilerplate`다. 원문에 같은 말이 있으면 예외다.
+  - 다른 Latin 언어 낱말·영어에 없는 글자·로마자 한국어 어미가 2개 이상이고 영어 기능어보다 많으면 `not_english`다.
+- 원문이 이미 영어인 행: 모델이 원문을 그대로(NFKC·공백·대소문자·끝 문장부호 무시) 돌려주고 더 엄한 규칙(의심 낱말 0개, 또는 1개 + 영어 기능어 2개)을 지나면 원문 그대로 ready로 적는다. provenance kind는 `source_native`, source_locale은 `en`이다. 공개 화면은 그 원문을 번역 표시 없이 ready로 보이고, SEO 준비도 ready다.
+  - 수요 단계에서 거르는 안(a)은 쓰지 않았다. 그 안은 모델 호출이 0이지만 판정이 휴리스틱 하나뿐이라, 짧은 체코어·인도네시아어 원문을 영영 번역하지 않은 채 en 색인에 올릴 수 있다.
+- 운영 후속(소유자 승인 필요): 시도가 남은 english_uncertain 행은 배포 뒤 재시도에서 저절로 풀린다. 시도를 다 쓴 행(attempts≥4, 배포 전 실패)만 묶음 재대기한다(attempts=3, 한 번만 더 부른다). SQL 모양은 통합 시험 "recovers pre-deploy english_uncertain rows"에 있다.
+
 
 이 차선은 코드와 시험만 다룬다. 운영 DB 쓰기·원격 SSH·배포·push는 하지 않는다.
 근거는 `docs/CODEX_HANDOFF.md`의 2026-10-27 23:07 KST 관측이다.

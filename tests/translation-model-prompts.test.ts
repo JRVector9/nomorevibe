@@ -82,7 +82,8 @@ it.each(["[MLX] gpt-oss-120b", "[supa] Qwen3.8-27B-NVFP4"])(
 
 it("retains exact protected tokens and accepts short English results after prompt alignment", () => {
   const source = { id: 1, name: "Acme", tagline: "FREE API tools for GitHub and GraphQL" };
-  expect(checkProductTranslation(source.tagline, source, "en", "tagline")).toEqual({ ok: true, text: source.tagline });
+  // Returned unchanged: the source is already English (stored as source_native).
+  expect(checkProductTranslation(source.tagline, source, "en", "tagline")).toEqual({ ok: true, text: source.tagline, sourceNative: true });
   for (const token of ["FREE", "API", "GitHub", "GraphQL"])
     expect(checkProductTranslation(source.tagline.replace(token, token.toLowerCase()), source, "en", "tagline"))
       .toEqual({ ok: false, reason: "term_lost" });
