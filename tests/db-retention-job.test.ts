@@ -20,7 +20,7 @@ beforeEach(() => {
   parts.shrinkDocuments.mockReset().mockResolvedValue(done({ afterId: 5_000 }));
   parts.pruneScans.mockReset().mockResolvedValue(done({ afterId: 0, passDoneAt: "2026-11-15T00:00:00.000Z" }));
   parts.pruneHealthDaily.mockReset().mockResolvedValue(done({ passDoneAt: "2026-11-15T00:00:00.000Z" }));
-  parts.pruneMaintainerEmails.mockReset().mockResolvedValue({ counts: { deleted: 2 }, caughtUp: true });
+  parts.pruneMaintainerEmails.mockReset().mockResolvedValue({ counts: { deleted: 2, unlisted: 1 }, caughtUp: true, state: { afterKey: "", passDoneAt: "2026-11-21T00:00:00.000Z" } });
 });
 
 describe("db-retention 잡 틀", () => {
@@ -28,9 +28,12 @@ describe("db-retention 잡 틀", () => {
     const logs: unknown[] = [];
     const outcome = await runDbRetention(ctx(null, logs));
     expect(outcome).toEqual({ done: true, cursor: { v: 1, lead: 1, evidence: { afterId: 7 }, documents: { afterId: 5_000 },
-      scans: { afterId: 0, passDoneAt: "2026-11-15T00:00:00.000Z" }, health: { passDoneAt: "2026-11-15T00:00:00.000Z" } } });
+      scans: { afterId: 0, passDoneAt: "2026-11-15T00:00:00.000Z" }, health: { passDoneAt: "2026-11-15T00:00:00.000Z" },
+      maintainerEmails: { afterKey: "", passDoneAt: "2026-11-21T00:00:00.000Z" } } });
+    // 제작자 이메일 부분은 지난 커서를 받아 「공개 제품 아님」 바퀴를 이어 한다
+    expect(parts.pruneMaintainerEmails).toHaveBeenCalledWith(undefined, undefined, expect.any(Function));
     expect(logs).toEqual([{ event: "db.retention", fields: expect.objectContaining({ "ledger.requests": 1, "evidence.n": 1, "health.caughtUp": true,
-      "maintainerEmails.deleted": 2, "maintainerEmails.caughtUp": true }) }]);
+      "maintainerEmails.deleted": 2, "maintainerEmails.unlisted": 1, "maintainerEmails.caughtUp": true }) }]);
   });
 
   it("한 부분의 실패는 그 부분만 접고(제 일 못 한 틱으로 알린다) 다른 부분은 돈다 — DB 까닭만 남긴다", async () => {

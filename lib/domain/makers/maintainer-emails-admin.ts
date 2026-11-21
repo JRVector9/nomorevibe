@@ -5,7 +5,7 @@ import { operationsAudit } from "@/lib/db/schema";
 import { maintainerEmailDenials, repositoryMaintainerEmails } from "@/lib/db/maintainer-email-schema";
 import { aiLevelRepositoryKey } from "@/lib/domain/evidence/ai-level-store";
 import {
-  MAINTAINER_EMAIL_DENY_HASH, MAINTAINER_EMAIL_DENY_HASH_PREFIX, MAINTAINER_EMAIL_LOCK, maintainerEmailDenyHash, maskMaintainerEmail,
+  MAINTAINER_EMAIL_DENY_HASH, MAINTAINER_EMAIL_DENY_HASH_PREFIX, MAINTAINER_EMAIL_LOCK, maintainerEmailDenyHash, maskMaintainerEmail, optOutAddressOf,
 } from "@/lib/domain/makers/maintainer-emails";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 
@@ -47,7 +47,28 @@ export type MaintainerEmailDenyResult = { deletedRows: number; repositories: num
  */
 export async function denyMaintainerEmail(input: { slug: string; repoUrl: string | null | undefined; denyKey: string; actor: string }): Promise<MaintainerEmailDenyResult> {
   if (!MAINTAINER_EMAIL_DENY_HASH.test(input.denyKey)) throw new Error("maintainer_email_deny_key_invalid");
-  const repositoryKey = aiLevelRepositoryKey(input.repoUrl);
+  return denyByHash({ denyKey: input.denyKey, actor: input.actor, action: MAINTAINER_EMAIL_DENY_ACTION, target: input.slug,
+    context: { repositoryKey: aiLevelRepositoryKey(input.repoUrl) } });
+}
+
+/** 「주소로 거부」 작업 로그 — 어느 제품의 일이 아니라(본인 요청) 제품 기록에 섞이지 않게 고정 대상으로 남긴다 */
+export const MAINTAINER_EMAIL_DENY_ADDRESS_ACTION = "maintainer-email-deny-address";
+export const MAINTAINER_EMAIL_OPT_OUT_TARGET = "maintainer-emails";
+
+/**
+ * 「주소로 거부」(2026-11-21 소유자 결정 — 권장안): 본인이 수집하지 말아 달라고 알려 온 주소. 서버에서 정규화·해시만 계산하고
+ * 주소는 DB·작업 로그·로그 어디에도 남기지 않는다(문장 bind 값도 해시뿐). 거부 목록에 넣고 표 전체에서 같은 주소의 행을 지운다 — 카드 거부와 같은 길.
+ * 제품 화면에 없는 주소(후보 단계에서 모은 것 없음·아직 모으지 않은 것)도 미리 거부할 수 있다.
+ */
+export async function denyMaintainerEmailAddress(input: { address: unknown; actor: string }): Promise<MaintainerEmailDenyResult> {
+  const address = optOutAddressOf(input.address);
+  if (!address) throw new Error("maintainer_email_address_invalid");
+  return denyByHash({ denyKey: maintainerEmailDenyHash(address), actor: input.actor, action: MAINTAINER_EMAIL_DENY_ADDRESS_ACTION,
+    target: MAINTAINER_EMAIL_OPT_OUT_TARGET, context: {} });
+}
+
+/** 거부 한 번 — 한 트랜잭션: 배타 잠금 → 거부 목록에 해시 → 해시로 표 전체 지우기 → 작업 로그(수만) */
+async function denyByHash(input: { denyKey: string; actor: string; action: string; target: string; context: Record<string, unknown> }): Promise<MaintainerEmailDenyResult> {
   return onPrimary(() => db.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${MAINTAINER_EMAIL_LOCK}))`);
@@ -58,8 +79,8 @@ export async function denyMaintainerEmail(input: { slug: string; repoUrl: string
       RETURNING repository_key`);
     const result: MaintainerEmailDenyResult = { deletedRows: deleted.length, repositories: new Set(deleted.map((row) => row.repository_key)).size,
       alreadyDenied: inserted.length === 0 };
-    await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: MAINTAINER_EMAIL_DENY_ACTION, target: input.slug,
-      detail: { repositoryKey, ...result } }));
+    await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: input.action, target: input.target,
+      detail: { ...input.context, ...result } }));
     return result;
   }));
 }

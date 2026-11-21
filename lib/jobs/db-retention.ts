@@ -19,7 +19,7 @@ export function partSliceMs(deadlineAt: number | undefined, remainingParts: numb
 /**
  * DB 보관 정리 잡(maintenance, 한 시간마다 — 2026-11-15 소유자 승인 DB 보관 ④⑤⑥). 규칙은 lib/operations/db-retention.ts.
  *
- * 한 틱은 여섯 부분(모델 장부 · 발굴 근거 · 수집 원본 줄이기 · 저장소 스캔 · 일일 가동 집계 · 제작자 이메일 1년 보관)을 차례로 돈다. 부분마다 짧은 트랜잭션 묶음을
+ * 한 틱은 여섯 부분(모델 장부 · 발굴 근거 · 수집 원본 줄이기 · 저장소 스캔 · 일일 가동 집계 · 제작자 이메일 1년 보관·공개 제품 아님)을 차례로 돈다. 부분마다 짧은 트랜잭션 묶음을
  * 예산(ctx.hasBudget)과 부분 몫(남은 틱 시간 ÷ 남은 부분 수, partSliceMs) 안에서만 열고, 다 못 한 부분은 커서(jobs.cursor)에 이어 할 자리를 남긴다. 먼저 서는 부분은 틱마다 돌아가므로
  * 한 부분의 밀린 일이 다른 부분을 굶기지 않는다. 원본 줄이기·스캔·가동 집계는 한 바퀴를 마치면 20시간 쉰다(하루 한 번).
  * 모델 장부 부분은 0187, 제작자 이메일 부분은 0194 가 적용된 DB 에서만 돈다(아니면 건너뛰고 skipped=migration_pending 을 남긴다).
@@ -64,7 +64,8 @@ export async function runDbRetention(ctx: JobContext<DbRetentionCursor>): Promis
           break;
         }
         case "maintainerEmails": {
-          const result = await pruneMaintainerEmails(ctx.lease, more);
+          const result = await pruneMaintainerEmails(ctx.lease, cursor.maintainerEmails, more);
+          if (result.state) next.maintainerEmails = result.state;
           results.maintainerEmails = { ...result.counts, caughtUp: result.caughtUp };
           break;
         }

@@ -65,6 +65,16 @@ describe("제작자 이메일 — 관리자 전용 경계", () => {
     const body = actions.slice(actions.indexOf("export const denyMaintainerEmailAction = webWriteAction("));
     expect(body.indexOf("if (!admin) return")).toBeGreaterThan(0);
     expect(body.indexOf("await denyMaintainerEmail(")).toBeGreaterThan(body.indexOf("if (!admin) return"));
+    const byAddress = actions.slice(actions.indexOf("export const denyMaintainerEmailAddressAction = webWriteAction("));
+    expect(byAddress.indexOf("if (!admin) return")).toBeGreaterThan(0);
+    expect(byAddress.indexOf("await denyMaintainerEmailAddress(")).toBeGreaterThan(byAddress.indexOf("if (!admin) return"));
+  });
+
+  it("「주소로 거부」 양식은 POST(서버 동작)로만 보내고 받은 주소를 다시 그리지 않는다", () => {
+    const optOut = readFileSync("app/(operator)/admin/products/[slug]/MaintainerEmailOptOut.tsx", "utf8");
+    expect(optOut).toMatch(/^"use client";/);
+    expect(optOut).toContain("<form action={action}");
+    expect(optOut).not.toMatch(/method="get"|defaultValue|searchParams|useSearchParams|localStorage/i);
   });
 
   it("느린 문장 로그(500ms 넘은 문장의 bind 값)에 주소가 남지 않게 — 수집 INSERT 와 거부 DELETE 는 주소를 bind 값으로 보내지 않는다", () => {

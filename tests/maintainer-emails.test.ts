@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CommitFacts } from "@/lib/domain/evidence/ai-level";
 import {
   currentOwnerLogin, MAINTAINER_EMAIL_DENY_HASH, MAINTAINER_EMAILS_PER_REPOSITORY, maintainerEmailDenyHash, maintainerEmailOf, maskMaintainerEmail,
-  ownerMaintainerEmails,
+  optOutAddressOf, ownerMaintainerEmails,
 } from "@/lib/domain/makers/maintainer-emails";
 
 // 남는 주소 시험은 운영자가 가진 도메인의 시험용 하위 도메인(*.fixture.nomorevibe.com, 받는 곳 없음)을 쓴다 — 남의 실제 주소가 아니다.
@@ -93,6 +93,19 @@ describe("ownerMaintainerEmails — 저장소의 지금 주인(개인 계정)의
     expect(emails).toHaveLength(MAINTAINER_EMAILS_PER_REPOSITORY);
     expect(emails[0]).toMatchObject({ email: "p2@fixture.nomorevibe.com", commits: 2 });
     expect(emails[1]).toMatchObject({ email: "p0@fixture.nomorevibe.com", name: "P0" });
+  });
+});
+
+describe("optOutAddressOf — 「주소로 거부」가 받는 주소", () => {
+  it("정규화해 받고, 수집 거르기에서 버리는 꼴(예약 도메인 등)도 거부는 받는다", () => {
+    expect(optOutAddressOf("  Kim@Fixture.NoMoreVibe.com ")).toBe("kim@fixture.nomorevibe.com");
+    expect(optOutAddressOf("kim@example.test")).toBe("kim@example.test");
+    expect(maintainerEmailDenyHash(optOutAddressOf(" KIM@fixture.nomorevibe.com")!)).toBe(maintainerEmailDenyHash("kim@fixture.nomorevibe.com"));
+  });
+
+  it("주소 꼴이 아니면 null", () => {
+    for (const raw of [undefined, null, 7, "", "kim", "@fixture.nomorevibe.com", "kim@", "a@b@fixture.nomorevibe.com", "kim @fixture.nomorevibe.com",
+      "kim@fixture.nomo\nrevibe.com", `${"a".repeat(250)}@fixture.nomorevibe.com`]) expect(optOutAddressOf(raw), String(raw)).toBeNull();
   });
 });
 

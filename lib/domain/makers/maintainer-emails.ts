@@ -64,6 +64,20 @@ export function maintainerEmailDenyHash(raw: string): string {
   return createHash('sha256').update(MAINTAINER_EMAIL_DENY_HASH_PREFIX + normalizeMaintainerEmail(raw), 'utf8').digest('hex');
 }
 export const MAINTAINER_EMAIL_DENY_HASH = /^[a-f0-9]{64}$/;
+
+/**
+ * 관리자 「주소로 거부」(본인 요청)가 받는 주소 — 정규화(앞뒤 공백 제거·소문자)한 꼴, 아니면 null.
+ * 수집 거르기(maintainerEmailOf)보다 넓게 받는다: 우리가 버리는 꼴의 주소라도 본인이 거부를 바라면 해시를 넣어 둔다(지울 행이 없을 뿐이다).
+ * 주소 꼴만 본다 — 한 개의 @, 양쪽이 비지 않음, 공백·제어 문자 없음, 254자 이하.
+ */
+export function optOutAddressOf(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const email = normalizeMaintainerEmail(raw);
+  if (!email || email.length > EMAIL_MAX || /[\s\u0000-\u001f\u007f]/.test(email)) return null;
+  const at = email.indexOf('@');
+  return at > 0 && at === email.lastIndexOf('@') && at < email.length - 1 ? email : null;
+}
+
 /**
  * 수집 쓰기(공유)와 관리자 거부(배타)가 나눠 잡는 advisory 잠금의 이름 — pg_advisory_xact_lock[_shared](hashtext(이 값)).
  * 거부가 commit 되기 전에 목록을 읽은 수집 쓰기가 거부 뒤에 주소를 되살리지 못하게 한다

@@ -20,7 +20,8 @@ import { readModelCapacityLedgerRetentionDays } from "@/lib/llm/capacity-retenti
  *    그 이벤트 전부. 열린 행·결과 미확정 행, 아직 열린 생성(generationHash)·논리 작업 열쇠(logical_work_key)에 묶인 행, 처리 중인 LLM 보조 작업·
  *    적용 전 소개 교정이 가리키는 행은 남긴다. 이벤트 표의 추가 전용 트리거는 0187 이 이 트랜잭션 설정(nmv.capacity_retention)에만 DELETE 를 연다.
  * ⑥ 이 모두를 한 잡에서 — 발굴 근거(최근 24시간 + 저장소마다 최근 서로 다른 commit 5개), 스캔(7일 · 보존 집합 밖), 가동 집계(KST 오늘 − 40일 전).
- * ⑦ repository_maintainer_emails(0194, 관리자 전용 제작자 이메일) — 마지막 확인 뒤 1년(소유자 결정 2026-11-21)이 지난 행. 주소를 읽지 않고 지우기만 한다.
+ * ⑦ repository_maintainer_emails(0194, 관리자 전용 제작자 이메일) — 소유자 결정 2026-11-21: 마지막 확인 뒤 1년이 지난 행(틱마다), 그리고
+ *    저장소에 공개 제품(seeded·verified)이 더는 없는 행(내려감·차단·검증 대기로 바뀜 — 저장소 키 커서로 하루 한 바퀴). 주소를 읽지 않고 지우기만 한다.
  *    거부 목록(maintainer_email_denials)은 지우지 않는다 — 지우면 다시 모으게 된다.
  *
  * 저장소 id 근거 표(repository_identity_anchors, 0191)는 이 잡의 대상이 아니다 — 지우지 않는 표다(DB 가 DELETE·TRUNCATE 를 거절한다). 여기에 넣지 않는다.
@@ -54,6 +55,8 @@ export const HEALTH_DAILY_RETENTION_DAYS = 40;
 /** 제작자 이메일: 마지막 확인(last_seen_at) 뒤 이만큼 지나면 지운다(2026-11-21 소유자 결정 「1년」) */
 export const MAINTAINER_EMAIL_RETENTION_DAYS = 365;
 const MAINTAINER_EMAIL_BATCH = 500;
+/** 「공개 제품 아님」 바퀴가 한 번에 보는 저장소 키 수 */
+const MAINTAINER_EMAIL_KEY_BATCH = 500;
 /** 발굴 근거: 최근 이만큼은 모두 남긴다 · 저장소마다 최근 서로 다른 commit 이만큼 */
 export const DISCOVERY_KEEP_HOURS = 24;
 export const DISCOVERY_KEEP_SHAS = 5;
@@ -77,6 +80,8 @@ export type DbRetentionCursor = {
   documents?: { afterId: number; passDoneAt?: string };
   scans?: { afterId: number; passDoneAt?: string };
   health?: { passDoneAt?: string };
+  /** 제작자 이메일의 「공개 제품 아님」 바퀴 — 저장소 키 커서(DB 정렬 순서). 1년 보관 지우기는 커서 없이 틱마다 */
+  maintainerEmails?: { afterKey: string; passDoneAt?: string };
 };
 export type PartResult = { counts: Record<string, number | string | boolean>; caughtUp: boolean };
 
@@ -403,13 +408,48 @@ export async function pruneMaintainerEmailBatch(lease: JobLease | undefined, day
     RETURNING 1`)));
 }
 
-export async function pruneMaintainerEmails(lease: JobLease | undefined, more: () => boolean): Promise<PartResult> {
-  if (!await maintainerEmailRetentionReady()) return { counts: { skipped: "migration_pending" }, caughtUp: true };
+/** 저장소 키(소문자 owner/name)에 공개 제품이 있나 — products_repository_identity_idx 와 같은 식(ai-level-refresh PRODUCT_IDENTITY) */
+const listedRepositorySql = (key: SQL): SQL => sql`EXISTS (SELECT 1 FROM products p WHERE p.status IN ('seeded', 'verified')
+  AND regexp_replace(regexp_replace(lower(rtrim(p.repo_url, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '') = 'https://github.com/' || ${key})`;
+
+/**
+ * 「공개 제품 아님」 한 묶음 — afterKey 다음 저장소 키 limit 개를 PK 색인 차례로 보고, 그 가운데 공개 제품이 없는 키의 행을 지운다.
+ * 주소 칸을 읽지 않는다(키만). 지우는 순간 같은 조건을 다시 본다 — 그사이 다시 공개된 제품의 행은 남는다.
+ */
+export async function pruneUnlistedMaintainerEmailKeys(lease: JobLease | undefined, afterKey: string, limit = MAINTAINER_EMAIL_KEY_BATCH):
+  Promise<{ examined: number; lastKey: string; deleted: number }> {
+  return retentionWrite(lease, async tx => {
+    const keys = await tx.execute<{ key: string }>(sql`SELECT DISTINCT repository_key AS key FROM repository_maintainer_emails
+      WHERE repository_key > ${afterKey} ORDER BY 1 LIMIT ${limit}`);
+    if (!keys.length) return { examined: 0, lastKey: afterKey, deleted: 0 };
+    const deleted = await tx.execute(sql`DELETE FROM repository_maintainer_emails e
+      WHERE e.repository_key IN (SELECT jsonb_array_elements_text(${JSON.stringify(keys.map(row => row.key))}::jsonb))
+        AND NOT ${listedRepositorySql(sql`e.repository_key`)}
+      RETURNING 1`);
+    return { examined: keys.length, lastKey: keys.at(-1)!.key, deleted: count(deleted) };
+  });
+}
+
+/** 제작자 이메일 부분 — 1년 지난 행(틱마다), 그다음 「공개 제품 아님」 바퀴(하루 한 번, 커서로 이어 한다) */
+export async function pruneMaintainerEmails(lease: JobLease | undefined, state: DbRetentionCursor["maintainerEmails"], more: () => boolean, now = Date.now()):
+  Promise<PartResult & { state: DbRetentionCursor["maintainerEmails"] }> {
+  if (!await maintainerEmailRetentionReady()) return { counts: { skipped: "migration_pending" }, caughtUp: true, state };
   let deleted = 0;
-  while (more()) {
+  for (;;) {
+    if (!more()) return { counts: { deleted, unlisted: 0 }, caughtUp: false, state };
     const batch = await pruneMaintainerEmailBatch(lease);
     deleted += batch;
-    if (batch < MAINTAINER_EMAIL_BATCH) return { counts: { deleted }, caughtUp: true };
+    if (batch < MAINTAINER_EMAIL_BATCH) break;
   }
-  return { counts: { deleted }, caughtUp: false };
+  const doneAt = state?.passDoneAt ? Date.parse(state.passDoneAt) : Number.NaN;
+  if (!state?.afterKey && Number.isFinite(doneAt) && now - doneAt < DAILY_PASS_MS) return { counts: { deleted, unlisted: 0, waiting: true }, caughtUp: true, state };
+  let afterKey = state?.afterKey ?? "", unlisted = 0;
+  while (more()) {
+    const batch = await pruneUnlistedMaintainerEmailKeys(lease, afterKey);
+    unlisted += batch.deleted; afterKey = batch.lastKey;
+    if (batch.examined < MAINTAINER_EMAIL_KEY_BATCH) {
+      return { counts: { deleted, unlisted, passDone: true }, caughtUp: true, state: { afterKey: "", passDoneAt: new Date(now).toISOString() } };
+    }
+  }
+  return { counts: { deleted, unlisted }, caughtUp: false, state: { afterKey, ...(state?.passDoneAt ? { passDoneAt: state.passDoneAt } : {}) } };
 }

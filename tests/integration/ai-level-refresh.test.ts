@@ -7,7 +7,9 @@ import { maintainerEmailDenials, repositoryMaintainerEmails } from "@/lib/db/mai
 import type { githubGraphql, githubRequest } from "@/lib/crawl/github";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { getRepositoryAiLevel, storedAiLevel } from "@/lib/domain/evidence/ai-level-store";
-import { denyMaintainerEmail, MAINTAINER_EMAIL_DENY_ACTION, maintainerEmailsForRepoUrl } from "@/lib/domain/makers/maintainer-emails-admin";
+import {
+  denyMaintainerEmail, denyMaintainerEmailAddress, MAINTAINER_EMAIL_DENY_ACTION, MAINTAINER_EMAIL_DENY_ADDRESS_ACTION, maintainerEmailsForRepoUrl,
+} from "@/lib/domain/makers/maintainer-emails-admin";
 import { MAINTAINER_EMAIL_LOCK, maintainerEmailDenyHash } from "@/lib/domain/makers/maintainer-emails";
 import { update } from "@/lib/domain/products/repository";
 import { dueRepositories, refreshAiLevelsJob, type AiLevelCursor } from "@/lib/jobs/products/ai-level-refresh";
@@ -333,12 +335,12 @@ const emailRows = async () => byKey(await db.select().from(repositoryMaintainerE
   .map(({ repositoryKey, email, authorName, authorLogin, commitCount }) => ({ repositoryKey, email, authorName, authorLogin, commitCount }));
 const pairs = async () => (await emailRows()).map((row) => `${row.repositoryKey} ${row.email}`);
 const emailLog = (ctx: JobContext<AiLevelCursor>) => vi.mocked(ctx.log).mock.calls.find(([event]) => event === "ai_level.maintainer_emails")?.[1];
-const ZERO = { repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0, organization: 0, ownerUnknown: 0, fork: 0, noOwnerCommit: 0, noAddress: 0 };
+const ZERO = { repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0, notPublic: 0, organization: 0, ownerUnknown: 0, fork: 0, noOwnerCommit: 0, noAddress: 0 };
 const F = (local: string) => `${local}@fixture.nomorevibe.com`;
 const old = (key: string, email: string, login: string) => db.insert(repositoryMaintainerEmails).values({ repositoryKey: key, email, authorName: "Old",
   authorLogin: login, commitCount: 1, firstSeenAt: new Date("2026-06-01T00:00:00Z"), lastSeenAt: new Date("2026-06-01T00:00:00Z") });
 
-it("제작자 이메일: 지금 주인(개인 계정) 로그인이 쓴 커밋의 사람 주소만 — 다른 기여자·조직 저장소·포크·주인 모름은 모으지 않고 까닭만 센다", async () => {
+it("제작자 이메일: 공개 제품 저장소에서 지금 주인(개인 계정) 로그인이 쓴 커밋의 사람 주소만 — 다른 기여자·조직·포크·주인 모름·후보만 있는 저장소는 모으지 않고 까닭만 센다", async () => {
   const base = { message: "fix: x" };
   const fixtures: Record<string, Fixture> = {
     // 개인 계정 저장소: 주인 kim 의 주소만. 다른 기여자(lee)·계정에 안 이어진 커밋·비공개 주소·봇·AI 도구는 뺀다
@@ -352,7 +354,7 @@ it("제작자 이메일: 지금 주인(개인 계정) 로그인이 쓴 커밋의
       { sha: SHA(7), ...base, authorName: "Cursor Agent", authorEmail: "cursoragent@cursor.com", authorLogin: "cursoragent" },
       { sha: SHA(8), ...base, authorName: "dependabot[bot]", authorEmail: "49699333+dependabot[bot]@users.noreply.github.com", authorLogin: null },
     ] },
-    // 후보 저장소 — 키 대소문자를 가리지 않는다
+    // 공개 제품이 없는 후보 저장소(2026-11-21 소유자 결정: 공개 제품만) — 제작자 커밋이 있어도 모으지 않는다
     "park/app": { owner: { login: "Park", type: "User" }, commits: [{ sha: SHA(9), ...base, authorName: "Park", authorEmail: F("park"), authorLogin: "Park" }] },
     // 조직 저장소: 지금 주인이 조직이면 커밋을 보지 않는다
     "acme/org-tool": { owner: { login: "acme", type: "Organization" }, commits: [{ sha: SHA(10), ...base, authorName: "Acme", authorEmail: F("team"), authorLogin: "acme" }] },
@@ -370,10 +372,9 @@ it("제작자 이메일: 지금 주인(개인 계정) 로그인이 쓴 커밋의
   expect(await emailRows()).toEqual([
     { repositoryKey: "kim/tool", email: "kim.work@kr.fixture.nomorevibe.com", authorName: "Kim", authorLogin: "kim", commitCount: 1 },
     { repositoryKey: "kim/tool", email: F("kim"), authorName: "Kim", authorLogin: "Kim", commitCount: 2 },
-    { repositoryKey: "park/app", email: F("park"), authorName: "Park", authorLogin: "Park", commitCount: 1 },
   ]);
   // 까닭별 수 — 주소는 로그에 없다. 시험 DB 역할은 superuser 라 bind 값 숨기기가 켜진다(unguarded 0)
-  expect(emailLog(ctx)).toEqual({ ...ZERO, repositories: 2, saved: 3, organization: 1, ownerUnknown: 1, fork: 1 });
+  expect(emailLog(ctx)).toEqual({ ...ZERO, repositories: 1, saved: 2, notPublic: 1, organization: 1, ownerUnknown: 1, fork: 1 });
   expect(JSON.stringify(vi.mocked(ctx.log).mock.calls)).not.toMatch(/fixture\.nomorevibe\.com/i);
 
   // 관리자 화면이 읽는 모양 — 저장소 주소를 어떻게 적어도 같은 키. 지우기 양식에는 주소 대신 해시와 가린 주소
@@ -401,6 +402,23 @@ it("제작자 이메일: 지금 주인(개인 계정) 로그인이 쓴 커밋의
   // 판정(repository_ai_levels.evidence)에는 주소가 섞이지 않는다
   const levels = await db.select({ evidence: repositoryAiLevels.evidence }).from(repositoryAiLevels);
   expect(JSON.stringify(levels)).not.toMatch(/fixture\.nomorevibe\.com/i);
+});
+
+it("공개 제품(seeded·verified)의 저장소만 — 검증 대기 제품·후보만 있는 저장소는 모으지 않고, 그 키에 남은 행도 지운다", async () => {
+  const commit = (n: number) => ({ sha: SHA(n), message: "fix: x", authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" });
+  const fixtures: Record<string, Fixture> = { "kim/listed": { commits: [commit(1)] }, "kim/verified": { commits: [commit(2)] },
+    "kim/pending": { commits: [commit(3)] }, "kim/candidate": { commits: [commit(4)] } };
+  await product("https://github.com/kim/listed");
+  await product("https://github.com/kim/verified", { status: "verified" });
+  // 검증 대기(unverified)는 공개 목록에 없다 — 후보와 함께 수집 대상(차례)에는 들지만 주소는 남기지 않는다
+  await product("https://github.com/kim/pending", { status: "unverified" });
+  await db.insert(crawlCandidates).values([{ repo: "kim/pending", state: "new" }, { repo: "kim/candidate", state: "new" }]);
+  // 예전에 남은 행(공개였다가 내려간 뒤 다시 후보가 된 저장소 등)은 그 자리에서 지운다
+  await old("kim/candidate", F("kim.before"), "kim");
+  const ctx = context();
+  await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  expect(await pairs()).toEqual([`kim/listed ${F("kim")}`, `kim/verified ${F("kim")}`]);
+  expect(emailLog(ctx)).toEqual({ ...ZERO, repositories: 2, saved: 2, notPublic: 2, removed: 1 });
 });
 
 it("옮겨 가거나 이름이 바뀐 저장소: 저장된 키가 아니라 응답의 지금 주인으로 맞추고, 지금 주인이 아닌 계정의 행은 지운다", async () => {
@@ -465,6 +483,31 @@ it("제작자 이메일 지우기: 그 제품 저장소에 행이 없어도(화�
   expect(await denyMaintainerEmail({ slug: tool.slug, repoUrl: tool.repoUrl, denyKey: maintainerEmailDenyHash(F("kim")), actor: "operator" }))
     .toEqual({ deletedRows: 2, repositories: 2, alreadyDenied: false });
   expect(await pairs()).toEqual([`kim/other ${F("kim.second")}`]);
+});
+
+it("주소로 거부(본인 요청): 서버가 해시만 계산해 거부 목록에 넣고 표 전체에서 지운다 — 작업 로그·로그에 주소·해시가 없고, 다시 모으지 않는다", async () => {
+  const fixtures: Record<string, Fixture> = { "kim/tool": { commits: [{ sha: SHA(1), message: "fix", authorName: "Kim", authorEmail: F("kim"), authorLogin: "kim" }] } };
+  await product("https://github.com/kim/tool");
+  await old("kim/other", F("kim"), "kim");
+  await old("lee/app", F("kim"), "lee");
+  await old("lee/app", F("lee"), "lee");
+  const floor = await auditFloor();
+  // 관리자가 적은 꼴 그대로(대소문자·공백) — 정규화해 같은 해시
+  expect(await denyMaintainerEmailAddress({ address: "  KIM@Fixture.NoMoreVibe.com ", actor: "operator" })).toEqual({ deletedRows: 2, repositories: 2, alreadyDenied: false });
+  expect(await pairs()).toEqual([`lee/app ${F("lee")}`]);
+  expect(await db.select({ hash: maintainerEmailDenials.emailHash }).from(maintainerEmailDenials)).toEqual([{ hash: maintainerEmailDenyHash(F("kim")) }]);
+  const audit = await auditRowsAfter(floor, MAINTAINER_EMAIL_DENY_ADDRESS_ACTION);
+  expect(audit.map(({ target, ok, detail }) => ({ target, ok, detail }))).toEqual([{ target: "maintainer-emails", ok: true,
+    detail: { deletedRows: 2, repositories: 2, alreadyDenied: false } }]);
+  expect(JSON.stringify(await auditRowsAfter(floor))).not.toMatch(new RegExp(`fixture\\.nomorevibe\\.com|${maintainerEmailDenyHash(F("kim"))}`, "i"));
+  // 다시 모으지 않는다 — 공개 제품의 제작자 커밋에 그 주소가 있어도
+  const ctx = context();
+  await refreshAiLevelsJob(ctx, fakeGithub(fixtures));
+  expect(await pairs()).toEqual([`lee/app ${F("lee")}`]);
+  expect(emailLog(ctx)).toMatchObject({ saved: 0, denied: 1 });
+  // 아직 모으지 않은 주소도 미리 거부해 둘 수 있다(지울 행 없음) · 주소 꼴이 아니면 거절(오류 글에 주소 없음)
+  expect(await denyMaintainerEmailAddress({ address: F("someone"), actor: "operator" })).toEqual({ deletedRows: 0, repositories: 0, alreadyDenied: false });
+  await expect(denyMaintainerEmailAddress({ address: "not-an-address", actor: "operator" })).rejects.toThrow(/^maintainer_email_address_invalid$/);
 });
 
 it("제작자 이메일 지우기는 진행 중인 수집 쓰기를 기다린 뒤 지운다 — 거부 전에 목록을 읽은 쓰기가 주소를 되살리지 못한다", async () => {

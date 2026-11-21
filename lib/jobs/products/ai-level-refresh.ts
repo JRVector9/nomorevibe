@@ -448,16 +448,17 @@ export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, depende
 
 /**
  * 제작자 이메일 틱 집계(주소 없이 수만) — repositories 주소를 남긴 저장소, saved 쓴 주소, denied 거부 목록이라 뺀 주소,
- * removed 지금 주인이 아닌 계정(옮겨 가기 전 주인)·조직·포크라 지운 행, unguarded 문장 로그 bind 값 숨기기 권한이 없어 그대로 쓴 묶음,
+ * removed 지금 주인이 아닌 계정(옮겨 가기 전 주인)·조직·포크·공개 제품이 아닌 저장소라 지운 행, unguarded 문장 로그 bind 값 숨기기 권한이 없어 그대로 쓴 묶음,
+ * notPublic 제작자 주소가 있었지만 공개 제품(seeded·verified)의 저장소가 아니라 남기지 않은 저장소(후보만 있음·검증 대기·차단),
  * organization·ownerUnknown·fork·noOwnerCommit·noAddress 주소를 남기지 않은 저장소(ContactSkip). 기록이 실패한 묶음은 넣지 않는다
  */
-type EmailTally = { repositories: number; saved: number; denied: number; removed: number; unguarded: number;
+type EmailTally = { repositories: number; saved: number; denied: number; removed: number; unguarded: number; notPublic: number;
   organization: number; ownerUnknown: number; fork: number; noOwnerCommit: number; noAddress: number };
-const emptyEmailTally = (): EmailTally => ({ repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0,
+const emptyEmailTally = (): EmailTally => ({ repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0, notPublic: 0,
   organization: 0, ownerUnknown: 0, fork: 0, noOwnerCommit: 0, noAddress: 0 });
 function tallyEmails(tally: EmailTally, result: BatchResult, written: ContactWrite) {
   tally.repositories += written.repositories; tally.saved += written.saved; tally.denied += written.denied;
-  tally.removed += written.removed; tally.unguarded += written.unguarded;
+  tally.removed += written.removed; tally.unguarded += written.unguarded; tally.notPublic += written.notPublic;
   tally.organization += result.contactSkips.organization ?? 0; tally.ownerUnknown += result.contactSkips.owner_unknown ?? 0;
   tally.fork += result.contactSkips.fork ?? 0; tally.noOwnerCommit += result.contactSkips.no_owner_commit ?? 0;
   tally.noAddress += result.contactSkips.no_usable_address ?? 0;
@@ -466,8 +467,8 @@ function logEmails(ctx: JobContext<AiLevelCursor>, tally: EmailTally) {
   if (Object.values(tally).some((n) => n > 0)) ctx.log('ai_level.maintainer_emails', tally);
 }
 
-type ContactWrite = { repositories: number; saved: number; denied: number; removed: number; unguarded: number };
-const noContactWrite = (): ContactWrite => ({ repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0 });
+type ContactWrite = { repositories: number; saved: number; denied: number; removed: number; unguarded: number; notPublic: number };
+const noContactWrite = (): ContactWrite => ({ repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0, notPublic: 0 });
 type Contacts = { emails: Map<string, MaintainerEmail[]>; owners: Map<string, string | null> };
 /** 주소·이름을 bind 값 대신 이 트랜잭션 지역 설정으로 넘기는 칸(set_config(..., true) — 트랜잭션이 끝나면 사라진다) */
 const STAGED_ROWS = 'nmv.maintainer_email_rows';
@@ -478,6 +479,8 @@ const STAGED_ROWS = 'nmv.maintainer_email_rows';
  *   거부가 commit 되기 전 목록을 읽고 그 뒤에 써서 지운 주소가 되살아나는 일이 없다(거부는 배타 모드로 잡아 이 쓰기가 끝나기를 기다린 뒤 지운다).
  * - 문장 로그: 운영은 500ms 넘긴 문장을 bind 값과 함께 남긴다. 먼저 이 트랜잭션의 bind 값 기록을 끈다(권한이 있을 때 — statement-log-guard.ts).
  *   권한이 없어도 주소·이름은 잠금을 기다릴 수 있는 INSERT 의 bind 값으로 보내지 않는다 — 잠금·쓰기가 없는 set_config 한 문장으로 넘기고 INSERT 는 그 설정을 읽는다.
+ * - 공개 제품(products.status seeded·verified)의 저장소만 남긴다(2026-11-21 소유자 결정 — 권장안). 심사 중인 후보·검증 대기·차단 제품의 저장소는
+ *   주소를 쓰지 않고(notPublic) 그 키에 남은 행도 지운다. 공개 여부는 이 트랜잭션에서 DB 로 본다(키만 bind 값).
  * - 이번 창에서 본 주소는 시각·커밋 수를 고치고, 창 밖으로 밀려난 지난 주소는 그대로 둔다(보관 1년 뒤 db-retention 이 지운다).
  *   다만 지금 주인이 아닌 계정의 행(옮겨 가기 전 주인), 조직·포크가 된 저장소의 행은 지운다(owners — 주소가 아니라 키·로그인으로).
  */
@@ -486,11 +489,22 @@ async function writeContacts(tx: Transaction, contacts: Contacts, now: Date): Pr
   const written = noContactWrite();
   if (!await hideBindValuesInStatementLog(tx)) written.unguarded = 1;
   await tx.execute(sql`SELECT pg_advisory_xact_lock_shared(hashtext(${MAINTAINER_EMAIL_LOCK}))`);
-  const hashes = new Map([...contacts.emails.values()].flat().map((item) => [item.email, maintainerEmailDenyHash(item.email)]));
+  const keys = [...new Set([...contacts.emails.keys(), ...contacts.owners.keys()])];
+  const listed = new Set(keys.length ? (await tx.execute<{ key: string }>(sql`SELECT k.key FROM jsonb_array_elements_text(${JSON.stringify(keys)}::jsonb) AS k(key)
+    WHERE EXISTS (SELECT 1 FROM products WHERE status IN ${PUBLIC} AND ${PRODUCT_IDENTITY} = 'https://github.com/' || k.key)`)).map((row) => row.key) : []);
+  const owners = new Map(contacts.owners);
+  const emailsByKey = new Map<string, MaintainerEmail[]>();
+  for (const key of keys) {
+    if (listed.has(key)) { if (contacts.emails.has(key)) emailsByKey.set(key, contacts.emails.get(key)!); continue; }
+    // 공개 제품이 아닌 저장소: 쓰지 않고, 그 키에 남은 행은 지운다
+    if (contacts.emails.has(key)) written.notPublic += 1;
+    owners.set(key, null);
+  }
+  const hashes = new Map([...emailsByKey.values()].flat().map((item) => [item.email, maintainerEmailDenyHash(item.email)]));
   const denied = new Set(hashes.size ? (await tx.select({ hash: maintainerEmailDenials.emailHash }).from(maintainerEmailDenials)
     .where(inArray(maintainerEmailDenials.emailHash, [...new Set(hashes.values())]))).map((row) => row.hash) : []);
   const rows: { repository_key: string; email: string; author_name: string | null; author_login: string | null; commit_count: number }[] = [];
-  for (const [key, emails] of contacts.emails) {
+  for (const [key, emails] of emailsByKey) {
     const allowed = emails.filter((item) => !denied.has(hashes.get(item.email)!));
     written.denied += emails.length - allowed.length;
     if (!allowed.length) continue;
@@ -508,10 +522,10 @@ async function writeContacts(tx: Transaction, contacts: Contacts, now: Date): Pr
         last_seen_at = greatest(excluded.last_seen_at, e.last_seen_at)`);
     await tx.execute(sql`SELECT set_config(${STAGED_ROWS}, '', true)`);
   }
-  if (contacts.owners.size) {
-    const owners = [...contacts.owners].map(([key, login]) => ({ key, login }));
+  if (owners.size) {
+    const spec = [...owners].map(([key, login]) => ({ key, login }));
     const removed = await tx.execute(sql`DELETE FROM repository_maintainer_emails e
-      USING jsonb_to_recordset(${JSON.stringify(owners)}::jsonb) AS o(key text, login text)
+      USING jsonb_to_recordset(${JSON.stringify(spec)}::jsonb) AS o(key text, login text)
       WHERE e.repository_key = o.key AND (o.login IS NULL OR lower(coalesce(e.author_login, '')) <> o.login)
       RETURNING 1`);
     written.removed = removed.length;

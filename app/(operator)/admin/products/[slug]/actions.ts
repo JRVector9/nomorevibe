@@ -5,7 +5,10 @@ import { z } from "zod";
 import { currentAdmin } from "@/lib/auth/admin";
 import { setAutomaticUpdateVisibility } from "@/lib/domain/evidence/admin";
 import { queueProductRefresh } from "@/lib/domain/evidence/refresh-requests";
-import { denyMaintainerEmail, MAINTAINER_EMAIL_DENY_ACTION } from "@/lib/domain/makers/maintainer-emails-admin";
+import {
+  denyMaintainerEmail, denyMaintainerEmailAddress, MAINTAINER_EMAIL_DENY_ACTION, MAINTAINER_EMAIL_DENY_ADDRESS_ACTION, MAINTAINER_EMAIL_OPT_OUT_TARGET,
+} from "@/lib/domain/makers/maintainer-emails-admin";
+import { optOutAddressOf } from "@/lib/domain/makers/maintainer-emails";
 import { findBySlug } from "@/lib/domain/products/repository";
 import { recordAdminAction } from "@/lib/operations/admin-log";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
@@ -123,5 +126,30 @@ export const denyMaintainerEmailAction = webWriteAction(async function denyMaint
     await recordAdminAction(admin.login, { action: MAINTAINER_EMAIL_DENY_ACTION, target: slug.data, ok: false,
       error: (cause as { code?: unknown } | null)?.code ? String((cause as { code: unknown }).code) : "failed" });
     return { issues: ["주소를 지우지 못했습니다. 잠시 후 다시 시도해주세요."] };
+  }
+});
+
+export type MaintainerEmailOptOutState = { ok?: true; deletedRows?: number; alreadyDenied?: boolean; issues?: string[] } | null;
+
+/**
+ * 제작자 이메일 「주소로 거부」(본인 요청, 관리자 전용, 2026-11-21 소유자 결정 — 권장안). 관리자가 적은 주소를 서버에서 정규화·해시만 하고
+ * 거부 목록에 넣고 표 전체에서 지운다. 주소는 돌려주지 않고(응답은 수만), 작업 로그·실패 기록·로그에도 남기지 않는다. POST 본문으로만 받는다(주소창에 남지 않는다).
+ */
+export const denyMaintainerEmailAddressAction = webWriteAction(async function denyMaintainerEmailAddressAction(
+  _previous: MaintainerEmailOptOutState,
+  form: FormData,
+): Promise<MaintainerEmailOptOutState> {
+  const admin = await currentAdmin();
+  if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+  const address = optOutAddressOf(form.get("address"));
+  if (!address) return { issues: ["주소 꼴을 확인해주세요(앞뒤 공백 없이, @ 하나)."] };
+  try {
+    const result = await denyMaintainerEmailAddress({ address, actor: admin.login });
+    return { ok: true, deletedRows: result.deletedRows, alreadyDenied: result.alreadyDenied };
+  } catch (error) {
+    const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+    await recordAdminAction(admin.login, { action: MAINTAINER_EMAIL_DENY_ADDRESS_ACTION, target: MAINTAINER_EMAIL_OPT_OUT_TARGET, ok: false,
+      error: (cause as { code?: unknown } | null)?.code ? String((cause as { code: unknown }).code) : "failed" });
+    return { issues: ["거부 목록에 넣지 못했습니다. 잠시 후 다시 시도해주세요."] };
   }
 });
