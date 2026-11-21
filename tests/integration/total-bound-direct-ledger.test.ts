@@ -4,7 +4,7 @@ import path from "node:path";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
@@ -31,7 +31,7 @@ import { ai1DispatchBindingSchema, ai1ItemDispatchBindingSchema, ai2DispatchBind
   websearchQueryLogicalWorkKey, type CrawlTaglineInput, type ModelCapacityDispatch, type ModelCapacityPolicy, type ModelCapacityRequest,
   type ModelCapacityReservation, type ModelSlotResult, type ProductTaglineKoMember, type ProductTranslationMember, type PublicationClassifyApiInput,
   type ReasonTranslationMember, type SearchVerifyInput, type WebsearchQueryInput } from "@/lib/llm/capacity";
-import { closeModelCapacityUnknownReview, finishAi1ItemModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi2ItemModelCapacityDispatch,
+import { cancelReservedModelSlot, closeModelCapacityUnknownReview, finishAi1ItemModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi2ItemModelCapacityDispatch,
   finishCrawlTaglineModelCapacityDispatch, finishProductTaglineKoModelCapacityDispatch, finishProductTranslationModelCapacityDispatch,
   finishPublicationApiDispatch, finishReasonTranslationModelCapacityDispatch, finishSearchVerifyModelCapacityDispatch,
   finishTextProfileModelCapacityDispatch, finishWebsearchQueryModelCapacityDispatch, lockAi1ModelCapacityDispatch, lockAi2ItemModelCapacityDispatch,
@@ -492,11 +492,36 @@ const exceeded = (flow: Flow, sent: Sent): boolean => {
     ? { ok: false, error: "invalid_output", detail: "request_token_bound_exceeded" } : { ok: false, error: "invalid_output" };
   return JSON.stringify(sent.result) === JSON.stringify(failure);
 };
+/**
+ * 흐름마다 따로 선다: 단언이 중간에 멈추면 정산하지 않은 dispatch(또는 예약)가 같은 장비의 칸을 쥔 채 남아, 뒤 흐름이 제 까닭이 아니라 칸 부족
+ * (`{ kind: 'granted' }` 불일치)으로 실패했다(PR #1014 리뷰). 이 시험이 연 호출은 끝날 때 아직 쥐고 있으면 운영자 검토로 닫고(dispatch → 미확정 → 검토),
+ * 이 시험 동안 이 소유자가 남긴 예약은 취소한다 — 다음 흐름은 빈 장비에서 시작한다.
+ */
+async function releaseHeld(opened: Started[], since: string) {
+  for (const started of opened.splice(0)) {
+    const current = await row(started.request.requestId);
+    if (current?.state === "dispatched") await markModelDispatchIndeterminate(started.dispatch, "transport_unknown");
+    if (current?.state === "dispatched" || current?.state === "indeterminate")
+      await closeModelCapacityUnknownReview({ requestId: started.request.requestId, operator, note: "post-check cleanup" });
+  }
+  const reserved = await client`SELECT request_id::text AS "requestId", token::text AS token, epoch::int AS epoch, revision::int AS revision,
+    policy_hash AS "policyHash" FROM model_capacity_requests WHERE owner_instance_id=${owner.instanceId} AND owner_boot_id=${owner.bootId}::uuid
+      AND state='reserved' AND queued_at >= ${since}::timestamptz`;
+  for (const value of reserved) await cancelReservedModelSlot({ ...value, owner: { ...owner } } as unknown as ModelCapacityReservation);
+  expect(await client`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${owner.instanceId}
+    AND state IN ('reserved','dispatched') AND queued_at >= ${since}::timestamptz`).toEqual([]);
+}
 describe.each(FLOWS.map(flow => [flow.name, flow] as const))("request bound post-check with a tokenizer block: %s", (_name, flow) => {
+  const opened: Started[] = [];
+  let since = "";
+  beforeEach(async () => { since = String((await client`SELECT clock_timestamp()::text AS now`)[0].now); });
+  afterEach(() => releaseHeld(opened, since));
+  const start = async (seed: number) => { const started = await flow.start(seed); opened.push(started); return started; };
+
   it("takes a response within the bound, and settles but never takes one whose reported usage breaks the bound", async () => {
     pinContracts({ [flow.routeId]: { tokenizer: { endpoint: `${origin}/tokenize`, requestTokenBound: 32_000 } } });
     engine.content = TAKEN_CONTENT[flow.routeId] ?? flow.content;
-    const within = await flow.start(++serial), taken = await within.send();
+    const within = await start(++serial), taken = await within.send();
     // 보내기 전 tokenizer 확인을 거쳤다(심사는 준비에서, text·분류는 전송 직전에)
     expect(engine.requests.map(request => request.path)).toEqual(["/tokenize", "/v1/chat/completions"]);
     expect(taken.terminal).not.toBeNull();
@@ -507,7 +532,7 @@ describe.each(FLOWS.map(flow => [flow.name, flow] as const))("request bound post
 
     // 엔진이 받은 입력을 31,990 토큰으로 보고한다 — 출력 상한(보낸 max_tokens)을 더하면 32,000 을 넘는다. 총량 C(65,536) 안이라 terminal 은 유효하다
     engine.requests.length = 0; engine.usage = { prompt_tokens: 31_990, completion_tokens: 20, total_tokens: 32_010 };
-    const over = await flow.start(++serial), refused = await over.send();
+    const over = await start(++serial), refused = await over.send();
     expect(engine.requests.map(request => request.path)).toEqual(["/tokenize", "/v1/chat/completions"]);
     expect(refused.terminal).not.toBeNull();
     expect(exceeded(flow, refused)).toBe(true);
