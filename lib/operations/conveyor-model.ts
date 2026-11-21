@@ -204,6 +204,15 @@ export function applyStationLlm(station: Station, llm: StationLlm | null): Stati
     }
     return next;
   }
+  const waiting = llm.tasks.filter(task => task.live && task.state === "waiting");
+  // Preserve independent worker/throughput incidents and an explicit pause.
+  if (waiting.length && station.tone !== "stop" && RANK[station.tone] <= RANK.slow) {
+    const all = waiting.length >= llm.liveCount;
+    const capacity = waiting.every(task => task.waitReason === "capacity");
+    return { ...next, tone: "slow",
+      status: capacity ? `칸 부족 — ${all ? "대기" : "일부 대기"}` : all ? "재시도 대기" : "일부 재시도 대기",
+      reason: [station.reason, ...waiting.map(task => `${task.label}: ${task.note}`)].filter(Boolean).join(" · ") };
+  }
   return next;
 }
 
