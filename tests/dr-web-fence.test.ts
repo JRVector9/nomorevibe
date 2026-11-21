@@ -406,8 +406,9 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-12 운영 콘솔 통합: 4a(수집·작업 — 주기 저장·수집원 저장·미리 보기 셋)와 4b(알림 설정 저장 하나)를 합쳐 132.
   // 2026-11-21 abcllm 이름표 정리 2단계 admin/models/contracts/actions.ts: previewContractConversion(전환·되돌리기 미리 보기 — 쓰지 않지만 같은 관문)·
   // applyContractConversion(계획 hash 로 실행) 둘이 더해져 134.
-  // 2026-11-21 admin/products/[slug]/actions.ts: denyMaintainerEmailAction(제작자 이메일 지우고 다시 모으지 않기, 0194) 하나가 더해져 135.
-  expect(wrapped).toBe(135);
+  // 2026-11-21 #999 admin/flow/keyword-recovery/actions.ts: retryKeywordGenerationAction(생성 한도에 걸린 제품 한 건 다시 대기열) 하나가 더해져 135.
+  // 2026-11-21 admin/products/[slug]/actions.ts: denyMaintainerEmailAction(제작자 이메일 지우고 다시 모으지 않기, 0194) 하나가 더해져 136.
+  expect(wrapped).toBe(136);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

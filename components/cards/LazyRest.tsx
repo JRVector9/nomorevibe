@@ -7,7 +7,6 @@ import { browseCountsQuery, useBrowseCounts } from "@/components/home/browse-cou
 import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { useCardList } from "./CardEnrich";
-import { FillLine } from "./fill-line";
 import { useMarkup } from "./markup-loader";
 import { SaveToggle } from "./SaveToggle";
 
@@ -66,9 +65,7 @@ export function MoreLink({ href, shown, state, searchTotal, approximate = false,
   const t = useTranslations("browse");
   const remote = useBrowseCounts(searchTotal === undefined ? browseCountsQuery(state) : null);
   const total = searchTotal ?? remote?.resultCount;
-  // 수를 받기 전에는 그 자리만 글자 없는 자리로 — 문구의 다른 부분은 그대로
-  const [before, after = ""] = t("saved.more", { shown: formatNumber(shown, locale), total: "\u0000" }).split("\u0000");
-  const label = total === undefined ? <>{before}<FillLine width="3em" />{after}</>
+  const label = total === undefined ? t("saved.moreWithoutCount")
     : t("saved.more", { shown: formatNumber(shown, locale), total: formatResultCount(total, approximate, locale, t) });
   return <Link prefetch={false} className="more-btn" href={href} scroll={false}>{label}{children}</Link>;
 }

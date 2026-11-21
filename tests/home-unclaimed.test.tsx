@@ -697,9 +697,11 @@ describe("끝까지 닿는 목록", () => {
     expect(html).not.toContain("p-10");
     expect(remote.lists).toContain("sort=recent&list=home&offset=9&limit=9");
     expect(html).toContain("프로젝트 더 보기 (18 / 33,692)");
-    // 수를 받기 전에는 전체 수 자리만 비운다
-    remote.counts = undefined;
-    expect(await render({ sort: "recent", shown: "18" })).toMatch(/프로젝트 더 보기 \(18 \/ <span class="fill-line"/);
+    for (const counts of [undefined, null]) {
+      remote.counts = counts;
+      const withoutCount = await render({ sort: "recent", shown: "18" });
+      expect(withoutCount).toMatch(/class="more-btn"[^>]*>프로젝트 더 보기<\/a>/);
+    }
   });
 });
 

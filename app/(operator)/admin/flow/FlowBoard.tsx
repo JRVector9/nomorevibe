@@ -100,7 +100,7 @@ const TASKS_HREF = "/admin/models#tasks";
 
 const STATE_TEXT: Record<TaskLlm["state"], string> = {
   ok: "최근 완료 · 설정 1순위", fallback: "최근 완료 · 대체 순위", other: "최근 완료 · 현재 설정과 다름", none: "모델 없음 — 멈춤", stuck: "쓸 수 있는 순위 없음 — 멈춤",
-  idle: "최근 1시간 호출 없음 · 설정값", set_only: "설정값",
+  waiting: "빈 칸·재시도 대기", idle: "최근 1시간 호출 없음 · 설정값", set_only: "설정값",
 };
 
 /** 카드 맨 아래, 모든 칸이 같은 자리·같은 모양 — LLM 이름표 + 모델 + 어디서·얼마나(한 줄). 모델이 없는 칸도 같은 모양으로 답한다 */
@@ -149,7 +149,7 @@ function LlmDetail({ llm, shown }: { llm: StationLlm | null; shown: string[] }) 
       const note = task.note && task.state !== "idle" && !shown.some((text) => text.includes(task.note!)) ? task.note : null;
       return (
         <dl key={task.task} className="cv-kv cv-llmd-task" data-state={task.state}>
-          <dt className="cv-llmd-k">작업</dt><dd className="cv-llmd-v"><b>{task.label}</b><span className="cv-llmd-state" data-state={task.state}>{task.pool ? task.state === "stuck" ? "작업 분산 · 최근 틱 사용 불가" : "작업 분산 · 설정값" : STATE_TEXT[task.state]}</span></dd>
+<dt className="cv-llmd-k">작업</dt><dd className="cv-llmd-v"><b>{task.label}</b><span className="cv-llmd-state" data-state={task.state}>{task.pool ? task.state === "stuck" ? "작업 분산 · 최근 틱 사용 불가" : task.state === "waiting" ? "작업 분산 · 빈 칸·재시도 대기" : "작업 분산 · 설정값" : STATE_TEXT[task.state]}</span></dd>
           <dt className="cv-llmd-k">현재 호출</dt><dd className="cv-llmd-v"><LiveModelRows llm={{ ...llm, tasks: [task], head: task }} /></dd>
           <dt className="cv-llmd-k">설정</dt><dd className="cv-llmd-v"><ConfiguredModelRows llm={{ ...llm, tasks: [task], head: task }} /></dd>
           {task.pool?.runtime && <><dt className="cv-llmd-k">최근 틱 관측</dt><dd className="cv-llmd-v">{kstShort(task.pool.runtime.at)} · {poolRuntimeLines(task)}</dd></>}

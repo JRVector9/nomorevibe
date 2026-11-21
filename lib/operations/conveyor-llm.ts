@@ -92,7 +92,8 @@ export const RUNTIME_FRESH_MS = 30 * 60_000;
 
 // ── 출력 ─────────────────────────────────────────────────────────────────────────────────────────
 
-export type RankSeen = { rank: number; connection: string; model: string; problem: string | null };
+type WaitReason = "capacity" | "retry";
+export type RankSeen = { rank: number; connection: string; model: string; problem: string | null; waiting?: WaitReason };
 export type SlotSeen = { slot: number; label: string | null; ranks: RankSeen[] };
 export type UsedSeen = { text: string; model: string; where: string; count: number; rank: number | null; lastAt: string | null };
 export type ActiveSeen = UsedSeen & { state: LlmActiveRow["state"] };
@@ -107,6 +108,8 @@ export type TaskState =
   | "none"
   /** 순위는 있으나 모두 쓸 수 없어 멈춘다(all_ranks_unusable) */
   | "stuck"
+  /** 설정은 있으나 빈 칸·재시도를 기다린다 */
+  | "waiting"
   /** 최근 1시간 호출이 없다 — 설정만 보인다 */
   | "idle"
   /** 설정만 알 수 있다(장부 밖이거나 장부를 읽지 못함, 또는 실행 쪽이 아직 이 순위를 읽지 않는 작업) */
@@ -132,6 +135,7 @@ export type TaskLlm = {
   head: TaskHead | null;
   /** 한 줄 설명(왜 이 상태인지) */
   note: string | null;
+  waitReason?: WaitReason;
 };
 export type LlmFlag = { tone: "bad" | "warn"; text: string };
 export type StationLlm =
@@ -153,7 +157,7 @@ export type StationLlm =
 
 const taskDef = (id: string): AiTaskDef | null => AI_TASKS.find((row) => row.id === id) ?? null;
 
-function problemOf(row: LlmRankRow, connection: LlmConnection | undefined): string | null {
+function problemOf(row: Pick<LlmRankRow, "enabled">, connection: LlmConnection | undefined): string | null {
   if (!row.enabled) return "순위가 꺼져 있음";
   if (!connection) return "연결을 찾을 수 없음";
   if (!connection.enabled) return "연결이 꺼져 있음";
@@ -187,13 +191,28 @@ function currentRuntime(def: AiTaskDef, inputs: LlmInputs): LlmRuntime | null {
   return changedSinceObservation ? null : runtime;
 }
 
+// Only explicit admission/backoff reasons are waiting. Unknown/auth/contract failures stay unusable.
+const WAIT_REASONS: Readonly<Record<string, WaitReason>> = {
+  capacity: "capacity", queue_full: "capacity", route_quota: "capacity", model_quota: "capacity",
+  deferred: "retry", rate_limited: "retry", model_paused: "retry",
+};
+/** 관측 사유 문자열은 바깥 값이다 — 객체 기본 속성(constructor 등)과 겹쳐도 대기로 읽지 않게 자기 칸만 본다. */
+const waitReasonOf = (code: string): WaitReason | undefined => Object.hasOwn(WAIT_REASONS, code) ? WAIT_REASONS[code] : undefined;
+
 function slotsOf(def: AiTaskDef, inputs: LlmInputs, fresh: LlmRuntime | null): SlotSeen[] {
   return Array.from({ length: def.slots }, (_, index) => index + 1).map((slot) => {
     const ranks = (inputs.rows ?? []).filter((row) => row.task === def.id && row.slot === slot).sort((a, b) => a.rank - b.rank).map((row): RankSeen => {
       const connection = inputs.connections?.find((entry) => entry.id === row.connectionId);
-      // 실행 쪽이 마지막 틱에서 이 순위를 쓸 수 없다고 한 까닭이 있으면 그것이 더 정확하다(칸이 하나인 작업만 순위로 가를 수 있다)
-      const seen = def.slots === 1 ? fresh?.unusable.find((entry) => entry.rank === row.rank)?.text ?? null : null;
-      return { rank: row.rank, connection: connection?.label ?? "연결 없음", model: row.model, problem: seen ?? problemOf(row, connection) };
+      // 칸이 하나인 작업만 실행 관측을 순위에 붙일 수 있다.
+      const observations = def.slots === 1 ? fresh?.unusable.filter(entry => entry.rank === row.rank) ?? [] : [];
+      const permanent = observations.find(entry => !waitReasonOf(entry.code));
+      const seen = permanent ?? observations[0];
+      const configuredProblem = problemOf(row, connection);
+      // A busy observation must not hide a disabled rank or missing key. A permanent reason on
+      // this same rank wins over a temporary counter regardless of observation order.
+      const waiting = !configuredProblem && seen && !permanent ? waitReasonOf(seen.code) : undefined;
+      return { rank: row.rank, connection: connection?.label ?? "연결 없음", model: row.model,
+        problem: configuredProblem ?? (seen?.code === "deferred" ? "재시도 예약 중" : seen?.text) ?? null, ...(waiting ? { waiting } : {}) };
     });
     return { slot, label: def.slotLabel ? `${def.slotLabel} ${slot}` : null, ranks };
   });
@@ -260,7 +279,7 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
       const connection = inputs.connections?.find(row => row.id === member.connectionId);
       return { memberId: member.memberId, slot: config.slot, configRevision: config.revision, connectionId: member.connectionId,
         connection: connection?.label ?? "연결 없음", model: member.model, deviceId: member.deviceId,
-        problem: !connection ? "연결을 찾을 수 없음" : !connection.enabled ? "연결이 꺼져 있음" : null };
+        problem: problemOf({ enabled: true }, connection) };
     }));
     const modelCount = new Set(members.map(member => member.model)).size, deviceCount = new Set(members.map(member => member.deviceId)).size;
     const pool: TaskLlmPool = { members, modelCount, deviceCount,
@@ -274,11 +293,19 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
     // Only an explicit whole-pool failure, after currentRuntime's identity/time guards, stops the task.
     // Individual member_unusable counters never imply that every member is unavailable.
     const unavailable = fresh?.pool && fresh.degraded?.code === "all_ranks_unusable" ? fresh.degraded : null;
+    const waitingMembers = unavailable ? members.flatMap(member => {
+      const reasons = fresh!.pool!.unusable.filter(row => row.memberId === member.memberId);
+      return !member.problem && reasons.length && reasons.every(row => waitReasonOf(row.code))
+        ? [reasons.every(row => waitReasonOf(row.code) === "capacity") ? "capacity" as const : "retry" as const] : [];
+    }) : [];
+    const waitReason = waitingMembers.length ? waitingMembers.every(reason => reason === "capacity") ? "capacity" as const : "retry" as const : undefined;
     return { task: def.id, label: def.label, live, slots: [], pool, used, active, usedWhy,
-      state: unavailable ? "stuck" : used?.length === 0 ? "idle" : "set_only",
+      state: waitReason ? "waiting" : unavailable ? "stuck" : used?.length === 0 ? "idle" : "set_only",
+      ...(waitReason ? { waitReason } : {}),
       head: top ? { model: top.model, where: top.where, rank: null, source: "used", count: top.count }
         : { model: `모델 ${pool.modelCount}개 · 작업 분산`, where: `장비 ${pool.deviceCount}대`, rank: null, source: "set", count: null },
-      note: unavailable ? `현재 작업 분산 구성의 최근 틱에서 모든 구성원을 사용할 수 없었습니다${unavailable.detail ? ` — ${unavailable.detail}` : ""}`
+      note: waitReason ? `현재 작업 분산 구성의 모델은 설정되어 있으며 ${waitReason === "capacity" ? "빈 칸" : "재시도"}을 기다립니다${unavailable?.detail ? ` — ${unavailable.detail}` : ""}`
+        : unavailable ? `현재 작업 분산 구성의 최근 틱에서 모든 구성원을 사용할 수 없었습니다${unavailable.detail ? ` — ${unavailable.detail}` : ""}`
         : used === null ? "작업 분산 설정입니다. 최근 실제 사용은 장부에서 확인하지 못했습니다."
         : "작업 분산 설정입니다. 최근 1시간 장부는 설정 변경 전 호출도 포함하며 구성원별 실행을 확정하지 않습니다." };
   }
@@ -339,6 +366,14 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
 
   // 쓸 수 있는 순위가 하나도 없다 — 모든 순위가 꺼짐·키 없음이거나, 실행 쪽이 마지막 틱에 모두 쓸 수 없다고 했는데 최근 1시간 호출도 없다
   const anyUsable = slots.some((slot) => slot.ranks.some((rank) => !rank.problem));
+  const waitingRanks = configured.filter(rank => rank.waiting);
+  if (live && !anyUsable && waitingRanks.length) {
+    const waiting = waitingRanks[0];
+    return { ...base, state: "waiting", used, usedWhy,
+      waitReason: waitingRanks.every(rank => rank.waiting === "capacity") ? "capacity" : "retry",
+      head: { model: waiting.model, where: where(waiting), rank: waiting.rank, source: "set", count: null },
+      note: `모델은 설정되어 있으며 빈 칸·재시도를 기다립니다 — ${configured.map(rank => `${rank.rank}순위 ${rank.problem}`).join(" · ")}` };
+  }
   if (live && (!anyUsable || (fresh?.degraded?.code === "all_ranks_unusable" && !used?.length))) {
     return { ...base, state: "stuck", used, usedWhy,
       head: { model: effective.model, where: where(effective), rank: effective.rank, source: "set", count: null },
@@ -371,8 +406,8 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
   return { ...base, state: "ok", used, usedWhy, head: headOf, note: null };
 }
 
-/** 대표를 고르는 순서 — 멈춤 > 순위가 바뀜 > 설정과 다름 > 정상 > 호출 없음 > 설정만(실행 쪽이 아직 읽지 않는 작업). 같으면 칸의 작업 순서 */
-const SEVERITY: Record<TaskState, number> = { none: 0, stuck: 1, fallback: 2, other: 3, ok: 4, idle: 5, set_only: 6 };
+/** 대표를 고르는 순서 — 멈춤 > 일시 대기 > 순위가 바뀜 > 설정과 다름 > 정상 > 호출 없음 > 설정만. 같으면 칸의 작업 순서 */
+const SEVERITY: Record<TaskState, number> = { none: 0, stuck: 1, waiting: 2, fallback: 3, other: 4, ok: 5, idle: 6, set_only: 7 };
 
 const modelOf = (task: TaskLlm | null): string | null => task?.head?.model ?? null;
 
@@ -388,6 +423,7 @@ function stationLlm(tasks: TaskLlm[]): StationLlm {
   const flagFor = (): LlmFlag | null => {
     if (head.state === "none") return { tone: "bad", text: NO_MODEL_TEXT };
     if (head.state === "stuck") return { tone: "bad", text: head.pool ? "최근 틱 · 분산 구성원 전체 사용 불가" : "쓸 수 있는 순위 없음 — 멈춤" };
+    if (head.state === "waiting") return { tone: "warn", text: head.waitReason === "capacity" ? "칸 부족 — 대기" : "재시도 대기" };
     if (head.state === "fallback") return { tone: "warn", text: `${head.head?.rank ?? 2}순위로 넘어감` };
     if (head.state === "other") return { tone: "warn", text: "순위에 없는 모델" };
     return null;
