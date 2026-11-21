@@ -75,6 +75,10 @@ export const secondReviews = pgTable("second_reviews", {
    */
   uniqueIndex("second_reviews_candidate_input_model_idx").on(table.candidateId, table.inputHash, table.model, table.generationKey),
   index("second_reviews_status_idx").on(table.status, table.createdAt.desc()),
+  // 0192: 「이 1차 시도의 2차 표」(발행 관문·claim 의 행 잠금)와 대체 표 사슬(chainIsBusy·정리)을 표 전체를 읽지 않고 찾는다.
+  // 운영에서는 scripts/ops/online-index.ts 가 먼저 만든다 — 정의의 원천은 drizzle/0192 다
+  index("second_reviews_first_attempt_idx").on(table.firstAttemptId).where(sql`${table.firstAttemptId} is not null`),
+  index("second_reviews_fallback_for_idx").on(table.fallbackForId).where(sql`${table.fallbackForId} is not null`),
 ]);
 
 export type SecondReview = typeof secondReviews.$inferSelect;
