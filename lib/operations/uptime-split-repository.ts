@@ -68,7 +68,7 @@ export async function readUptimeSplitReadback(executor: Pick<Database, "execute"
 }
 
 /**
- * 배포 관문·감시(readWorkerProgress)용. 역할 워커가 15초마다 부르므로 legacy 면 한 행만 읽고 null 이다(관문은 지금 그대로).
+ * 배포 관문·감시(readWorkerProgress)용. legacy 면 한 행만 읽고 null 이다(관문은 지금 그대로). 역할 감독은 부르지 않는다(readRoleProgress, 2026-11-21).
  * claims 면 장부를 읽어 uptime 단계 입력을 낸다.
  */
 export async function readUptimeSplitStage(executor: Pick<Database, "execute">): Promise<ProgressStageInput | null> {

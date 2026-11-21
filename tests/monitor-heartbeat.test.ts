@@ -184,3 +184,30 @@ it('writes the phone alert rows only when they were read — an absent field is 
   recordMonitorHeartbeat(status([]), path);
   expect(JSON.parse(readFileSync(path, 'utf8'))).not.toHaveProperty('consoleAlerts');
 });
+
+// 2026-11-21: 읽지 못한 조각의 이름·코드를 하트비트에 남긴다. 읽지 못한 텍스트 단계가 있으면 공급자 고장 목록을 「없음」으로 쓰지 않는다.
+it('records which reads failed by piece name and code only, and nothing when every read succeeded', () => {
+  const report = { ...status(null), overall: 'unknown' as const, readFailures: [{ piece: 'text-reason', code: '57014' },
+    { piece: 'progress', code: 'DB_POOL_WAIT_TIMEOUT' }, { piece: 'bad piece; drop table', code: '57014' },
+    { piece: 'readiness', code: 'select secret from t' }] };
+  const value = heartbeat(report).value;
+  expect(value.readFailures).toEqual([{ piece: 'text-reason', code: '57014' }, { piece: 'progress', code: 'DB_POOL_WAIT_TIMEOUT' }]);
+  expect(value).toMatchObject({ overall: 'unknown' });
+  expect(heartbeat(status([])).value).not.toHaveProperty('readFailures');
+});
+
+it('does not turn an unread text stage into an observed provider clear, and still reports the stages that were read', () => {
+  const unread = { stage: 'reason-translate', role: 'text', reason: 'unknown_age', alarm: false, job: 'reason-translate',
+    unread: { piece: 'text-reason', code: '57014' } } satisfies StageProgress;
+  const first = lane({ stage: 'first', role: 'reviewer', reason: 'consumer_missing', alarm: true, restartEligible: false });
+  const report = status([lane(), unread, first]);
+  report.overall = 'alarm'; report.progress!.overall = 'alarm';
+  const value = heartbeat(report).value;
+  // 칸이 없다 = 모름(진행 전체를 못 읽은 주기와 같다). 빈 목록·keywords 만 있는 목록은 reason-translate 의 「고장 없음」으로 읽힌다
+  expect(value).not.toHaveProperty('providerFailures');
+  expect(value).not.toHaveProperty('stageFailures');
+  expect(value.reviewFailures).toEqual([{ stage: 'first', reason: 'consumer_missing' }]);
+  // 읽힌 주기에는 지금처럼 목록을 쓴다
+  expect(heartbeat(status([lane(), { ...lane({ stage: 'reason-translate' }), measuredAgeSeconds: 240 }])).value.providerFailures)
+    .toEqual(['reason-translate', 'keywords']);
+});
