@@ -19,8 +19,9 @@ const interrupted = (signal: AbortSignal, deadline?: AbortSignal): TokenBudgetCh
 /**
  * Only a complete, matching tokenizer response can prove overflow. Unavailable evidence never becomes a product failure.
  * thinking "off" (default, direct-openai-chat-v1 and the AI2 requestBudget): the wire must carry chat_template_kwargs.enable_thinking=false.
- * thinking "as_sent" (openai-chat-total-bound-v1 with a tokenizer block): the wire is the route's own bytes and is not rewritten, so the
- * tokenizer is asked with exactly the chat_template_kwargs that are sent — none when the wire has none.
+ * thinking "as_sent" (openai-chat-total-bound-v1 with a tokenizer block): the wire is the route's own bytes (only the gateway-only context_strategy
+ * field is dropped, D-6) and thinking is not rewritten, so the tokenizer is asked with exactly the chat_template_kwargs that are sent — none when
+ * the wire has none.
  */
 export async function checkAi2TokenBudget(contract: TokenBudgetContract, wire: string,
   options: { timeoutMs: number; signal?: AbortSignal; thinking?: "off" | "as_sent" }): Promise<TokenBudgetCheck> {

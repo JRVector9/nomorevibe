@@ -255,6 +255,41 @@ it('rolls back request cancellation, event and fallback when the final job signa
   await expect(fallbackWaitingSecondReview(value.intent, value.requestId)).rejects.toThrow('job_version_exhausted');
   expect(await snapshot(value.requestId)).toEqual(before);
 });
+/*
+ * abcllm 이름표 정리 2단계(3단계 전 확인 — second-review-model-capacity.ts 의 줄 대기 대체): 줄에서 15초 넘게 기다린 표를 같은 칸의 다음 순위로 넘기는 것은
+ * 장비 칸이 있는 엔진 직접 계약(direct-openai-chat-v1)의 표뿐이다. 오늘 운영 2차 표는 모두 abcllm 계약이라 기다린다 — 그 계약을 이름표만 local-direct 로 바꾼
+ * 새 모양(openai-chat-total-bound-v1)도 기다려야 3단계 전환이 「누가 그 표를 받는가」를 바꾸지 않는다. 조건을 예전 꼴(provider 가 local-direct)로 되돌리면
+ * 새 모양의 표가 다음 순위로 넘어가 이 시험이 실패한다. 실제 준비(prepareAi2GatewayCall)·장부 대기 행·소비자 경로를 그대로 탄다.
+ */
+it.each([
+  ['the device-named direct contract (direct-openai-chat-v1) hands the vote to its slot fallback', 'direct'],
+  ['the relabelled total-bound contract (openai-chat-total-bound-v1) keeps waiting like an abcllm vote', 'total-bound'],
+] as const)('a vote waiting over 15 seconds on a full device: %s', async (_name, shape) => {
+  const tokenizer = createServer((request, response) => {
+    request.resume(); response.end(JSON.stringify({ count: 10, tokens: Array.from({ length: 10 }, (_, index) => index + 1), max_model_len: 40_960 }));
+  });
+  await new Promise<void>(resolve => tokenizer.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = tokenizer.address(); if (!address || typeof address === 'string') throw new Error('fixture_address_missing');
+    const origin = `http://127.0.0.1:${address.port}`;
+    contracts(origin);
+    if (shape === 'total-bound') serving.contracts.set(`local-direct:${mainModel}`, { version: 1, protocol: 'openai-chat-total-bound-v1', routeId: 'second-review',
+      provider: 'local-direct', model: mainModel, responseModel: mainModel, deploymentRevision: 'fixture', endpoint: `${origin}/v1/chat/completions`, totalTokenBound: 40_960 });
+    const value = await fixture(); await age(value.requestId);
+    if (shape === 'direct') {
+      expect(await executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).toEqual({ state: 'rerouted' });
+      await expectHandoff(value, 'capacity_wait_timeout');
+      return;
+    }
+    const before = await snapshot(value.requestId);
+    await expect(executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).rejects.toMatchObject({ reason: 'capacity' });
+    // 표는 그대로 기다린다: 대기 행·사건·2차 행·잡 모두 그대로, 대체 표 없음
+    expect(await snapshot(value.requestId)).toEqual(before);
+    expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid`).toEqual([{ state: 'waiting' }]);
+    expect(await admin`SELECT id FROM second_reviews WHERE fallback_for_id=${value.row.id}`).toEqual([]);
+  } finally { tokenizer.closeAllConnections(); await new Promise<void>((resolve, reject) => tokenizer.close(error => error ? reject(error) : resolve())); }
+});
+
 it.each([true, false])('switches a failed tokenizer to fallback before inference (saturated=%s)', async saturated => {
   const paths: string[] = [], server = createServer((request, response) => {
     paths.push(request.url ?? ''); request.resume(); response.writeHead(503); response.end('{}');

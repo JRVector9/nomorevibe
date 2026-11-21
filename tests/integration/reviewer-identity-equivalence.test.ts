@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, modelCapacityRequests, products, secondReviews } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, modelCapacityRequests, pipelineItemLeases, products,
+  secondReviews } from "@/lib/db/schema";
 import { changeReviewMode, getSettings, saveSettings } from "@/lib/crawl/settings";
 import { claimAgentReview, listReviewCandidates, loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { judgeRevision } from "@/lib/crawl/rules";
@@ -30,6 +32,7 @@ vi.mock("@/lib/domain/products/og", () => ({ cacheOgImage: async () => null }));
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
+  await db.delete(pipelineItemLeases).where(eq(pipelineItemLeases.stage, "ai2"));
   await db.delete(secondReviews);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
@@ -183,6 +186,51 @@ it("아직 보내지 않은 2차 표는 지금 이름표로 옮겨 적혀 그대
   expect(await published()).toBe(0);
 
   await vote(gate, "local-direct");
+  await tick();
+  expect(await published()).toBe(1);
+});
+
+// 1단계 리뷰(#1011)의 시험 공백 ②: 옮겨 적기는 살아 있는 item(보내는 중일 수 있는 표) 앞에서 쓰지 않고, 대체 표도 같은 규칙으로 옮긴다
+it("살아 있는 item 이 있는 동안은 아직 보내지 않은 표도 옮겨 적지 않는다 — item 이 끝난 뒤의 정리가 옮긴다", async () => {
+  await votersAre({ provider: "abcllm", model: V });
+  const { row } = await candidate(14, { provider: "abcllm", model: M });
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const [gate] = await db.select().from(secondReviews);
+  await firstIs("local-direct", M);
+  await votersAre({ provider: "local-direct", model: V });
+  // 소비자가 이 표의 item 을 쥐고 있다(보내는 중일 수 있다) — 후보 TX 의 candidateItemsBusy 가 쓰기 전체를 막는다
+  const workKey = `ai2:${gate.id}`;
+  await db.insert(pipelineItemLeases).values({ stage: "ai2", workKey, binding: { stage: "ai2", secondReviewId: gate.id, candidateId: row.id } as never,
+    bindingHash: "a".repeat(64), ownerInstanceId: "identity-live-item", ownerBootId: randomUUID(), token: randomUUID(), itemEpoch: 1,
+    leaseUntil: sql`clock_timestamp() + interval '1 minute'` });
+  expect(await closeSettledSecondReviews()).toBe(0);
+  expect(await db.select().from(secondReviews)).toMatchObject([{ id: gate.id, provider: "abcllm", model: V, status: "pending" }]);
+  // item 이 끝났다(기한 지남) — 이제 옮긴다
+  await db.update(pipelineItemLeases).set({ leaseUntil: sql`clock_timestamp() - interval '1 second'` }).where(eq(pipelineItemLeases.workKey, workKey));
+  expect(await closeSettledSecondReviews()).toBe(1);
+  expect(await db.select().from(secondReviews)).toMatchObject([{ id: gate.id, provider: "local-direct", model: V, status: "pending", resolution: null }]);
+});
+
+it("대체 표도 아직 보내지 않았으면 지금 그 자리(대체 순위)의 이름표로 옮긴다 — 대체로 넘긴 첫 표(끝난 기록)는 그대로다", async () => {
+  const F = "fallback-voter-test";
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: V }], fallbacks: [{ provider: "abcllm", model: F }] } }, "test");
+  await candidate(15, { provider: "abcllm", model: M });
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const [root] = await db.select().from(secondReviews);
+  // 첫 표가 같은 칸의 다음 순위로 넘어갔다(줄 대기·준비 실패 대체와 같은 꼴) — 대체 표는 아직 보내지 않았다
+  await db.update(secondReviews).set({ status: "resolved", resolution: "fallback", resolvedAt: new Date() }).where(eq(secondReviews.id, root.id));
+  const [child] = await db.insert(secondReviews).values({ candidateId: root.candidateId, repo: root.repo, trigger: root.trigger, firstDecision: root.firstDecision,
+    firstConfidence: root.firstConfidence, firstModel: root.firstModel, firstAttemptId: root.firstAttemptId, inputHash: root.inputHash,
+    generationKey: root.generationKey, fallbackForId: root.id, failureCount: root.failureCount, provider: "abcllm", model: F }).returning();
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "local-direct", model: V }], fallbacks: [{ provider: "local-direct", model: F }] } }, "test");
+  expect(await closeSettledSecondReviews()).toBe(1);
+  const rows = await db.select().from(secondReviews).orderBy(secondReviews.id);
+  expect(rows).toMatchObject([{ id: root.id, provider: "abcllm", model: V, status: "resolved", resolution: "fallback" },
+    { id: child.id, provider: "local-direct", model: F, status: "pending", resolution: null, fallbackForId: root.id }]);
+  expect(await closeSettledSecondReviews()).toBe(0);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+  // 대체 표가 승인하면 그 칸의 표로 센다
+  await vote(rows[1], "local-direct");
   await tick();
   expect(await published()).toBe(1);
 });

@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import "@/lib/crawl/agent-review-serving-contract";
 import "@/lib/crawl/second-review-serving-contract";
 import { bindReviewTaskRank } from "@/lib/crawl/review-task-ranks";
-import { textRedirect, textWireFor } from "@/lib/crawl/agent-review-gateway";
+import { reviewWithGateway, textRedirect, textWireFor } from "@/lib/crawl/agent-review-gateway";
+import { crawlTaglineGatewayWire } from "@/lib/crawl/tagline";
+import { productTaglineKoGatewayWire, productTranslationGatewayWire, reasonTranslationGatewayWire, websearchQueryGatewayWire } from "@/lib/crawl/translate";
+import { profileGatewayWire } from "@/lib/domain/products/search-profile";
+import { searchVerifyGatewayWire } from "@/lib/domain/products/search-verify";
 import { bindApiTaskRank, type AiTaskRank } from "@/lib/llm/ai-task-resolver";
 import { setAiTaskModelsForTest } from "@/lib/llm/ai-task-models-snapshot";
 import { cliEngineEndpoint, cliEngineRevision } from "@/lib/llm/cli-engine-config";
@@ -13,16 +17,68 @@ import { setServingContractSnapshotForTest, textRouteAccess } from "@/lib/llm/se
 import { servingContractHash, validateAdminServingContract } from "@/lib/operations/admin-serving-contracts";
 import { LIMITS_TASKS } from "@/lib/operations/admin-limits-view";
 import { TEST_CONNECTION_ID, TEST_TEXT_BASE_URL, textRankRow } from "./text-task-ranks-fixture";
-import { abcllmContract, contractRow, prepareRouteCall, STRICT_TERMINAL_ROUTES, TOTAL_BOUND_ROUTES, totalBoundContract,
-  type TotalBoundRoute } from "./total-bound-direct-fixture";
+import { abcllmContract, contractRow, prepareRouteCall, queryInput, reasonTexts, reviewInput, STRICT_TERMINAL_ROUTES, taglineEvidence, taglineKoItems,
+  TOTAL_BOUND_ROUTES, totalBoundContract, translationItems, verifyItem, profileEvidence, type TotalBoundRoute } from "./total-bound-direct-fixture";
 
 /**
  * 2026-11-21 abcllm 이름표 정리 1단계 — 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct).
  * - 열 경로의 스키마가 새 모양을 추가로 받는다. 저장된 옛 두 모양(abcllm 총량 상한·direct-openai-chat-v1)의 hash 는 한 바이트도 바뀌지 않는다.
- * - 새 모양의 wire 는 그 경로가 abcllm 계약으로 보내는 바이트 그대로다(실제 준비 함수의 wireHash 로 견준다).
+ * - 새 모양의 wire 는 그 경로가 abcllm 계약으로 보내는 바이트에서 게이트웨이 전용 칸 context_strategy 하나만 뺀 것이다(2단계, 소유자 결정 D-6).
+ *   그 칸이 없는 경로(번역 4경로·카테고리 분류)는 바이트까지 같다. 실제 준비 함수의 wireHash 로 견준다.
  * 운영 값이 아니다(모양만 맞춘 고정 fixture).
  */
 const sha = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const shaBytes = (value: string) => createHash("sha256").update(value).digest("hex");
+/** D-6 이 빼는 칸 하나만 뺀 같은 바이트(나머지 칸 순서 그대로) — 기대값을 시험 쪽에서 따로 만든다 */
+const withoutContextStrategy = (wire: string): string => {
+  const body = JSON.parse(wire) as Record<string, unknown>;
+  delete body.context_strategy;
+  return JSON.stringify(body);
+};
+/** abcllm 계약의 wire 가 context_strategy 를 싣는 경로 — 게이트웨이 raw 심사 wire 를 쓰는 둘과 그 칸을 직접 적는 text 셋 */
+const CONTEXT_STRATEGY_ROUTES: ReadonlySet<TotalBoundRoute> = new Set(["crawl-agent-review", "second-review", "product-search-profile",
+  "crawl-tagline", "product-search-verify"]);
+/**
+ * 같은 엔진의 abcllm 계약이 보내는 바이트를 그 경로의 wire 함수로 따로 만든다(시험이 준비 함수의 wireHash 와 견줘 같은 바이트임을 먼저 확인한다).
+ * 심사 두 경로는 게이트웨이 raw wire(비공개 함수)를 reviewWithGateway 가 보내는 본문으로 받는다. 카테고리 분류의 wire 함수는 비공개라 null 이다
+ * (그 경로는 wireHash 가 그대로임으로 본다).
+ */
+async function abcllmWireBytes(routeId: TotalBoundRoute, engine: string, extra: Record<string, unknown>): Promise<string | null> {
+  const reserve = typeof extra.reasoningTokenReserve === "number" ? extra.reasoningTokenReserve : 0;
+  switch (routeId) {
+    case "crawl-agent-review": case "second-review": {
+      let sent: string | null = null;
+      const capture = (async (_url: unknown, init?: RequestInit) => { sent = String(init?.body); throw new Error("captured"); }) as unknown as typeof fetch;
+      await reviewWithGateway(reviewInput(), { model: engine, endpoint: { baseUrl: "http://engine.test:8000/v1", apiKey: null }, request: capture });
+      return sent;
+    }
+    case "product-search-profile": return profileGatewayWire(profileEvidence(), engine);
+    case "product-search-verify": return searchVerifyGatewayWire(verifyItem(), engine);
+    case "crawl-tagline": return crawlTaglineGatewayWire(taglineEvidence(), engine);
+    case "reason-translate": return reasonTranslationGatewayWire(reasonTexts(), engine, reserve);
+    case "product-translate": return productTranslationGatewayWire(translationItems(), engine);
+    case "product-tagline-ko": return productTaglineKoGatewayWire(taglineKoItems(), engine, reserve);
+    case "search-query-translate": return websearchQueryGatewayWire(queryInput(), engine);
+    case "crawl-publish-classify": return null;
+  }
+}
+/**
+ * 새 모양의 기본 계약(선택 칸 없음, model fixture-model)이 보내는 wire 바이트의 sha256 — 이 PR(2단계, D-6)의 코드로 계산해 박았다.
+ * 경로의 프롬프트·출력 상한이 바뀌면 함께 바뀐다(그때는 abcllm 계약의 바이트도 바뀐다 — 아래 견줌이 둘의 관계를 따로 지킨다).
+ */
+const NEW_WIRE_SHA: Readonly<Record<TotalBoundRoute, string>> = {
+  // 심사 두 경로는 같은 raw 심사 wire 다(같은 입력·같은 모델)
+  "crawl-agent-review": "cea9b64daca663aba96691ea3af9a409edfb1b273c158dbeb9b207ecdede4fa5",
+  "second-review": "cea9b64daca663aba96691ea3af9a409edfb1b273c158dbeb9b207ecdede4fa5",
+  "product-search-profile": "7e542375b5f57bab0a1e2c8151fe90dc405e1d15e5782565fae2a008b084750e",
+  "crawl-tagline": "647e0c92ae471d6eb9a0ed1fe98b8dbe9d776c748c36aeef1fadaad2e589465e",
+  "product-search-verify": "d1215309343e2a6fcde9afee57b6d3f932bd139be1a4aeb19de0cbd236d2fd72",
+  "reason-translate": "c8913e18897e0e077c3753c7bf079ca70ce69a6e024ff7d82df9fb4335e4fe47",
+  "product-translate": "83c70fe49023f854aa89e4f878761ce4b028657a21e8c755a4b1de64e41e0e1c",
+  "product-tagline-ko": "e31372a9d7e4a91c89ceffb6cc3fde9888ce5157a155862f271044aa53c5c7e4",
+  "search-query-translate": "281d1e8af8e5db4a031e40f21913594986f7dcf1664c7f422234901f3147244e",
+  "crawl-publish-classify": "0eb25431da61b430beac159a1d7e98e3d525d288ba0fcf8c7e34ab5f5b70391c",
+};
 const adminHash = (routeId: string, contract: unknown) => {
   const checked = validateAdminServingContract(routeId, contract);
   if (!checked.ok) throw new Error(`${routeId}:${checked.reason}`);
@@ -95,11 +151,11 @@ describe.each(TOTAL_BOUND_ROUTES)("%s", routeId => {
     expect(backoff.ok).toBe(routeId === "product-tagline-ko");
   });
 
-  it("prepares the same wire bytes for the new shape as for today's abcllm contract of the same engine", async () => {
+  it("prepares today's abcllm wire bytes minus exactly context_strategy for the new shape of the same engine (D-6)", async () => {
     const variants: Record<string, unknown>[] = [{}, { engineModel: "engine-name" }];
     if (routeId === "reason-translate" || routeId === "product-tagline-ko") variants.push({ reasoningTokenReserve: 2048 });
     for (const extra of variants) {
-      const model = extra.engineModel ? "engine-name@0b0c0d0e" : "fixture-model";
+      const label = JSON.stringify(extra), model = extra.engineModel ? "engine-name@0b0c0d0e" : "fixture-model";
       const before = abcllmContract(routeId, { model, extra }), after = totalBoundContract(routeId, { model, extra });
       setServingContractSnapshotForTest([contractRow(before)]);
       const old = await prepareRouteCall(routeId, model, "abcllm");
@@ -110,11 +166,32 @@ describe.each(TOTAL_BOUND_ROUTES)("%s", routeId => {
       const nextDefault = routeId === "crawl-publish-classify" || routeId === "crawl-agent-review" ? next : await prepareRouteCall(routeId, model, undefined);
       // 새 계약만 있는 선택을 abcllm 으로 부르면 닫힌다(줄에 서 있던 옛 provider 요청은 보내지지 않는다)
       const stale = await prepareRouteCall(routeId, model, "abcllm");
-      expect(stale, JSON.stringify(extra)).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
-      for (const call of [old, oldDefault, next, nextDefault]) expect(call.kind, JSON.stringify(extra)).toBe("prepared");
+      expect(stale, label).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+      for (const call of [old, oldDefault, next, nextDefault]) expect(call.kind, label).toBe("prepared");
       if (old.kind !== "prepared" || next.kind !== "prepared" || oldDefault.kind !== "prepared" || nextDefault.kind !== "prepared") throw new Error("prepared_required");
-      expect(next.wireHash, JSON.stringify(extra)).toBe(old.wireHash);
-      expect(oldDefault.wireHash).toBe(old.wireHash); expect(nextDefault.wireHash).toBe(old.wireHash);
+      expect(oldDefault.wireHash).toBe(old.wireHash); expect(nextDefault.wireHash).toBe(next.wireHash);
+      // abcllm 계약의 바이트를 경로의 wire 함수로 따로 만들고, 그것이 준비 함수가 묶은 바이트와 같음을 먼저 확인한다
+      const oldBytes = await abcllmWireBytes(routeId, typeof extra.engineModel === "string" ? extra.engineModel : model, extra);
+      if (oldBytes !== null) expect(shaBytes(oldBytes), label).toBe(old.wireHash);
+      if (CONTEXT_STRATEGY_ROUTES.has(routeId)) {
+        if (oldBytes === null) throw new Error("abcllm_bytes_required");
+        const oldBody = JSON.parse(oldBytes) as Record<string, unknown>, expected = withoutContextStrategy(oldBytes);
+        expect(oldBody.context_strategy, label).toBe("raw");
+        // 새 wire 의 바이트 = abcllm 바이트에서 그 칸 하나만 뺀 것(나머지 칸의 값·순서 그대로) — sha 가 같으면 바이트가 같다
+        expect(next.wireHash, label).toBe(shaBytes(expected));
+        expect(next.wireHash, label).not.toBe(old.wireHash);
+        const nextBody = JSON.parse(expected) as Record<string, unknown>;
+        expect(Object.keys(oldBody).filter(key => !Object.hasOwn(nextBody, key)), label).toEqual(["context_strategy"]);
+        expect(Object.keys(nextBody), label).toEqual(Object.keys(oldBody).filter(key => key !== "context_strategy"));
+        for (const key of Object.keys(nextBody)) expect(nextBody[key], `${label} ${key}`).toEqual(oldBody[key]);
+        // 추론 강도 칸은 남는다(D-6 은 context_strategy 만 뺀다)
+        expect(nextBody.reasoning_effort, label).toBe(oldBody.reasoning_effort);
+      } else {
+        // 그 칸을 싣지 않는 경로: 새 wire 는 abcllm 계약과 바이트까지 같다
+        if (oldBytes !== null) expect(Object.hasOwn(JSON.parse(oldBytes), "context_strategy"), label).toBe(false);
+        expect(next.wireHash, label).toBe(old.wireHash);
+      }
+      if (Object.keys(extra).length === 0) expect(next.wireHash, "new-shape wire pin").toBe(NEW_WIRE_SHA[routeId]);
       expect(next).toMatchObject({ model, totalTokenBound: old.totalTokenBound });
       // 계약 hash 는 모양마다 다르다 — binding 이 어느 계약으로 보냈는지 묶는다
       expect(old.servingContractHash).toBe(adminHash(routeId, before)); expect(next.servingContractHash).toBe(adminHash(routeId, after));
@@ -148,29 +225,42 @@ describe("wire rules of the new shape", () => {
     endpoint: "http://engine.test:8000/v1/chat/completions", totalTokenBound: 65_536, deploymentRevision: "fixture" };
   const gateway = { ...base, provider: "abcllm", protocol: "abcllm-raw-total-bound-v1" };
 
-  it("is the route's own wire: gateway-era fields stay, the engine name comes from engineModel, the contract model is the fallback", () => {
-    expect(textWireFor(base, "ledger-name", build)).toBe(build("ledger-name"));
-    expect(textWireFor(base, "ledger-name", build)).toBe(textWireFor(gateway, "ledger-name", build));
-    expect(textWireFor({ ...base, engineModel: "engine-name" }, "ledger-name", build)).toBe(build("engine-name"));
-    expect(textWireFor({ ...base, engineModel: "engine-name" }, "ledger-name", build)).toBe(textWireFor({ ...gateway, engineModel: "engine-name" }, "ledger-name", build));
+  it("is the route's own wire minus context_strategy (D-6): reasoning_effort stays, the engine name comes from engineModel, the contract model is the fallback", () => {
+    expect(textWireFor(base, "ledger-name", build)).toBe(withoutContextStrategy(build("ledger-name")));
+    expect(textWireFor(base, "ledger-name", build)).toBe(withoutContextStrategy(textWireFor(gateway, "ledger-name", build)));
+    // abcllm 계약은 예전 바이트 그대로 — 그 칸을 보낸다
+    expect(textWireFor(gateway, "ledger-name", build)).toBe(build("ledger-name"));
+    expect(JSON.parse(textWireFor(base, "ledger-name", build))).toEqual({ model: "ledger-name", stream: false, temperature: 0, max_tokens: 900,
+      reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false }, messages: [{ role: "user", content: "hi" }] });
+    expect(textWireFor({ ...base, engineModel: "engine-name" }, "ledger-name", build)).toBe(withoutContextStrategy(build("engine-name")));
+    expect(textWireFor({ ...base, engineModel: "engine-name" }, "ledger-name", build))
+      .toBe(withoutContextStrategy(textWireFor({ ...gateway, engineModel: "engine-name" }, "ledger-name", build)));
     // local-direct 는 등록부 키로도 고를 수 있다 — 선택 글자가 아니라 계약의 이름이 나간다
-    expect(textWireFor(base, "device:registry-key", build)).toBe(build("ledger-name"));
+    expect(textWireFor(base, "device:registry-key", build)).toBe(withoutContextStrategy(build("ledger-name")));
+    // 그 칸이 없는 경로의 wire(번역·분류 꼴)는 바이트까지 그대로다
+    const plain = (model: string) => JSON.stringify({ model, stream: false, temperature: 0.1, reasoning_effort: "low", max_tokens: 900, messages: [{ role: "user", content: "hi" }] });
+    expect(textWireFor(base, "ledger-name", plain)).toBe(plain("ledger-name"));
+    expect(textWireFor(base, "ledger-name", plain)).toBe(textWireFor(gateway, "ledger-name", plain));
     // direct-openai-chat-v1 은 예전 그대로다(게이트웨이 칸을 빼고 thinking 을 끈다)
     const direct = JSON.parse(textWireFor({ ...base, protocol: "direct-openai-chat-v1", maxOutputTokens: 400 }, "ledger-name", build));
     expect(direct).toMatchObject({ model: "ledger-name", max_tokens: 400 }); expect("context_strategy" in direct || "reasoning_effort" in direct).toBe(false);
   });
 
   it("caps max_tokens only when the contract carries maxOutputTokens", () => {
-    expect(JSON.parse(textWireFor({ ...base, maxOutputTokens: 400 }, "ledger-name", build))).toEqual({ ...JSON.parse(build("ledger-name")), max_tokens: 400 });
-    expect(textWireFor({ ...base, maxOutputTokens: 900 }, "ledger-name", build)).toBe(build("ledger-name"));
-    expect(textWireFor({ ...base, maxOutputTokens: 5000 }, "ledger-name", build)).toBe(build("ledger-name"));
+    expect(textWireFor({ ...base, maxOutputTokens: 400 }, "ledger-name", build))
+      .toBe(withoutContextStrategy(JSON.stringify({ ...JSON.parse(build("ledger-name")), max_tokens: 400 })));
+    expect(textWireFor({ ...base, maxOutputTokens: 900 }, "ledger-name", build)).toBe(withoutContextStrategy(build("ledger-name")));
+    expect(textWireFor({ ...base, maxOutputTokens: 5000 }, "ledger-name", build)).toBe(withoutContextStrategy(build("ledger-name")));
   });
 
   it("takes a CLI-engine revision the way an abcllm contract does, which direct-openai-chat-v1 still refuses", () => {
     for (const reasoningEffort of [undefined, "high"]) {
       const deploymentRevision = cliEngineRevision({ connectionId: TEST_CONNECTION_ID, ...(reasoningEffort ? { reasoningEffort } : {}) });
       const wire = textWireFor({ ...base, deploymentRevision }, "ledger-name", build);
-      expect(wire).toBe(textWireFor({ ...gateway, deploymentRevision }, "ledger-name", build));
+      const old = textWireFor({ ...gateway, deploymentRevision }, "ledger-name", build);
+      // abcllm 형 CLI 엔진 계약은 예전처럼 그 칸을 보내고, 새 모양은 그 칸 하나만 빠진다
+      expect(JSON.parse(old).context_strategy).toBe("raw");
+      expect(wire).toBe(withoutContextStrategy(old));
       expect(JSON.parse(wire).reasoning_effort).toBe(reasoningEffort);
       expect(() => textWireFor({ ...base, protocol: "direct-openai-chat-v1", maxOutputTokens: 400, deploymentRevision }, "ledger-name", build))
         .toThrow("invalid_cli_engine_revision");
@@ -235,7 +325,7 @@ describe("rank binding", () => {
 });
 
 describe("second-review requestBudget moves to the tokenizer block", () => {
-  it("asks the tokenizer with the same request and sends the same wire as the abcllm contract with a requestBudget", async () => {
+  it("asks the tokenizer with the same request and sends the abcllm requestBudget wire minus context_strategy", async () => {
     const asked: string[] = [];
     const server = createServer((request, response) => {
       const chunks: Buffer[] = [];
@@ -254,7 +344,12 @@ describe("second-review requestBudget moves to the tokenizer block", () => {
         tokenizer: { endpoint: `${origin}/tokenize`, requestTokenBound: 32_000 } } }))]);
       const next = await prepareRouteCall("second-review", "fixture-model", "local-direct");
       if (old.kind !== "prepared" || next.kind !== "prepared") throw new Error("prepared_required");
-      expect(next.wireHash).toBe(old.wireHash);
+      // abcllm requestBudget 계약의 바이트(raw wire, max_tokens = requestBudget.maxOutputTokens)에서 context_strategy 만 빠진다
+      const raw = await abcllmWireBytes("second-review", "fixture-model", {});
+      if (raw === null) throw new Error("abcllm_bytes_required");
+      const oldBytes = JSON.stringify({ ...JSON.parse(raw), max_tokens: 4096 });
+      expect(shaBytes(oldBytes)).toBe(old.wireHash);
+      expect(next.wireHash).toBe(shaBytes(withoutContextStrategy(oldBytes))); expect(next.wireHash).not.toBe(old.wireHash);
       expect(asked).toHaveLength(2); expect(asked[0].startsWith("/tokenize ")).toBe(true); expect(asked[1]).toBe(asked[0]);
       // tokenizer 묶음이 없는 새 계약은 tokenizer 를 부르지 않는다(tokenizer 가 없는 서버)
       setServingContractSnapshotForTest([contractRow(totalBoundContract("second-review", options))]);

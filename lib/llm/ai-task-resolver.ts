@@ -161,7 +161,7 @@ function bindCliEngineTaskRank(routeId: GatewayServingRoute, rank: AiTaskRank, c
   } catch {
     return unusable("cli_engine_source_invalid");
   }
-  // CLI 엔진 계약은 abcllm 형(transport direct)이거나 같은 바이트를 보내는 엔진 직접 총량 상한 계약이다(다른 local-direct 모양은 받지 않는다)
+  // CLI 엔진 계약은 abcllm 형(transport direct)이거나 같은 바이트(context_strategy 만 뺀 — D-6)를 보내는 엔진 직접 총량 상한 계약이다(다른 local-direct 모양은 받지 않는다)
   const direct = contracts.filter(entry => (entry.provider === "abcllm" && entry.row.transport === "direct" || entry.totalBound === true)
     && entry.endpointBase === baseUrl && entry.wireModel === rank.model);
   if (!direct.length) return unusable("cli_contract_missing");
