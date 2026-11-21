@@ -13,6 +13,7 @@ import { README_SAMPLE_LIMIT } from "./readme";
 import { repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/access";
 import { packageProofOf, type PackageProof } from "./package-proof";
 import { reviewSemanticNow } from "./review-replay-context";
+import { reviewRenderedPage, type ReviewRenderedPage } from "./shell-render";
 import type { ProjectActivity } from "./audit-project-activity";
 
 /**
@@ -91,7 +92,12 @@ export type ReviewSnapshot = {
     /** 페이지가 제작자(레포 주인)의 GitHub 로 가는 링크를 걸었는가 — 걸었으면 프로젝트의 집이다 */
     linksOwnGithub: boolean;
     /** 저장소에서 찾은 스킬·플러그인·확장 파일(package-proof.ts). 찾은 것이 있을 때만 싣는다 — 없는 후보의 입력 해시는 그대로다 */
-    packageProof?: PackageProof };
+    packageProof?: PackageProof;
+    /**
+     * 수집 본문이 JS 앱 껍데기여서 브라우저로 그린 글을 pageText 로 쓸 때만 싣는다(shell-render.ts) — 출처·원래 수집 본문·그린 시각.
+     * 없는 후보의 입력 해시는 그대로다
+     */
+    renderedPage?: ReviewRenderedPage };
   /** 저장소의 바뀌지 않는 사실. 스타·마지막 푸시·생성일 */
   repoFacts: { stars: number | null; pushedAt: string | null; createdAt: string | null };
   /** 규칙이 어디서 멈췄는지 — 모델이 무엇을 대신 가르는지 알게 한다 */
@@ -165,6 +171,8 @@ export type ReviewEvidenceAge = "window" | "any_age";
  */
 export function buildReviewProduct(candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, now: Date): ReviewSnapshot["product"] {
   const page = document.pageMeta ?? {};
+  // JS 앱 껍데기를 브라우저로 뜻있게 그렸으면 그 글이 방문자가 보는 본문이다(shell-render.ts). 아니면 수집 본문 그대로
+  const rendered = reviewRenderedPage(document);
   return {
     repo: candidate.repo,
     name: limitedText(page.title, 300) || candidate.repo.split("/").at(-1)!,
@@ -176,7 +184,7 @@ export function buildReviewProduct(candidate: CrawlCandidate, document: CrawlDoc
      * 바뀌어도 옛 승인이 새 원본으로 복사됐다(codex 재현). 스냅숏에 두면 inputHash에 들어가,
      * 본문이 바뀌면 옛 승인은 재사용도 발행 검증도 통과하지 못한다.
      */
-    pageText: limitedText(pageFactsFromDocument(document).textSample, TEXT_SAMPLE_LIMIT),
+    pageText: rendered?.pageText ?? limitedText(pageFactsFromDocument(document).textSample, TEXT_SAMPLE_LIMIT),
     url: candidate.productUrl,
     accessMode: accessFromDocument({ ...document, productUrl: candidate.productUrl }, settings, now)?.mode ?? "website",
     repositoryUrl: repositoryUrl(candidate.repo),
@@ -185,6 +193,7 @@ export function buildReviewProduct(candidate: CrawlCandidate, document: CrawlDoc
     readme: limitedText(page.readmeSample, README_SAMPLE_LIMIT),
     linksOwnGithub: linksOwnGithub(candidate.repo, pageFactsFromDocument(document).githubLinks),
     ...(packageProofOf(document.repoMeta).length ? { packageProof: packageProofOf(document.repoMeta) } : {}),
+    ...(rendered ? { renderedPage: rendered.renderedPage } : {}),
   };
 }
 

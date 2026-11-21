@@ -24,6 +24,8 @@ export type PurposeLimit = { maxTokens: number; concurrency: number; timeoutMs?:
 export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number; slowCallMs?: number; soloAttempts?: number; callMs?: number; maxAttempts?: number; consumerConcurrency?: number; classifierConcurrency?: number;
   /** 공개분 변경 재판정(published-recheck) — 틱마다 견줄 공개 제품 수·하루에 올릴 수·감사 잡 틱마다 물을 수·같다고 볼 낱말 유사도(%)·1차에 물러나는 상한(시간) */
   scanBatch?: number; dailyCap?: number; askBatch?: number; minSimilarity?: number; yieldHours?: number;
+  /** 1차 직전 JS 앱 껍데기 그리기(lib/crawl/jobs/shell-render-document.ts, 2026-11-21) — 1 켬 · 0 끔(새로 그리지 않음. 이미 그린 글은 입력에 그대로 쓴다) */
+  shellRender?: number;
   /**
    * 잡 주기 덮어쓰기(ms, 2026-11-12 운영 콘솔 조각 4a) — scheduler 가 읽는다(lib/jobs/job-intervals.ts). 다른 손잡이와 달리 코드 기본값(DEFAULT_RUNTIME_SETTINGS.jobs)에
    * 없다: 기본값은 카탈로그(lib/jobs/catalog.ts intervalMs)이고, 주기가 있는 카탈로그 잡이면 어느 잡에나 적을 수 있다. 범위 1분~24시간
@@ -117,6 +119,11 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
      * yieldHours: 1차 심사 대기에 후보가 있으면 물러나되, 가장 오래 기다린 재판정 항목이 이 시간을 넘으면 함께 묻는다(0 이면 물러나지 않음 — 장부의 background 등급만)
      */
     "published-recheck": { scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 60, yieldHours: 6 },
+    /**
+     * 1차 직전 JS 앱 껍데기 그리기(PR #983) — 1 켬 · 0 끔. 끄면 1차가 화면 서버를 새로 부르지 않는다(재배포·env 없이 30초 스냅숏으로 다음 틱부터).
+     * 이미 그린 글은 심사 입력에 그대로 쓴다 — 끄기만으로 입력 해시가 흔들리지 않는다. 감사 화면 판별(audit-screen-review)은 이 칸을 읽지 않는다
+     */
+    "crawl-agent-review": { shellRender: 1 },
   },
   // scripts/worker.ts jobRunOptions 의 리터럴. product-translate 만 "auto"(= 호출 상한 300초 + 여유 15초 = 315초).
   // 2026-10-31(PR 3a-C) 합성 잡 분해 — 나뉜 잡은 전 잡의 예산 봉투를 그대로 받는다: held-qwen-retry·split-confirm 110초(human-deepseek-review),
@@ -189,7 +196,7 @@ export const jobKnobsSchema = z.object({
   batch: int(1, 64), batchChars: int(100, 30_000), minCallMs: ms(1_000, 600_000), slowCallMs: ms(1_000, 600_000),
   soloAttempts: int(1, 10), callMs: ms(5_000, 600_000), maxAttempts: int(1, 50), consumerConcurrency: int(1, 4), classifierConcurrency: int(1, 4),
   scanBatch: int(10, 2_000), dailyCap: int(0, 5_000), askBatch: int(0, 16), minSimilarity: int(0, 100), yieldHours: int(0, 168),
-  intervalMs: int(JOB_INTERVAL_MIN_MS, JOB_INTERVAL_MAX_MS),
+  shellRender: int(0, 1), intervalMs: int(JOB_INTERVAL_MIN_MS, JOB_INTERVAL_MAX_MS),
 }).partial().strict();
 /** 코드 기본값에 없어도 적을 수 있는 손잡이 — 잡 주기(카탈로그에 주기가 있는 잡만) */
 const knobAllowed = (job: string, knob: string, base: JobKnobs | undefined) =>
@@ -510,7 +517,7 @@ const TRANSLATION_FIELD_LABELS: Record<keyof ProductTranslationPolicy, string> =
 const KNOB_LABELS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(ms)", slowCallMs: "느린 호출(ms)",
   soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)", classifierConcurrency: "분류 동시 묶음(1~4)",
   scanBatch: "틱마다 견줄 제품", dailyCap: "하루 올리기 상한", askBatch: "감사 틱마다 묻기", minSimilarity: "같다고 볼 유사도(%)", yieldHours: "1차 양보 상한(시간)",
-  intervalMs: "주기(ms)" };
+  shellRender: "JS 껍데기 그려 보기(1 켬·0 끔)", intervalMs: "주기(ms)" };
 export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산",
   assignments: "모델 배정 읽기", capacity: "모델 장부 점유", publicApi: "공개 API 관문", devices: "장비 한도" };
 /** 열거 칸의 값 이름 — 폼의 선택지와 감사 줄이 같은 말을 쓴다 */

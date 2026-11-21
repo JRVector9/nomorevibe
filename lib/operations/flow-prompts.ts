@@ -48,6 +48,7 @@ const REVIEW_VARIABLES = [
   'snapshot.product.readme',
   'snapshot.product.linksOwnGithub',
   'snapshot.product.packageProof',
+  'snapshot.product.renderedPage',
   'snapshot.repoFacts.stars',
   'snapshot.repoFacts.pushedAt',
   'snapshot.repoFacts.createdAt',
