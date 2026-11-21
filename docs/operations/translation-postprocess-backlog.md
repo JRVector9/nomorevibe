@@ -1,5 +1,65 @@
 # 번역·후처리 차선 남은 일 목록
 
+## 영어 결과 검사 오판 — 2026-11-17 / PR #986
+
+- PR: https://github.com/JRVector9/nomorevibe/pull/986 (착수 시 Draft; 구현·로컬 검증 뒤 Ready for review로 전환해 CI 실행)
+- 범위: `checkProductTranslation`의 en 결과만. 원문 감지와 일본어 묶음/프롬프트는 변경하지 않는다.
+- [x] 최신 origin/main a9c53498에서 전용 브랜치·착수 Draft PR 생성.
+- [x] `detectTranslationSourceLocale`·`hasEnglishEvidence` 및 `englishLang` 호출처 확인, 공유 감지 불변.
+- [x] 저장된 en 67건을 시험 fixture로 보존. 실제 이전 검사기와 새 검사기 재판정: 43/67 → 66/67. 오판 23건 0/23 → 23/23, 나머지 44건 43/44 → 43/44 (묶음 파싱 실패 1건 유지).
+- [x] `tests/translation-english-check.test.ts`: 23건·기존 통과·혼합 문자·원문 반복·원문 감지/준비 상태 회귀 검증.
+- [x] 결정: 변경된 라틴 문자 결과를 요청 언어에 근거해 허용. 짧은 영어/제품명 누락을 막고 공유 언어 감지는 보수적으로 유지한다. 스페인어·독일어 등도 통과할 수 있음은 명시적 한계이며 시험으로 고정한다.
+- [x] 운영 `product_translations` 현재 행을 BEGIN READ ONLY / 5초 제한 / ROLLBACK으로 집계. 09:47 UTC english_uncertain 21,287행, not_japanese 0행. 누적 모델 호출 오류율이 아니다.
+- [x] 관련 vitest 17파일 283건·변경 TS eslint 통과. 첫 확장 시험 실패(기대값 1건, 공유 의존성 누락 2건)는 수정·독립 npm ci 뒤 재검증했다.
+- [x] next typegen 및 `NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit` 통과. 최초 tsc 의존성 누락 실패는 보존한다.
+- [x] 구현 커밋 d1bdfc8d 및 작업 브랜치 push. Draft CI는 저장소 규칙으로 check 실패/검사 생략을 확인했다. 결제 차단이 아니며 Ready 전환이 정식 실행 경로다.
+- CI의 현재·최종 성공 여부는 [PR #986 checks](https://github.com/JRVector9/nomorevibe/pull/986/checks)와 개발사항 완료 보고를 원천으로 확인한다. CI 성공 전에는 완료로 판정하지 않는다.
+- [x] `npm run deploy -- scope --base a9c534981975da2636c2fece03695b58b1009749 --sha d1bdfc8d4193b1639e4870f0ba6390bd63913d19`: trusted=true, full / 전체 18앱. `HEAD` 문자열을 준 최초 조회는 invalid_commit_identity로 분류되어 40자리 SHA로 바로잡아 검증했다.
+- 측정 명령: `node --import tsx /home/ubuntu/.xaegis-hub/data/local-agent/jobs/347992d8-ed0b-4263-b8f8-5771268eaa18/scratch/replay.ts` (기존 검사기 git show 사본과 저장 응답 사용). 결과 및 실패 이력은 PR 본문과 개발사항 보고에 함께 보존한다.
+- 병합·배포·운영 설정 변경·운영 DB 쓰기 금지. 아래는 과거 작업 기록이며 이번 범위를 넓히지 않는다.
+
+### 2026-11-21 보강 — PR #1019 (main 266bdd20·506dca4f 병합 뒤)
+- en 결과 규칙은 `lib/domain/products/translation-english.ts`·`english-lexicon.ts`에 있다. 표시 `lang`·수요·준비 판정이 쓰는 공유 감지(`hasEnglishEvidence`)는 바꾸지 않았다.
+- **원문 유지(`source_native`)**: 모델이 원문과 같은 글자·숫자(NFKC, 대소문자, 공백·문장부호·이모지 무시)를 돌려주면, **영어 긍정 근거**가 있을 때만 원문 그대로 ready로 적는다. provenance kind는 `source_native`, source_locale은 `en`이다.
+  - 긍정 근거의 조건
+    - 영어 낱말 사전(흔한 영어 + 소프트웨어 낱말, 규칙 활용 포함)에 든 낱말이 2개 이상이고, 그중 기능어가 아닌 낱말이 하나 이상이다.
+    - 사전 낱말이 전체 낱말의 70% 이상이다. 사전에 없는 대문자 낱말(이름일 수 있음)은 0.5로 센다.
+    - 외국어·겹치는 낱말·악센트 낱말은 사전 낱말이 3개 이상일 때만 1개(긴 글은 사전 낱말 6개당 1개)까지 둔다.
+  - 공개 화면은 그 원문을 번역 표시 없이 ready로 보인다. SEO 준비도 ready다.
+  - 수요 단계에서 거르는 안(a)은 쓰지 않았다. 호출은 0이지만 판정 근거가 휴리스틱 하나뿐이고, 틀리면 영영 번역하지 않은 채 en 색인에 오른다.
+- **바뀐 답**: 다음 경우에만 거른다. 손 목록 밖 낱말만으로 된 짧은 외국어 답은 여전히 통과한다(아래 한계).
+  - 다른 Latin 언어 낱말·영어에 없는 글자·로마자 한국어 어미가 2개 이상이고 영어 기능어보다 많으면 `not_english`다.
+  - 두 낱말 이상인데 사전 낱말이 1/3 미만이면 `english_uncertain`이다.
+- **거절·메타 답 → `boilerplate`**: 두 갈래만 잡는다. 원문에 같은 말이 있으면 막지 않는다.
+  - 답 전체가 메타인 경우: "Unchanged", "(no change)", "Same as the original", "Translation not needed", "N/A" 등.
+  - 글 자체에 대한 진술: "Here is the translation:", "The input appears to be Korean", "I can't translate…", "Sorry I can't help…" 등.
+  - 그래서 "Translate memes that can't be translated", "Okay, let's plan your week" 같은 보통 소개는 통과한다.
+- **측정**(로컬, 모델 호출 없음, 원문을 그대로 돌려줬다고 가정).
+  - 사전은 아래 리뷰 말뭉치와 운영 말뭉치에서 놓친 낱말을 보고 넓혔다. 그래서 두 말뭉치 수치는 표본 안 수치다. 표본 밖 수치는 "표본 밖 직접 작성" 줄뿐이다.
+
+  | 말뭉치 | 비영어 → source_native | 영어 → source_native |
+  |---|---|---|
+  | 리뷰 말뭉치 | 0/139 | 99/124 |
+  | 운영 말뭉치(english_uncertain Latin 원문 300건, 직접 분류) | 0/57 (불명 0/11) | 220/232 |
+  | 표본 밖 직접 작성 | 0/71 | 75/80 |
+
+  - 바뀐 답으로 통과하는 비영어: 리뷰 32/139, 표본 밖 21/71.
+  - 바뀐 답으로 통과하는 영어: 리뷰 123/124(1건은 숫자 불일치), 표본 밖 80/80, 저장 응답 fixture 회귀 0.
+- **운영 후속(소유자 승인 필요)**: SQL은 `scripts/ops/product-translation-english-sql.ts`가 찍는다(실행은 하지 않는다). 두 SQL 모두 2,000행씩 하고, 행이 나오지 않을 때까지 되풀이한다. 실행마다 `operations_audit`에 한 줄을 남긴다.
+  - 컷오프 D: 모든 product-translate 일꾼이 새 릴리스로 바뀐 뒤 DB에서 `SELECT now()::timestamp;`로 읽는다. `updated_at`이 timestamp without time zone이므로 로컬·KST 문자열은 쓰지 않는다.
+  - 재대기: `node --import tsx scripts/ops/product-translation-english-sql.ts requeue --before '<D>' --actor <login>`
+    - 대상: en `rejected:english_uncertain` 중 D 전에 시도를 다 쓴 행(attempts ≥ min(maxAttempts, 4)). 장부가 쥔 멤버(대기·예약·보냄·미확인)는 뺀다.
+    - attempts는 실시간 `translation.product.maxAttempts`에서 `min(maxAttempts, 4) − 1`로 정한다. 한 번만 더 부르는 셈이다.
+    - 시도가 남은 행은 배포 뒤 재시도에서 저절로 풀리므로 쓰기가 필요 없다.
+  - 되돌리기: `node --import tsx scripts/ops/product-translation-english-sql.ts rollback --since '<D>' [--until '<T>'] --actor <login>`
+    - 대상: D 이후 적힌 source_native ready 행.
+    - 결과: failed, text NULL, error `source_native_reverted`, provenance machine, source_locale NULL, attempts는 실시간 maxAttempts 이상. 작업도 관리자 재요청도 다시 부르지 않는다.
+    - 코드를 되돌릴 때는 웹이 옛 코드가 되기 전에 돌린다. 옛 웹은 source_native를 「번역됨」으로 그려 「원문 보기」에 같은 글을 한 번 더 보인다.
+  - 한 건씩은 관리자 「공개 번역」 화면에서 되돌린다.
+    - 상태 거르기의 「원문 유지(이미 영어)」를 고르고 「영어 아님 — 실패로 되돌리기」를 누른다. 감사 action은 `product-translation-source-native-revert`다.
+    - 각 행에 출처(기계 번역·원문 유지)가 보이고, 집계에 「원문 유지」 칸이 있다.
+
+
 이 차선은 코드와 시험만 다룬다. 운영 DB 쓰기·원격 SSH·배포·push는 하지 않는다.
 근거는 `docs/CODEX_HANDOFF.md`의 2026-10-27 23:07 KST 관측이다.
 

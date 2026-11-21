@@ -1,4 +1,4 @@
-import { isJpeg, renderHealthSchema, renderResponseSchema, renderServiceErrorSchema, SCREEN_MAX_SCREENSHOT_BYTES, SCREEN_RENDER_PROTOCOL,
+import { isJpeg, jsonbSafeText, renderHealthSchema, renderResponseSchema, renderServiceErrorSchema, SCREEN_MAX_SCREENSHOT_BYTES, SCREEN_RENDER_PROTOCOL,
   type RenderHealth } from "./protocol";
 
 /**
@@ -90,8 +90,9 @@ export async function requestRender(url: string, options: { config: ScreenRender
   if (!value.ok) return { ok: false, kind: "page", code: value.error === "http_status" && value.status ? `page_http_${value.status}` : `page_${value.error}` };
   const jpeg = Buffer.from(value.screenshot, "base64");
   if (!isJpeg(jpeg) || jpeg.length > SCREEN_MAX_SCREENSHOT_BYTES) return { ok: false, kind: "outage", code: "render_invalid" };
-  return { ok: true, finalUrl: value.finalUrl, status: value.status, text: value.text, textLength: value.textLength, jpeg, renderMs: value.renderMs,
-    egress: value.egress };
+  // 그린 글·주소는 페이지가 정한다 — 짝 없는 서로게이트·NUL 을 여기서 걸러 DB(jsonb)에 적는 모든 사용처를 막는다(화면 서버 판과 무관하게)
+  return { ok: true, finalUrl: jsonbSafeText(value.finalUrl), status: value.status, text: jsonbSafeText(value.text), textLength: value.textLength, jpeg,
+    renderMs: value.renderMs, egress: value.egress };
 }
 
 /** 화면 서버 상태 — 판·샌드박스·글꼴. 닿지 않거나 약속과 다르면 null */

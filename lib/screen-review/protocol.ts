@@ -139,6 +139,15 @@ export const RENDER_SERVICE_ERRORS = ["unauthorized", "forbidden", "bad_request"
 export type RenderServiceError = (typeof RENDER_SERVICE_ERRORS)[number];
 export const renderServiceErrorSchema = z.object({ error: z.enum(RENDER_SERVICE_ERRORS) }).strict();
 
+/**
+ * jsonb 에 넣을 수 있는 글 — 짝 없는 UTF-16 서로게이트는 U+FFFD 로 바꾸고 NUL 은 뺀다. Postgres jsonb 는 "\ud800"(22P02)·"\u0000"(22P05)을
+ * 거절한다. 그린 글은 페이지가 정하는 입력이라(이모지를 slice 로 자른 글·한 글자씩 찍는 효과) 이런 글이 실제로 온다 — 그대로 적으면 1차 틱이
+ * 매번 같은 후보에서 실패했다(PR #1020 리뷰 BLOCKER). 자른 뒤에 부른다(자르기가 서로게이트 짝을 가를 수 있다)
+ */
+export function jsonbSafeText(value: string): string {
+  return value.toWellFormed().replace(/\u0000/g, "");
+}
+
 /** JPEG 의 첫 세 바이트 */
 export function isJpeg(bytes: Uint8Array): boolean {
   return bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;

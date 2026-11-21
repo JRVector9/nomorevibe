@@ -87,7 +87,7 @@ function browserEnv(): Record<string, string> {
 
 /** 보이는 글을 접는다 — 제어 문자를 빼고, 공백·빈 줄을 줄이고, 6,000자에서 자른다(서로게이트 쌍을 가르지 않는다) */
 export function normalizeRenderedText(raw: string): { text: string; length: number } {
-  const folded = raw.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+  const folded = raw.toWellFormed().replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
     .replace(/[ \t ]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   let text = folded.slice(0, SCREEN_TEXT_LIMIT);
   if (/[\ud800-\udbff]$/.test(text)) text = text.slice(0, -1);

@@ -11,6 +11,7 @@ import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from "@/lib/llm/deadline-ladder";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingProductTranslations, pendingProductTranslationBatch, requestProductTranslations, recordProductTranslations, prepareProductTranslationDispatch,
+  readProductTranslations, readProductTranslationReadiness, selectProductTranslation,
   type ProductTranslationTask } from "@/lib/domain/products/translations";
 import { translateDemandedProductFields } from "@/lib/jobs/products/translations";
 import { requestTakedown } from "@/lib/domain/products/takedown";
@@ -34,6 +35,7 @@ import { setAiTaskExecutionConfigsForTest } from "@/lib/llm/ai-task-execution-sn
 import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
 import type { AiTaskPoolMember } from "@/lib/llm/ai-task-execution-config";
 import { JAPANESE_ABCLLM_TRANSLATION_TAG, japaneseAbcllmTranslationRules } from "@/scripts/ops/generate-japanese-abcllm-product-translation-sql";
+import { englishUncertainRequeueSql } from "@/scripts/ops/product-translation-english-sql";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTranslationServingContract | null }));
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
@@ -825,5 +827,59 @@ it("ends the same abcllm ja batch without a ledger rejection when the reply fail
     expect(unknown[0].row.logical_member_keys.every((key: string) => key.endsWith(":ja:tagline"))).toBe(true);
     expect((await admin`SELECT status,attempts FROM product_translations WHERE product_id=ANY(${first.ids}::int[]) AND locale='ja'`).map(value => ({ ...value })))
       .toEqual(first.ids.slice(0, 3).map(() => ({ status: "failed", attempts: 3 })));
+  });
+}), 30_000);
+
+// 2026-11-21 운영: en english_uncertain 26,995 중 원문 Latin 25,134(표본 절반이 이미 영어). 모델이 이미 영어인 원문을 그대로 돌려주면
+// 같은 원문(source_native)을 ready 로 적고, 공개 화면·SEO 준비는 번역 표시 없이 그 원문을 ready 로 본다. 섞인 묶음의 한국어 원문은 기계 번역 그대로다.
+const echoEnglish = (response: ServerResponse, body: string) => { const items = JSON.parse(JSON.parse(body).messages[1].content) as { text: string }[];
+  response.end(JSON.stringify(replyBody(items.map(item => /[가-힣]/u.test(item.text) ? "Doc helps you manage documents" : item.text)))); };
+it("stores an unchanged already-English source as source_native and renders it as the ready source, beside a machine translation", exercise(async () => {
+  const english = await seed(["tagline"], "Color picker"), korean = await seed(["tagline"]);
+  await server(async ({ bodies, setReply }) => {
+    setReply(echoEnglish);
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
+    expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content).map((item: { text: string }) => item.text)).toEqual(["Color picker", "문서를 정리하는 도구"]);
+  });
+  const stored = async (id: number) => (await admin`SELECT status,text,attempts,source_locale,error_code,provenance FROM product_translations WHERE product_id=${id}`).map(row => ({ ...row }));
+  expect(await stored(english.product.id)).toEqual([{ status: "ready", text: "Color picker", attempts: 1, source_locale: "en", error_code: null,
+    provenance: { kind: "source_native", source: "ai_page", policy: "public-fields-v1" } }]);
+  expect(await stored(korean.product.id)).toEqual([{ status: "ready", text: "Doc helps you manage documents", attempts: 1, source_locale: "ko", error_code: null,
+    provenance: { kind: "machine", source: "ai_page", policy: "public-fields-v1" } }]);
+  const source = { id: english.product.id, name: "Doc", tagline: "Color picker", description: "문서를 정리하는 도구" };
+  const rows = await tracked(readProductTranslations([source], "en"));
+  expect(selectProductTranslation(source, "en", "tagline", rows.find(row => row.field === "tagline"))).toMatchObject({
+    text: "Color picker", lang: "en", translated: false, ready: true, pending: false, provenance: "source_native" });
+  const readiness = await tracked(readProductTranslationReadiness([source]));
+  expect(selectProductTranslation(source, "en", "tagline", readiness.find(row => row.field === "tagline")).ready).toBe(true);
+  // A ready row is never demanded again by the public read path.
+  expect(await tracked(requestProductTranslations([english.product.id], "en", ["tagline"]))).toBe(0);
+}), 20_000);
+
+// 배포 뒤 기존 실패 행: 시도가 남은 행(attempts<4)은 다음 재시도에서 저절로 source_native 가 되고, 시도를 다 쓴 행은 오케스트레이터의
+// 재대기(아래 SQL, 배포 전 실패만·장부가 쥔 멤버 제외)로 한 번 더 부른다. 배포 뒤 다시 english_uncertain 인 행은 재대기가 건드리지 않는다.
+it("recovers pre-deploy english_uncertain rows: due retries on their own, exhausted rows only through the bounded re-queue", exercise(async () => {
+  const retrying = await seed(["tagline"], "Color picker"), exhausted = await seed(["tagline"], "Habit tracker for teams");
+  await admin`UPDATE product_translations SET status='failed',error_code='rejected:english_uncertain',attempts=2,retry_at=clock_timestamp()-interval '1 second'
+    WHERE product_id=${retrying.product.id}`;
+  await admin`UPDATE product_translations SET status='failed',error_code='rejected:english_uncertain',attempts=4,retry_at=NULL WHERE product_id=${exhausted.product.id}`;
+  const [{ deployed }] = await admin`SELECT now()::timestamp::text AS deployed`;
+  // The operator SQL itself (scripts/ops/product-translation-english-sql.ts), audit row left out only because this fixture
+  // restores every table exactly; tests/integration/product-translation-english-ops-sql.test.ts runs it with the audit row.
+  const requeue = async () => (await admin.unsafe(englishUncertainRequeueSql({ before: deployed, actor: "fixture", audit: false })
+    .replace("ORDER BY t.product_id", `AND t.product_id = ANY('{${retrying.product.id},${exhausted.product.id}}'::int[]) ORDER BY t.product_id`)))[0].rows as number;
+  const state = async (id: number) => (await admin`SELECT status,attempts,error_code,provenance->>'kind' AS kind FROM product_translations WHERE product_id=${id}`).map(row => ({ ...row }));
+  await server(async ({ bodies, setReply }) => {
+    setReply(echoEnglish);
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
+    expect(await state(retrying.product.id)).toEqual([{ status: "ready", attempts: 3, error_code: null, kind: "source_native" }]);
+    expect(await state(exhausted.product.id)).toEqual([{ status: "failed", attempts: 4, error_code: "rejected:english_uncertain", kind: "machine" }]);
+    expect(await requeue()).toBe(1);
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(2);
+    expect(await state(exhausted.product.id)).toEqual([{ status: "ready", attempts: 4, error_code: null, kind: "source_native" }]);
+    // A post-deploy failure (updated_at after the deploy instant) is out of scope for the re-queue.
+    await admin`UPDATE product_translations SET status='failed',text=NULL,error_code='rejected:english_uncertain',attempts=4,updated_at=now()+interval '1 second'
+      WHERE product_id=${exhausted.product.id}`;
+    expect(await requeue()).toBe(0);
   });
 }), 30_000);
