@@ -59,7 +59,7 @@ import type { RenderClientResult } from "@/lib/screen-review/render-client";
 
 const now = new Date("2026-11-17T09:00:00.000Z");
 const settings = mergeWithDefaults({});
-const ENV = { SCREEN_RENDER_URL: "http://100.111.160.31:8791", SCREEN_RENDER_TOKEN: "t".repeat(40) };
+const ENV = { SCREEN_RENDER_URL: "http://100.64.0.9:8791", SCREEN_RENDER_TOKEN: "t".repeat(40) };
 
 const SOWONDEUNG_SHELL = "소원등 | 마음을 담아, 하늘로 날려요 소원등 마음을 담아, 하늘로 날려요 숲속의 밤을 준비하고 있어요...";
 const SOWONDEUNG_RENDERED = "탁자에서 소원등을 받아 보세요\n\nWASD / 방향키로 이동 · 탁자를 바라보고 E\n\n소원등\n\n마음을 담아, 하늘로 날려요\n\n숲속의 밤을 준비하고 있어요...";
