@@ -18,11 +18,21 @@ const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: ()
   connection: { application_name: 'ai2-priority-query-fixture' } });
 const candidates = new Map<number, string>(), votes = new Set<number>(), requests = new Set<string>();
 let baseline: unknown, serial = 0;
+// 장부 control·ai2 단계 행의 updated_at — 2차 심사 대기 시간은 그 뒤만 센다(DRAIN·단계 멈춤 제외). 이 파일은 한 시간 전부터 열린 것으로 두고 끝나면 되돌린다
+let opened: { control: string | null; stage: string | null } = { control: null, stage: null };
+const openSince = async (control: string, stage = control) => {
+  await admin`UPDATE model_capacity_control SET updated_at=clock_timestamp()-${control}::interval WHERE id=1`;
+  await admin`UPDATE pipeline_stage_modes SET updated_at=clock_timestamp()-${stage}::interval WHERE stage='ai2'`;
+};
 async function ledger() {
   return (await admin`SELECT to_jsonb(r) AS value FROM model_capacity_requests r ORDER BY queue_ordinal`).map(row => row.value);
 }
 beforeAll(async () => {
   ensureSchema(); baseline = await ledger();
+  const [control] = await admin`SELECT updated_at::text AS at FROM model_capacity_control WHERE id=1`;
+  const [stage] = await admin`SELECT updated_at::text AS at FROM pipeline_stage_modes WHERE stage='ai2'`;
+  opened = { control: control?.at ?? null, stage: stage?.at ?? null };
+  await openSince('1 hour');
   // The global pending scan must never claim unrelated fixture work.
   expect(await admin`SELECT id FROM second_reviews WHERE status='pending'`).toEqual([]);
 });
@@ -41,7 +51,12 @@ afterEach(async () => {
 beforeEach(() => { pinReviewRanks({ second: [[{ provider: 'local-direct', model: 'query-direct' }, { provider: 'local-direct', model: 'query-backup' }]] }); });
 // 2차 심사 대기 시간(runtime_settings jobs.second-review.reviewWaitMs, 2026-11-21) — 이 파일은 15초로 켠다(아래 시험의 기본 나이 16초가 넘긴다). 기본 0 은 대기 hint 가 없다
 beforeEach(() => { setRuntimeSettingsForTest({ version: 1, jobs: { 'second-review': { reviewWaitMs: 15_000 } } }); });
-afterAll(async () => { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); });
+afterAll(async () => {
+  try {
+    if (opened.control) await admin`UPDATE model_capacity_control SET updated_at=${opened.control}::timestamptz WHERE id=1`;
+    if (opened.stage) await admin`UPDATE pipeline_stage_modes SET updated_at=${opened.stage}::timestamptz WHERE stage='ai2'`;
+  } finally { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); }
+});
 async function vote(fallback = false) {
   const repo = `${prefix}/app-${++serial}`;
   const [candidate] = await db.insert(crawlCandidates).values({ repo, productUrl: `https://priority-${serial}.example`,
@@ -103,6 +118,10 @@ it('follows the review wait time: off finds no waiting hint, and a re-queued vot
   const before = await ledger();
   await run();
   expect(calls().slice(0, 3)).toEqual([reserved.id, requeued.id, young.id]);
+  // 장부를 10초 전에 다시 열었다(DRAIN 뒤) — 그 앞의 40초는 세지 않아 대기 hint 가 없다(PR #1023 리뷰 MINOR 4)
+  lifecycle.execute.mockReset(); await openSince('10 seconds', '1 hour');
+  try { await run(); } finally { await openSince('1 hour'); }
+  expect(calls().slice(0, 3)).toEqual([reserved.id, young.id, requeued.id]);
   // 꺼짐(기본 0): 넘길 대기 표가 없으니 대기 hint 를 찾지 않는다 — 예약 다음은 보통 차례(id 순)
   lifecycle.execute.mockReset(); setRuntimeSettingsForTest({});
   await run();

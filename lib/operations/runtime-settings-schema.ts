@@ -30,8 +30,12 @@ export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number
    * 2차 심사 대기 시간(ms, 2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」) — 2차 첫 표(root)가 제 모델 줄에서 이만큼 넘게
    * 기다렸는데 그 모델이 아직 가득 차 있으면 같은 투표자 칸의 다음 순위로 넘긴다(capacity_wait_timeout, lib/crawl/second-review-ownership.ts). 계약 모양
    * (abcllm·direct-openai-chat-v1·openai-chat-total-bound-v1)을 가리지 않는다. 기다림은 그 표가 그 모델로 마지막으로 보내진 뒤 처음 줄에 선 때부터 센다 —
-   * 대기 만료(장부 queueTtlMs)·정책 판 바뀜·재시작으로 대기 행이 새로 서도 이어서 센다(lib/llm/capacity-repository.ts ai2QueueWaitStartSql).
-   * 0 = 넘기지 않음(줄에서 계속 기다림 — 이 칸을 만들기 전 운영 abcllm 표의 동작). 범위 0~1시간. AI2 소비자가 30초 스냅숏으로 읽는다
+   * 대기 만료(장부 queueTtlMs)·정책 판 바뀜·재시작으로 대기 행이 새로 서도 이어서 센다(lib/llm/capacity-repository.ts ai2QueueWaitStartSql). 장부가 닫혀
+   * 있던 시간(DRAIN)·2차 단계가 멈췄던 시간은 세지 않는다(장부 control·ai2 단계 행이 마지막으로 바뀐 때부터).
+   * 0 = 넘기지 않음(줄에서 계속 기다림 — 이 칸을 만들기 전 운영 abcllm 표의 동작). 0 이면 AI2 소비자의 「오래 기다린 대기 hint」(예전 15초 행 나이 — abcllm 표는
+   * 그 hint 로 쪽 맨 앞에서 다시 물어졌을 뿐 넘어가지 않았다)도 찾지 않는다. 범위 0~1시간. AI2 소비자가 30초 스냅숏으로 읽는다.
+   * 되돌리기 주의: 이 칸이 저장 문서에 있으면 이 칸을 모르는 옛 웹은 어떤 실시간 한도 저장도 거절한다(unknown_job_knob) — 웹을 이 판 아래로 되돌리기 전에
+   * 새 웹에서 이 칸을 「기본값으로」 돌린다(저장 문서에서 키를 지운다). 옛 워커는 경고 한 번 뒤 이 칸을 무시한다
    */
   reviewWaitMs?: number;
   /**

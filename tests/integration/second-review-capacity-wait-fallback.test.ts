@@ -17,8 +17,8 @@ import { claimConsumerItemSecondReview, claimSecondReviewItemWithModelReservatio
 import { executeSecondReviewConsumerItem } from '@/lib/crawl/second-review-item-lifecycle';
 import { ai2GatewayServingContractHash, type Ai2GatewayServingContract } from '@/lib/crawl/second-review-serving-contract';
 import { modelCapacityPolicyHash, type ModelCapacityPolicy, type ModelCapacityRequestIdentity } from '@/lib/llm/capacity';
-import { cancelReservedModelSlot, markModelDispatchIndeterminate, requestAi2ItemModelSlot, requestModelSlot,
-  withdrawUndispatchedAi2ItemForFallback } from '@/lib/llm/capacity-repository';
+import { cancelReservedModelSlot, closeModelCapacityUnknownReview, markModelDispatchIndeterminate, requestAi2ItemModelSlot, requestModelSlot,
+  setModelCapacityMode, withdrawUndispatchedAi2ItemForFallback } from '@/lib/llm/capacity-repository';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { setRuntimeSettingsForTest } from '@/lib/operations/runtime-settings-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
@@ -141,9 +141,11 @@ const waitSetting = (ms: number) => setRuntimeSettingsForTest({ version: 1, jobs
 beforeEach(async () => {
   await cleanup(); contracts(); waitSetting(WAIT_MS);
   await db.insert(crawlSettings).values({ id: 1, values: settings() }).onConflictDoUpdate({ target: crawlSettings.id, set: { values: settings() } });
-  await admin`UPDATE pipeline_stage_modes SET mode='items',draining_from=NULL,writer_contract_version=1 WHERE stage='ai2'`;
+  // 장부·2차 단계는 한 시간 전부터 열려 있었다 — 2차 심사 대기 시간은 그 행들이 마지막으로 바뀐 때(OPEN 전환 등)보다 앞을 세지 않는다(아래 DRAIN 시험)
+  await admin`UPDATE pipeline_stage_modes SET mode='items',draining_from=NULL,writer_contract_version=1,updated_at=clock_timestamp()-interval '1 hour'
+    WHERE stage='ai2'`;
   await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,
-    policy_hash=${modelCapacityPolicyHash(policy)},cursor=0 WHERE id=1`;
+    policy_hash=${modelCapacityPolicyHash(policy)},cursor=0,updated_at=clock_timestamp()-interval '1 hour' WHERE id=1`;
 });
 afterEach(async () => { setRuntimeSettingsForTest(null); await cleanup(); });
 afterAll(async () => { try { await cleanup(); } finally { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); } });
@@ -374,10 +376,38 @@ it('starts the wait again after the vote was last sent to that model', async () 
   // 보낸 뒤로는 방금 줄에 섰을 뿐이다 — ①의 100초를 이어 세지 않는다(30초 문턱 아래)
   const before = await snapshot(requeued);
   expect(await fallbackWaitingSecondReview(value.intent, requeued)).toBe(false); expect(await snapshot(requeued)).toEqual(before);
+  // ④ 운영자가 그 미확정 행을 「검토 완료」로 닫는다 — 행은 withdrawn 이 되지만 dispatched_at·binding 이 남아 여전히 「보낸 행」이다(PR #1023 리뷰 MINOR 1).
+  // 상태로만 가르면 닫힌 행이 줄에만 섰던 행으로 들어가 ①의 100초부터 세어 바로 넘어갔다
+  expect(await closeModelCapacityUnknownReview({ requestId: sent, operator: 'fixture-operator', note: 'fixture review' })).toMatchObject({ kind: 'reviewed' });
+  expect(await admin`SELECT state, dispatched_at IS NOT NULL AS sent FROM model_capacity_requests WHERE request_id=${sent}::uuid`)
+    .toEqual([{ state: 'withdrawn', sent: true }]);
+  const reviewed = await snapshot(requeued);
+  expect(await fallbackWaitingSecondReview(value.intent, requeued)).toBe(false); expect(await snapshot(requeued)).toEqual(reviewed);
   // 보낸 뒤의 기다림은 센다: 문턱을 1ms 로 낮추면 넘긴다
   waitSetting(1);
   expect(await fallbackWaitingSecondReview(value.intent, requeued)).toBe(true);
   await expectHandoff({ ...value, requestId: requeued }, 'capacity_wait_timeout');
+});
+it('does not count a DRAIN window or a paused AI2 stage: the wait restarts from the last reopening', async () => {
+  const value = await fixture();
+  // 배포 창 전에 100초 기다린 표 — 창(DRAIN → OPEN, 실제 장부 모드 전환) 뒤에는 다시 연 때부터 센다(PR #1023 리뷰 MINOR 4)
+  await age(value.requestId, 100);
+  await db.transaction(tx => setModelCapacityMode(tx, 'draining'));
+  await db.transaction(tx => setModelCapacityMode(tx, 'open'));
+  expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid`).toEqual([{ state: 'waiting' }]);
+  const before = await snapshot(value.requestId);
+  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(false); expect(await snapshot(value.requestId)).toEqual(before);
+  // 다시 연 지 20초 — 아직 30초 문턱 아래(그 앞의 100초는 세지 않는다)
+  await admin`UPDATE model_capacity_control SET updated_at=clock_timestamp()-interval '20 seconds' WHERE id=1`;
+  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(false); expect(await snapshot(value.requestId)).toEqual(before);
+  // 다시 연 지 31초지만 2차 단계가 5초 전에야 items 로 돌아왔다 — 단계가 멈췄던 시간도 세지 않는다
+  await admin`UPDATE model_capacity_control SET updated_at=clock_timestamp()-interval '31 seconds' WHERE id=1`;
+  await admin`UPDATE pipeline_stage_modes SET updated_at=clock_timestamp()-interval '5 seconds' WHERE stage='ai2'`;
+  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(false); expect(await snapshot(value.requestId)).toEqual(before);
+  // 둘 다 31초 전 — 넘긴다
+  await admin`UPDATE pipeline_stage_modes SET updated_at=clock_timestamp()-interval '31 seconds' WHERE stage='ai2'`;
+  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(true);
+  await expectHandoff(value, 'capacity_wait_timeout');
 });
 it('rejects a capacity wait handoff without a valid review wait time at the ledger', async () => {
   const value = await fixture(); await age(value.requestId);

@@ -3096,18 +3096,31 @@ export async function removeCapacityRoutes(tx: ProductTransaction, value: { rout
 /**
  * 2차 표 하나가 그 경로·공급자·모델 줄에서 이어서 기다리기 시작한 시각(timestamptz, 없으면 NULL) — 2차 심사 대기 시간(runtime_settings
  * jobs.second-review.reviewWaitMs, 2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」)을 재는 곳.
- * 같은 표(logical work key)·경로·공급자·모델에서 줄에만 섰던 행(waiting·withdrawn — 보낸 적 없음) 중 가장 이른 접수 시각이되, 그 표가 그 모델로
- * 마지막으로 보내진(dispatched·settled·indeterminate) 뒤에 선 것만 센다. 대기 행 하나의 나이(queued_at)만 보면 대기 만료(정책 queueTtlMs)·
- * 정책 판 바뀜·워커 재시작으로 행이 새로 설 때마다 0 부터 다시 세어, 대기 유효 시간보다 긴 대기 시간에는 영영 닿지 않는다.
- * 인자는 바깥 행의 칸 — 열(AI2 소비자 hint 의 대기 행) 또는 값(물림 TX 가 잠근 행). 같은 표의 행은 logical key 색인으로 찾는다.
+ * 같은 표(logical work key)·경로·공급자·모델에서 줄에만 섰던 행(waiting·withdrawn 이고 보낸 근거가 없는 행) 중 가장 이른 접수 시각이되, 그 표가
+ * 그 모델로 마지막으로 보내진 뒤에 선 것만 센다. 대기 행 하나의 나이(queued_at)만 보면 대기 만료(정책 queueTtlMs)·정책 판 바뀜·워커 재시작으로
+ * 행이 새로 설 때마다 0 부터 다시 세어, 대기 유효 시간보다 긴 대기 시간에는 영영 닿지 않는다.
+ * - 「보냄」은 상태가 아니라 근거로 가른다(2026-11-21 PR #1023 리뷰 MINOR 1): dispatched_at 이나 dispatch binding 이 있거나 상태가
+ *   dispatched·settled·indeterminate 인 행. 사람 「검토 완료」(closeModelCapacityUnknownReview)·회수(releaseModelDispatchWithEvidence)는
+ *   보낸 행을 withdrawn 으로 닫되 dispatched_at·binding 을 남긴다 — 상태만 보면 그 행이 「줄에만 섰던 행」으로 들어가 보내기 전부터 다시 셌다.
+ * - 장부가 닫혀 있던 시간과 2차 단계가 멈췄던 시간은 세지 않는다(같은 리뷰 MINOR 4): 시작은 model_capacity_control.updated_at 과
+ *   pipeline_stage_modes(ai2).updated_at 보다 앞설 수 없다. 두 칸은 그 행의 상태가 바뀔 때만 움직인다 — OPEN 전환(setModelCapacityMode·DR 허가
+ *   열기)·DRAIN·정책 저장·OPEN 중 route 덧붙이기/빼기, 단계 전환·writer 계약 판 올림. 그래서 OPEN 으로 마지막으로 돌아온 시각보다 늘 같거나 늦다
+ *   (관리자 콘솔도 이 칸을 「모드가 그렇게 된 때」로 보인다). OPEN 중 route 저장은 모두의 시계를 그때부터 다시 세게 한다 — 늦게 넘길 뿐 일찍 넘기지 않는다.
+ * 인자는 바깥 행의 칸 — 열(AI2 소비자 hint 의 대기 행) 또는 값(물림 TX 가 잠근 행). 같은 표의 행은 logical key 색인으로 찾는다. 셀 행이 없으면 NULL
+ * (비교는 거짓 — 넘기지 않는다).
  */
 export function ai2QueueWaitStartSql(row: Readonly<{ logicalWorkKey: SQLWrapper | string; routeId: SQLWrapper | string;
   provider: SQLWrapper | string; model: SQLWrapper | string }>): SQL {
   const same = (alias: "w" | "d") => sql`${sql.raw(alias)}.logical_work_key = ${row.logicalWorkKey} AND ${sql.raw(alias)}.route_id = ${row.routeId}
     AND ${sql.raw(alias)}.provider = ${row.provider} AND ${sql.raw(alias)}.model = ${row.model}`;
-  return sql`(SELECT min(w.queued_at) FROM model_capacity_requests w WHERE ${same("w")} AND w.state IN ('waiting','withdrawn')
-    AND w.queued_at > coalesce((SELECT max(coalesce(d.dispatched_at, d.queued_at)) FROM model_capacity_requests d
-      WHERE ${same("d")} AND d.state IN ('dispatched','settled','indeterminate')), '-infinity'::timestamptz))`;
+  const sent = (alias: "w" | "d") => sql`(${sql.raw(alias)}.dispatched_at IS NOT NULL OR ${sql.raw(alias)}.dispatch_binding IS NOT NULL
+    OR ${sql.raw(alias)}.state IN ('dispatched','settled','indeterminate'))`;
+  return sql`(SELECT CASE WHEN min(w.queued_at) IS NULL THEN NULL ELSE GREATEST(min(w.queued_at),
+      (SELECT c.updated_at FROM model_capacity_control c WHERE c.id = 1),
+      (SELECT s.updated_at FROM pipeline_stage_modes s WHERE s.stage = 'ai2')) END
+    FROM model_capacity_requests w WHERE ${same("w")} AND w.state IN ('waiting','withdrawn') AND NOT ${sent("w")}
+      AND w.queued_at > coalesce((SELECT max(coalesce(d.dispatched_at, d.queued_at)) FROM model_capacity_requests d
+        WHERE ${same("d")} AND ${sent("d")}), '-infinity'::timestamptz))`;
 }
 /** 2차 심사 대기 시간의 범위(ms) — runtime_settings jobs.second-review.reviewWaitMs 의 켠 값(0 = 끔은 부르는 쪽이 거른다)과 같다 */
 const AI2_REVIEW_WAIT_MAX_MS = 3_600_000;
