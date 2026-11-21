@@ -709,6 +709,17 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   return call;
 }
 
+/**
+ * 이 준비 호출의 표가 줄에서 15초 넘게 기다리면 같은 칸의 다음 순위로 넘기는가(capacity_wait_timeout, second-review-model-capacity.ts) — 장비 이름 칸이 있는
+ * 엔진 직접 계약(direct-openai-chat-v1, #664 의 GPU 직접 주 모델 + 대체 설계)의 표만이다. abcllm 계약의 표와, 그 이름표만 local-direct 로 바꾼
+ * openai-chat-total-bound-v1 의 표는 예전 abcllm 표처럼 줄에서 기다린다(2026-11-21 이름표 정리 — 계약을 다시 저장해도 누가 그 표를 받는지가 바뀌지 않게).
+ * 판정은 준비한 그 계약으로 한다(준비 뒤에 계약 스냅숏이 바뀌어도 같은 답). 이 모듈이 준비하지 않은 값이면 false.
+ */
+export function ai2CallReroutesOnCapacityWait(call: PreparedAi2GatewayCall): boolean {
+  const contract = preparedAi2Calls.get(call)?.contract;
+  return contract?.provider === "local-direct" && !isTotalBoundDirectContract(contract);
+}
+
 /** Only the original native AI2 capability has historical evidence. */
 export function readAi2GatewayTerminal(value: unknown): Ai2GatewayTerminalEvidence | null {
   return value && typeof value === "object" ? ai2Terminals.get(value as Ai2GatewayTerminal) ?? null : null;

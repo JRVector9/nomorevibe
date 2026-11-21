@@ -22,7 +22,12 @@ import {
  */
 
 const L = HELPER_DECISION_LIMITS;
-/** AI2 주 투표자의 장부 경로(§3.4): policy route `second-review` 중 local-direct. 도우미 장비 자신의 같은 경로(PR 2c)는 뺀다. */
+/**
+ * AI2 주 투표자의 장부 경로(§3.4): policy route `second-review` 중 local-direct. 도우미 장비 자신의 같은 경로(PR 2c)는 뺀다.
+ * 2026-11-21 abcllm 이름표 정리: 2차 abcllm 계약을 openai-chat-total-bound-v1(local-direct)로 다시 저장하면 그 route(같은 장비)도 여기 들고 그 대기 행도
+ * ai2Waiting 에 든다 — ai2 도우미 배정(mode shadow·live)이 있으면 「주 장비 가득」 판정의 장비 목록이 바뀐다. 그 표는 줄에서 기다리고 다음 순위로 넘기지
+ * 않는다(second-review-model-capacity.ts ai2CallReroutesOnCapacityWait). 2차 전환 전 확인 항목이다(PR 본문).
+ */
 export const AI2_PRIMARY_ROUTE = Object.freeze({ routeId: "second-review", provider: "local-direct" } as const);
 /** 배정마다 건강 창에서 읽는 장부 행 상한(도우미는 틱마다 per_tick ≤ 16 건이라 30분 창에 이보다 많지 않다). */
 export const HELPER_LEDGER_ROWS_MAX = 500;
