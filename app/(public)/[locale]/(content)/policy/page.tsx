@@ -24,6 +24,9 @@ import { analyticsEnabled } from "@/lib/analytics/config";
  * - 내려달라는 요청: 접수 즉시 noindex(indexing.ts 2번), 24시간 안 확인(takedown-view.ts TAKEDOWN_OVERDUE_HOURS)
  * 공개 연락처는 CONTACT_EMAIL 하나다(2026-10-22 사용자 결정으로 D5 의 "공개 이메일 없음"을 바꿈 — Bluesky 개발자 지침 5).
  * SNS 화제·자료 출처·삭제 요청·신고를 받고, 프로젝트에 관한 요청은 그대로 사이트 안의 요청 폼으로 받는다.
+ * - 자동 수집·AI 학습(#automation, 2026-11-14 「외부 수집 방지 2단계」 초안 — 법률 검토 전, 병합 금지 Draft PR):
+ *   학습용 AI 봇은 막고 검색 색인·출처를 밝힌 AI 답변 인용은 허용한다(robots.txt·Content-Signal과 같은 기준).
+ *   방어 경로·제한 수치는 여기 적지 않는다. TODO(사람 결정): 시행일·개정 고지·법률 검토.
  * - 방문 분석(#analytics, 2026-10-22): 모으는 것·목적·처리자·보관·끄는 법. 실제 규칙은 lib/analytics(events·sanitize·consent)와
  *   docs/operations/2026-10-22-google-analytics.md — 보내는 이벤트나 보관 기간을 바꾸면 여기도 고친다.
  */
@@ -50,6 +53,7 @@ export default async function PolicyPage() {
     { id: "unclaimed", title: unclaimedLabel },
     { id: "takedown", title: t("takedown.title") },
     { id: "analytics", title: t("analytics.title") },
+    { id: "automation", title: t("automation.title") },
     { id: "contact", title: t("contact.title") },
   ];
 
@@ -151,6 +155,19 @@ export default async function PolicyPage() {
         {/* 이 브라우저의 상태와 끄기·다시 켜기 — 브라우저에서만 그린다 */}
         <AnalyticsOptOut variant="policy" enabled={analyticsEnabled()} />
         <p>{t("analytics.contact")}</p>
+      </Section>
+
+      <Section id="automation" title={t("automation.title")}>
+        <p>{t("automation.intro")}</p>
+        <ul>
+          <li>{t("automation.scraping")}</li>
+          <li>{t("automation.copying")}</li>
+          <li>{t("automation.training")}</li>
+        </ul>
+        <p>{t("automation.allowed")}</p>
+        <p>{t("automation.ownTools")}</p>
+        <p>{t("automation.measures")}</p>
+        <p>{t("automation.contact")}</p>
       </Section>
 
       <Section id="contact" title={t("contact.title")}>
