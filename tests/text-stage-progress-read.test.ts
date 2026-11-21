@@ -7,7 +7,7 @@ import { readTextStageProgress, resetTextReasonProgressForTest, TEXT_REASON_MAX_
 type Group = 'reason' | 'other';
 const fixture = vi.hoisted(() => ({ transactions: [] as Array<{ group: Group | null; config: unknown; statements: string[] }>,
   failure: {} as Partial<Record<Group | 'home', unknown>>, waiting: 3, hold: null as Promise<void> | null,
-  warn: [] as Array<{ event: string; fields: unknown }> }));
+  warn: [] as Array<{ event: string; fields: unknown }>, stdout: [] as string[] }));
 vi.mock('@/lib/db', () => ({ db: {
   transaction: async (load: (tx: { execute(query: SQL): Promise<unknown> }) => Promise<unknown>, config: unknown) => {
     const record = { group: null as Group | null, config, statements: [] as string[] }; fixture.transactions.push(record);
@@ -29,7 +29,6 @@ vi.mock('@/lib/domain/products/korean-taglines', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/domain/products/korean-taglines')>(),
   homeListSlugs: async () => { if (fixture.failure.home) throw fixture.failure.home; return []; },
 }));
-vi.mock('@/lib/observability/logger', () => ({ logger: { warn: (event: string, fields: unknown) => { fixture.warn.push({ event, fields }); } } }));
 
 const START = Date.parse('2026-11-21T00:00:00.000Z');
 // drizzle 이 감싼 드라이버 오류 꼴 — message 에 SQL 본문과 입력값이 들어 있다
@@ -41,9 +40,16 @@ const stage = (rows: Awaited<ReturnType<typeof readTextStageProgress>>, key: str
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(START);
   resetTextReasonProgressForTest();
-  fixture.transactions.length = 0; fixture.failure = {}; fixture.waiting = 3; fixture.hold = null; fixture.warn.length = 0;
+  fixture.transactions.length = 0; fixture.failure = {}; fixture.waiting = 3; fixture.hold = null; fixture.warn.length = 0; fixture.stdout.length = 0;
+  // 조각 실패 줄은 stderr 로만 간다 — 관문 스크립트의 stdout 은 보고 JSON 한 줄이어야 한다(배포 도구가 stdout 전체를 JSON 으로 읽는다)
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+    const { ts, level, event, ...fields } = JSON.parse(String(chunk)) as { ts: string; level: string; event: string };
+    expect(level).toBe('warn'); expect(Number.isNaN(Date.parse(ts))).toBe(false);
+    fixture.warn.push({ event, fields }); return true;
+  });
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { fixture.stdout.push(String(chunk)); return true; });
 });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { expect(fixture.stdout).toEqual([]); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it('merges exact reason and other queues from separate bounded read-only statements', async () => {
   const rows = await readTextStageProgress();

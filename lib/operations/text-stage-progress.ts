@@ -9,7 +9,6 @@ import { homeListSlugs, koreanQueuePredicates } from '@/lib/domain/products/kore
 import { productTranslationEligible } from '@/lib/domain/products/translations';
 import { productTranslationPolicy } from '@/lib/domain/products/translation-policy';
 import { profileGenerationRetryAllowedSql } from '@/lib/domain/products/search-profile-retry';
-import { logger } from '@/lib/observability/logger';
 import { progressReadFailure, TEXT_PROGRESS_STAGE_JOBS, type ProgressReadFailure, type ProgressStageInput, type TextProgressStageKey } from './worker-progress';
 
 /** Same word ratio as NEEDS_KOREAN, without a correlated set-returning aggregate for every product. */
@@ -186,10 +185,14 @@ function readGroup(group: 'reason' | 'other', home: readonly string[]) {
   }, { accessMode: 'read only' });
 }
 
-/** 실패한 조각 — 이름과 SQLSTATE·오류 이름만 로그 한 줄로 남기고 그대로 돌려준다(SQL 본문·입력값·message 는 적지 않는다) */
+/**
+ * 실패한 조각 — 이름과 SQLSTATE·오류 이름만 로그 한 줄로 남기고 그대로 돌려준다(SQL 본문·입력값·message 는 적지 않는다).
+ * 이 줄은 **stderr** 로 쓴다: 배포 관문 스크립트(check-worker-progress·check-failover-readiness)의 stdout 은 보고 JSON 한 줄이어야 한다 —
+ * 배포 도구가 stdout 전체를 JSON 으로 읽으므로, 공용 로거(warn 은 stdout)로 쓰면 조각이 실패한 바로 그때 보고 전체를 읽지 못한다.
+ */
 function pieceFailed(piece: 'text-reason' | 'text-other', error: unknown): ProgressReadFailure {
   const failure = progressReadFailure(piece, error);
-  logger.warn('progress.piece_failed', failure);
+  process.stderr.write(`${JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'progress.piece_failed', ...failure })}\n`);
   return failure;
 }
 
