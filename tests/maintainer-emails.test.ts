@@ -64,6 +64,16 @@ describe("ownerMaintainerEmails — 저장소의 지금 주인(개인 계정)의
     expect(emails.map(row => row.email)).toEqual(["lee@fixture.nomorevibe.com"]);
   });
 
+  it("이름을 200자에서 자를 때 서로게이트 쌍 가운데가 잘려도 jsonb 가 받는 well-formed 글로 남긴다(22P02 회귀)", () => {
+    const name = "a".repeat(199) + "😀😀";
+    const [row] = ownerMaintainerEmails([commit({ authorName: name })], user()).emails;
+    expect(row.name).toBe("a".repeat(199));
+    expect(row.name!.isWellFormed()).toBe(true);
+    // 가운데의 짝 없는 서로게이트도 대체 문자로 다듬어 jsonb 로 넘길 수 있다
+    const [lone] = ownerMaintainerEmails([commit({ authorName: "Kim \uD83D Lee" })], user()).emails;
+    expect(lone.name!.isWellFormed()).toBe(true);
+  });
+
   it("주인 커밋이 있어도 남길 주소가 없으면 까닭을 따로 센다(비공개 주소·AI 도구 작성)", () => {
     expect(ownerMaintainerEmails([commit({ authorEmail: "1+kim@users.noreply.github.com" })], user()))
       .toEqual({ emails: [], skip: "no_usable_address", ownerLogin: "kim" });

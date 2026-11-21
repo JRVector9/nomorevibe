@@ -77,8 +77,12 @@ export function maskMaintainerEmail(email: string): string {
   return `${email[0]}***${email.slice(at)}`;
 }
 
+/**
+ * 주소 행은 jsonb(set_config → jsonb_to_recordset)로 넘어간다 — slice 가 서로게이트 쌍 가운데를 자르면 짝 없는 서로게이트가 남아
+ * jsonb 가 22P02 로 묶음 전체를 거절한다. 자른 뒤 toWellFormed 로 다듬고, 다듬어 생긴 대체 문자는 끝에서 뗀다.
+ */
 const clip = (value: string | null | undefined, max: number) => {
-  const text = (value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max).trim();
+  const text = (value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max).toWellFormed().replace(/�+$/u, '').trim();
   return text || null;
 };
 
