@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { authSecret, currentAdmin } from "@/lib/auth/admin";
 import { formatDetailTime } from "@/lib/format/time";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { listExhaustedKeywordGenerations } from "@/lib/operations/keyword-generation-recovery";
 import { KEYWORD_GENERATION_RECOVERY_HREF, stagePanelHref } from "@/lib/operations/stage-panel-catalog";
@@ -23,7 +24,7 @@ export default async function KeywordGenerationRecoveryPage({ searchParams }: {
   const secret = authSecret();
   const token = secret && !adminWorkspaceReadOnly() ? jobControlCsrf(admin, secret) : null;
 
-  return <main className="mx-auto max-w-4xl space-y-4 p-5">
+  return <main className="mx-auto max-w-4xl space-y-4 p-5"><PageStamp />
     <Link prefetch={false} href={stagePanelHref("keywords")} className="underline">키워드 등록 단계로</Link>
     <h1 className="text-[22px] font-semibold">키워드 생성 복구</h1>
     <p className="admin-page-lead text-fg-2">생성 한도에 걸린 제품을 한 건씩 다시 대기열에 넣을 수 있습니다. 생성에 성공할 때까지 기존 검색 키워드는 유지됩니다.</p>

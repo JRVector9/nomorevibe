@@ -196,6 +196,8 @@ const WAIT_REASONS: Readonly<Record<string, WaitReason>> = {
   capacity: "capacity", queue_full: "capacity", route_quota: "capacity", model_quota: "capacity",
   deferred: "retry", rate_limited: "retry", model_paused: "retry",
 };
+/** 관측 사유 문자열은 바깥 값이다 — 객체 기본 속성(constructor 등)과 겹쳐도 대기로 읽지 않게 자기 칸만 본다. */
+const waitReasonOf = (code: string): WaitReason | undefined => Object.hasOwn(WAIT_REASONS, code) ? WAIT_REASONS[code] : undefined;
 
 function slotsOf(def: AiTaskDef, inputs: LlmInputs, fresh: LlmRuntime | null): SlotSeen[] {
   return Array.from({ length: def.slots }, (_, index) => index + 1).map((slot) => {
@@ -203,12 +205,12 @@ function slotsOf(def: AiTaskDef, inputs: LlmInputs, fresh: LlmRuntime | null): S
       const connection = inputs.connections?.find((entry) => entry.id === row.connectionId);
       // 칸이 하나인 작업만 실행 관측을 순위에 붙일 수 있다.
       const observations = def.slots === 1 ? fresh?.unusable.filter(entry => entry.rank === row.rank) ?? [] : [];
-      const permanent = observations.find(entry => !WAIT_REASONS[entry.code]);
+      const permanent = observations.find(entry => !waitReasonOf(entry.code));
       const seen = permanent ?? observations[0];
       const configuredProblem = problemOf(row, connection);
       // A busy observation must not hide a disabled rank or missing key. A permanent reason on
       // this same rank wins over a temporary counter regardless of observation order.
-      const waiting = !configuredProblem && seen && !permanent ? WAIT_REASONS[seen.code] : undefined;
+      const waiting = !configuredProblem && seen && !permanent ? waitReasonOf(seen.code) : undefined;
       return { rank: row.rank, connection: connection?.label ?? "연결 없음", model: row.model,
         problem: configuredProblem ?? (seen?.code === "deferred" ? "재시도 예약 중" : seen?.text) ?? null, ...(waiting ? { waiting } : {}) };
     });
@@ -293,8 +295,8 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
     const unavailable = fresh?.pool && fresh.degraded?.code === "all_ranks_unusable" ? fresh.degraded : null;
     const waitingMembers = unavailable ? members.flatMap(member => {
       const reasons = fresh!.pool!.unusable.filter(row => row.memberId === member.memberId);
-      return !member.problem && reasons.length && reasons.every(row => WAIT_REASONS[row.code])
-        ? [reasons.every(row => WAIT_REASONS[row.code] === "capacity") ? "capacity" as const : "retry" as const] : [];
+      return !member.problem && reasons.length && reasons.every(row => waitReasonOf(row.code))
+        ? [reasons.every(row => waitReasonOf(row.code) === "capacity") ? "capacity" as const : "retry" as const] : [];
     }) : [];
     const waitReason = waitingMembers.length ? waitingMembers.every(reason => reason === "capacity") ? "capacity" as const : "retry" as const : undefined;
     return { task: def.id, label: def.label, live, slots: [], pool, used, active, usedWhy,
