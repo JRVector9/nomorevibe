@@ -7,10 +7,11 @@ import { itemBindingHash, type Ai2ItemBinding } from '@/lib/jobs/items/types';
 import { ai2DispatchBindingHash, ai2ModelDispatchSchema } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 const mocks = vi.hoisted(() => ({ pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(),
-  prepare: vi.fn(), serving: vi.fn(), native: vi.fn(), atomic: vi.fn(), fallback: vi.fn(), compatibility: vi.fn(), consumer: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), transport: vi.fn() }));
+  prepare: vi.fn(), reroutes: vi.fn(), serving: vi.fn(), native: vi.fn(), atomic: vi.fn(), fallback: vi.fn(), compatibility: vi.fn(), consumer: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), transport: vi.fn() }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ findOwnPendingModelRequest: mocks.pending, requestAi2ItemModelSlot: mocks.request,
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown, reconcileAi2GatewayTerminal: mocks.reconcile }));
-vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi2GatewayCall: mocks.prepare, reviewWithReservedAi2Gateway: mocks.native }));
+vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi2GatewayCall: mocks.prepare, reviewWithReservedAi2Gateway: mocks.native,
+  ai2CallReroutesOnCapacityWait: mocks.reroutes }));
 vi.mock('@/lib/crawl/second-review-serving-contract', async original => ({ ...await original<typeof import('@/lib/crawl/second-review-serving-contract')>(),
   resolveAi2GatewayServingContract: mocks.serving }));
 vi.mock('@/lib/crawl/second-review-ownership', async load => ({ ...await load<typeof import('@/lib/crawl/second-review-ownership')>(),
@@ -48,6 +49,8 @@ const terminal = Object.freeze({ kind: 'ai2_gateway_terminal' as const });
 function gate<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
 beforeEach(() => {
   vi.resetAllMocks(); value = fixture(); mocks.prepare.mockReturnValue(value.call); mocks.serving.mockReturnValue(null); mocks.pending.mockResolvedValue(null);
+  // 준비한 계약이 줄 대기 대체를 받는 모양인가(실제 판정은 agent-review-gateway 의 준비 상태) — 아래 local-direct 시험들은 장비 칸이 있는 직접 계약의 표다
+  mocks.reroutes.mockReturnValue(true);
   mocks.request.mockResolvedValue({ kind: 'granted', reservation: value.reservation });
   mocks.atomic.mockResolvedValue({ kind: 'claimed', row: value.row, input: value.input, receipt: value.receipt, dispatch: value.dispatch });
   mocks.compatibility.mockRejectedValue(value.intent); mocks.consumer.mockRejectedValue(value.intent);
@@ -101,6 +104,16 @@ it('hands off only an existing local waiting request after the atomic helper acc
   expect(await claimSecondReviewModelCapacity(intent)).toEqual({ kind: 'capacity_fallback' });
   expect(mocks.fallback).toHaveBeenCalledExactlyOnceWith(intent, requestId);
   expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+});
+it('a waiting vote whose prepared contract does not reroute on capacity (abcllm, openai-chat-total-bound-v1) keeps waiting', async () => {
+  // 2026-11-21 abcllm 이름표 정리 2단계: 줄 대기 대체는 provider 글자가 아니라 준비한 계약의 모양으로 정한다(ai2CallReroutesOnCapacityWait)
+  for (const intent of [localIntent(), value.intent]) {
+    mocks.reroutes.mockReset().mockReturnValue(false); mocks.fallback.mockReset().mockResolvedValue(true);
+    mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' }); mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+    await expect(claimSecondReviewModelCapacity(intent)).rejects.toMatchObject({ reason: 'capacity' });
+    expect(mocks.reroutes).toHaveBeenCalledExactlyOnceWith(value.call);
+    expect(mocks.fallback).not.toHaveBeenCalled(); expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
+  }
 });
 it('capacity handoff returns a routing change without a model call, item lease or verdict writer', async () => {
   mocks.consumer.mockRejectedValue(localIntent()); mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' });

@@ -54,8 +54,9 @@ export type DirectServingContract = Readonly<z.infer<ReturnType<typeof directSer
  * 엔진에 바로 보내는 총량 상한 계약(2026-11-21 abcllm 이름표 정리 1단계) — provider 는 local-direct, 열 경로가 같은 모양을 쓴다.
  *
  * - 「API 주소 + 모델」만 적는다: 장비 이름 칸(backendId·physicalGroup)과 게이트웨이 표지(strictTerminalOptIn)가 없다.
- * - wire 는 그 경로가 abcllm 총량 상한 계약으로 보내는 바이트 그대로다(경로의 wire + engineModel). 엄격 terminal 헤더만 나가지 않는다.
- *   장부는 abcllm 계약처럼 totalTokenBound(C) 전부를 계량한다.
+ * - wire 는 그 경로가 abcllm 총량 상한 계약으로 보내는 바이트(경로의 wire + engineModel)에서 게이트웨이 전용 칸 context_strategy 하나만 뺀 것이다
+ *   (소유자 결정 D-6, 2026-11-21 — 그 칸이 없는 번역 4경로·카테고리 분류는 바이트까지 같다). reasoning_effort·max_tokens·chat_template_kwargs 는 그대로다.
+ *   엄격 terminal 헤더는 나가지 않는다. 장부는 abcllm 계약처럼 totalTokenBound(C) 전부를 계량한다.
  * - tokenizer 묶음이 있을 때만 보내기 전에 엔진 tokenizer(같은 origin 의 /tokenize)로 입력 + 출력 상한 ≤ requestTokenBound 를 확인한다.
  *   묶음이 없으면 확인하지 않는다(tokenizer 가 없는 서버).
  * - maxOutputTokens 가 있으면 요청의 max_tokens 를 그 값으로 묶는다: text 경로는 경로의 값과 견줘 작은 쪽, 심사 두 경로는 그 값 그대로

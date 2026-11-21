@@ -289,7 +289,7 @@ function envelope() { return { id: 'native-ai2-response', object: 'chat.completi
   usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }, usage_provenance: 'upstream_reported' }; }
 async function localServer(run: (state: { posts: string[]; received: Promise<void>; release: () => void;
   setReply: (reply: (response: ServerResponse) => void) => void }) => Promise<void>, held = false, requestedModel = model,
-  transport: 'abcllm' | 'local-direct' = 'abcllm', budgeted = false) {
+  transport: 'abcllm' | 'local-direct' | 'total-bound' | 'total-bound-tokenizer' = 'abcllm', budgeted = false) {
   const gate = latch(), received = latch(), pending = new Set<Promise<unknown>>(), posts: string[] = [];
   let reply: (response: ServerResponse) => void = response => { response.end(JSON.stringify(envelope())); };
   const http = createServer((request, response) => {
@@ -321,6 +321,12 @@ async function localServer(run: (state: { posts: string[]; received: Promise<voi
       endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
       tokenizerEndpoint: `http://127.0.0.1:${address.port}/tokenize`, totalTokenBound: 50_000,
       requestTokenBound: 32_000, maxOutputTokens: 10_000, backendId: 'local', physicalGroup: 'engine', deploymentRevision: 'loopback-direct' };
+    // 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, abcllm 이름표 정리) — 장비 이름 칸(backendId·physicalGroup)이 없다. tokenizer 묶음은 선택이다
+    if (transport === 'total-bound' || transport === 'total-bound-tokenizer') serving.contract = { version: 1, protocol: 'openai-chat-total-bound-v1',
+      routeId: 'second-review', provider: 'local-direct', model: requestedModel, responseModel: 'local-engine', deploymentRevision: 'loopback-total-bound',
+      endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, totalTokenBound: 50_000,
+      ...(transport === 'total-bound-tokenizer' ? { maxOutputTokens: 10_000,
+        tokenizer: { endpoint: `http://127.0.0.1:${address.port}/tokenize`, requestTokenBound: 32_000 } } : {}) };
     await run({ posts, received: received.promise, release: gate.resolve, setReply: value => { reply = value; } });
   } catch (error) { errors.push(error); }
   finally {
@@ -501,6 +507,29 @@ it('direct primary commits exact item ownership and native settlement with a 32k
     expect(await vote(f.row.id)).toMatchObject({ status: 'agreed', second_decision: 'approve', failure_count: 0 });
   }, false, model, 'local-direct');
 }));
+
+/*
+ * abcllm 이름표 정리 2단계(1단계 리뷰의 시험 공백 ①): 새 모양 계약에는 장비 이름 칸이 없다. 2차 claim 은 그 계약에서 장부 매핑의 장비를 견주지 않고
+ * (second-review-ownership.ts 의 `"backendId" in serving` 가드), abcllm 계약처럼 정책 route 가 있는지만 본다. 가드를 예전 꼴(provider 만 보기)로 되돌리면
+ * undefined 장비 칸이 route 와 달라 provider_contract_unavailable 로 미뤄져 이 시험이 실패한다.
+ */
+it.each(['total-bound', 'total-bound-tokenizer'] as const)('direct primary on the new %s shape commits item ownership and native settlement through the real consumer', transport =>
+  exercise(async () => {
+    directPrimary = true; await install(); const f = await fixture();
+    await localServer(async ({ posts }) => {
+      expect(await execute(f.row.id)).toEqual({ state: 'recorded' }); expect(posts).toHaveLength(1);
+      const body = JSON.parse(posts[0]);
+      // D-6: 게이트웨이 전용 context_strategy 만 빠지고 abcllm raw 심사 wire 의 나머지(추론 강도·thinking 끔)는 그대로다
+      expect(body).toMatchObject({ model, reasoning_effort: 'low', chat_template_kwargs: { enable_thinking: false } });
+      expect(body).not.toHaveProperty('context_strategy');
+      if (transport === 'total-bound-tokenizer') expect(body.max_tokens).toBe(10_000);
+      const [request] = await capacityRows();
+      expect(request).toMatchObject({ provider: 'local-direct', state: 'settled', logical_work_key: `ai2:${f.candidate.id}:${f.root.id}`,
+        provider_budget_id: 'local', group_id: 'engine', dispatch_binding: { provider: 'local-direct', chargedTokens: 50_000 },
+        terminal_evidence: { actualUsage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 } } });
+      expect(await vote(f.row.id)).toMatchObject({ status: 'agreed', second_decision: 'approve', failure_count: 0, provider: 'local-direct' });
+    }, false, model, transport);
+  })());
 
 it('verified direct completion with invalid business JSON falls back once to a budgeted abcLLM review under the same vote fence', exercise(async () => {
   directPrimary = true; await install(); const f = await fixture();

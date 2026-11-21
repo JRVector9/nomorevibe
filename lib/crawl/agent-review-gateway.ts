@@ -182,14 +182,23 @@ function directReviewWire(contract: { model: string; maxOutputTokens?: number },
   return JSON.stringify(body);
 }
 /**
- * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1)의 심사 wire — abcllm raw 계약이 보내는 바이트 그대로(게이트웨이 칸 포함)에 계약의 엔진 모델
- * 이름(engineModel, 없으면 model)을 넣는다. maxOutputTokens 가 있으면 2차의 requestBudget 처럼 max_tokens 를 그 값으로 둔다.
+ * 소유자 결정 D-6(2026-11-21): 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1)의 wire 는 게이트웨이 전용 칸 context_strategy 를 보내지 않는다.
+ * 그 칸 하나만 빼고 나머지(칸 순서·reasoning_effort·max_tokens·chat_template_kwargs·프롬프트 바이트)는 같은 엔진의 abcllm 계약이 보내는 그대로다.
+ * 그 칸이 없는 wire(번역 4경로·카테고리 분류)는 그대로 둔다(바이트까지 같다). abcllm 계약·direct-openai-chat-v1 의 wire 는 이 함수를 타지 않는다.
+ */
+function withoutGatewayContextField(body: Record<string, unknown>): boolean {
+  if (!Object.hasOwn(body, "context_strategy")) return false;
+  delete body.context_strategy;
+  return true;
+}
+/**
+ * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1)의 심사 wire — abcllm raw 계약이 보내는 바이트에서 context_strategy 만 뺀 것(D-6)에 계약의 엔진 모델
+ * 이름(engineModel, 없으면 model)을 넣는다. maxOutputTokens 가 있으면 2차의 requestBudget 처럼 max_tokens 를 그 값으로 둔다. reasoning_effort 는 남는다.
  */
 function totalBoundReviewWire(contract: { model: string; engineModel?: string; maxOutputTokens?: number }, serialized: string): string {
-  const wire = gatewayWire(contract.engineModel ?? contract.model, serialized);
-  if (contract.maxOutputTokens === undefined) return wire;
-  const body = JSON.parse(wire);
-  body.max_tokens = contract.maxOutputTokens;
+  const body = JSON.parse(gatewayWire(contract.engineModel ?? contract.model, serialized)) as Record<string, unknown>;
+  withoutGatewayContextField(body);
+  if (contract.maxOutputTokens !== undefined) body.max_tokens = contract.maxOutputTokens;
   return JSON.stringify(body);
 }
 type TotalBoundBudgetContract = { protocol: string; model: string; engineModel?: string; totalTokenBound: number;
@@ -253,8 +262,9 @@ export function directTextWire(contract: { model: string; maxOutputTokens: numbe
 /**
  * 계약에 맞는 wire: local-direct 직접 계약(direct-openai-chat-v1)이면 엔진 이름의 직접 wire, abcllm(게이트웨이·직접 연결)이면 그 경로의 게이트웨이 wire 를
  * 선택 이름으로 그대로. abcllm 형 계약에 engineModel 이 있으면(같은 모델을 다른 연결에도 둔 순위, PR B) 선택 이름(연결로 가른 장부 이름) 대신 그 엔진 이름을 보낸다.
- * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct)은 abcllm 형과 같은 바이트다 — 경로의 wire 에 계약의 엔진 이름(engineModel,
- * 없으면 model)을 넣고, CLI 엔진 revision 이면 abcllm 형처럼 추론 강도를 맞춘다. maxOutputTokens 가 있을 때만 max_tokens 를 그 값 아래로 묶는다.
+ * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct)은 abcllm 형의 바이트에서 context_strategy 만 뺀 것이다(D-6) — 경로의 wire 에
+ * 계약의 엔진 이름(engineModel, 없으면 model)을 넣고, CLI 엔진 revision 이면 abcllm 형처럼 추론 강도를 맞춘다. maxOutputTokens 가 있을 때만 max_tokens 를
+ * 그 값 아래로 묶는다. 그 칸이 없는 경로의 wire 는 abcllm 형과 바이트까지 같다.
  */
 export function textWireFor(contract: TextRouteContract, selection: string, build: (model: string) => string): string {
   const cliEngineSource = parseCliEngineRevision(contract.deploymentRevision);
@@ -268,8 +278,10 @@ export function textWireFor(contract: TextRouteContract, selection: string, buil
   }
   const wire = build(contract.engineModel ?? (totalBound ? contract.model : selection));
   const outputCap = totalBound ? contract.maxOutputTokens : undefined;
-  if (cliEngineSource === null && outputCap === undefined) return wire;
   const body = JSON.parse(wire) as Record<string, unknown>;
+  // D-6: 새 모양만 게이트웨이 전용 칸을 뺀다(abcllm 형 CLI 엔진 계약은 예전 바이트 그대로)
+  const dropped = totalBound && withoutGatewayContextField(body);
+  if (cliEngineSource === null && outputCap === undefined && !dropped) return wire;
   if (cliEngineSource !== null) {
     const effort = cliEngineSource.reasoningEffort;
     if (effort === undefined) {
@@ -345,7 +357,7 @@ export async function directTextBudgetFailure(contract: TextRouteContract, wire:
 }
 /**
  * 리다이렉트 처리. direct-openai-chat-v1(과 1차의 raw local-direct)은 거절(error), abcllm 형은 따라가지 않고 그 응답을 그대로 받는다(manual).
- * openai-chat-total-bound-v1 은 abcllm 형이 하던 대로(manual)다 — 같은 서버에 같은 요청을 보내는 계약이라 전송 동작을 바꾸지 않는다.
+ * openai-chat-total-bound-v1 은 abcllm 형이 하던 대로(manual)다 — 같은 서버에 같은 요청(context_strategy 만 뺀 — D-6)을 보내는 계약이라 전송 동작을 바꾸지 않는다.
  */
 export const textRedirect = (contract: { provider: string; protocol?: string }): "error" | "manual" =>
   contract.provider === "local-direct" && !isTotalBoundDirectContract(contract) ? "error" : "manual";
@@ -541,7 +553,7 @@ export async function prepareAi1DirectCall(input: ReviewInput, options: { model:
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   let wire: string;
   if (contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL) {
-    // 총량 상한 직접 계약: abcllm raw 계약과 같은 wire, tokenizer 묶음이 있을 때만 요청 상한을 먼저 확인한다
+    // 총량 상한 직접 계약: abcllm raw 계약의 wire 에서 context_strategy 만 뺀 것(D-6), tokenizer 묶음이 있을 때만 요청 상한을 먼저 확인한다
     wire = totalBoundReviewWire(contract, serialized);
     const checked = await totalBoundTokenCheck(contract, wire, { timeoutMs, signal: options.signal });
     if (checked && checked.kind !== "within_budget") return unsupported;
@@ -676,7 +688,7 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   // 같은 모델을 다른 연결에도 둔 순위(PR C1): 엔진에는 계약의 engineModel 이 나간다(없으면 예전 그대로 model)
   let wire = gatewayWire(contract.provider === "abcllm" && contract.engineModel ? contract.engineModel : contract.model, serialized);
   if (contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL) {
-    // 총량 상한 직접 계약: abcllm raw 계약과 같은 wire(maxOutputTokens 는 requestBudget 처럼 max_tokens 가 된다), tokenizer 묶음이 있을 때만 확인
+    // 총량 상한 직접 계약: abcllm raw 계약의 wire 에서 context_strategy 만 뺀 것(D-6 — maxOutputTokens 는 requestBudget 처럼 max_tokens 가 된다), tokenizer 묶음이 있을 때만 확인
     wire = totalBoundReviewWire(contract, serialized);
     const checked = await totalBoundTokenCheck(contract, wire, { timeoutMs, signal: options.signal });
     if (checked && checked.kind !== "within_budget") return unsupported;
@@ -695,6 +707,17 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
     model, inputHash: snapshot.inputHash });
   preparedAi2Calls.set(call, { wire, inputIdentity: sha(JSON.stringify(snapshot)), contract: freeze(contract), timeoutMs, used: false });
   return call;
+}
+
+/**
+ * 이 준비 호출의 표가 줄에서 15초 넘게 기다리면 같은 칸의 다음 순위로 넘기는가(capacity_wait_timeout, second-review-model-capacity.ts) — 장비 이름 칸이 있는
+ * 엔진 직접 계약(direct-openai-chat-v1, #664 의 GPU 직접 주 모델 + 대체 설계)의 표만이다. abcllm 계약의 표와, 그 이름표만 local-direct 로 바꾼
+ * openai-chat-total-bound-v1 의 표는 예전 abcllm 표처럼 줄에서 기다린다(2026-11-21 이름표 정리 — 계약을 다시 저장해도 누가 그 표를 받는지가 바뀌지 않게).
+ * 판정은 준비한 그 계약으로 한다(준비 뒤에 계약 스냅숏이 바뀌어도 같은 답). 이 모듈이 준비하지 않은 값이면 false.
+ */
+export function ai2CallReroutesOnCapacityWait(call: PreparedAi2GatewayCall): boolean {
+  const contract = preparedAi2Calls.get(call)?.contract;
+  return contract?.provider === "local-direct" && !isTotalBoundDirectContract(contract);
 }
 
 /** Only the original native AI2 capability has historical evidence. */

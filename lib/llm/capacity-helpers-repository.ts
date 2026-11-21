@@ -385,6 +385,8 @@ export type ModelAssignmentSaveResult = Readonly<{
   contract: Readonly<{ routeId: string; model: string; contractHash: string; source: ModelAssignmentContractSource; id: number | null }> | null;
   route: ModelCapacityRoute | null; appended: readonly ModelCapacityRoute[]; policyRevision: number;
   deviceRole: Readonly<{ routeId: string; before: number | null; after: number }>;
+  /** 새 계약을 abcllm 형으로 만든 까닭(그 경로가 아직 전환 전 — lib/operations/engine-contract-shape.ts). 없으면 칸이 없다 */
+  shapeNote?: string;
 }>;
 
 async function defaultAssignmentRegistry(): Promise<ModelRegistry> {
@@ -410,6 +412,13 @@ async function defaultAssignmentCliContract(routeId: string, provider: CliProvid
 type AssignmentContract = Readonly<{ contractHash: string; source: ModelAssignmentContractSource; storedId: number | null;
   /** local-direct: 계약의 backendId(= 정책 route 의 providerBudgetId). */
   backendId: string | null;
+  /**
+   * 정책 route·배정 행의 provider 를 계약이 정할 때(direct 전송, 2026-11-21 2단계): 저장된 계약의 provider, 또는 새로 만들 계약의 provider(관문이 열려 있으면
+   * 엔진 직접 총량 상한 local-direct — lib/operations/engine-contract-shape.ts). 없으면 전송·등록부가 정한 provider 그대로다.
+   */
+  provider?: string;
+  /** 새 계약을 abcllm 형으로 만든 까닭(경로가 아직 전환 전) — 저장 결과·감사에 싣는다 */
+  shapeNote?: string;
   /** probed: fence 를 쥔 뒤 계약 행을 쓰고 그 id 를 돌려준다. */
   write: ((tx: ProductTransaction) => Promise<{ id: number }>) | null }>;
 
@@ -473,23 +482,38 @@ async function assignmentContract(tx: ProductTransaction, input: ModelAssignment
       } };
   }
   const contractTransport = input.transport === "direct" ? "direct" : "gateway";
-  const [row] = await tx.select({ id: modelServingContracts.id, contractHash: modelServingContracts.contractHash, transport: modelServingContracts.transport })
+  const [row] = await tx.select({ id: modelServingContracts.id, contractHash: modelServingContracts.contractHash, transport: modelServingContracts.transport,
+    contract: modelServingContracts.contract })
     .from(modelServingContracts).where(and(eq(modelServingContracts.routeId, routeId), eq(modelServingContracts.model, model),
       eq(modelServingContracts.enabled, true))).limit(1);
+  const { engineContractShape, engineContractShapeText, isTotalBoundShape, routeContractState } = await import("@/lib/operations/engine-contract-shape");
   if (row) {
     if (row.transport !== contractTransport) return assignmentFail("contract_transport_mismatch");
-    return { contractHash: row.contractHash, source: "stored", storedId: Number(row.id), backendId: null, write: null };
+    // 3단계 전환 도구가 옮긴(또는 2단계 저장이 만든) 엔진 직접 총량 상한 계약은 그 provider(local-direct)로 부른다
+    return { contractHash: row.contractHash, source: "stored", storedId: Number(row.id), backendId: null, write: null,
+      ...(contractTransport === "direct" && isTotalBoundShape(row.contract ?? {}) ? { provider: "local-direct" } : {}) };
   }
   const { ENGINE_CONNECT_ROUTES, engineRouteContract } = await import("@/lib/operations/admin-engine-connect");
   if (!(ENGINE_CONNECT_ROUTES as readonly string[]).includes(routeId)) return assignmentFail("contract_unbuildable");
+  // 새 계약의 모양: direct 전송이고, 계약을 읽는 모든 프로세스가 새 판이고, 그 경로가 전환 뒤(또는 새 경로)면 엔진 직접 총량 상한(local-direct).
+  // 그 밖(옛 게이트웨이 전송·전환 전 경로)은 abcllm 형 그대로(engine-contract-shape.ts)
+  const { readContractReaderGate } = await import("@/lib/operations/contract-reader-gate");
+  const gate = contractTransport === "direct" ? await readContractReaderGate(tx) : null;
+  const routeRows = gate ? await tx.select({ contract: modelServingContracts.contract }).from(modelServingContracts)
+    .where(and(eq(modelServingContracts.routeId, routeId), eq(modelServingContracts.enabled, true))) : [];
+  const routeState = routeContractState(routeRows.map(entry => ({ routeId, provider: entry.contract?.provider, protocol: entry.contract?.protocol })), routeId);
+  const chosen = gate ? engineContractShape(routeId, gate.ok, routeState) : null;
+  const shape = chosen?.provider ?? "abcllm";
+  const shapeNote = chosen ? engineContractShapeText(routeId, chosen, routeState) : null;
   const probed = await probe(input.transport);
   const contract = engineRouteContract(routeId as (typeof ENGINE_CONNECT_ROUTES)[number], model, probed.responseModel, probed.endpoint,
-    probed.totalTokenBound, entry.equipment, probed.totalTokenBoundFrom);
+    probed.totalTokenBound, entry.equipment, probed.totalTokenBoundFrom, null, null, shape);
   if (!contract) return assignmentFail("contract_unbuildable");
   const { saveServingContractTx, servingContractHash } = await import("@/lib/operations/admin-serving-contracts");
-  return { contractHash: servingContractHash(contract), source: "probed", storedId: null, backendId: null,
+  return { contractHash: servingContractHash(contract), source: "probed", storedId: null, backendId: null, ...(shape === "local-direct" ? { provider: shape } : {}),
+    ...(shapeNote ? { shapeNote } : {}),
     write: writer => saveServingContractTx(writer, { routeId, contract, auth: contractTransport === "gateway" ? "gateway" : "none",
-      transport: contractTransport, note }, actor) };
+      transport: contractTransport, note, ...(gate ? { contractReaderGate: gate } : {}) }, actor) };
 }
 
 /**
@@ -530,14 +554,16 @@ export async function saveModelAssignment(tx: ProductTransaction, input: unknown
   const registry = await (deps.registry ?? defaultAssignmentRegistry)();
   const entry = registry.models.find(model => model.key === parsed.registryKey);
   if (!entry) return assignmentFail("registry_key_unknown");
-  const provider = assignmentRouteProvider(parsed.transport, entry.provider);
-  if (provider === null) return assignmentFail("transport_provider_mismatch");
+  const transportProvider = assignmentRouteProvider(parsed.transport, entry.provider);
+  if (transportProvider === null) return assignmentFail("transport_provider_mismatch");
   const model = assignmentWireModel(parsed.transport, entry);
   const enabledDevice = (reader: Reader) => reader.select({ deviceId: modelCapacityDevices.deviceId, version: modelCapacityDevices.version })
     .from(modelCapacityDevices).where(and(eq(modelCapacityDevices.deviceId, parsed.deviceId), eq(modelCapacityDevices.enabled, true)));
   if (!(await enabledDevice(tx)).length) return assignmentFail("device_unconfigured");
   // (b) 계약 — 네트워크 probe 는 잠금 전에
-  const contract = await assignmentContract(tx, parsed, entry, routeId, provider, model, deps, actor);
+  const contract = await assignmentContract(tx, parsed, entry, routeId, transportProvider, model, deps, actor);
+  // direct 전송의 provider 는 계약이 정한다(엔진 직접 총량 상한이면 local-direct — 2026-11-21 2단계). 그 밖에는 전송·등록부의 provider
+  const provider = contract.provider ?? transportProvider;
   if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
   const storedContract = contract.write ? await contract.write(tx) : null;
   const contractId = storedContract?.id ?? contract.storedId;
@@ -600,8 +626,10 @@ export async function saveModelAssignment(tx: ProductTransaction, input: unknown
   const deviceRole = Object.freeze({ routeId, before: roleBefore, after: parsed.rank });
   await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: MODEL_ASSIGNMENT_SAVE_AUDIT_ACTION, target: parsed.assignmentId,
     detail: { version: after.version, expectedVersion: parsed.expectedVersion, before: before && { ...before }, after: { ...after },
-      contract: { ...contractView }, route: { ...route }, appended: appended.length > 0, policyRevision, deviceRole: { ...deviceRole }, offOnly: false } }));
-  return Object.freeze({ before, after, offOnly: false, contract: contractView, route, appended: Object.freeze(appended), policyRevision, deviceRole });
+      contract: { ...contractView }, route: { ...route }, appended: appended.length > 0, policyRevision, deviceRole: { ...deviceRole }, offOnly: false,
+      ...(contract.shapeNote ? { shapeNote: contract.shapeNote } : {}) } }));
+  return Object.freeze({ before, after, offOnly: false, contract: contractView, route, appended: Object.freeze(appended), policyRevision, deviceRole,
+    ...(contract.shapeNote ? { shapeNote: contract.shapeNote } : {}) });
 }
 
 /**

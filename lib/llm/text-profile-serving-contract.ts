@@ -24,7 +24,7 @@ export type TextProfileGatewayServingContract = Readonly<z.infer<typeof textProf
 export const textProfileDirectServingContractSchema = directServingContractSchema("product-search-profile", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
 /**
  * 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계): 장비 이름·tokenizer 칸 없이
- * 「API 주소 + 모델 + 총량 상한」만 적고, 위 abcllm 계약과 같은 wire 를 보낸다(lib/llm/direct-serving-contract.ts).
+ * 「API 주소 + 모델 + 총량 상한」만 적고, 위 abcllm 계약의 wire 에서 context_strategy 만 뺀 것을 보낸다(D-6, lib/llm/direct-serving-contract.ts).
  */
 export const textProfileTotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("product-search-profile");
 export const textProfileRouteServingContractSchema = z.discriminatedUnion("protocol", [textProfileServingContractSchema, textProfileDirectServingContractSchema,

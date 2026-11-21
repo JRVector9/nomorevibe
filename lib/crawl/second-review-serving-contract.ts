@@ -38,8 +38,8 @@ const legacyAi2GatewayServingContractSchema = z.object({
 export const ai2DirectServingContractSchema = directServingContractSchema("second-review",
   [AI2_DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_OPENAI_CHAT_PROTOCOL] as const);
 /**
- * AI2 의 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계). abcllm raw 계약과 같은
- * wire 를 보낸다. raw 계약의 requestBudget(tokenizer 로 요청 상한 확인)은 이 모양의 tokenizer 묶음 + maxOutputTokens 로 옮겨 적는다.
+ * AI2 의 엔진 직접 총량 상한 계약(openai-chat-total-bound-v1, provider local-direct — 2026-11-21 abcllm 이름표 정리 1단계). abcllm raw 계약의
+ * wire 에서 context_strategy 만 뺀 것을 보낸다(D-6). raw 계약의 requestBudget(tokenizer 로 요청 상한 확인)은 이 모양의 tokenizer 묶음 + maxOutputTokens 로 옮겨 적는다.
  */
 export const ai2TotalBoundDirectServingContractSchema = totalBoundDirectServingContractSchema("second-review");
 export const ai2GatewayServingContractSchema = z.discriminatedUnion("protocol", [
