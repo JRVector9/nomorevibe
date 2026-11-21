@@ -38,6 +38,7 @@ import { engineRouteContract, ENGINE_CONNECT_ROUTES, probeEngineContract } from 
 import { adminAuditRow, adminLog, type AdminLogRow } from "./admin-log";
 import { DIRECT_PROBE_INTERVAL_MS, directProbeDue, directProbeGate } from "./admin-models-direct-probe";
 import { saveCliServingContractTx, saveServingContractTx } from "./admin-serving-contracts";
+import { contractReaderGateText, readContractReaderGate } from "./contract-reader-gate";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 import { cliCatalogMetadataFromSnapshot, type CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision } from "@/lib/llm/cli-engine-config";
@@ -149,7 +150,8 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
   const contracts = servingContractSnapshot().rows.map(row => {
     const contract = row.contract && typeof row.contract === "object" ? row.contract as Record<string, unknown> : {};
     return { routeId: row.routeId, model: row.model, transport: row.transport,
-      provider: typeof contract.provider === "string" ? contract.provider : null, endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
+      provider: typeof contract.provider === "string" ? contract.provider : null, protocol: typeof contract.protocol === "string" ? contract.protocol : null,
+      endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
       engineModel: typeof contract.engineModel === "string" ? contract.engineModel : null,
       cliVersion: typeof contract.cliVersion === "string" ? contract.cliVersion : null,
       deploymentRevision: typeof contract.deploymentRevision === "string" ? contract.deploymentRevision : null,
@@ -166,8 +168,11 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
   const devices = new Map((await listModelCapacityDevices().catch(() => [])).map(device => [device.deviceId,
     { enabled: device.enabled, limitSlots: device.limitSlots, physicalLimit: device.physicalLimit ?? null }]));
   const table = tableLocalModelContracts();
+  // 새 엔진 직접 계약의 모양 — 계약을 읽는 모든 프로세스가 새 판이면 엔진 직접 총량 상한(local-direct, 2026-11-21 2단계). 저장 TX 가 다시 본다(saveServingContractTx)
+  const gate = await readContractReaderGate();
   // 2차(second-review)도 순위 저장이 엔진 직접 계약(abcllm 형 total-bound, transport direct)을 만든다(PR C1 — 예전에는 env·서빙 계약·등록부 화면의 계약만 받았다)
   return { contracts, policy, policyError, devices, cliEngineIdentity: cliEngineModelIdentity, engineRoutes: [...ENGINE_CONNECT_ROUTES, "second-review"], cliContractRoutes: [...CLI_DB_CONTRACT_ROUTES],
+    directShape: { open: gate.ok, text: gate.reason === "stale_processes" ? contractReaderGateText(gate) : null },
     localContract: backendId => {
       const contract = resolveLocalModelContract(backendId);
       return contract ? { model: contract.model, endpoint: contract.endpoint } : null;
@@ -926,7 +931,7 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
         || !effortSupported || (task.kind === "vision" && served.vision !== true))
         return { ok: false as const, issues: ["ai_connection_cli_catalog_changed"] };
       const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, row.model,
-        cliEngineEndpoint(record.baseUrl), context, connection.deviceId, "engine", ready.createContract.engineModel);
+        cliEngineEndpoint(record.baseUrl), context, connection.deviceId, "engine", ready.createContract.engineModel, null, ready.createContract.provider ?? "abcllm");
       if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
       contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity,
         contract: { ...contract, deploymentRevision: cliEngineRevision(cliEngine) }, key: cliEngineBearer(key), label: connection.label });
@@ -946,7 +951,8 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
     // 장부 이름(identity)이 계약 행의 열쇠다. 같은 모델을 다른 연결에도 둔 순위는 연결로 가른 이름이고 엔진에는 engineModel(= 순위 모델)이 나간다(PR B)
     // 추론 토큰 여유는 그 칸을 받는 경로(사유 번역·한국어 소개)의 계약에만 실린다
     const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, probed.responseModel, probed.endpoint,
-      probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel, connection.reasoningTokenReserve ?? null);
+      probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel, connection.reasoningTokenReserve ?? null,
+      ready.createContract.provider ?? "abcllm");
     if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
     contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, contract, key, label: connection.label });
   }

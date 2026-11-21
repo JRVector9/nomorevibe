@@ -6,6 +6,7 @@ import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { disableAdminServingContract, readbackServingEndpoint, saveAdminServingContract, type ServingContractAuthMode } from "@/lib/operations/admin-serving-contracts";
 import { connectAdminEngine, engineBaseUrl, engineConnectAssignmentHref } from "@/lib/operations/admin-engine-connect";
 import { disableAdminRegistryOverride, saveAdminRegistryOverride } from "@/lib/operations/admin-model-registry";
+import { applyServingContractConversion, conversionPlanLines, planServingContractConversion, type ConversionAction } from "@/lib/operations/serving-contract-convert";
 
 /** assignHref: 엔진 연결 뒤 「이 모델을 단계에 배정」 주소(모델 배정 화면의 새 배정 폼을 미리 채운다, PR 3b-D) */
 export type ContractSaveState = { ok?: true; message?: string; issues?: string[]; assignHref?: string } | null;
@@ -26,10 +27,17 @@ const REASONS: Record<string, string> = {
   model_registry_invalid: "합친 등록부가 검사를 통과하지 못했습니다(제한 시간 순서·키 중복 등).",
   model_purpose_duplicate: "한 용도(purpose)를 두 모델이 맡게 됩니다. 한 모델에만 두세요.",
   stage_pools_incompatible: "저장된 단계별 모델 선택과 맞지 않습니다(없는 키나 다른 어댑터). 단계 선택을 먼저 바꿔주세요.",
+  contract_reader_gate_closed: "계약을 읽는 프로세스 중 옛 판이 있어 직접 연결(local-direct) 새 모양을 저장하지 않았습니다. 모두 새 판으로 배포된 뒤 다시 저장해주세요.",
+  contract_route_not_converted: "이 경로에는 아직 켜진 abcllm 계약이 있어 직접 연결 모양을 따로 저장하지 않습니다. 「abcllm 계약 → 직접 연결 전환」으로 경로를 옮겨주세요.",
+  serving_contract_convert_input_invalid: "경로·모델 값을 확인해주세요.",
+  serving_contract_convert_plan_changed: "미리 본 뒤 계약·정책이 바뀌었습니다. 미리 보기를 다시 해주세요.",
+  model_capacity_route_conflict: "용량 정책에 같은 경로·모델 route 가 다른 예산·장비로 있습니다.",
+  model_capacity_routes_cap: "용량 정책 route 가 상한(256)에 닿았습니다.", model_capacity_append_chain_full: "정책 앞 판 사슬이 가득 찼습니다. 잠시 뒤 다시 해주세요.",
 };
 const reasonOf = (error: unknown) => error instanceof Error ? error.message : "";
 const issue = (error: unknown) => {
   const reason = reasonOf(error);
+  if (reason.startsWith("serving_contract_convert_blocked:")) return [`실행하지 않았습니다(${reason.slice(33)}). 미리 보기의 「실행 불가」 줄을 확인해주세요.`];
   if (reason.startsWith("engine_unreachable:")) return [`엔진에 닿지 못했습니다(${reason.slice(19)}). 주소·키를 확인해주세요.`];
   const mismatch = /^engine_max_len_mismatch:(\d+):(\d+)$/.exec(reason);
   if (mismatch) return [`엔진이 알려 준 최대 길이(${mismatch[1]})와 입력한 컨텍스트 상한(${mismatch[2]})이 다릅니다. 엔진 값이 기준이니 입력을 비우거나 ${mismatch[1]}로 맞춰 주세요.`];
@@ -83,10 +91,11 @@ export const connectEngine = webWriteAction(async function connectEngine(_previo
       engineModel: String(form.get("engineModel") ?? ""), routes, selectStages: form.get("selectStages") === "on",
       note: String(form.get("note") ?? "") || null, maxModelLen: maxModelLen ? Number(maxModelLen) : undefined }, admin.login);
     for (const path of ["/admin/models/contracts", "/admin/models"]) revalidatePath(path);
-    const parts = [`연결했습니다: 경로 ${result.contracts.length}개(${result.contracts.map(row => row.routeId).join(", ")}), 요청 모델 ${result.requestModel}`
+    const parts = [`연결했습니다: 경로 ${result.contracts.length}개(${result.contracts.map(row => `${row.routeId}${row.provider === "local-direct" ? " · 직접 연결" : " · abcllm 형"}`).join(", ")}), 요청 모델 ${result.requestModel}`
       + `(엔진 응답 이름 ${result.responseModel}), 토큰 한도 ${result.totalTokenBound}${result.totalTokenBoundFrom === "operator" ? "(운영자 입력)" : ""}.`,
       result.stages.length ? `단계 모델 지정: ${result.stages.join(", ")}.` : "단계 모델은 바꾸지 않았습니다.",
       ...(result.firstReviewRenamed ? ["1차 모델 선택을 새 이름으로 바꿨습니다."] : []),
+      ...(result.directShapeNote ? [result.directShapeNote] : []),
       result.missingPolicyRoutes.length ? `용량 정책에 아직 없는 경로가 있어 그 호출은 보류됩니다: ${result.missingPolicyRoutes.join(" · ")} (정책 추가 필요).`
         : "용량 정책에 경로가 있습니다. 각 앱은 30초 안에 다음 작업부터 씁니다."];
     return { ok: true, message: parts.join(" "), assignHref: engineConnectAssignmentHref(registryKey, routes) };
@@ -121,5 +130,38 @@ export const disableRegistryOverride = webWriteAction(async function disableRegi
     const done = await disableAdminRegistryOverride(String(form.get("key") ?? ""), admin.login);
     for (const path of ["/admin/models/contracts", "/admin/models"]) revalidatePath(path);
     return done ? { ok: true, message: "되돌렸습니다. 코드 기본 정의가 다시 쓰입니다." } : { issues: ["켜진 덮어쓰기가 없습니다."] };
+  } catch (error) { return { issues: issue(error) }; }
+});
+
+/**
+ * abcllm 계약 → 직접 연결(local-direct) 전환·되돌리기의 미리 보기와 실행(2026-11-21 abcllm 이름표 정리 2단계 — lib/operations/serving-contract-convert.ts).
+ * 화면은 경로·모델·계획 hash 만 보낸다. 서버가 계약·정책·관문을 다시 읽어 같은 계획일 때만 쓴다(운영 스크립트 scripts/ops/serving-contract-convert.ts 와 같다).
+ */
+export type ConversionState = { plan?: { action: ConversionAction; routeId: string; model: string | null; planHash: string; blocked: string | null; targets: number;
+  lines: string[] }; ok?: true; message?: string; issues?: string[] } | null;
+const conversionInput = (form: FormData) => ({ action: (form.get("action") === "revert" ? "revert" : "convert") as ConversionAction,
+  routeId: String(form.get("routeId") ?? ""), model: String(form.get("model") ?? "").trim() || null });
+
+export const previewContractConversion = webWriteAction(async function previewContractConversion(_previous: ConversionState, form: FormData): Promise<ConversionState> {
+  if (!await currentAdmin()) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+  const input = conversionInput(form);
+  try {
+    const plan = await planServingContractConversion(input);
+    return { plan: { action: plan.action, routeId: plan.routeId, model: plan.model, planHash: plan.planHash, blocked: plan.blocked, targets: plan.targets.length,
+      lines: conversionPlanLines(plan) } };
+  } catch (error) { return { issues: issue(error) }; }
+});
+
+export const applyContractConversion = webWriteAction(async function applyContractConversion(_previous: ConversionState, form: FormData): Promise<ConversionState> {
+  const admin = await currentAdmin();
+  if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+  const input = conversionInput(form), planHash = String(form.get("planHash") ?? "");
+  try {
+    const result = await applyServingContractConversion({ ...input, planHash }, admin.login);
+    for (const path of ["/admin/models/contracts", "/admin/models"]) revalidatePath(path);
+    return { ok: true, message: `${result.action === "convert" ? "전환" : "되돌리기"}했습니다: 계약 ${result.saved.length}개`
+      + `(${result.saved.map(row => `${row.model} #${row.previousId}→#${row.id}`).join(", ")})`
+      + (result.appended.length ? `, 정책 route ${result.appended.length}개 덧붙임(판 ${result.policyRevision})` : "")
+      + (result.refusals.length ? `, 거절 ${result.refusals.length}개는 그대로 둠` : "") + ". 각 앱은 30초 안에 다음 작업부터 씁니다." };
   } catch (error) { return { issues: issue(error) }; }
 });

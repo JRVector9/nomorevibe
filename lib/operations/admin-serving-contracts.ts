@@ -1,11 +1,13 @@
 import "@/lib/llm/publication-classify-serving-contract";
 import { createHash } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { modelServingContracts, operationsAudit } from "@/lib/db/schema";
 import { GATEWAY_SERVING_CONTRACT_ROUTES, parseGatewayServingContract, registeredGatewayServingContractSchema,
   type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
+import { OPENAI_CHAT_TOTAL_BOUND_PROTOCOL } from "@/lib/llm/direct-serving-contract";
 import { sealSecret, secretBoxReady, servingContractKeyAad } from "@/lib/security/secret-box";
+import { readContractReaderGate, type ContractReaderGate } from "./contract-reader-gate";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
 import { adminAuditRow } from "./admin-log";
 // Each contract module registers its route schema on first import; the admin validates with exactly those schemas.
@@ -27,7 +29,17 @@ export type AdminServingContractInput = { routeId: string; contract: unknown; au
   /** 'direct': the endpoint is the engine itself, not the abcLLM gateway (default 'gateway'). */
   transport?: ServingContractTransportMode;
   /** A new key to store; undefined keeps the current stored key of the same route+model. Never echoed back. */
-  apiKey?: string; note?: string | null };
+  apiKey?: string; note?: string | null;
+  /**
+   * 새 모양(openai-chat-total-bound-v1) 저장의 계약 읽기 관문(contract-reader-gate.ts) — 같은 TX 에서 이미 읽은 호출자(전환·순위 저장)가 넘긴다.
+   * 없으면 저장이 그 TX 로 읽는다. 폼에서 오지 않는다(서버 코드만 채운다).
+   */
+  contractReaderGate?: ContractReaderGate;
+  /**
+   * 3단계 전환 도구(serving-contract-convert.ts)의 저장 — 그 경로에 켜진 abcllm 계약이 남아 있어도 새 모양을 저장한다. 그 밖의 새 모양 저장은 경로가 전환 뒤(abcllm
+   * 계약 없음)일 때만 받는다(contract_route_not_converted). 폼에서 오지 않는다.
+   */
+  viaConversion?: boolean };
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const isRoute = (value: string): value is GatewayServingRoute => (GATEWAY_SERVING_CONTRACT_ROUTES as readonly string[]).includes(value);
@@ -72,6 +84,15 @@ export function checkServingContractInput(input: AdminServingContractInput, acto
 /** The save inside a caller's fenced transaction (engine connect saves several rows atomically). */
 export async function saveServingContractTx(tx: Tx, input: AdminServingContractInput, actor: string): Promise<{ id: number; contractHash: string }> {
   const { contract, newKey } = checkServingContractInput(input, actor);
+  // 새 모양은 계약을 읽는 모든 프로세스가 새 판일 때만 저장한다 — 옛 판은 모르는 protocol 을 「계약 없음」으로 읽는다(2026-11-21 2단계)
+  if (contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL && !(input.contractReaderGate ?? await readContractReaderGate(tx)).ok)
+    throw new Error("contract_reader_gate_closed");
+  // 경로마다 전환은 전환 도구로만(소유자 승인·D-6 표본 비교 뒤 — 3단계). 그 경로에 켜진 abcllm 계약이 하나라도 있으면 다른 저장은 새 모양을 쓰지 않는다
+  if (contract.protocol === OPENAI_CHAT_TOTAL_BOUND_PROTOCOL && !input.viaConversion) {
+    const [left] = await tx.select({ id: modelServingContracts.id }).from(modelServingContracts).where(and(eq(modelServingContracts.routeId, input.routeId),
+      eq(modelServingContracts.enabled, true), sql`${modelServingContracts.contract}->>'provider' = 'abcllm'`)).limit(1);
+    if (left) throw new Error("contract_route_not_converted");
+  }
   const note = input.note?.trim() ? input.note.trim().slice(0, 400) : null, model = contract.model, routeId = input.routeId;
   const transport = input.transport ?? "gateway";
   const contractHash = servingContractHash(contract);
