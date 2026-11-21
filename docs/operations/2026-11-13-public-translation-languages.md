@@ -29,6 +29,18 @@ node --import tsx scripts/ops/generate-japanese-product-translation-sql.ts
 
 적용 전 규칙 baseline 존재 여부를 검사하고, 추가된 다섯 규칙의 개수와 SHA-256을 확인한다. 임시 전용 PostgreSQL에서 실제 전체 마이그레이션과 일본어 native 왕복을 검증했다. 운영 반영 시 DB 마이그레이션이 먼저 필요하고, 웹·text 및 실제 배치 담당 앱을 공식 배포 scope/plan으로 확정해야 한다. 이 브랜치는 운영 DB·설정·서비스를 변경하지 않았다.
 
+### 2026-11-21 보완 — `0193_japanese_abcllm_product_translation`
+
+`0184`는 일본어 가지를 `provider='local-direct'` 쌍둥이(0157·0161)에만 더했다. 운영 장부의 `product-translate` 행은 전부 `provider='abcllm'`이라, `ja`가 든 첫 묶음이 대기열 맨 앞에 온 2026-11-21 00:44Z부터 장부 INSERT가 `23514 model_capacity_requests_logical_check`로 틱마다 실패했다. 위 일본어 DB 검사는 local-direct 계약만 돌려 이를 놓쳤다.
+
+`0193`은 `0184`의 다섯 가지에서 provider 글자만 `abcllm`으로 되돌린 가지(= `0125`의 abcllm product-translate 가지에 `ja`만 더한 것)를 같은 다섯 제약의 다음 ordinal로 넣는다. 기존 rules 행·장부 행은 바꾸지 않고, 다시 실행해도 행이 늘지 않는다. 앱 코드는 바뀌지 않는다.
+
+```sh
+node --import tsx scripts/ops/generate-japanese-abcllm-product-translation-sql.ts
+```
+
+검증: `tests/integration/product-translation-model-capacity.test.ts`에 기본(abcllm) 계약으로 운영과 같은 묶음(ja 소개 3건 + zh-Hans 소개 1건)의 예약→dispatch→정산, 검사 탈락·429·잘린 답 경로, 그리고 0193의 다섯 행을 하나씩 뺐을 때 그 제약 이름으로 23514가 나는지를 더했다. `0193`이 없는 DB(0192까지)에서는 두 검사 모두 운영과 같은 23514 `logical_check`로 실패한다. 운영 DB에는 적용하지 않았다.
+
 ## 실제 검증
 
 - 관련 단위/회귀 검사: 13개 파일, 고유 268건 통과. 최초 묶음의 번체 URL 기대값 실패는 새 간체 이동 정책을 검사하도록 고치고 해당 파일을 재실행했다.
