@@ -93,6 +93,14 @@ describe("시간 상한·죽이기(가짜 브라우저)", () => {
     expect(long.text.length).toBe(5_999);
     expect(long.length).toBe(6_005);
   });
+
+  // PR #1020 리뷰 — 글 가운데의 짝 없는 서로게이트(이모지를 slice 로 자른 글·한 글자씩 찍는 효과)는 jsonb 에 들어가지 않는다. 서버도 U+FFFD 로 바꾼다
+  it("글 가운데의 짝 없는 서로게이트는 U+FFFD 로 바꾼다", () => {
+    const high = String.fromCharCode(0xd800), low = String.fromCharCode(0xdc00);
+    const { text } = normalizeRenderedText(`Task ${high} board ${low} 😀 end`);
+    expect(text).toBe("Task � board � 😀 end");
+    expect(text.isWellFormed()).toBe(true);
+  });
 });
 
 /** Playwright 가 받은 headless shell — 없으면 진짜 브라우저 시험은 건너뛴다(CI) */

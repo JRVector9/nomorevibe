@@ -11,7 +11,7 @@ import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-
 import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { TEST_TEXT_BASE_URL, textRankRow } from "./text-task-ranks-fixture";
-import { resetShellRenderBackoff } from "@/lib/crawl/jobs/shell-render-document";
+import { resetShellRenderBackoff, shellRenderBackoff } from "@/lib/crawl/jobs/shell-render-document";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,blocked:vi.fn(),pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),readmeFailure:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn(),skipHandOff:vi.fn(),setRendered:vi.fn(),render:vi.fn()}));
 vi.mock("@/lib/crawl/first-reviewer-blocks", () => ({readBlockedFirstReviewerKeys:mocks.blocked}));
@@ -886,8 +886,9 @@ describe("JS 앱 껍데기 — 규칙 갈림 뒤에 그린다", () => {
       code: "record_failed_22P02" }));
   });
 
-  // PR #1020 리뷰 MAJOR — CLI 순위뿐인 40초 틱: 그리기는 모델 시간(틱 끝 − 상한 20초 − 여유) 안으로, 1시간 기다림은 시도 전에 본다
-  it("CLI 40초 틱에서 시간 초과가 이어져도 1시간 뒤에는 그리지 않고 심사한다(0·30·61·62·120분)", async () => {
+  // PR #1020 리뷰 MAJOR — CLI 순위뿐인 40초 틱: 그리기는 모델 시간(틱 끝 − 상한 20초 − 여유) 안으로 줄어, 1시간이 지나면 그 시도 뒤에도
+  // 같은 틱에 모델을 부른다. 한 껍데기의 거듭된 시간 초과로는 물러나지 않는다(서로 다른 껍데기 3개가 이어져야 — MINOR-A)
+  it("CLI 40초 틱에서 시간 초과가 이어져도 1시간 뒤에는 같은 틱에 심사한다(0·30·61·62·120분)", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       const base = Date.now();
@@ -902,11 +903,50 @@ describe("JS 앱 껍데기 — 규칙 갈림 뒤에 그린다", () => {
         await reviewCrawlCandidates(context());
         if (mocks.review.mock.calls.length > before) reviewedAt.push(minute);
       }
-      expect(mocks.render).toHaveBeenCalledTimes(2);
+      expect(mocks.render).toHaveBeenCalledTimes(5);
       for (const [, options] of mocks.render.mock.calls) expect((options as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(40_000 - 20_000 - 3_000);
       expect(reviewedAt).toEqual([61, 62, 120]);
+      expect(shellRenderBackoff.failures).toBe(0);
       expect(mocks.claim).toHaveBeenCalledTimes(3);
       expect(mocks.setRendered).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // PR #1020 다시 보기 MAJOR-2 — CLI 틱에서 그릴 시간이 없어 미뤄진 껍데기가 1시간 뒤 돌아와도, 서버가 멀쩡하면 그려서 심사한다
+  it("CLI 틱에서 시간이 없어 미룬 껍데기는 61분 뒤 돌아와도 그려서 심사한다", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const base = await mocks.document();
+      const docs = new Map<string, CrawlDocument>();
+      mocks.document.mockImplementation(async (repo: string) => docs.get(repo) ?? { ...base, repo, pageMeta: { title: repo } });
+      mocks.setRendered.mockImplementation(async (expected: CrawlDocument, rendered: unknown) => {
+        const next = { ...expected, pageMeta: { ...expected.pageMeta, renderedPage: rendered } } as CrawlDocument;
+        docs.set(expected.repo, next);
+        return next;
+      });
+      mocks.render.mockImplementation(async (url: string) => {
+        vi.setSystemTime(Date.now() + 5_000);
+        return { ok: true, finalUrl: `${url}/`, status: 200, text: RENDERED, textLength: RENDERED.length, jpeg: Buffer.from([0xff, 0xd8, 0xff]), renderMs: 5_000,
+          egress: { requests: 1, bytes: 1, blocked: 0 } };
+      });
+      const shells = [1, 2, 3].map(id => ({ ...candidate(), id, repo: `acme/shell-${id}`, productUrl: `https://shell-${id}.example` }));
+      for (const [index, row] of shells.entries()) docs.set(row.repo, { ...base, repo: row.repo, productUrl: row.productUrl, pageMeta: { title: `Shell ${index + 1}` } });
+      mocks.list.mockResolvedValue(shells);
+      const t0 = Date.now();
+      const first = context();
+      await reviewCrawlCandidates(first);
+      const windowed = first.log.mock.calls.filter(([event, fields]) => event === "crawl.agent_review_skipped" && fields.reason === "render_window")
+        .map(([, fields]) => fields.repo);
+      expect(windowed.length).toBeGreaterThan(0);
+      vi.setSystemTime(t0 + 61 * 60_000);
+      const later = context();
+      mocks.list.mockResolvedValue(shells.filter(row => windowed.includes(row.repo)));
+      await reviewCrawlCandidates(later);
+      expect(later.log).not.toHaveBeenCalledWith("crawl.agent_review_shell_render_skipped", expect.objectContaining({ reason: "wait_expired" }));
+      const reviewed = new Map(mocks.review.mock.calls.map(([input]) => [input.snapshot.product.repo, input.snapshot.product.pageText]));
+      for (const repo of windowed) expect(reviewed.get(repo)).toBe(RENDERED);
     } finally {
       vi.useRealTimers();
     }

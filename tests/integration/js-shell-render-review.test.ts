@@ -195,3 +195,18 @@ it("stores a rendered text with a lone surrogate and NUL, and keeps the last goo
   expect(failed?.pageMeta?.[RENDERED_PAGE_KEY]).toMatchObject({ ok: false, attempts: 1, last: { text: stored } });
   expect((await loadReviewInput(candidate, failed!, mergeWithDefaults({}))).inputHash).toBe(before.inputHash);
 });
+
+// PR #1020 다시 보기 MINOR-C — 그린 기록 쓰기가 잠금 시간 초과(55P03)로 실패하면 껍데기 글로 심사하지 않고 그 후보만 미룬다. 다음 시도에 적힌다
+it("defers a candidate whose render record write hits a lock timeout, then stores it on the next attempt", async () => {
+  const candidate = await seed("daelong/mochipet-rpg", "https://mochi.example", SHELL, { reason: "ambiguous" });
+  const document = (await getDocument(candidate.repo))!;
+  const step = await db.transaction(async tx => {
+    // 다른 연결이 원본 행을 쥐고 있다 — 그린 기록 쓰기(UPDATE)는 lock_timeout 뒤 55P03 으로 실패한다
+    await tx.execute(sql`select 1 from crawl_documents where repo = ${candidate.repo} for update`);
+    return ensureShellRender(document, { deadlineAt: Date.now() + 60_000, env: ENV, render: async () => ok(RENDERED) });
+  });
+  expect(step).toMatchObject({ kind: "wait", reason: "render_deferred", code: "record_deferred_55P03" });
+  expect((await getDocument(candidate.repo))?.pageMeta).not.toHaveProperty(RENDERED_PAGE_KEY);
+  expect(await ensureShellRender((await getDocument(candidate.repo))!, { deadlineAt: Date.now() + 60_000, env: ENV, render: async () => ok(RENDERED) }))
+    .toMatchObject({ kind: "ready", state: { kind: "rendered" } });
+});
