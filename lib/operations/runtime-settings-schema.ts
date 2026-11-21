@@ -27,6 +27,14 @@ export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number
   /** 1차 직전 JS 앱 껍데기 그리기(lib/crawl/jobs/shell-render-document.ts, 2026-11-21) — 1 켬 · 0 끔(새로 그리지 않음. 이미 그린 글은 입력에 그대로 쓴다) */
   shellRender?: number;
   /**
+   * 2차 심사 대기 시간(ms, 2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」) — 2차 첫 표(root)가 제 모델 줄에서 이만큼 넘게
+   * 기다렸는데 그 모델이 아직 가득 차 있으면 같은 투표자 칸의 다음 순위로 넘긴다(capacity_wait_timeout, lib/crawl/second-review-ownership.ts). 계약 모양
+   * (abcllm·direct-openai-chat-v1·openai-chat-total-bound-v1)을 가리지 않는다. 기다림은 그 표가 그 모델로 마지막으로 보내진 뒤 처음 줄에 선 때부터 센다 —
+   * 대기 만료(장부 queueTtlMs)·정책 판 바뀜·재시작으로 대기 행이 새로 서도 이어서 센다(lib/llm/capacity-repository.ts ai2QueueWaitStartSql).
+   * 0 = 넘기지 않음(줄에서 계속 기다림 — 이 칸을 만들기 전 운영 abcllm 표의 동작). 범위 0~1시간. AI2 소비자가 30초 스냅숏으로 읽는다
+   */
+  reviewWaitMs?: number;
+  /**
    * 잡 주기 덮어쓰기(ms, 2026-11-12 운영 콘솔 조각 4a) — scheduler 가 읽는다(lib/jobs/job-intervals.ts). 다른 손잡이와 달리 코드 기본값(DEFAULT_RUNTIME_SETTINGS.jobs)에
    * 없다: 기본값은 카탈로그(lib/jobs/catalog.ts intervalMs)이고, 주기가 있는 카탈로그 잡이면 어느 잡에나 적을 수 있다. 범위 1분~24시간
    */
@@ -96,7 +104,9 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
   translation: { product: { maxSourceChars: 30_000, batchChars: 8_000, batchMax: 4, demandLimit: 80, maxAttempts: 4, jobMarginMs: 15_000 } },
   jobs: {
     // AI2 item lifecycles; independent of member count and physical model admission.
-    "second-review": { consumerConcurrency: 1 },
+    // reviewWaitMs: 2차 심사 대기 시간(위 JobKnobs) — 기본 0(넘기지 않음). 이 칸을 만든 2026-11-21 운영 2차 표는 모두 abcllm 계약이라 줄에서 기다렸고
+    // (넘김은 엔진 직접 계약 direct-openai-chat-v1 의 15초뿐, 운영에 그 계약 없음), 배포만으로 누가 표를 받는지 바뀌지 않게 그 동작을 기본으로 둔다
+    "second-review": { consumerConcurrency: 1, reviewWaitMs: 0 },
     "crawl-publish": { classifierConcurrency: 1 },
     // lib/crawl/jobs/translate-reasons.ts BATCH·BATCH_CHARS·MIN_CALL_MS·SOLO_ATTEMPTS
     "reason-translate": { batch: 4, batchChars: 1_600, minCallMs: 30_000, soloAttempts: 3 },
@@ -196,7 +206,7 @@ export const jobKnobsSchema = z.object({
   batch: int(1, 64), batchChars: int(100, 30_000), minCallMs: ms(1_000, 600_000), slowCallMs: ms(1_000, 600_000),
   soloAttempts: int(1, 10), callMs: ms(5_000, 600_000), maxAttempts: int(1, 50), consumerConcurrency: int(1, 4), classifierConcurrency: int(1, 4),
   scanBatch: int(10, 2_000), dailyCap: int(0, 5_000), askBatch: int(0, 16), minSimilarity: int(0, 100), yieldHours: int(0, 168),
-  shellRender: int(0, 1), intervalMs: int(JOB_INTERVAL_MIN_MS, JOB_INTERVAL_MAX_MS),
+  shellRender: int(0, 1), intervalMs: int(JOB_INTERVAL_MIN_MS, JOB_INTERVAL_MAX_MS), reviewWaitMs: int(0, RUNTIME_BUDGET_MAX_MS),
 }).partial().strict();
 /** 코드 기본값에 없어도 적을 수 있는 손잡이 — 잡 주기(카탈로그에 주기가 있는 잡만) */
 const knobAllowed = (job: string, knob: string, base: JobKnobs | undefined) =>
@@ -517,7 +527,7 @@ const TRANSLATION_FIELD_LABELS: Record<keyof ProductTranslationPolicy, string> =
 const KNOB_LABELS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(ms)", slowCallMs: "느린 호출(ms)",
   soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)", classifierConcurrency: "분류 동시 묶음(1~4)",
   scanBatch: "틱마다 견줄 제품", dailyCap: "하루 올리기 상한", askBatch: "감사 틱마다 묻기", minSimilarity: "같다고 볼 유사도(%)", yieldHours: "1차 양보 상한(시간)",
-  shellRender: "JS 껍데기 그려 보기(1 켬·0 끔)", intervalMs: "주기(ms)" };
+  shellRender: "JS 껍데기 그려 보기(1 켬·0 끔)", intervalMs: "주기(ms)", reviewWaitMs: "대기 시간(ms)" };
 export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산",
   assignments: "모델 배정 읽기", capacity: "모델 장부 점유", publicApi: "공개 API 관문", devices: "장비 한도" };
 /** 열거 칸의 값 이름 — 폼의 선택지와 감사 줄이 같은 말을 쓴다 */

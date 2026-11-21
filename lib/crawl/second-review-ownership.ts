@@ -26,6 +26,8 @@ import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finis
 import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type ModelCapacityReservation, type ModelCapacityRequestIdentity, type Ai2ModelDispatch,
   type CliModelDispatch } from "@/lib/llm/capacity";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
+import { jobKnob } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { resolveAi2GatewayServingContract, ai2ServingContractMatches, ai2GatewayServingContractHash } from "./second-review-serving-contract";
 import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -509,23 +511,37 @@ export async function reserveSecondReviewItemReplayCall(receipt: SecondReviewIte
 
 class WaitingFallbackRefused extends Error {}
 
+/**
+ * 2차 심사 대기 시간(ms, runtime_settings jobs.second-review.reviewWaitMs — 2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」).
+ * 첫 표가 제 모델 줄에서 이만큼 넘게 기다렸고 그 모델이 아직 가득 차 있으면 같은 투표자 칸의 다음 순위로 넘긴다(capacity_wait_timeout). 0 = 넘기지 않음.
+ * 계약 모양(abcllm·direct-openai-chat-v1·openai-chat-total-bound-v1)을 가리지 않는다 — 예전에는 고정 15초에 direct-openai-chat-v1 표만이었다.
+ * 물림 TX(아래)와 AI2 소비자의 줄 대기 hint(consumers/second.ts)가 같은 값을 읽는다(30초 스냅숏).
+ */
+export function secondReviewRerouteWaitMs(): number {
+  return jobKnob(runtimeSettings(), "second-review", "reviewWaitMs");
+}
+
 /** Capacity waiting is a routing change, never a failed or completed model
- * verdict. Withdrawal, fresh domain checks, fallback and wakeup commit together. */
+ * verdict. Withdrawal, fresh domain checks, fallback and wakeup commit together.
+ * capacity_wait_timeout 은 2차 심사 대기 시간이 켜져(> 0) 있고 그 표가 이 모델 줄에서 이어서 그만큼 넘게 기다렸을 때만이다
+ * (장부가 같은 TX 에서 다시 잰다 — lib/llm/capacity-repository.ts ai2QueueWaitStartSql). */
 export async function fallbackWaitingSecondReview(intent: SecondReviewModelReservationRequired, requestId: string,
   reason: Ai2PreDispatchFallbackReason = "capacity_wait_timeout"): Promise<boolean> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   if (!(intent instanceof SecondReviewModelReservationRequired)) throw new Error("invalid_second_review_model_intent");
   const expected = snapshotModelIntent(intent.intent), { binding, owner } = expected;
-  // 엔진 직접 표(local-direct, 또는 PR C1 의 순위 저장이 만든 abcllm 형 직접 계약)만 — 줄에 선 장부 행을 물리고 같은 칸의 다음 순위로 넘긴다
+  // API 표(local-direct·abcllm — 계약 모양은 가리지 않는다)만 줄에 선 장부 행을 물리고 같은 칸의 다음 순위로 넘긴다. CLI 표는 줄에서 기다린다
   if (binding.reviewer.provider !== "local-direct" && binding.reviewer.provider !== "abcllm" || binding.fallbackForId !== null
     || binding.vote !== binding.secondReviewId) return false;
+  const minWaitMs = reason === "capacity_wait_timeout" ? secondReviewRerouteWaitMs() : undefined;
+  if (reason === "capacity_wait_timeout" && !(minWaitMs! > 0)) return false;
   const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: "second", pool: "reviewer",
     routeId: "second-review", provider: binding.reviewer.provider, model: binding.reviewer.model,
     workKey: `ai2:${binding.candidateId}:${binding.vote}:${itemBindingHash(binding)}` });
   try {
     return await onPrimary(() => db.transaction(async tx => {
       const capacity = await withdrawUndispatchedAi2ItemForFallback(tx, { requestId, identity,
-        target: { candidateId: binding.candidateId, vote: binding.vote }, reason });
+        target: { candidateId: binding.candidateId, vote: binding.vote }, reason, ...(minWaitMs !== undefined ? { minWaitMs } : {}) });
       if (!capacity) throw new WaitingFallbackRefused();
       const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
       if (stage.mode !== "items" || stage.writerContractVersion < 1) throw new WaitingFallbackRefused();

@@ -7,11 +7,10 @@ import { itemBindingHash, type Ai2ItemBinding } from '@/lib/jobs/items/types';
 import { ai2DispatchBindingHash, ai2ModelDispatchSchema } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 const mocks = vi.hoisted(() => ({ pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(),
-  prepare: vi.fn(), reroutes: vi.fn(), serving: vi.fn(), native: vi.fn(), atomic: vi.fn(), fallback: vi.fn(), compatibility: vi.fn(), consumer: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), transport: vi.fn() }));
+  prepare: vi.fn(), serving: vi.fn(), native: vi.fn(), atomic: vi.fn(), fallback: vi.fn(), compatibility: vi.fn(), consumer: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), transport: vi.fn() }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ findOwnPendingModelRequest: mocks.pending, requestAi2ItemModelSlot: mocks.request,
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown, reconcileAi2GatewayTerminal: mocks.reconcile }));
-vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi2GatewayCall: mocks.prepare, reviewWithReservedAi2Gateway: mocks.native,
-  ai2CallReroutesOnCapacityWait: mocks.reroutes }));
+vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi2GatewayCall: mocks.prepare, reviewWithReservedAi2Gateway: mocks.native }));
 vi.mock('@/lib/crawl/second-review-serving-contract', async original => ({ ...await original<typeof import('@/lib/crawl/second-review-serving-contract')>(),
   resolveAi2GatewayServingContract: mocks.serving }));
 vi.mock('@/lib/crawl/second-review-ownership', async load => ({ ...await load<typeof import('@/lib/crawl/second-review-ownership')>(),
@@ -22,6 +21,7 @@ vi.mock('@/lib/crawl/second-review-transport', () => ({ dispatchSecondReviewTran
 import { SecondReviewModelReservationRequired } from '@/lib/crawl/second-review-ownership';
 import { claimSecondReviewModelCapacity, reviewSecondReviewModelCapacity, abandonSecondReviewModelCapacity } from '@/lib/crawl/second-review-model-capacity';
 import { executeSecondReviewConsumerItem, executeSecondReviewItem } from '@/lib/crawl/second-review-item-lifecycle';
+import { setRuntimeSettingsForTest } from '@/lib/operations/runtime-settings-store';
 const owner = { instanceId: 'ai2-native-unit', bootId: randomUUID() };
 function fixture() {
   const now = new Date(), settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'enforce' as const };
@@ -49,8 +49,8 @@ const terminal = Object.freeze({ kind: 'ai2_gateway_terminal' as const });
 function gate<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
 beforeEach(() => {
   vi.resetAllMocks(); value = fixture(); mocks.prepare.mockReturnValue(value.call); mocks.serving.mockReturnValue(null); mocks.pending.mockResolvedValue(null);
-  // 준비한 계약이 줄 대기 대체를 받는 모양인가(실제 판정은 agent-review-gateway 의 준비 상태) — 아래 local-direct 시험들은 장비 칸이 있는 직접 계약의 표다
-  mocks.reroutes.mockReturnValue(true);
+  // 2차 심사 대기 시간(runtime_settings jobs.second-review.reviewWaitMs)을 켠다 — 기본 0 은 넘기지 않는다(아래 「꺼짐」 시험). 실제 나이는 장부 TX 가 잰다(통합 시험)
+  setRuntimeSettingsForTest({ version: 1, jobs: { 'second-review': { reviewWaitMs: 30_000 } } });
   mocks.request.mockResolvedValue({ kind: 'granted', reservation: value.reservation });
   mocks.atomic.mockResolvedValue({ kind: 'claimed', row: value.row, input: value.input, receipt: value.receipt, dispatch: value.dispatch });
   mocks.compatibility.mockRejectedValue(value.intent); mocks.consumer.mockRejectedValue(value.intent);
@@ -58,7 +58,7 @@ beforeEach(() => {
   mocks.native.mockResolvedValue({ result: success, terminal }); mocks.reconcile.mockResolvedValue({ kind: 'settled' }); mocks.unknown.mockResolvedValue(true);
   mocks.cancel.mockResolvedValue(true); mocks.fallback.mockResolvedValue(false); mocks.record.mockResolvedValue({ state: 'recorded' }); mocks.transport.mockResolvedValue(success);
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); setRuntimeSettingsForTest(null); });
 it('does not allocate or dispatch when the production preparation remains unsupported', async () => {
   mocks.prepare.mockReturnValue({ kind: 'unsupported', reason: 'provider_contract_unavailable' });
   await expect(claimSecondReviewModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'provider_contract_unavailable' });
@@ -105,13 +105,22 @@ it('hands off only an existing local waiting request after the atomic helper acc
   expect(mocks.fallback).toHaveBeenCalledExactlyOnceWith(intent, requestId);
   expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });
-it('a waiting vote whose prepared contract does not reroute on capacity (abcllm, openai-chat-total-bound-v1) keeps waiting', async () => {
-  // 2026-11-21 abcllm 이름표 정리 2단계: 줄 대기 대체는 provider 글자가 아니라 준비한 계약의 모양으로 정한다(ai2CallReroutesOnCapacityWait)
-  for (const intent of [localIntent(), value.intent]) {
-    mocks.reroutes.mockReset().mockReturnValue(false); mocks.fallback.mockReset().mockResolvedValue(true);
+it('2026-11-21: an abcllm vote waiting on a full model hands off too — the contract shape no longer decides', async () => {
+  // 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」 — 오늘 운영 2차 순위(abcllm 계약)의 표도 같은 칸의 다음 순위로 넘어간다
+  for (const intent of [value.intent, localIntent()]) {
+    const requestId = randomUUID(); mocks.fallback.mockReset().mockResolvedValue(true);
+    mocks.pending.mockResolvedValue({ requestId, state: 'waiting' }); mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+    expect(await claimSecondReviewModelCapacity(intent)).toEqual({ kind: 'capacity_fallback' });
+    expect(mocks.fallback).toHaveBeenCalledExactlyOnceWith(intent, requestId);
+    expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+  }
+});
+it.each([[{}], [{ version: 1, jobs: { 'second-review': { reviewWaitMs: 0 } } }]])('with the review wait time off (%j) a waiting vote keeps waiting without a handoff TX', async stored => {
+  setRuntimeSettingsForTest(stored);
+  for (const intent of [value.intent, localIntent()]) {
+    mocks.fallback.mockReset().mockResolvedValue(true);
     mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' }); mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
     await expect(claimSecondReviewModelCapacity(intent)).rejects.toMatchObject({ reason: 'capacity' });
-    expect(mocks.reroutes).toHaveBeenCalledExactlyOnceWith(value.call);
     expect(mocks.fallback).not.toHaveBeenCalled(); expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
   }
 });

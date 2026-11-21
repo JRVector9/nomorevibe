@@ -17,8 +17,10 @@ import { claimConsumerItemSecondReview, claimSecondReviewItemWithModelReservatio
 import { executeSecondReviewConsumerItem } from '@/lib/crawl/second-review-item-lifecycle';
 import { ai2GatewayServingContractHash, type Ai2GatewayServingContract } from '@/lib/crawl/second-review-serving-contract';
 import { modelCapacityPolicyHash, type ModelCapacityPolicy, type ModelCapacityRequestIdentity } from '@/lib/llm/capacity';
-import { markModelDispatchIndeterminate, requestAi2ItemModelSlot, requestModelSlot } from '@/lib/llm/capacity-repository';
+import { cancelReservedModelSlot, markModelDispatchIndeterminate, requestAi2ItemModelSlot, requestModelSlot,
+  withdrawUndispatchedAi2ItemForFallback } from '@/lib/llm/capacity-repository';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
+import { setRuntimeSettingsForTest } from '@/lib/operations/runtime-settings-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 import { directContractRow } from './direct-engine-fixtures';
 
@@ -133,14 +135,17 @@ beforeAll(async () => {
   expect(baseline.jobs.filter(row => row.name === 'second-review' && row.lease_token !== null)).toEqual([]);
   initialized = true;
 });
+// 2차 심사 대기 시간(runtime_settings jobs.second-review.reviewWaitMs, 2026-11-21) — 이 파일은 30초로 켠다. 기본 0(끔)은 아래 「꺼짐」 시험이 본다
+const WAIT_MS = 30_000;
+const waitSetting = (ms: number) => setRuntimeSettingsForTest({ version: 1, jobs: { 'second-review': { reviewWaitMs: ms } } });
 beforeEach(async () => {
-  await cleanup(); contracts();
+  await cleanup(); contracts(); waitSetting(WAIT_MS);
   await db.insert(crawlSettings).values({ id: 1, values: settings() }).onConflictDoUpdate({ target: crawlSettings.id, set: { values: settings() } });
   await admin`UPDATE pipeline_stage_modes SET mode='items',draining_from=NULL,writer_contract_version=1 WHERE stage='ai2'`;
   await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,
     policy_hash=${modelCapacityPolicyHash(policy)},cursor=0 WHERE id=1`;
 });
-afterEach(cleanup);
+afterEach(async () => { setRuntimeSettingsForTest(null); await cleanup(); });
 afterAll(async () => { try { await cleanup(); } finally { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); } });
 
 async function fixture(saturated = true, primary: PrimaryProvider = 'local-direct') {
@@ -174,7 +179,9 @@ async function fixture(saturated = true, primary: PrimaryProvider = 'local-direc
   expect(slot.kind).toBe(saturated ? 'deferred' : 'granted');
   return { row, candidate, document, intent, identity, target, requestId, slot, blocker };
 }
-const age = (id: string) => admin`UPDATE model_capacity_requests SET queued_at=clock_timestamp()-interval '16 seconds' WHERE request_id=${id}::uuid`;
+/** 대기 행의 접수 시각을 seconds 초 전으로 — 기본은 2차 심사 대기 시간(30초)을 넘긴 31초 */
+const age = (id: string, seconds = WAIT_MS / 1000 + 1) =>
+  admin`UPDATE model_capacity_requests SET queued_at=clock_timestamp()-${seconds}::integer*interval '1 second' WHERE request_id=${id}::uuid`;
 async function snapshot(id: string) {
   return { requests: (await admin`SELECT to_jsonb(r) AS value FROM model_capacity_requests r WHERE request_id=${id}::uuid`).map(row => row.value),
     events: (await admin`SELECT to_jsonb(e) AS value FROM model_capacity_events e WHERE request_id=${id}::uuid ORDER BY id`).map(row => row.value),
@@ -190,9 +197,12 @@ async function expectHandoff(value: Awaited<ReturnType<typeof fixture>>, reason:
   expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId}::uuid AND kind='dispatch_started'`).toEqual([]);
   expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid`).toEqual([{ state: 'withdrawn' }]);
 }
-it('waits at least 15 seconds, then atomically switches to fallback without recording a model failure', async () => {
+it('waits longer than the review wait time, then atomically switches to fallback without recording a model failure', async () => {
   const value = await fixture(), before = await snapshot(value.requestId);
   expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(false); expect(await snapshot(value.requestId)).toEqual(before);
+  // 예전 고정 문턱(15초)은 넘었지만 2차 심사 대기 시간(30초)보다 짧다 — 행·사건·표 그대로
+  await age(value.requestId, 16); const aged = await snapshot(value.requestId);
+  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(false); expect(await snapshot(value.requestId)).toEqual(aged);
   await age(value.requestId); expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(true);
   await expectHandoff(value, 'capacity_wait_timeout');
   expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId}::uuid ORDER BY id`).toEqual([{ kind: 'queued' }, { kind: 'wait_cancelled' }]);
@@ -261,17 +271,12 @@ it('rolls back request cancellation, event and fallback when the final job signa
   expect(await snapshot(value.requestId)).toEqual(before);
 });
 /*
- * abcllm 이름표 정리 2단계(3단계 전 확인 — second-review-model-capacity.ts 의 줄 대기 대체): 줄에서 15초 넘게 기다린 표를 같은 칸의 다음 순위로 넘기는 것은
- * 장비 칸이 있는 엔진 직접 계약(direct-openai-chat-v1)의 표뿐이다. 오늘 운영 2차 표는 모두 abcllm 계약이라 기다린다 — 그 계약을 이름표만 local-direct 로 바꾼
- * 새 모양(openai-chat-total-bound-v1)도 기다려야 3단계 전환이 「누가 그 표를 받는가」를 바꾸지 않는다. 조건을 예전 꼴(provider 가 local-direct)로 되돌리면
- * 새 모양의 표가 다음 순위로 넘어가 이 시험이 실패한다. 실제 준비(prepareAi2GatewayCall)·장부 대기 행·소비자 경로를 그대로 탄다.
+ * 2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」: 줄 대기 넘김은 계약 모양을 묻지 않고 2차 심사 대기 시간(여기 30초)만 본다 —
+ * 오늘 운영 2차 순위의 abcllm 계약 표도 넘어간다. 예전(#1014)에는 direct-openai-chat-v1 표만 15초 뒤 넘어가고 abcllm·openai-chat-total-bound-v1 표는 기다렸다
+ * (계약으로 가르는 조건을 되살리면 아래 abcllm·total-bound 가 실패한다). 실제 준비(prepareAi2GatewayCall)·장부 대기 행·소비자 경로를 그대로 탄다.
  */
-it.each([
-  ['the device-named direct contract (direct-openai-chat-v1) hands the vote to its slot fallback', 'direct'],
-  ['the relabelled total-bound contract (openai-chat-total-bound-v1) keeps waiting like an abcllm vote', 'total-bound'],
-  // 오늘 운영 꼴: 2차 순위 1·2 가 abcllm 계약이다 — 그 표는 15초가 지나도 줄에서 기다린다(PR #1014 리뷰). 다르게 하려면 소유자 결정이 먼저다
-  ["today's abcllm contract (abcllm-raw-total-bound-v1) keeps waiting", 'abcllm'],
-] as const)('a vote waiting over 15 seconds on a full device: %s', async (_name, shape) => {
+type Shape = 'direct' | 'total-bound' | 'abcllm';
+async function withShape(shape: Shape, run: (primary: PrimaryProvider) => Promise<void>) {
   const tokenizer = createServer((request, response) => {
     request.resume(); response.end(JSON.stringify({ count: 10, tokens: Array.from({ length: 10 }, (_, index) => index + 1), max_model_len: 40_960 }));
   });
@@ -282,31 +287,105 @@ it.each([
     contracts(origin);
     if (shape === 'total-bound') serving.contracts.set(`local-direct:${mainModel}`, { version: 1, protocol: 'openai-chat-total-bound-v1', routeId: 'second-review',
       provider: 'local-direct', model: mainModel, responseModel: mainModel, deploymentRevision: 'fixture', endpoint: `${origin}/v1/chat/completions`, totalTokenBound: 40_960 });
-    const primary: PrimaryProvider = shape === 'abcllm' ? 'abcllm' : 'local-direct';
     if (shape === 'abcllm') {
-      // abcllm 계약은 엔진 직접 연결 행(transport direct)이 있어야 열린다 — 키 없는 엔진
+      // 오늘 운영 꼴: abcllm 계약은 엔진 직접 연결 행(transport direct)이 있어야 열린다 — 키 없는 엔진
       serving.contracts.set(`abcllm:${mainModel}`, { version: 1, protocol: 'abcllm-raw-total-bound-v1', routeId: 'second-review', provider: 'abcllm',
         model: mainModel, responseModel: mainModel, deploymentRevision: 'fixture', endpoint: `${origin}/v1/chat/completions`, totalTokenBound: 40_960 });
       setServingContractSnapshotForTest([directContractRow('second-review', mainModel)]);
       await db.update(crawlSettings).set({ values: settings(true, 'abcllm') }).where(eq(crawlSettings.id, 1));
     }
-    const value = await fixture(true, primary); await age(value.requestId);
-    expect(value.row.provider).toBe(primary);
-    if (shape === 'direct') {
-      expect(await executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).toEqual({ state: 'rerouted' });
-      await expectHandoff(value, 'capacity_wait_timeout');
-      return;
-    }
-    const before = await snapshot(value.requestId);
-    await expect(executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).rejects.toMatchObject({ reason: 'capacity' });
-    // 표는 그대로 기다린다: 대기 행·사건·2차 행·잡 모두 그대로, 대체 표 없음
-    expect(await snapshot(value.requestId)).toEqual(before);
-    expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid`).toEqual([{ state: 'waiting' }]);
-    expect(await admin`SELECT id FROM second_reviews WHERE fallback_for_id=${value.row.id}`).toEqual([]);
+    await run(shape === 'abcllm' ? 'abcllm' : 'local-direct');
   } finally {
     setServingContractSnapshotForTest(null);
     tokenizer.closeAllConnections(); await new Promise<void>((resolve, reject) => tokenizer.close(error => error ? reject(error) : resolve()));
   }
+}
+async function expectStillWaiting(value: Awaited<ReturnType<typeof fixture>>) {
+  const before = await snapshot(value.requestId);
+  await expect(executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).rejects.toMatchObject({ reason: 'capacity' });
+  // 표는 그대로 기다린다: 대기 행·사건·2차 행·잡 모두 그대로, 대체 표 없음
+  expect(await snapshot(value.requestId)).toEqual(before);
+  expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid`).toEqual([{ state: 'waiting' }]);
+  expect(await admin`SELECT id FROM second_reviews WHERE fallback_for_id=${value.row.id}`).toEqual([]);
+}
+it.each([
+  ["today's abcllm contract (abcllm-raw-total-bound-v1)", 'abcllm'],
+  ['the device-named direct contract (ai2-direct-openai-chat-v1)', 'direct'],
+  ['the relabelled total-bound contract (openai-chat-total-bound-v1)', 'total-bound'],
+] as const)('a vote on %s waits below the review wait time and hands off to its slot fallback past it', async (_name, shape) => {
+  await withShape(shape, async primary => {
+    const value = await fixture(true, primary); expect(value.row.provider).toBe(primary);
+    await age(value.requestId, 16); await expectStillWaiting(value);
+    await age(value.requestId);
+    expect(await executeSecondReviewConsumerItem({ secondReviewId: value.row.id, owner })).toEqual({ state: 'rerouted' });
+    await expectHandoff(value, 'capacity_wait_timeout');
+    // 장부: 대기 행 하나가 줄에 섰다가(queued) 넘김으로 물러났다(wait_cancelled) — 보냄·정산·미확인 없음
+    expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId}::uuid ORDER BY id`).toEqual([{ kind: 'queued' }, { kind: 'wait_cancelled' }]);
+  });
+});
+it.each(['abcllm', 'direct'] as const)('with the review wait time off (0, the default) a %s vote waiting an hour keeps waiting', async shape => {
+  setRuntimeSettingsForTest({});
+  await withShape(shape, async primary => {
+    const value = await fixture(true, primary); await age(value.requestId, 3_600);
+    const before = await snapshot(value.requestId);
+    expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(false); expect(await snapshot(value.requestId)).toEqual(before);
+    await expectStillWaiting(value);
+  });
+});
+it('keeps counting the wait across a queue expiry (wait_expired → a new waiting row) for an abcllm vote', async () => {
+  await withShape('abcllm', async primary => {
+    const value = await fixture(true, primary);
+    // 첫 대기 행은 40초 전에 줄에 서서 대기 유효 시간(queueTtlMs)이 지났다 — 다음 장부 요청이 wait_expired 로 거두고 같은 표가 새 행으로 다시 선다
+    await admin`UPDATE model_capacity_requests SET queued_at=clock_timestamp()-interval '40 seconds',queue_until=clock_timestamp()-interval '1 second'
+      WHERE request_id=${value.requestId}::uuid`;
+    const requeued = randomUUID();
+    expect(await requestAi2ItemModelSlot({ ...value.identity, requestId: requeued }, value.target)).toMatchObject({ kind: 'deferred', reason: 'capacity' });
+    expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId}::uuid ORDER BY id`).toEqual([{ kind: 'queued' }, { kind: 'wait_expired' }]);
+    // 새 행 하나의 나이는 0초에 가깝다(예전 식이면 넘기지 않는다). 이어 세면 40초 > 30초 — 새 대기 행을 물리고 넘긴다
+    expect(await fallbackWaitingSecondReview(value.intent, requeued)).toBe(true);
+    await expectHandoff({ ...value, requestId: requeued }, 'capacity_wait_timeout');
+    expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid`).toEqual([{ state: 'withdrawn' }]);
+  });
+});
+it('starts the wait again after the vote was last sent to that model', async () => {
+  const value = await fixture();
+  if (value.blocker?.kind !== 'granted') throw new Error('fixture_blocker_missing');
+  // ① 100초 전에 줄에 섰던 첫 대기 행(대기 유효 시간이 지나 다음 장부 요청이 거둔다)
+  await admin`UPDATE model_capacity_requests SET queued_at=clock_timestamp()-interval '100 seconds',queue_until=clock_timestamp()-interval '1 second'
+    WHERE request_id=${value.requestId}::uuid`;
+  // ② 장비가 비어 같은 표가 그 모델로 보내졌고 결과 미확정이 됐다(실제 예약·item claim·dispatch 경로)
+  expect(await cancelReservedModelSlot(value.blocker.reservation)).toBe(true);
+  const sent = randomUUID(), slot = await requestAi2ItemModelSlot({ ...value.identity, requestId: sent }, value.target);
+  if (slot.kind !== 'granted') throw new Error('fixture_reservation_missing');
+  const contract = serving.contracts.get(`local-direct:${mainModel}`)!;
+  const claim = await claimSecondReviewItemWithModelReservation({ secondReviewId: value.row.id, owner, expected: value.intent.intent,
+    reservation: slot.reservation, identity: value.identity, call: { kind: 'prepared', model: mainModel, inputHash: value.intent.intent.input.inputHash,
+      totalTokenBound: contract.totalTokenBound, wireHash: 'a'.repeat(64), servingContractHash: ai2GatewayServingContractHash(contract) } });
+  if (claim.kind !== 'claimed' || !claim.dispatch || claim.receipt.ownership.kind !== 'item') throw new Error('fixture_dispatch_missing');
+  leases.push(claim.receipt.ownership.lease);
+  await markModelDispatchIndeterminate(claim.dispatch, 'transport_unknown');
+  await releaseLeases();
+  // ③ 그 뒤 같은 표가 다시 줄에 섰다(미확정 행이 장비 칸을 점유해 포화)
+  const requeued = randomUUID();
+  expect(await requestAi2ItemModelSlot({ ...value.identity, requestId: requeued }, value.target)).toMatchObject({ kind: 'deferred', reason: 'capacity' });
+  expect(await admin`SELECT request_id::text, state FROM model_capacity_requests WHERE request_id=ANY(${[value.requestId, sent, requeued]}::uuid[])
+    ORDER BY queue_ordinal`).toEqual([{ request_id: value.requestId, state: 'withdrawn' }, { request_id: sent, state: 'indeterminate' },
+    { request_id: requeued, state: 'waiting' }]);
+  // 보낸 뒤로는 방금 줄에 섰을 뿐이다 — ①의 100초를 이어 세지 않는다(30초 문턱 아래)
+  const before = await snapshot(requeued);
+  expect(await fallbackWaitingSecondReview(value.intent, requeued)).toBe(false); expect(await snapshot(requeued)).toEqual(before);
+  // 보낸 뒤의 기다림은 센다: 문턱을 1ms 로 낮추면 넘긴다
+  waitSetting(1);
+  expect(await fallbackWaitingSecondReview(value.intent, requeued)).toBe(true);
+  await expectHandoff({ ...value, requestId: requeued }, 'capacity_wait_timeout');
+});
+it('rejects a capacity wait handoff without a valid review wait time at the ledger', async () => {
+  const value = await fixture(); await age(value.requestId);
+  const before = await snapshot(value.requestId);
+  for (const minWaitMs of [undefined, 0, -1, 1.5, 3_600_001]) await expect(db.transaction(tx => withdrawUndispatchedAi2ItemForFallback(tx, {
+    requestId: value.requestId, identity: value.identity, target: value.target, reason: 'capacity_wait_timeout',
+    ...(minWaitMs === undefined ? {} : { minWaitMs }) }))).rejects.toThrow('invalid_ai2_fallback_wait');
+  expect(await snapshot(value.requestId)).toEqual(before);
 });
 
 it.each([true, false])('switches a failed tokenizer to fallback before inference (saturated=%s)', async saturated => {

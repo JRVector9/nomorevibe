@@ -213,7 +213,10 @@ export const HELPER_DECISION_LIMITS = Object.freeze({
   shadowStatsWindow: 1000,
   /** 실전 결과 최근 표본 수. */
   liveStatsRecent: 200,
-  /** AI2 주 장비 가득 참 판정: local-direct second-review 대기 행 나이 ≥ 15 s(AI2 소비자의 오늘 대체 조건과 같다). */
+  /**
+   * AI2 주 장비 가득 참 판정: local-direct second-review 대기 행 나이 ≥ 15 s(도우미 감시자만의 고정 문턱). 예전에는 AI2 소비자의 줄 대기 넘김과 같은 값이었지만
+   * 2026-11-21 부터 그 넘김은 관리자 설정 「2차 심사 대기 시간」(runtime_settings jobs.second-review.reviewWaitMs)을 따르고 이 값과 따로다.
+   */
   ai2PrimaryWaitMinMs: 15_000,
 } as const);
 
