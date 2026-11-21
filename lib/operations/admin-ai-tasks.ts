@@ -2,6 +2,7 @@ import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { OPENCODE_NATIVE_TASK_ROUTES, aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { AI_TASK_EXECUTION_SAVE_AUDIT_ACTION } from "@/lib/llm/ai-task-execution-config";
+import { isTotalBoundShape, newEngineContractProvider, TOTAL_BOUND_PROTOCOL_NAME, type EngineContractProvider } from "./engine-contract-shape";
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, AUDIT_DIRECT_ROUTE, AUDIT_SECOND_OPINION_ROUTE, AUDIT_SECOND_OPINION_TASK, aiAssistRouteId, aiConnectionTaskAllowed, aiTask, aiTaskAccepts, aiTaskAliasIdentity,
   aiTaskSlotLabel, isAiRankSavableTask, type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
@@ -526,6 +527,8 @@ export type AiReadinessInput = Readonly<{
   cliEngineIdentity?: (model: string, source: CliEngineSource) => string;
   /** 켜진 계약 행(model_serving_contracts, 키 없이). provider·endpoint·engineModel 은 계약 JSON 의 값(engineModel 은 연결로 가른 이름의 계약만, PR B) */
   contracts: readonly Readonly<{ routeId: string; model: string; provider: string | null; endpoint: string | null; transport: string; engineModel?: string | null;
+    /** 계약 protocol(엔진 직접 총량 상한 openai-chat-total-bound-v1 을 가르는 데 쓴다 — 2026-11-21 2단계). 없으면 모른다 */
+    protocol?: string | null;
     /** CLI 계약 행(`cli:<provider>:<route>`)의 버전(PR C1) */
     cliVersion?: string | null;
     /** CLI 엔진 계약의 배포 리비전 — prepared source와 다르면 계약을 새로 만든다. */
@@ -551,6 +554,12 @@ export type AiReadinessInput = Readonly<{
   assistFamilies?: Readonly<{ primary: string; audit: string }> | null;
   /** 엔진 직접 계약을 만들 수 있는 경로(admin-engine-connect ENGINE_CONNECT_ROUTES + 2차 second-review, PR C1) */
   engineRoutes: readonly string[];
+  /**
+   * 계약 읽기 관문(lib/operations/contract-reader-gate.ts, 2026-11-21 2단계) — 열려 있으면 새로 만드는 엔진 직접 계약이 엔진 직접 총량 상한(local-direct)이다
+   * (engine-contract-shape.ts). 없으면 닫힌 것으로 본다(abcllm 형). text 는 닫힌 까닭이 옛 판 프로세스일 때 화면·저장 경고에 싣는 문장이다
+   * (관측이 하나도 없거나 읽지 못한 것은 이름 댈 프로세스가 없어 null — 경고 없이 abcllm 형)
+   */
+  directShape?: Readonly<{ open: boolean; text: string | null }>;
   /** CLI 계약을 DB 행으로 만드는 route(cli-serving-contract CLI_DB_CONTRACT_ROUTES — 1차·2차·Grok 로그인 유지, PR C1). 없으면 빈 목록 */
   cliContractRoutes?: readonly string[];
   policy: Readonly<{ mode: string; routes: readonly AiPolicyRoute[]; groupLimits: Readonly<Record<string, number>> }> | null;
@@ -573,7 +582,9 @@ export type AiRankReadiness = Readonly<{
   /** 저장이 만들 것 */
   createDevice: Readonly<{ deviceId: string; limitSlots: number }> | null;
   /** identity = 만들 계약의 model 열쇠, engineModel = 엔진에 보낼 이름(identity 가 연결로 가른 이름일 때만) */
-  createContract: Readonly<{ routeId: string; replacesGateway: boolean; identity: string; engineModel: string | null; cliEngine?: CliEngineSource }> | null;
+  createContract: Readonly<{ routeId: string; replacesGateway: boolean; identity: string; engineModel: string | null; cliEngine?: CliEngineSource;
+    /** 만들 계약의 provider — local-direct 면 엔진 직접 총량 상한(openai-chat-total-bound-v1), 없거나 abcllm 이면 abcllm 형(engine-contract-shape.ts) */
+    provider?: EngineContractProvider }> | null;
   appendRoute: AiPolicyRoute | null;
   /** 저장이 만들(또는 버전을 바꿀) CLI 계약 행(PR C1 — 1차·2차·Grok 로그인 유지 route 만, 연결의 CLI 버전으로) */
   createCliContract: Readonly<{ routeId: string; provider: string; model: string; cliVersion: string; replaces: string | null }> | null;
@@ -610,8 +621,12 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
   const routeId = task.routeId;
   const policyRoutes = input.policy?.routes ?? [];
   const budgetFor = (deviceId: string) => policyRoutes.find(route => route.groupId === deviceId)?.providerBudgetId ?? deviceId;
-  /** 정책 route 확인 — 있으면 장비가 연결의 장비와 같아야 한다. 없으면 appendable 일 때 덧붙일 route 를 정한다. */
-  const checkRoute = (routeProvider: string, appendable: boolean, why: string): string | null => {
+  /**
+   * 정책 route 확인 — 있으면 장비가 연결의 장비와 같아야 한다. 없으면 appendable 일 때 덧붙일 route 를 정한다.
+   * gatewayBudget: abcllm 형과 엔진 직접 총량 상한(local-direct, 장비 이름 칸 없음)은 같은 장비의 route 가 쓰는 예산 이름을 따르고 같은 경로의 다른 모델과
+   * 장비를 맞추지 않는다. 그 밖의 provider(로컬 계약·CLI)는 같은 경로의 다른 모델과 장비가 같아야 한다.
+   */
+  const checkRoute = (routeProvider: string, appendable: boolean, why: string, gatewayBudget = routeProvider === "abcllm"): string | null => {
     if (!routeId) return null;
     if (input.policy === null) { blocking.push(`${head}: 용량 정책을 읽지 못해 경로를 확인하지 못했습니다. 잠시 뒤 다시 저장하세요.`); return null; }
     if (input.policy.mode === "disabled") { warnings.push(`${head}: 용량 관리가 꺼져 있어 경로를 확인하지 않았습니다.`); return null; }
@@ -623,12 +638,12 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
     }
     if (!appendable) { blocking.push(`${head}: 용량 정책에 ${routeId} / ${routeProvider} / ${identity} 경로가 없습니다. ${why}`); return null; }
     const sibling = policyRoutes.find(route => route.routeId === routeId && route.provider === routeProvider);
-    if (routeProvider !== "abcllm" && sibling && sibling.groupId !== connection.deviceId) {
+    if (!gatewayBudget && sibling && sibling.groupId !== connection.deviceId) {
       blocking.push(`${head}: 같은 경로의 다른 모델이 장비 ${sibling.groupId}에 있습니다. 연결의 장비 이름을 ${sibling.groupId}(으)로 맞추세요.`);
       return null;
     }
     appendRoute = Object.freeze({ routeId, provider: routeProvider, model: identity, groupId: connection.deviceId,
-      providerBudgetId: routeProvider === "abcllm" ? budgetFor(connection.deviceId) : sibling?.providerBudgetId ?? budgetFor(connection.deviceId) });
+      providerBudgetId: gatewayBudget ? budgetFor(connection.deviceId) : sibling?.providerBudgetId ?? budgetFor(connection.deviceId) });
     return connection.deviceId;
   };
   const checkDevice = (deviceId: string | null) => {
@@ -663,6 +678,7 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
       return result();
     }
     provider = "abcllm";
+    let cliTotalBound = false;
     if (!input.cliEngineIdentity) {
       blocking.push(`${head}: CLI 계약 정보를 읽지 못했습니다. 다시 시도하세요.`);
       return result();
@@ -672,13 +688,16 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
       ? input.contracts.find(entry => entry.routeId === task.routeId && entry.model === identity)
       : undefined;
     if (existing) {
-      if (existing.provider !== "abcllm" || existing.transport !== "direct"
+      // 3단계 전환 도구가 옮긴 엔진 직접 총량 상한 계약(local-direct)도 같은 CLI 엔진 계약이다 — 그 provider 로 부른다
+      cliTotalBound = isTotalBoundShape(existing);
+      if (!cliTotalBound && (existing.provider !== "abcllm" || existing.transport !== "direct")
         || contractBase(existing.endpoint) !== connection.baseUrl
         || existing.engineModel !== model
         || existing.deploymentRevision !== cliEngineRevision(engineSource)) {
         blocking.push(`${head}: CLI 연결·모델·추론 강도가 저장된 계약과 다릅니다.`);
         return result();
       }
+      if (cliTotalBound) provider = "local-direct";
     } else if (task.routeId && input.engineRoutes.includes(task.routeId)) {
       createContract = Object.freeze({
         routeId: task.routeId,
@@ -691,7 +710,7 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
       blocking.push(`${head}: 이 작업의 CLI 실행 경로를 준비할 수 없습니다.`);
       return result();
     }
-    checkDevice(checkRoute(provider, true, ""));
+    checkDevice(checkRoute(provider, true, "", provider === "abcllm" || cliTotalBound));
     return result();
   }
   if (connection.kind === "cli") {
@@ -729,21 +748,30 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
       return result();
     case "engine-route": case "review-ai1": case "review-ai2": {
       // PR B(text)·PR C1(1차·2차): 실행 쪽이 순위마다 「그 연결을 가리키는 계약」(끝점 = 연결 주소, 엔진 모델 = 순위 모델)을 찾는다
-      // (lib/llm/ai-task-resolver.ts·lib/crawl/review-task-ranks.ts). 1차·2차는 abcllm 형 total-bound 계약(transport direct — 엔진에 바로)을 만든다.
+      // (lib/llm/ai-task-resolver.ts·lib/crawl/review-task-ranks.ts). 없으면 total-bound 계약(transport direct — 엔진에 바로)을 만든다: 계약 읽기 관문이 열려 있으면
+      // 엔진 직접 총량 상한(local-direct, 2026-11-21 2단계 — 2차는 아직 abcllm 형), 닫혀 있으면 abcllm 형(engine-contract-shape.ts).
       // 같은 모델 이름의 계약이 다른 서버에 있으면 연결로 가른 이름(<모델>@<연결 id 앞 8자>)으로 따로 계약·용량 경로를 둔다 — 두 서버를 두 순위로 쓸 수 있다.
       const isDirect = (entry: AiReadinessInput["contracts"][number]) => entry.transport === "direct" || entry.provider === "local-direct";
-      const wireOf = (entry: AiReadinessInput["contracts"][number]) => entry.provider === "local-direct" ? entry.model : entry.engineModel ?? entry.model;
+      // 엔진에 가는 이름: abcllm 형과 엔진 직접 총량 상한은 engineModel ?? model, 그 밖의 local-direct(direct-openai-chat-v1)는 model(servingContractWireModel 과 같다)
+      const wireOf = (entry: AiReadinessInput["contracts"][number]) => entry.provider === "local-direct" && !isTotalBoundShape(entry) ? entry.model
+        : entry.engineModel ?? entry.model;
       const own = input.contracts.filter(entry => entry.routeId === routeId && isDirect(entry) && contractBase(entry.endpoint) === base && wireOf(entry) === model)
         .sort((a, b) => Number(a.provider === "local-direct") - Number(b.provider === "local-direct") || Number(a.model !== model) - Number(b.model !== model));
       provider = "abcllm";
+      // 새로 만들 계약의 provider(관문이 열려 있으면 엔진 직접 총량 상한 — engine-contract-shape.ts). 이미 있는 계약은 그 provider 그대로다
+      const created = routeId ? newEngineContractProvider(routeId, input.directShape?.open ?? false) : "abcllm";
+      // abcllm 형이면 칸을 두지 않는다(예전 저장·화면이 견주는 모양 그대로)
+      const shapeField = created === "local-direct" ? { provider: created } : {};
+      let totalBound = false;
       if (own.length) {
         identity = own[0].model;
         provider = own[0].provider === "local-direct" ? "local-direct" : "abcllm";
+        totalBound = isTotalBoundShape(own[0]);
       } else if (!routeId || !input.engineRoutes.includes(routeId)) {
         blocking.push(`${head}: ${routeId} 경로의 연결 계약이 없고 자동으로 만들 수 없습니다.`);
       } else {
         const plain = input.contracts.find(entry => entry.routeId === routeId && entry.model === model);
-        if (!plain || !isDirect(plain)) createContract = Object.freeze({ routeId, replacesGateway: !!plain, identity: model, engineModel: null });
+        if (!plain || !isDirect(plain)) createContract = Object.freeze({ routeId, replacesGateway: !!plain, identity: model, engineModel: null, ...shapeField });
         else {
           const alias = aiTaskAliasIdentity(model, connection.id);
           const taken = alias ? input.contracts.find(entry => entry.routeId === routeId && entry.model === alias) : undefined;
@@ -752,13 +780,19 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
             + "서빙 계약·등록부 화면에서 그 계약을 고치세요.");
           else {
             identity = alias;
-            createContract = Object.freeze({ routeId, replacesGateway: false, identity: alias, engineModel: model });
+            createContract = Object.freeze({ routeId, replacesGateway: false, identity: alias, engineModel: model, ...shapeField });
             warnings.push(`${head}: 같은 모델 이름의 계약이 다른 서버(${aiConnectionHost(contractBase(plain.endpoint)) ?? "주소 없음"})에 있어 이 연결은 장부 이름 ${alias}(으)로 `
               + `따로 계약·용량 경로를 둡니다 — 엔진에는 ${model}이(가) 나갑니다.`);
           }
         }
       }
-      checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
+      if (createContract) {
+        provider = created; totalBound = created === "local-direct";
+        if (created === "abcllm" && input.directShape?.text && !input.directShape.open && routeId && newEngineContractProvider(routeId, true) === "local-direct")
+          warnings.push(`${head}: 새 계약은 abcllm 형으로 만듭니다 — 직접 연결(local-direct) 모양은 모든 프로세스가 새 판일 때만 만듭니다. ${input.directShape.text}`);
+      }
+      checkDevice(checkRoute(provider, provider === "abcllm" || totalBound, "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다.",
+        provider === "abcllm" || totalBound));
       // 목록 없는 서버에 적은 모델(2026-11-10): 목록 대조 없이 1토큰 시험으로 확인하므로 계약 상한은 연결의 「컨텍스트 상한」이다
       if (createContract && aiConnectionManualOnly(connection, model) && !connection.contextTokens)
         blocking.push(`${head}: 목록(/models)에 없는 모델이라 계약 상한을 알 수 없습니다. LLM 운영에서 이 연결의 「컨텍스트 상한」을 적은 뒤 저장하세요.`);
@@ -899,7 +933,8 @@ export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ ran
       endpoint: ready.createLocalContract.endpoint, physicalGroup: ready.createLocalContract.physicalGroup,
       modelFamily: ready.createLocalContract.model.slice(0, 120).trim() });
     if (ready.createContract && entry.connection.baseUrl)
-      contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, provider: "abcllm",
+      contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, provider: ready.createContract.provider ?? "abcllm",
+        protocol: ready.createContract.provider === "local-direct" ? TOTAL_BOUND_PROTOCOL_NAME : null,
         endpoint: ready.createContract.cliEngine ? cliEngineEndpoint(entry.connection.baseUrl) : `${entry.connection.baseUrl}/chat/completions`, transport: "direct", engineModel: ready.createContract.engineModel,
         ...(ready.createContract.cliEngine ? { deploymentRevision: cliEngineRevision(ready.createContract.cliEngine) } : {}) });
     if (ready.createCliContract) contracts.push({ routeId: `cli:${ready.createCliContract.provider}:${ready.createCliContract.routeId}`,
