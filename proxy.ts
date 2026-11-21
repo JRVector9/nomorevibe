@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth/session";
 import { adminIngressAllowed, adminLocalLoginEnabled, adminOrigin, isAdminProtectedPath, verifyAdminSession } from "@/lib/auth/admin-access";
+import { countsTowardCrawlBurst } from "@/lib/http/crawl-burst-policy";
 import { DEFAULT_LOCALE, PUBLIC_LOCALE_HEADER, type Locale } from "@/lib/i18n/locales";
 import { isLocaleExcludedPath, pathLocale, stripLocale } from "@/lib/i18n/routing";
 import { RENDER_RECOVERY_COOKIE, RENDER_RECOVERY_COOKIE_VALUE } from "@/lib/web/recovery-cache";
@@ -32,6 +33,12 @@ async function routeRequest(req: NextRequest) {
   const locale = pathLocale(pathname);
   if (isAdminProtectedPath(stripLocale(pathname))) {
     if (locale || !adminIngressAllowed(req.headers)) return new NextResponse(null, { status: 404, headers: { "Cache-Control": "private, no-store" } });
+  }
+  // 과다 호출 차단(lib/http/crawl-burst.ts) — 공개 화면만 센다(정적 자원·API·관리자는 빼고). 막힌 IP 는 30분 동안 크롤링 금지 안내 429
+  if (countsTowardCrawlBurst(req)) {
+    const { guardCrawlBurst } = await import("@/lib/http/crawl-burst");
+    const blocked = await guardCrawlBurst(req, "page", "page");
+    if (blocked) return blocked;
   }
   // 검색(?q=)은 엣지에 담기지 않아(next.config.ts) 요청마다 DB 검색이 돈다 — IP 별 한도(lib/http/anti-scrape.ts)
   if (isSearchRequest(req)) {

@@ -42,6 +42,13 @@ class WatchdogConfigurationTests(unittest.TestCase):
         self.config['hosts']['mini'] = {**primary, 'target': 'jr@100.64.0.2', 'services': ['web']}
         self.config['hosts']['osaka'] = {**primary, 'target': 'root@100.64.0.3', 'services': ['agent-scan']}
         self.assertEqual(self.read(), self.config)
+        # 2026-11-15: the Korean discovery consumer is watched next to agent-scan (the osaka gateway lists both).
+        self.config['hosts']['osaka']['services'] = ['agent-scan', 'github-ko-discovery']
+        self.assertEqual(self.read(), self.config)
+        self.config['hosts']['osaka']['services'] = ['agent-scan', 'agent-scan']
+        with self.assertRaisesRegex(ValueError, 'invalid_configuration'):
+            self.read()
+        self.config['hosts']['osaka']['services'] = ['agent-scan']
         self.config['hosts']['extra'] = {**primary, 'target': 'jr@100.64.0.4'}
         with self.assertRaisesRegex(ValueError, 'invalid_configuration'):
             self.read()

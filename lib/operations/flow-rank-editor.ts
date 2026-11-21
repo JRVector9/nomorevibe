@@ -1,4 +1,4 @@
-import { AI_TASKS, aiTask, aiTaskAccepts, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
+import { AI_TASKS, aiTask, aiTaskAccepts, aiTaskRankScopeNote, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import { aiTaskEditTarget } from "./ai-task-edit-target";
 import {
   AI_RANK_SLOT_NAMES, aiRankChoiceOfRow, aiConnectionModelIds, aiModelChoiceName, aiModelDisplayName, aiModelsErrorText, aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskRankOptions, validateAiTaskRanks,
@@ -46,6 +46,8 @@ export type FlowRankLine = {
   saved: AiRankChoice[]; options: FlowRankOption[];
   /** 실행 쪽이 이 순위를 읽는가 — 아니면 「설정값」(바꿔도 지금 동작은 그대로) */
   live: boolean;
+  /** 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)의 설명 — 있으면 live 가 아니어도 순위를 저장받는다(aiTaskRankScopeNote) */
+  scope?: string;
   /** 화면에서 바꿀 수 없는 까닭(선택 상자를 막는다) */
   lock: string | null;
   /** Safe stored mode/member settings; never contains decrypted connection credentials. */
@@ -131,7 +133,8 @@ function buildRankEditor(entries: readonly (readonly [LlmStationKey | "off_belt"
       }
       const editTarget = id === "publish-classify" ? null : aiTaskEditTarget(id);
       lines.push({ key: `${id}#${slot}`, station, task: id, slot, label: aiTaskSlotLabel(task, slot), revision: revisionOf(own),
-        saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), ...(execution ? { execution } : {}),
+        saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), ...(aiTaskRankScopeNote(id) ? { scope: aiTaskRankScopeNote(id)! } : {}),
+        ...(execution ? { execution } : {}),
         lock: execution?.mode === "workload_pool" ? "작업 분산 중입니다. 분산 모델과 실행 방식은 「작업 배정」의 실행 방식에서 변경하세요."
           : FLOW_RANK_LOCKS[id] ? `${FLOW_RANK_LOCKS[id]}${editTarget ? ` 실제 적용 설정: ${editTarget.href}` : ""}`
             : editTarget ? `실제 적용 설정에서 변경하세요: ${editTarget.href}` : null });

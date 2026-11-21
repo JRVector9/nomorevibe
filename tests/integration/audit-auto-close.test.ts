@@ -14,7 +14,7 @@ import { EMPTY_POLICY_FILTER } from "@/lib/crawl/audit-policy-filter";
 import { listAuditFindings, startProductAudit } from "@/lib/crawl/product-audit";
 import { screenReviewCounts, screenReviewQueue } from "@/lib/crawl/audit-screen-review";
 import { resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
-import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
+import { QWEN_V2_AUDIT_PROMPT_VERSION, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
 import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
@@ -328,7 +328,7 @@ describe("답으로 닫기", () => {
   it("운영 행에 범위·닫기 칸이 없으면 새 기본값(열린 거절 전부·닫기 켬)으로 돈다 — 배포만으로 켜진다", async () => {
     await judged([{ repo: "d/low", confidence: 0.6, reason: CONTENT }]);
     await db.execute(sql`update crawl_settings set values = jsonb_set(values, '{qwenAuto,auditSecondOpinion}', '{"enabled": true, "perTick": 10}') where id = 1`);
-    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true });
+    expect((await getSettings()).qwenAuto.auditSecondOpinion).toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true, recollectPerTick: 1 });
     server.answers.set("d/low", { decision: "reject", confidence: 0.97 });
     await tick();
     expect(server.calls).toEqual(["d/low"]);
@@ -480,7 +480,7 @@ describe("글이 적은 페이지·엇갈림(2026-10-22 사용자 결정)", () =
     expect(splits.map((row) => row.target).sort()).toEqual(["approve", "owned", "reject"]);
     expect(splits.find((row) => row.target === "reject")).toMatchObject({ actor: "qwen-v2-auto", actorKind: "model", ok: true, detail: {
       itemId: (await item("reject")).id, aiConfidence: 0.6, category: "content",
-      m1: { model: "qwen3.8-flash-next", decision: "reject", confidence: 0.95, promptVersion: QWEN_V2_PROMPT_VERSION, reason: "Qwen says reject." },
+      m1: { model: "qwen3.8-flash-next", decision: "reject", confidence: 0.95, promptVersion: QWEN_V2_AUDIT_PROMPT_VERSION, reason: "Qwen says reject." },
       others: [{ model: "grok-4.7", source: "grok-cli-batch", decision: "approve", confidence: 0.9, reason: "earlier" }] } });
     expect(splits.find((row) => row.target === "owned")).toMatchObject({ detail: { others: [{ model: "qwen3.8-flash-next+vision", source: "qwen-vision-m1" }] } });
     expect(splits.find((row) => row.target === "approve")).toMatchObject({ detail: { m1: { decision: "approve" }, others: [{ decision: "reject" }] } });

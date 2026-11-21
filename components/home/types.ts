@@ -11,7 +11,6 @@ export type HomePulseView = {
   updates: { projects: number; releases: number };
   /** 이번 주 가장 활발한 프로젝트 수 — 목록(제품 값)은 서버가 그린 구획(ActiveList)에만 있다 */
   activeCount: number;
-  categories: { key: string; total: number; born: number }[];
   tools: { scanned: number; withTool: number; rows: { label: string; count: number }[] } | null;
 };
 

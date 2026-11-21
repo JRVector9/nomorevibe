@@ -8,6 +8,7 @@ import { opencodeCliLogicalSql, opencodeCliDispatchSql, opencodeCliEventTerminal
 import { opencodeTaskLogicalSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
 import { gatewayHttpRejectedEventTerminalSql } from "@/lib/llm/gateway-http-rejected-sql";
 import { japaneseProductLogicalSql, japaneseProductDispatchSql, japaneseProductEventSql } from "@/lib/llm/japanese-product-translation-sql";
+import { japaneseAbcllmProductLogicalSql, japaneseAbcllmProductDispatchSql, japaneseAbcllmProductEventSql } from "@/lib/llm/japanese-abcllm-product-translation-sql";
 import { cliExecutorEvidenceShape } from "@/lib/llm/cli-executor-boundary-contract";
 import { cliExecutorIndeterminateEvidenceShape } from "@/lib/llm/cli-executor-indeterminate-boundary-contract";
 import { cliExecutorRemovedEvidenceShape } from "@/lib/llm/cli-executor-removed-boundary-contract";
@@ -40,6 +41,12 @@ it("appends the next monotonic migration and only three new guarded ledger branc
 it.each(targets)("%s / %s keeps the complete predecessor and appends the exact OpenCode branch", (table, name, branch) => {
   const checks = getTableConfig(table === "model_capacity_requests" ? modelCapacityRequests : modelCapacityEvents).checks;
   let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+  // 0193 appends the abcllm twin of the 0184 Japanese branch last.
+  const japaneseAbcllm = name === "model_capacity_requests_logical_check" ? japaneseAbcllmProductLogicalSql
+    : name === "model_capacity_requests_dispatch_check" ? japaneseAbcllmProductDispatchSql : japaneseAbcllmProductEventSql;
+  const japaneseAbcllmTail = `) OR (${japaneseAbcllm})`;
+  expect(expression.startsWith("(") && expression.endsWith(japaneseAbcllmTail), `${name}: 0193 additive tail present`).toBe(true);
+  expression = expression.slice(1, -japaneseAbcllmTail.length);
   const japanese = name === "model_capacity_requests_logical_check" ? japaneseProductLogicalSql
     : name === "model_capacity_requests_dispatch_check" ? japaneseProductDispatchSql : japaneseProductEventSql;
   const japaneseTail = `) OR (${japanese})`;

@@ -214,5 +214,54 @@ describe("「동시에」 분류가 포화로 미뤄진 틱", () => {
     expect(boundary.pool).toHaveBeenCalledTimes(1);   // 첫 묶음 하나만 물었다(classifierConcurrency 1)
     expect(boundary.publish).not.toHaveBeenCalled();
     expect(boundary.hold).not.toHaveBeenCalled();     // 분류 못 한 후보를 「분류 없음」으로 보류하지 않는다 — 다음 틱이 다시 묻는다
+    // 10·10·10·5 — 한도보다 적게 온 넷째 읽기가 대기열의 끝이다. 빈 답을 확인하는 다섯째 읽기는 하지 않는다(2026-11-21)
+    expect(boundary.candidates).toHaveBeenCalledTimes(4);
+  });
+
+  /**
+   * 2026-11-21(운영 실측): 분류 자리가 막힌 동안 발행 틱은 무거운 대기열 쿼리를 두 번 돌렸다 — 후보를 읽어 기다림에 넣고, 그 후보들만 NOT IN 으로
+   * 뺀 같은 쿼리로 빈 답을 확인한 뒤 model_capacity 로 미뤘다. 미룬 틱은 poll 마다 다시 도므로 그 확인이 그대로 곱해졌다.
+   */
+  it("대기열이 한 묶음보다 짧으면 분류를 기다리는 후보만 남긴 채 다시 읽지 않고 미룬다 — 분류는 종전대로 한 번 묻는다", async () => {
+    const { setAiTaskExecutionConfigsForTest } = await import("@/lib/llm/ai-task-execution-snapshot");
+    setAiTaskExecutionConfigsForTest([{ task: "publish-classify", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null, reserveRanks: false,
+      members: [{ memberId: "0b0c0d0e-0000-4000-8000-00000000e0e0" }] } as never]);
+    const pending = Array.from({ length: 3 }, (_, index) => ({ id: index + 1, repo: `owner/tool-${index + 1}`, updatedAt: new Date(2026, 10, 21, 0, 0, 3 - index) }));
+    const dialect = new PgDialect();
+    boundary.candidates.mockImplementation(async (_states: unknown, limit: number, predicate?: SQL) => {
+      const excluded = predicate ? dialect.sqlToQuery(predicate).params : [];
+      return pending.filter(row => !excluded.includes(row.id)).slice(0, limit);
+    });
+    boundary.prepare.mockImplementation(async (candidate: { repo: string }) => ({ input: { repo: candidate.repo }, snapshot: { document: {}, starAutoApproved: false } }));
+    // 그 작업만의 사정(per-work)으로 미뤄도 같다 — 이 틱의 남은 묶음을 막지는 않지만 대기열에 남은 것이 없다
+    for (const reason of ["capacity", "work_busy"] as const) {
+      boundary.candidates.mockClear(); boundary.pool.mockReset();
+      boundary.pool.mockRejectedValue(new ModelCapacityDeferredError(reason));
+      let checks = 0;
+      const ctx: JobContext<null> = { cursor: null, save: vi.fn(), log: vi.fn(), hasBudget: () => ++checks < 200 };
+      expect(await publishCandidates(ctx)).toEqual({ done: false, deferred: "model_capacity" });
+      expect(boundary.candidates).toHaveBeenCalledTimes(1);
+      expect(boundary.pool).toHaveBeenCalledTimes(1);
+      expect(ctx.log).not.toHaveBeenCalledWith("crawl.publish_done", expect.anything());
+    }
+    expect(boundary.publish).not.toHaveBeenCalled();
+    expect(boundary.hold).not.toHaveBeenCalled();
+  });
+
+  it("기다리는 후보가 없는 틱은 종전대로 대기열을 다시 읽어 빈 것을 확인하고 끝난다", async () => {
+    const { setAiTaskExecutionConfigsForTest } = await import("@/lib/llm/ai-task-execution-snapshot");
+    setAiTaskExecutionConfigsForTest([{ task: "publish-classify", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null, reserveRanks: false,
+      members: [{ memberId: "0b0c0d0e-0000-4000-8000-00000000e0e0" }] } as never]);
+    const pending = new Map(Array.from({ length: 3 }, (_, index) => [index + 1, { id: index + 1, repo: `owner/tool-${index + 1}`, updatedAt: new Date(2026, 10, 21, 0, 0, 3 - index) }] as const));
+    boundary.candidates.mockImplementation(async () => [...pending.values()]);
+    boundary.prepare.mockImplementation(async (candidate: { repo: string }) => ({ input: { repo: candidate.repo }, snapshot: { document: {}, starAutoApproved: false } }));
+    boundary.pool.mockImplementation(async (selected: unknown[]) => selected.map(() => "Tool"));
+    boundary.publish.mockImplementation(async (candidate: { id: number }) => { pending.delete(candidate.id); return { ok: true }; });
+    let checks = 0;
+    const ctx: JobContext<null> = { cursor: null, save: vi.fn(), log: vi.fn(), hasBudget: () => ++checks < 200 };
+    expect(await publishCandidates(ctx)).toEqual({ done: true });
+    expect(boundary.candidates).toHaveBeenCalledTimes(2);
+    expect(boundary.publish).toHaveBeenCalledTimes(3);
+    expect(ctx.log).toHaveBeenCalledWith("crawl.publish_done", { published: 3, skipped: 0, conflicts: 0, drained: true });
   });
 });

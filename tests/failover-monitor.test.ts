@@ -20,6 +20,18 @@ it('combines readiness and progress without downgrading alarms or unknowns', () 
   expect(exitCodeFor('alarm')).toBe(2);
 });
 
+it('carries read-failure causes as a record only: they never change overall, and an unread stage is listed once', () => {
+  const failures = [{ piece: 'capacity-mode', code: '57014' }];
+  expect(combineMonitorStatus(ready, progress, undefined, undefined, failures)).toMatchObject({ overall: 'ok', readFailures: failures });
+  expect(combineMonitorStatus(ready, progress)).not.toHaveProperty('readFailures');
+  const unread = { piece: 'text-reason', code: '57014' };
+  const partial = { ...progress, overall: 'unknown' as const, stages: [
+    { role: 'text' as const, stage: 'reason-translate' as const, reason: 'unknown_age' as const, alarm: false, unread },
+    { role: 'text' as const, stage: 'keywords' as const, reason: 'no_work' as const, alarm: false, waiting: 0 }] };
+  expect(combineMonitorStatus(ready, partial, undefined, undefined, [unread])).toMatchObject({ overall: 'unknown', readFailures: [unread] });
+  expect(combineMonitorStatus(ready, { ...partial, overall: 'alarm' })).toMatchObject({ overall: 'alarm', readFailures: [unread] });
+});
+
 it('carries the model admission mode as an observation only: DRAINING never changes overall', () => {
   const draining = { mode: 'draining' as const, changedAt: 1_000 };
   expect(combineMonitorStatus(ready, progress, undefined, draining)).toMatchObject({ overall: 'ok', capacityMode: draining });

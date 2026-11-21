@@ -38,13 +38,15 @@ function checkedFrom(freshness: DetailFreshness[], t: Translator<"detail">): str
  * 그 계정은 '주요 기여자'로 따로 적는다(github-owner.ts repositoryOperator).
  * '정보 갱신'은 GitHub·공개 페이지에서 사실을 읽은 때다 — AI 흔적 검사('무엇으로 만들었나')와는 다른 일이다(UX-16).
  */
-export function InfoCard({ product, repository, freshness, unclaimed }: {
+export function InfoCard({ product, repository, freshness, unclaimed, goHref }: {
   /** 정보 카드가 읽는 제품 칸만(lib/domain/products/detail-extras.ts) */
   product: Pick<DetailClientProduct, "slug" | "url" | "accessMode" | "category" | "makerName" | "repoGone" | "repoUrl" | "stack">;
   repository: ProductDetailView["repository"];
   /** 출처마다 어디서·언제 읽었는지만(client-data.ts detailFreshness) — 원본 수집 값은 넘기지 않는다 */
   freshness: DetailFreshness[];
   unclaimed: boolean;
+  /** 사이트로 나가는 /go 주소 — 보호 API 가 준 서명 토큰이 붙어 있다(DetailExtras goHref) */
+  goHref: string;
 }) {
   const t = useTranslations("detail");
   const locale = useLocale();
@@ -75,7 +77,7 @@ export function InfoCard({ product, repository, freshness, unclaimed }: {
             <a href={operator.contributor.profileUrl} target="_blank" rel="noopener noreferrer" className={LINK}>@{operator.contributor.login} ↗</a>
           </Row>
         )}
-        {site && <Row label={t("info.website")}><a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="site" className={LINK}>{displayUrl} ↗</a></Row>}
+        {site && <Row label={t("info.website")}><a href={goHref} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="site" className={LINK}>{displayUrl} ↗</a></Row>}
         {/* 사라졌다고 확정된 저장소(repoGone)로는 링크를 걸지 않는다 */}
         {repoUrl && product.repoGone && (
           <Row label={t("info.repository")}><span className="font-normal text-fg-2">{t("info.gone")}</span></Row>

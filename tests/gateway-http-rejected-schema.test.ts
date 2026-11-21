@@ -8,6 +8,7 @@ import { GATEWAY_HTTP_REJECTED_BINDING_KINDS, GATEWAY_HTTP_REJECTED_RETRY_AFTER_
 import { isGatewayHttpRejectedStatus } from "@/lib/llm/gateway-http-rejected";
 import { PROVIDER_RATE_LIMIT_RETRY_AFTER_MAX_MS } from "@/lib/llm/provider-rate-limit";
 import { japaneseProductTerminalSql, japaneseProductEventSql } from "@/lib/llm/japanese-product-translation-sql";
+import { japaneseAbcllmProductTerminalSql, japaneseAbcllmProductEventSql } from "@/lib/llm/japanese-abcllm-product-translation-sql";
 
 /**
  * 0174(2026-11-11) gateway_http_rejected: journal·파일 모양·Drizzle 선언·TS/SQL 목록 일치만 본다. 실제 DB 적용·guard 판정·정산·읽는 쪽은
@@ -46,6 +47,10 @@ it("Drizzle composes both terminal CHECKs as (previous) OR (0174 branch) and lea
   for (const [table, name, branch] of [[modelCapacityRequests, "model_capacity_requests_terminal_check", gatewayHttpRejectedTerminalSql],
     [modelCapacityEvents, "model_capacity_events_terminal_check", gatewayHttpRejectedEventTerminalSql]] as const) {
     let expression = new PgDialect().sqlToQuery(getTableConfig(table).checks.find(check => check.name === name)!.value).sql;
+    // 0193 appends the abcllm twin of the 0184 Japanese branch last.
+    const japaneseAbcllmTail = `) OR (${table === modelCapacityRequests ? japaneseAbcllmProductTerminalSql : japaneseAbcllmProductEventSql})`;
+    expect(expression.startsWith("(") && expression.endsWith(japaneseAbcllmTail), `${name}: 0193 additive tail present`).toBe(true);
+    expression = expression.slice(1, -japaneseAbcllmTail.length);
     const japanese = table === modelCapacityRequests ? japaneseProductTerminalSql : japaneseProductEventSql;
     const japaneseTail = `) OR (${japanese})`;
     expect(expression.startsWith("(") && expression.endsWith(japaneseTail), `${name}: 0184 additive tail present`).toBe(true);

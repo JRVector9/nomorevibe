@@ -330,19 +330,26 @@ describe("공개 제품 JSON API 응답 항목", () => {
     const response = await productRoute.GET(request("/api/products/found-app"), params("found-app") as never);
     expect(response.status).toBe(200);
     const body = await response.json() as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(["category", "name", "slug", "status", "tagline", "url"]);
+    expect(Object.keys(body).sort()).toEqual(["category", "name", "slug", "status", "tagline"]);
     for (const hidden of ["id", "description", "builder", "stack", "makerName", "repoUrl", "source", "verifyToken", "editTokenHash", "claimInvitedAt", "createdAt", "updatedAt"]) {
       expect(body, hidden).not.toHaveProperty(hidden);
     }
   });
 
-  it("주인 없는 제품은 claimable·verify 를 함께 준다(스킬 클레임 흐름)", async () => {
+  it.each([false, true])("주인 없는 제품은 주소 일치(%s)일 때만 verify를 준다", async matches => {
     mocks.findBySlug.mockResolvedValue(product);
-    const response = await productRoute.GET(request("/api/products/found-app", { ua: "nomorevibe-skill/1" }), params("found-app") as never);
+    const response = await productRoute.GET(request(`/api/products/found-app${matches ? "?url=https%3A%2F%2Ffound-app.test" : ""}`, { ua: "nomorevibe-skill/1" }), params("found-app") as never);
     expect(response.status).toBe(200);
     const body = await response.json() as Record<string, unknown>;
     expect(body.claimable).toBe(true);
-    expect(body.verify).toBeTruthy();
+    if (matches) {
+      expect(body.verify).toBeTruthy();
+      expect(body).not.toHaveProperty("message");
+    } else {
+      expect(body).not.toHaveProperty("verify");
+      expect(body.message).toContain("/skill.md");
+    }
+    expect(body).not.toHaveProperty("url");
     expect(body).not.toHaveProperty("id");
   });
 

@@ -1,6 +1,6 @@
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db, onReplica, onPrimary } from "@/lib/db";
 import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { createMemo } from "@/lib/cache/memo";
@@ -31,10 +31,10 @@ import { busyMemberKeysSql, capacityOwnerFromEnv, type CapacityOwner } from '@/l
  * 해시는 DB 에서도 JS 에서도 원문 UTF-8 의 sha256 이라 서로 맞는다.
  */
 const SOURCES = sql`
-  select coalesce(a.reason, a.outcome->>'reason') as body, coalesce(a.completed_at, a.started_at) as at
+  select coalesce(a.reason, a.outcome->>'reason') as body, coalesce(a.completed_at, a.started_at) as at, 'a' || a.id as ref
     from crawl_review_attempts a where coalesce(a.reason, a.outcome->>'reason') is not null
   union all
-  select s.second_reason, coalesce(s.reviewed_at, s.created_at) from second_reviews s where s.second_reason is not null`;
+  select s.second_reason, coalesce(s.reviewed_at, s.created_at), 's' || s.id from second_reviews s where s.second_reason is not null`;
 
 /**
  * translate.ts needsKorean 과 같은 기준 — 글자 중 한글이 30% 미만.
@@ -50,9 +50,24 @@ const NEEDS_KOREAN = sql`length(btrim(body)) > 0 and (body !~ '[가-힣]'
 export const TRANSLATION_SOURCE_ROWS_SQL = SOURCES;
 export const TRANSLATION_NEEDS_KOREAN_SQL = NEEDS_KOREAN;
 
-export const UNIQUE_TRANSLATION_SOURCES_SQL = sql`select encode(sha256(convert_to(body, 'UTF8')), 'hex') as hash, body, max(at) as at
-  from (${SOURCES}) src where ${NEEDS_KOREAN} group by 1, 2`;
+/**
+ * 옮길 글마다 한 줄 — 해시 · 가장 최근 시각 · 그 글을 가진 원본 행 하나(ref: 'a<심사 기록 id>' 또는 's<2차 심사 id>').
+ *
+ * 본문으로 묶지 않는다(2026-11-15). 프로드 사유 40.4만 행 중 35.9만이 서로 다른 글이라 본문을 키로 한 집계가 작업 메모리
+ * (work_mem 64MB · 해시 128MB)를 넘어 부를 때마다 80MB 넘게 임시 파일로 흘렸다 — 이 잡과 감시가 몇 초마다 불러 시간당 수십 GB.
+ * 해시로만 묶으면 같은 결과가 70MB 안에서 끝난다(복제본 EXPLAIN ANALYZE, 시간은 같다). 본문은 고른 몇 줄만 ref 로 다시 읽는다
+ * (sourceBodySql) — 한 문장 안이라 스냅숏이 같아 그 행의 글은 이 해시의 글이다.
+ */
+export const UNIQUE_TRANSLATION_SOURCES_SQL = sql`select encode(sha256(convert_to(body, 'UTF8')), 'hex') as hash, max(at) as at, min(ref) as ref
+  from (${SOURCES}) src where ${NEEDS_KOREAN} group by 1`;
 const UNIQUE_SOURCES = UNIQUE_TRANSLATION_SOURCES_SQL;
+
+/** UNIQUE_SOURCES 의 ref 로 본문을 읽는다 — 줄을 고른(LIMIT·해시 목록) 바깥에서만 부른다 */
+function sourceBodySql(ref: SQL) {
+  return sql`case left(${ref}, 1)
+    when 'a' then (select coalesce(a.reason, a.outcome->>'reason') from crawl_review_attempts a where a.id = substr(${ref}, 2)::int)
+    else (select s.second_reason from second_reviews s where s.id = substr(${ref}, 2)::int) end`;
+}
 
 export type PendingTranslation = { hash: string; body: string; attempts: number };
 
@@ -71,12 +86,14 @@ function notBusy(owner: CapacityOwner | undefined) {
  */
 export async function untriedTranslations(limit: number, owner: CapacityOwner | undefined = capacityOwnerFromEnv()): Promise<PendingTranslation[]> {
   const rows = await db.execute<{ hash: string; body: string; attempts: number }>(sql`
-    select u.hash, u.body, 0::int as attempts
-      from (${UNIQUE_SOURCES}) u
-      left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
-     where t.source_hash is null and ${notBusy(owner)}
-     order by u.at desc nulls last, u.hash
-     limit ${limit}`);
+    select p.hash, ${sourceBodySql(sql`p.ref`)} as body, 0::int as attempts from (
+      select u.hash, u.ref, u.at
+        from (${UNIQUE_SOURCES}) u
+        left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
+       where t.source_hash is null and ${notBusy(owner)}
+       order by u.at desc nulls last, u.hash
+       limit ${limit}) p
+     order by p.at desc nulls last, p.hash`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
 }
 
@@ -89,12 +106,14 @@ export async function untriedTranslations(limit: number, owner: CapacityOwner | 
  */
 export async function retryableTranslations(limit: number, owner: CapacityOwner | undefined = capacityOwnerFromEnv()): Promise<PendingTranslation[]> {
   const rows = await db.execute<{ hash: string; body: string; attempts: number }>(sql`
-    select u.hash, u.body, t.attempts::int as attempts
-      from (${UNIQUE_SOURCES}) u
-      join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
-     where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()) and ${notBusy(owner)}
-     order by t.retry_at asc nulls first, t.attempts asc, u.hash
-     limit ${limit}`);
+    select p.hash, ${sourceBodySql(sql`p.ref`)} as body, p.attempts from (
+      select u.hash, u.ref, t.attempts::int as attempts, t.retry_at
+        from (${UNIQUE_SOURCES}) u
+        join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
+       where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()) and ${notBusy(owner)}
+       order by t.retry_at asc nulls first, t.attempts asc, u.hash
+       limit ${limit}) p
+     order by p.retry_at asc nulls first, p.attempts asc, p.hash`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
 }
 
@@ -107,11 +126,12 @@ export async function pendingReasonTranslationBatch(memberKeys: readonly string[
   const hashes = keys.map(key => key.slice(3));
   return onPrimary(async () => {
     const rows = await db.execute<PendingTranslation>(sql`
-      SELECT u.hash, u.body, coalesce(t.attempts,0)::int AS attempts
-      FROM (${UNIQUE_SOURCES}) u LEFT JOIN text_translations t ON t.source_hash=u.hash AND t.target_lang='ko'
-      WHERE u.hash=ANY(ARRAY[${sql.join(hashes.map(hash => sql`${hash}`), sql`, `)}]::text[])
-        AND (t.source_hash IS NULL OR (t.status='failed' AND (t.retry_at IS NULL OR t.retry_at<=clock_timestamp())))
-      ORDER BY u.hash`);
+      SELECT p.hash, ${sourceBodySql(sql`p.ref`)} AS body, p.attempts FROM (
+        SELECT u.hash, u.ref, coalesce(t.attempts,0)::int AS attempts
+        FROM (${UNIQUE_SOURCES}) u LEFT JOIN text_translations t ON t.source_hash=u.hash AND t.target_lang='ko'
+        WHERE u.hash=ANY(ARRAY[${sql.join(hashes.map(hash => sql`${hash}`), sql`, `)}]::text[])
+          AND (t.source_hash IS NULL OR (t.status='failed' AND (t.retry_at IS NULL OR t.retry_at<=clock_timestamp())))) p
+      ORDER BY p.hash`);
     if (rows.length !== hashes.length) return null;
     const batch = [...rows].map(row => ({ ...row, attempts: Number(row.attempts) }));
     // A once-batched member may now require a solo retry. It must never drag

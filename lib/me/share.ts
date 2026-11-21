@@ -1,22 +1,18 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
-import { translatedCategory } from "@/components/home/i18n";
 import { db } from "@/lib/db";
 import { productReactions } from "@/lib/db/me-schema";
 import { getProductIdentity } from "@/lib/domain/products/detail-view";
 import { publicRead } from "@/lib/domain/products/public-reads";
+import { teaserSummary } from "@/lib/domain/products/public-teaser";
 import { selectProductTranslation } from "@/lib/domain/products/translations";
-import { TRIED_BADGE_MIN } from "@/lib/domain/products/badge";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import { productReactionsEnabled } from "@/lib/domain/reactions/flags";
 import { getTranslator } from "@/lib/i18n/dictionary";
-import { formatNumber } from "@/lib/i18n/format";
 import type { Locale } from "@/lib/i18n/locales";
 import { productTranslationSource, readTranslationsForProducts } from "@/lib/i18n/products";
 import { logger } from "@/lib/observability/logger";
 import { siteOrigin } from "@/lib/site";
-import { talkPublicEnabled } from "@/lib/social/flags";
-import { productTalk } from "@/lib/social/talk";
 
 /** 배지·공유 카드는 공개 목록에 오른 제품에만 — 아무 주소나 등록한 검증 전(unverified) 줄에 내주면 피싱에 쓰인다. 감사 보류 중인 것도 목록 밖이다 */
 const CATALOG_STATUSES = ["seeded", "verified"] as const;
@@ -42,34 +38,25 @@ export async function productTriedCount(productId: number): Promise<number> {
   });
 }
 
-export type ShareCardData = {
-  name: string; tagline: string; brandLine: string; chips: { text: string; hn?: true }[]; url: string; date: string;
-};
+export type ShareCardData = { name: string; tagline: string; brandLine: string; url: string };
 
 /**
- * 공유 카드(SNS 설계 T13·M5) 글 — 이름·한 줄 소개(그 언어)·사실 칩. 화제 근거(HN 점수)가 있으면 앞에, 없으면 분야를 둔다.
- * 숫자는 카드를 만든 때의 값이라 날짜를 함께 적는다.
+ * 공유 카드(SNS 설계 T13·M5) 글 — 이름·요약(그 언어의 한 줄)·사이트 표기뿐이다.
+ * 공개 주소로 나가는 그림이라 스타·HN 점수·써본 사람·분야 칩과 그 날짜는 싣지 않는다(2026-11-15 사람 결정, 공개 출력은 주소·이름·요약).
+ *
+ * 이 카드는 상세의 공유 미리보기 그림(og:image·twitter:image·JSON-LD image)이기도 하다(2026-11-15 사람 결정). 그래서 상세가 열리는
+ * 제품(내려간 banned 가 아닌 것 — 검증 전·감사 보류·수집 개인 프로필 포함)이면 카드도 나온다. 상세 HTML 이 이미 같은 이름·요약을 싣으므로
+ * 더 드러나는 값은 없다. «소개됨» 배지(app/badge)는 지금처럼 공개 목록에 오른 제품만(publicProductIdentity).
  */
-export async function shareCardData(slug: string, locale: Locale, now = new Date()): Promise<ShareCardData | null> {
-  const product = await publicProductIdentity(slug);
-  if (!product) return null;
-  const [me, common, labels, tried, translations, talk] = await Promise.all([
-    getTranslator(locale, "me"), getTranslator(locale, "common"), getTranslator(locale, "labels"),
-    productTriedCount(product.id),
+export async function shareCardData(slug: string, locale: Locale): Promise<ShareCardData | null> {
+  const product = await publicRead("detail", ["identity", slug], () => getProductIdentity(slug));
+  if (!product || product.status === "banned") return null;
+  const [common, translations] = await Promise.all([
+    getTranslator(locale, "common"),
     readTranslationsForProducts([product], locale).catch((error) => { logger.warn("me.share_card_translation_unavailable", { error }); return []; }),
-    talkPublicEnabled() ? productTalk(product.id, product.repoUrl, now).catch(() => null) : Promise.resolve(null),
   ]);
-  const tagline = locale === "ko" ? product.taglineKo?.trim() || product.tagline
-    : selectProductTranslation(productTranslationSource(product), locale, "tagline", translations.find((row) => row.field === "tagline")).text;
-  const hn = talk?.posts.filter((post) => post.source === "hn").sort((a, b) => b.points - a.points)[0];
-  const chips: ShareCardData["chips"] = [];
-  if (hn) chips.push({ text: me("share.cardHn", { points: formatNumber(hn.points, locale), comments: formatNumber(hn.comments, locale) }), hn: true });
-  if (typeof product.stars === "number") chips.push({ text: me("share.cardStars", { count: formatNumber(product.stars, locale) }) });
-  if (tried >= TRIED_BADGE_MIN) chips.push({ text: me("share.cardTried", { count: formatNumber(tried, locale) }) });
-  if (!hn) chips.push({ text: translatedCategory(product.category, labels) });
-  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  return {
-    name: product.name, tagline, brandLine: common("site.tagline"), chips: chips.slice(0, 3),
-    url: `${new URL(siteOrigin()).host}/p/${product.slug}`, date: me("share.cardDate", { date }),
-  };
+  const translation = locale === "ko" ? null
+    : selectProductTranslation(productTranslationSource(product), locale, "tagline", translations.find((row) => row.field === "tagline"));
+  const { summary } = teaserSummary({ tagline: product.tagline, taglineKo: product.taglineKo, translation }, locale);
+  return { name: product.name, tagline: summary, brandLine: common("site.tagline"), url: `${new URL(siteOrigin()).host}/p/${product.slug}` };
 }

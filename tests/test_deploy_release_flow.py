@@ -29,6 +29,10 @@ release = load('release_coordinator_flow', ROOT / 'scripts/ops/deploy_release.py
 fixtures = load('release_coordinator_runtime_fixtures', ROOT / 'tests/test_release_runtime.py')
 
 
+def stat_mode(path):
+    return path.stat().st_mode & 0o777
+
+
 class StatefulApi:
     def __init__(self, owner, apps, latest):
         self.owner, self.apps, self.deployments = owner, copy.deepcopy(apps), copy.deepcopy(latest)
@@ -109,7 +113,7 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.stack.enter_context(patch.object(release.shared, 'github_integration_preflight', side_effect=actual_integration))
         self.monitor = self.stack.enter_context(patch.object(release.shared, 'monitor_gate', side_effect=self.monitor_gate))
         self.health = self.stack.enter_context(patch.object(release.shared, 'check_app_deployed', side_effect=self.check_health))
-        self.public = self.stack.enter_context(patch.object(release.shared, 'public_gate', side_effect=lambda sha: self.record('public-verified', {'release': sha})))
+        self.public = self.stack.enter_context(patch.object(release.shared, 'public_gate', side_effect=lambda _client, target: self.record('public-verified', {'release': target['sha']})))
         self.purge = self.stack.enter_context(patch.object(release.shared, 'purge_html', side_effect=lambda: self.record('cache-purged', {'purged': True})))
         self.launch = self.stack.enter_context(patch.object(release, 'load', side_effect=lambda name, filename: SimpleNamespace(launch_observer=self.launch_observer)
             if filename == 'release_observer.py' else (_ for _ in ()).throw(AssertionError('unexpected dynamic module'))))
@@ -959,6 +963,184 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.assert_stopped_without_redeploy('swarm_update_paused', 'monitor-m3_swarm_paused',
                                              rollback=monitor_module.git.shared.SwarmRollback)
         self.swarm.assert_not_called(); self.original.assert_not_called()
+
+    # 2026-11-15: the Git rollout (text·maintenance·scheduler·connect, deploy_git_apps.deploy) hit the same start race on
+    # scheduler-m3: "scheduler-m3_swarm_rollback_completed" stopped the window until a human redeployed the same config.
+    def rollback_read(self, state):
+        """What the Git verifier's runtime read (deploy_git_apps.probe) reports: the UpdateStatus, never task errors."""
+        return {'ready': False, 'updateState': state, 'image': self.target['worker'], 'specHash': 'f' * 64}
+
+    def arm_git_start_race(self, first, *, second=None, **reads):
+        """A scheduler entrypoint commit on a fleet already at `after` selects only the scheduler pair, which the real Git
+        rollout and its real check_deployed deploy. scheduler-m3's first deployment reads `first`; the deployment after a
+        redeploy reads ready, or `second`."""
+        self.target['worker'] = release.shared.IMAGE_PREFIX['worker'] + fixtures.NEW_ID
+        self.move_fleet_to(self.after)
+        (self.repo / 'scripts').mkdir()
+        (self.repo / 'scripts/scheduler.ts').write_text('export const tick = 2;\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'scheduler entrypoint change')
+        self.after = self.git('rev-parse', 'HEAD')
+        self.target['sha'] = self.after
+        self.snapshot['target'] = copy.deepcopy(self.target)
+        self.plan.update(target=self.target, snapshot=self.snapshot, scope=release.impact(self.snapshot, self.after))
+        self.assertEqual(self.plan['scope']['selectedApps'], ['scheduler-mini', 'scheduler-m3'])
+        self.proof.update(profile='full', verifiedAt=release.now(), target={'sha': self.after, 'worker': self.target['worker']})
+        self.plan['readiness'] = copy.deepcopy(self.proof)
+        self.ready.side_effect = lambda sha, **kwargs: self.record('ci-verified', copy.deepcopy(self.proof))
+        self.git_reads = []
+        def probe(short, app, sha, **kwargs):
+            deployment = self.client.latest(short)['deploymentId']
+            self.git_reads.append((short, deployment))
+            baseline = self.snapshot['baseline'][short]
+            if not deployment.startswith('new-'):
+                return {'ready': True, 'updateState': 'completed', 'image': baseline['image'], 'specHash': baseline['specHash']}
+            if short == 'scheduler-m3' and (deployment == 'new-scheduler-m3' or second is not None):
+                return copy.deepcopy(first if deployment == 'new-scheduler-m3' else second)
+            self.assertEqual((sha, kwargs['image']), (self.after, self.target['worker']))
+            return {'ready': True, 'updateState': 'completed', 'image': self.target['worker'], 'specHash': 'e' * 64}
+        self.final_receipts = {}
+        def fleet(client, snapshot, target, selected, receipts, repo, *, output_snapshot=None, retired_settings=()):
+            self.assertIs(client, self.client)
+            if not selected:
+                self.assertEqual(client.apps, snapshot['apps']); self.assertEqual(receipts, {})
+                return self.record('fleet-baseline-verified', copy.deepcopy(snapshot['baseline']))
+            self.assertEqual(list(selected), ['scheduler-mini', 'scheduler-m3'])
+            observed = copy.deepcopy(snapshot['baseline'])
+            for short in selected:
+                self.assertEqual(receipts[short]['deploymentId'], client.latest(short)['deploymentId'])
+                self.assertEqual(client.app(short), release.git.expected_config(short, snapshot['apps'][short], target, 'shared-worker'))
+                observed[short].update(release=self.after, image=self.target['worker'])
+            self.final_receipts.update(copy.deepcopy(receipts))
+            if output_snapshot is not None:
+                output_snapshot.update(schemaVersion=1, target=target, apps=copy.deepcopy(client.apps),
+                    latest=copy.deepcopy(client.deployments), runtime=copy.deepcopy(snapshot['runtime']), baseline=observed)
+            return self.record('fleet-final-verified', observed)
+        self.fleet.side_effect = fleet
+        self.stack.enter_context(patch.object(release.git, 'probe', side_effect=probe))
+        self.stack.enter_context(patch.object(release.git, 'source_manifest', return_value={'package-lock.json': 'a' * 64}))
+        self.stack.enter_context(patch.object(release.git.shared, 'monitor_gate', side_effect=self.monitor_gate))
+        self.arm_rollback_reads('scheduler-m3', **reads)
+
+    def assert_git_stopped_without_redeploy(self, reason, detail):
+        with self.assertRaises(release.git.GitRolloutStopped) as raised:
+            release.run_release(self.plan, self.execution, observe=False)
+        # Exactly today's stop: the original Swarm rollback ends the Git wave, nothing is requested again.
+        self.assertIsInstance(raised.exception.__cause__, release.git.shared.SwarmRollback)
+        self.assertEqual(str(raised.exception.__cause__), detail)
+        self.assertEqual(self.posts_of('scheduler-m3'), ['application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy'])
+        receipts = self.execution / 'git'
+        record = json.loads((receipts / 'scheduler-m3.swarm-rollback.safe.json').read_text())
+        self.assertEqual((record['app'], record['decision'], record['reason']), ('scheduler-m3', 'stop', reason))
+        failed = json.loads((receipts / 'scheduler-m3.failed.json').read_text())
+        self.assertEqual((failed['error'], failed['detail']), ('SwarmRollback', detail))
+        self.assertEqual(json.loads((receipts / 'summary.json').read_text())['failed'], ['scheduler-m3'])
+        for absent in ('scheduler-m3.redeploy.attempted.json', 'scheduler-m3.verified.json'):
+            self.assertFalse((receipts / absent).exists(), absent)
+        for absent in ('result.safe.json', 'final.private.json'):
+            self.assertFalse((self.execution / absent).exists(), absent)
+        stopped = json.loads((self.execution / 'stopped.safe.json').read_text())
+        self.assertEqual((stopped['errorClass'], stopped['swarmRedeploys']), ('GitRolloutStopped', {'count': 0, 'apps': []}))
+        self.assertEqual(self.observations, [])
+        return record
+
+    def test_a_git_app_start_race_rollback_is_redeployed_once_with_the_same_saved_config_and_verified_again(self):
+        race = self.race('scheduler-m3')
+        self.arm_git_start_race(self.rollback_read('rollback_completed'))
+        result = release.run_release(self.plan, self.execution, observe=False)
+        self.assertEqual((result['status'], result['deployedApps']), ('deployed-and-verified', ['scheduler-mini', 'scheduler-m3']))
+        self.assertEqual(result['swarmRedeploys'], {'count': 1, 'apps': ['scheduler-m3']})
+        self.assertEqual(self.posts_of('scheduler-m3'), ['application.saveEnvironment', 'application.saveDockerProvider',
+                                                         'application.deploy', 'application.deploy'])
+        self.assertEqual(self.posts_of('scheduler-mini'), ['application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy'])
+        # The same saved config is deployed again: no setting is written between the two deploy requests.
+        deploys = [payload for name, endpoint, payload in self.client.posts if name == 'scheduler-m3' and endpoint == 'application.deploy']
+        self.assertEqual(deploys[0], deploys[1])
+        # The rolled-back deployment is read once; the verification after the redeploy waits for a newer one.
+        self.assertEqual([deployment for short, deployment in self.git_reads if short == 'scheduler-m3' and deployment.startswith('new-')],
+                         ['new-scheduler-m3', 'new-scheduler-m3-2', 'new-scheduler-m3-2'])
+        redeploy = [index for index, event in enumerate(self.events) if event == ('scheduler-m3', 'application.deploy')][1]
+        self.assertEqual(self.events[:redeploy].count(('scheduler-m3', 'swarm-status-read')), 2)  # task error, then settled
+        self.assertLess(self.events.index(('scheduler-m3', 'rolled-back-runtime-proven')), redeploy)
+        # Model admission is re-read before the redeploy with the gate that admitted the Git rollout.
+        self.assertEqual([list(call.args[1]) for call in self.model_drain.call_args_list],
+                         [['scheduler-mini', 'scheduler-m3'], ['scheduler-mini', 'scheduler-m3']])
+        receipts = self.execution / 'git'
+        record = json.loads((receipts / 'scheduler-m3.swarm-rollback.safe.json').read_text())
+        self.assertEqual((record['decision'], record['reason'], record['rolledBackDeploymentId'], record['maxRedeploys']),
+                         ('redeploy_once', 'swarm_start_race', 'new-scheduler-m3', 1))
+        self.assertEqual(record['detected'], {'updateState': 'rollback_completed', 'taskErrors': [race]})
+        self.assertEqual(record['settled'], {'updateState': 'rollback_completed', 'taskErrors': [race]})
+        self.assertEqual(record['checks'], dict.fromkeys(release.SWARM_ROLLBACK_CHECKS, True))
+        for name in ('scheduler-m3.redeploy-model-drain.safe.json', 'scheduler-m3.redeploy.attempted.json',
+                     'scheduler-m3.redeploy.completed.json', 'scheduler-m3.deploy.completed.json'):
+            self.assertTrue((receipts / name).is_file(), name)
+            self.assertEqual(stat_mode(receipts / name), 0o600)
+        self.assertEqual(json.loads((receipts / 'scheduler-m3.redeploy.attempted.json').read_text())['action'], 'application.deploy')
+        verified = json.loads((receipts / 'scheduler-m3.verified.json').read_text())
+        self.assertEqual((verified['deploymentId'], verified['swarmRedeploys']), ('new-scheduler-m3-2', 1))
+        self.assertEqual(json.loads((receipts / 'scheduler-mini.verified.json').read_text())['swarmRedeploys'], 0)
+        self.assertEqual(self.final_receipts['scheduler-m3']['deploymentId'], 'new-scheduler-m3-2')
+        summary = json.loads((receipts / 'summary.json').read_text())
+        self.assertEqual((summary['deployed'], summary['failed'], summary['stopped']), (['scheduler-mini', 'scheduler-m3'], [], False))
+        self.assertEqual(json.loads((self.execution / 'result.safe.json').read_text())['swarmRedeploys'],
+                         {'count': 1, 'apps': ['scheduler-m3']})
+        self.assertFalse((receipts / 'scheduler-m3.swarm-rollback-repeated.safe.json').exists())
+        self.assertFalse((self.execution / 'stopped.safe.json').exists())
+
+    def test_a_second_git_rollback_after_the_single_redeploy_stops_the_release(self):
+        race = self.race('scheduler-m3')
+        self.arm_git_start_race(self.rollback_read('rollback_completed'), second=self.rollback_read('rollback_completed'))
+        with self.assertRaises(release.git.GitRolloutStopped) as raised:
+            release.run_release(self.plan, self.execution, observe=False)
+        detail = 'scheduler-m3_swarm_rollback_repeated:task_error=' + race
+        self.assertIsInstance(raised.exception.__cause__, release.git.shared.ReleaseStopped)
+        self.assertEqual(str(raised.exception.__cause__), detail)
+        self.assertEqual(self.posts_of('scheduler-m3').count('application.deploy'), 2)
+        receipts = self.execution / 'git'
+        repeated = json.loads((receipts / 'scheduler-m3.swarm-rollback-repeated.safe.json').read_text())
+        self.assertEqual((repeated['decision'], repeated['reason'], repeated['detected'], repeated['redeploys']),
+                         ('stop', 'swarm_rollback_repeated', {'updateState': 'rollback_completed', 'taskErrors': [race]}, 1))
+        # The Git receipts keep the safe stop code, like every other Git stop.
+        failed = json.loads((receipts / 'scheduler-m3.failed.json').read_text())
+        self.assertEqual((failed['error'], failed['detail']), ('ReleaseStopped', detail))
+        self.assertEqual(json.loads((receipts / 'summary.json').read_text())['detail'], detail)
+        self.assertEqual(json.loads((self.execution / 'stopped.safe.json').read_text())['swarmRedeploys'],
+                         {'count': 1, 'apps': ['scheduler-m3']})
+        self.assertTrue((receipts / 'scheduler-m3.redeploy.completed.json').is_file())
+        self.assertFalse((receipts / 'scheduler-m3.verified.json').exists())
+        self.assertFalse((self.execution / 'result.safe.json').exists())
+
+    def test_a_paused_git_update_stops_without_waiting_or_a_redeploy(self):
+        self.arm_git_start_race(self.rollback_read('paused'))
+        record = self.assert_git_stopped_without_redeploy('swarm_update_paused', 'scheduler-m3_swarm_paused')
+        self.swarm.assert_not_called(); self.original.assert_not_called(); self.assertFalse(record['checks']['swarmRolledBack'])
+
+    def test_a_git_rollback_that_pauses_while_settling_stops_without_a_redeploy(self):
+        race = self.race('scheduler-m3')
+        self.arm_git_start_race(self.rollback_read('rollback_started'),
+                                settle=[{'updateState': 'rollback_started', 'taskErrors': [race]},
+                                        {'updateState': 'rollback_started', 'taskErrors': [race]},
+                                        {'updateState': 'rollback_paused', 'taskErrors': [race]}])
+        record = self.assert_git_stopped_without_redeploy('rollback_not_settled', 'scheduler-m3_swarm_rollback_started')
+        self.assertEqual((record['settleStop'], record['checks']['rollbackSettled']), ('scheduler-m3_swarm_rollback_paused', False))
+        self.original.assert_not_called()
+
+    def test_any_other_git_task_error_stops_without_a_redeploy(self):
+        self.arm_git_start_race(self.rollback_read('rollback_completed'),
+                                settle=[{'updateState': 'rollback_completed',
+                                         'taskErrors': ['task: non-zero exit (1)', self.race('scheduler-m3')]}])
+        record = self.assert_git_stopped_without_redeploy('task_error_not_start_race', 'scheduler-m3_swarm_rollback_completed')
+        self.assertEqual(record['detected']['taskErrors'][0], 'task: non-zero exit (1)')
+        self.assertEqual(self.swarm.call_count, 1); self.original.assert_not_called()
+        self.assertEqual((record['checks']['swarmRolledBack'], record['checks']['startRace']), (True, False))
+
+    def test_git_saved_config_drift_during_the_rollback_stops_without_a_redeploy(self):
+        def operator_saved_other_settings():
+            self.client.apps['scheduler-m3']['env'] += 'OPERATOR_CHANGE=1\n'
+        self.arm_git_start_race(self.rollback_read('rollback_completed'), during_settle=operator_saved_other_settings)
+        record = self.assert_git_stopped_without_redeploy('saved_configuration_not_target', 'scheduler-m3_swarm_rollback_completed')
+        self.assertEqual((record['checks']['runtimeIsOriginal'], record['checks']['savedConfigIsTarget']), (True, False))
+        self.assertEqual(self.model_drain.call_count, 1)  # the run's own gate only; no redeploy re-read
 
 
 if __name__ == '__main__': unittest.main()

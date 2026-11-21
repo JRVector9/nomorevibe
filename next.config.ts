@@ -48,6 +48,8 @@ const nextConfig: NextConfig = {
 
   // skill/SKILL.md는 빌드 산출물이 아니므로 명시적으로 포함시켜야 /skill.md가 런타임에 읽을 수 있다
   outputFileTracingIncludes: {
+    "/api/og-cache/*": ["./assets/fonts/noto-sans-kr-400.woff"],
+    "/api/media/*": ["./assets/fonts/noto-sans-kr-400.woff"],
     "/skill.md": ["./skill/SKILL.md"],
     // 공유 카드 글꼴(lib/me/share-card.tsx 가 실행 중에 읽는다)
     "/\\[locale\\]/p/\\[slug\\]/share-card.png": ["./assets/fonts/*.woff"],

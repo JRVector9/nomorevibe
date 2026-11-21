@@ -17,7 +17,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
 import { REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
-import { firstReviewProviderPredicate, lockSecondReviewDomain, secondReviewGeneration, secondReviewInputMatches } from "./second-review-input";
+import { firstReviewProviderPredicate, lockSecondReviewDomain, secondReviewFirstReviewer, secondReviewGeneration, secondReviewInputMatches } from "./second-review-input";
 import { assertSecondReviewOwnership, finishSecondReviewOwnership, secondReviewBinding, type SecondReviewReceipt } from "./second-review-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
@@ -25,11 +25,12 @@ import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { dbErrorFields, isDbDeadlock } from "@/lib/db/error-fields";
 import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { canonicalReviewModel, sameReviewModel, reviewIndependenceKey } from "./review-model-identity";
-import { secondReviewFallbacks, secondReviewFallbacksFor, secondReviewVoters, withoutTakenModels } from "./second-review-voters";
+import { secondReviewFallbacks, secondReviewFallbacksFor, secondReviewVoterFor, secondReviewVoters, withoutTakenModels } from "./second-review-voters";
+import { sameReviewerProvider, sameReviewerProviderSql } from "./reviewer-identity";
 import { requireReviewTaskRanks } from "./review-task-ranks";
 import { insertSecondReviewWorkloadRows, secondReviewAssignmentMap, secondReviewHasWorkloadPool,
   secondReviewPoolRequiredSql, secondReviewPoolRootExistsSql, secondReviewPoolRootMembershipSql, secondReviewPoolMembershipSql,
-  secondReviewWorkloadMembership, secondReviewPoolHasEligibleMember, secondReviewVoteEligible,
+  secondReviewWorkloadMembership, secondReviewWorkloadReviewer, secondReviewWorkloadSlots, secondReviewPoolHasEligibleMember, secondReviewVoteEligible,
   secondReviewAssignedVoteCanonical } from "./second-review-workload";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { reviewSemanticNow } from "./review-replay-context";
@@ -230,7 +231,7 @@ async function wakeStaleSourceJobs(wakes: ReadonlySet<StaleSourceWake>): Promise
 function currentFirst(domain: ControllerDomain, gate = false): CrawlReviewAttempt | undefined {
   const pool = firstReviewers(domain.settings);
   return [...domain.attempts].reverse().find(row => row.kind === "automatic" && row.state === "succeeded"
-    && (row.provider === "claude-cli" || row.provider === "abcllm" || hasFirstReviewer(pool, row))
+    && secondReviewFirstReviewer(pool, row)
     && (!gate || hasFirstReviewer(pool, row))
     // 관문은 보류 Qwen-v2 의 승인에도 붙는다 — 독립 투표자가 있을 때만(held-qwen-retry-policy.ts)
     || gate && heldQwenGateFirst(domain.settings, row, domain.candidate));
@@ -249,9 +250,11 @@ function controllerInputMatches(domain: ControllerDomain, row: SecondReview, now
   const identity = domain.attempts.find(first => first.id === row.firstAttemptId);
   const pool = firstReviewers(settings);
   const first = [...domain.attempts].reverse().find(attempt => (attempt.kind === "automatic" && attempt.state === "succeeded"
-    && (attempt.provider === "claude-cli" || attempt.provider === "abcllm" || hasFirstReviewer(pool, attempt))
+    && secondReviewFirstReviewer(pool, attempt)
     || row.trigger === "ai_approved" && heldQwenGateFirst(settings, attempt, candidate))
-    && (row.trigger !== "ai_approved" || identity && attempt.provider === identity.provider && attempt.model === identity.model));
+    // 관문 행은 그 1차 심사자의 최신 판단에 붙는다 — 「그 심사자」의 provider 는 동등 규칙이다(SQL 짝: second-review-input.ts 의 gateFirst)
+    && (row.trigger !== "ai_approved" || identity && attempt.model === identity.model
+      && (attempt.provider === identity.provider || sameReviewerProvider(attempt.provider, identity.provider))));
   return (!row.publishedSlug || Boolean(domain.publishedProductId)) && secondReviewInputMatches(row,
     { candidate, document, settings, input, first, root: domain.votes.find(root => root.id === row.fallbackForId),
       workloadAssignment: domain.workloadAssignments?.get(row.fallbackForId ?? row.id) }, now);
@@ -482,7 +485,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
         and s.first_attempt_id = ${latest.firstAttemptId}
         and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
-          where v->>'provider'=s.provider and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
+          where ${sameReviewerProviderSql(sql`v->>'provider'`, sql`s.provider`)} and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${required}`)))
     .limit(ENQUEUE_LIMIT * 4);
   /**
@@ -528,7 +531,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
         gt(approved.validUntil, semanticNow), sql`${gateRequired} > 0`, (workload ? sql`NOT ${secondReviewPoolRootExistsSql(sql`${approved.candidateId}`, sql`${approved.firstAttemptId}`, sql`${approved.inputHash}`, 'ai_approved')}` : sql`(select count(*) from ${secondReviews} s
           where s.candidate_id = ${approved.candidateId} and s.first_attempt_id = ${approved.firstAttemptId} and s.trigger = 'ai_approved'
             and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
-              where v->>'provider'=s.provider and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
+              where ${sameReviewerProviderSql(sql`v->>'provider'`, sql`s.provider`)} and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
                 = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${gateRequired}`)))
       .limit(ENQUEUE_LIMIT);
     /*
@@ -649,6 +652,22 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
 }
 
 /**
+ * 아직 보내지 않은 표(pending·failed)를 옮겨 적을 이름표 — 그 자리의 지금 심사자(current)가 같은 장부 이름의 다른 이름표(abcllm ↔ local-direct)일 때만.
+ * 받은 표·끝난 표, 이름표가 같은 표, 장부 이름이 글자 그대로 같지 않은 자리(다른 계약 행)는 null 이다.
+ */
+export function secondReviewRelabel(row: Pick<SecondReview, "status" | "provider" | "model">,
+  current: { provider: SecondReviewProvider; model: string } | null): SecondReviewProvider | null {
+  if (row.status !== "pending" && row.status !== "failed" || !row.provider || !current) return null;
+  return current.provider !== row.provider && current.model === row.model && sameReviewerProvider(current.provider, row.provider) ? current.provider : null;
+}
+/** relabel 힌트 SQL 이 견줄 지금 자리들(provider·장부 이름) — 「동시에」면 투표자 1 의 구성원·저장된 순위까지. */
+function secondReviewRelabelTargets(voters: readonly { provider: string; model: string }[], fallbacks: readonly { provider: string; model: string }[]) {
+  const pooled = secondReviewHasWorkloadPool() ? secondReviewWorkloadSlots().flatMap(slot => [...slot.candidates, ...slot.legacy])
+    .flatMap(candidate => candidate.binding ? [{ provider: candidate.binding.provider, model: candidate.binding.identity }] : []) : [];
+  return [...new Map([...voters, ...fallbacks, ...pooled].map(row => [JSON.stringify([row.provider, row.model]), { provider: row.provider, model: row.model }])).values()];
+}
+
+/**
  * 더 볼 필요가 없어진 것을 닫는다 — 사람이 이미 결정했거나(보류가 아님) 공개분이 내려갔다.
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
@@ -663,7 +682,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
   // waits and completed published history must never occupy the cleanup prefix.
   const removedPredicate = and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
       secondReviewHasWorkloadPool() ? sql`NOT (${secondReviewPoolMembershipSql(sql`second_reviews`)})` : sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
-        where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
+        where ${sameReviewerProviderSql(sql`v->>'provider'`, sql`coalesce(${secondReviews.provider}, 'claude-cli')`)}
           and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
           and (${secondReviews.fallbackForId} is null or exists(select 1 from second_reviews root
@@ -671,7 +690,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
               and root.candidate_id=${secondReviews.candidateId} and root.generation_key=${secondReviews.generationKey}
               and root.input_hash=${secondReviews.inputHash} and root.status='resolved' and root.resolution='fallback'
               and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) primary_v
-                where primary_v->>'provider'=root.provider
+                where ${sameReviewerProviderSql(sql`primary_v->>'provider'`, sql`root.provider`)}
                   and regexp_replace(regexp_replace(lower(trim(primary_v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
                     = regexp_replace(regexp_replace(lower(trim(root.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')))))`);
   const orphanedPredicate = and(eq(secondReviews.status, "resolved"), eq(secondReviews.resolution, "fallback"), isNull(secondReviews.fallbackForId),
@@ -679,7 +698,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
       sql`not exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.status in ('pending','failed','agreed','needs_human'))`,
       secondReviewHasWorkloadPool() ? secondReviewPoolRootMembershipSql(sql`second_reviews`)
         : sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
-        where v->>'provider'=${secondReviews.provider}
+        where ${sameReviewerProviderSql(sql`v->>'provider'`, sql`${secondReviews.provider}`)}
           and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))`);
   const obsoletePredicate = and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
@@ -687,6 +706,11 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
         and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${semanticNow.toISOString()}::timestamp))`));
   const legacyPredicate = and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
       inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"]));
+  // 아직 보내지 않은 표(pending·failed)의 이름표가 지금 그 자리의 이름표와 다르다(같은 심사자 — 계약을 local-direct 로 다시 저장했다). 힌트일 뿐이고 잠근 뒤 아래 relabel 이 가른다
+  const relabelTargets = JSON.stringify(secondReviewRelabelTargets(voters, fallbacks));
+  const relabelPredicate = and(inArray(secondReviews.status, ["pending", "failed"]),
+      sql`exists(select 1 from jsonb_array_elements(${relabelTargets}::jsonb) v where v->>'provider' <> ${secondReviews.provider}
+        and ${sameReviewerProviderSql(sql`v->>'provider'`, sql`${secondReviews.provider}`)} and v->>'model' = ${secondReviews.model})`);
   const settledHints = await db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId })
     .from(secondReviews).leftJoin(crawlCandidates, eq(crawlCandidates.id, secondReviews.candidateId))
     // 공개분의 일치는 끝난 기록이다(그대로 둔다) — 훑는 대상에 넣으면 날마다 쌓여 한도를 잡아먹는다
@@ -697,7 +721,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
         else ${crawlCandidates.state} is distinct from 'needs_review' end`))
     .orderBy(secondReviews.id).limit(1_000);
   const cleanupHints = await db.selectDistinct({ candidateId: secondReviews.candidateId }).from(secondReviews)
-    .where(or(removedPredicate, orphanedPredicate, obsoletePredicate, legacyPredicate));
+    .where(or(removedPredicate, orphanedPredicate, obsoletePredicate, legacyPredicate, relabelPredicate));
   const decidedIds = new Set(settledHints.map(row => row.id));
   const hinted = [...new Set([...cleanupHints, ...settledHints].map(row => row.candidateId))].sort((a, b) => a - b)
     .map(candidateId => ({ candidateId }));
@@ -708,7 +732,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
     const currentVotes = new Map(domain.votes.map(row => [row.id, { ...row }]));
     const changed = new Set<number>();
     const inPool = (row: SecondReview, pool: typeof voters) => secondReviewHasWorkloadPool()
-      ? secondReviewWorkloadMembership(row, domain.workloadAssignments?.get(row.fallbackForId ?? row.id)) : pool.some(voter => voter.provider === (row.provider ?? "claude-cli") && sameReviewModel(voter.model, row.model));
+      ? secondReviewWorkloadMembership(row, domain.workloadAssignments?.get(row.fallbackForId ?? row.id)) : Boolean(secondReviewVoterFor(pool, { provider: row.provider ?? "claude-cli", model: row.model }));
     const update = async (row: SecondReview, patch: Partial<typeof secondReviews.$inferInsert>) => {
       const [updated] = await tx.update(secondReviews).set(patch).where(and(eq(secondReviews.id, row.id), eq(secondReviews.status, row.status),
         sql`${secondReviews.resolution} IS NOT DISTINCT FROM ${row.resolution}`)).returning();
@@ -722,6 +746,17 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
         && root.inputHash === row.inputHash && root.status === "resolved" && root.resolution === "fallback" && inPool(root, voters);
       if (!inPool(row, row.fallbackForId ? fallbacks : voters) || row.fallbackForId && !validFallback) {
         await update(row, { status: "resolved", resolution: "model_removed", resolvedAt: now });
+        continue;
+      }
+      // 표 이어받기(reviewer-identity.ts): 아직 보내지 않은 표는 지금 그 자리의 이름표로 옮긴다 — 표는 올릴 때의 provider 로 불리는데(binding·계약·정책 route),
+      // 계약을 local-direct 로 다시 저장하면 옛 이름표로는 부를 계약이 없어 표가 대기에 갇힌다. 받은 표(agreed·needs_human)는 기록이라 고치지 않는다.
+      // 이 TX 는 후보의 2차 행을 모두 잠갔고 살아 있는 item 이 있으면 쓰지 않는다(candidateItemsBusy) — 보내는 중인 표는 건드리지 않는다
+      const relabel = secondReviewRelabel(row, secondReviewHasWorkloadPool()
+        ? secondReviewWorkloadReviewer(row, domain.workloadAssignments?.get(row.fallbackForId ?? row.id))
+        : secondReviewVoterFor(row.fallbackForId ? fallbacks : voters, row) ?? null);
+      if (relabel) {
+        const updated = await update(row, { provider: relabel });
+        if (updated) logger.info("second_review.vote_relabelled", { secondReviewId: row.id, candidateId: row.candidateId, from: row.provider, to: relabel });
       }
     }
     for (const row of currentVotes.values()) {
@@ -883,7 +918,7 @@ function staleVoteVerdict(domain: ControllerDomain, row: SecondReview, semanticN
     latestFirstId: currentFirst(domain, row.trigger === "ai_approved")?.id ?? null,
     expectedGenerationKey: input ? secondReviewGeneration(row.firstAttemptId, input, row.trigger) : null,
     reviewerConfigured: secondReviewHasWorkloadPool() ? secondReviewWorkloadMembership(row, domain.workloadAssignments?.get(row.fallbackForId ?? row.id))
-      : pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model)),
+      : Boolean(secondReviewVoterFor(pool, row)),
     loaderAccepts: (row.status === "pending" || row.status === "failed") && controllerInputMatches(domain, row, semanticNow),
     promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, now: semanticNow,
   });

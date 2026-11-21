@@ -64,19 +64,20 @@ Oracle nomore-x: 어느 쪽이든 **바꾸지 않는다**(`DATABASE_URL`은 Tail
 
 ## 배포 순서
 
-0. 이 기능이 든 릴리스를 평소대로 전 앱에 올린다(환경변수는 아직 그대로 → 동작 불변). `/api/health`에 `networkRoutes`가 없는지 본다.
+0. 이 기능이 든 릴리스를 평소대로 전 앱에 올린다(환경변수는 아직 그대로 → 동작 불변). 각 웹 컨테이너 안의 직접 `/api/health`에 `networkRoutes`가 없는지 본다(공개 주소는 2026-11-16부터 `status`만 내므로 근거가 되지 않는다).
 1. **mini 예비 5개**(publisher·reviewer·crawler·text·maintenance standby): 환경변수 저장 → 재배포. 예비라 일을 하지 않는다 — `role_leases`가 그대로인지,
    `operations_observations`의 해당 서비스 값에 `networkRoutes.primary`가 기대 경로인지 본다.
-2. **web-mini**(2대): 저장 → 재배포 → 각 복제본 `/api/health`: `db: ok`, `networkRoutes.primary`·`read`·`valkey`가 기대 경로.
+2. **web-mini**(2대): 저장 → 재배포 → 각 복제본 안의 직접 `/api/health`: `db: ok`, `networkRoutes.primary`·`read`·`valkey`가 기대 경로.
 3. **web-m3**(4대): 같은 확인.
 4. **M3 역할 앱**: connect-agent 먼저(관측 `service:connect-agent:*` 갱신 확인) → publisher → reviewer → crawler → scheduler(2대) → text → maintenance.
    text·maintenance를 재시작하는 동안 mini 예비가 lease를 가져가면 스스로 놓지 않는다 — `docs/operations/independent-workers-runbook.md`의 예비 scale 0→1 절차를 따른다.
-5. 하루 관측: 로그 `db.connection_fallback`·`cache.valkey_fallback_opened`(평소 0), health `dbLatencyMs`, 웹 오류율, V9-Primary `ss` 의 6432·6380 출발 주소
+5. 하루 관측: 로그 `db.connection_fallback`·`cache.valkey_fallback_opened`(평소 0), 직접 health `dbLatencyMs`, 웹 오류율, V9-Primary `ss` 의 6432·6380 출발 주소
    (A면 M3 `192.168.139.2`·mini `192.168.50.246`, B면 Tailscale 주소).
 
 ## 확인 명령 (읽기 전용)
 
-- health: 웹 컨테이너 안이 아니라 Traefik/서비스 경로로 `/api/health` → `networkRoutes`(이름만, 주소 없음).
+- health: 각 웹 컨테이너 안에서 직접 `docker exec <cid> node -e "fetch('http://'+process.env.HOSTNAME+':3000/api/health').then(r=>r.json()).then(j=>console.log(JSON.stringify(j)))"`
+  → `networkRoutes`(이름만, 주소 없음). Traefik·공개 주소로 온 요청은 2026-11-16부터 `status`만 받는다.
 - 워커 관측: `select key, value->'networkRoutes' from operations_observations where key like 'service:%'`.
 - DB 쪽 출발 주소: `ssh jr@100.99.209.55 'ss -Htn state established "( sport = :6432 or sport = :6380 )"'`.
 

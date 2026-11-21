@@ -72,7 +72,8 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000, lane: "ai1" },
   /**
    * 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다. 전용 줄(second): AI2 가 items 모드면 이 잡은 행 올리기·닫기
-   * 정비 틱만 하고 stage_blocked 로 끝난다 — 사람 위임·감사·소개 검수 뒤에 줄 서지 않고, 요청이 남아 있으면 다음 poll(기본 5초)에 다시 돈다.
+   * 정비 틱만 하고 완료 틱으로 끝난다(2026-11-21 — 그 전에는 stage_blocked 미룸이라 요청이 남아 poll 5초마다 정비를 되풀이했다). 다음 틱은
+   * 이 주기의 정기 요청과 1차 기록·표 기록의 requestJob 이 깨운다 — 사람 위임·감사·소개 검수 뒤에 줄 서지 않는다.
    * legacy 모드에서 남은 행이 있으면 continuation:"ready" 로 runner 가 다시 요청해 1초 뒤 돈다(scripts/worker.ts).
    * 갈림 판가름(gpu3090)은 2026-10-31 부터 자기 잡 split-tiebreak 이다 — 이 잡은 표 심사·정비 틱만
    */
@@ -212,6 +213,13 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 새 카탈로그 잡이다 — 이 잡을 담은 릴리스는 scheduler 를 먼저 배포한다(새 잡 → scheduler 먼저).
    */
   { name: "console-alerts", role: "maintenance", intervalMs: 5 * 60_000 },
+  /**
+   * DB 보관 정리(2026-11-15 소유자 승인 DB 보관 ④⑤⑥, lib/jobs/db-retention.ts) — 끝난 모델 장부(기본 14일)·발굴 근거(24시간 + 저장소마다 최근 commit 5개)·
+   * 저장소 스캔(7일, 보존 집합 밖)·일일 가동 집계(40일)를 지우고, 자동 거절 수집 원본의 repo_meta 를 읽는 키만 남게 줄인다(행은 지우지 않는다 — 메이커 소유 id 근거).
+   * 한 시간마다 짧은 트랜잭션 묶음을 틱 예산 안에서만 연다 — 하루치를 한 번에 몰아 지우면 WAL·복제 지연이 한꺼번에 몰린다.
+   * 새 카탈로그 잡이다 — 이 잡을 담은 릴리스는 scheduler 를 먼저 배포한다(새 잡 → scheduler 먼저).
+   */
+  { name: "db-retention", role: "maintenance", intervalMs: 60 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
   { name: "product-site-evidence-refresh", role: "site-evidence", intervalMs: 60_000, batchVersion: 1 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)

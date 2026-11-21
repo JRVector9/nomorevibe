@@ -1277,10 +1277,59 @@
       "breakpoints": true
     },
     {
-      "idx": 186,
+      "idx": 187,
       "version": "7",
-      "when": 1794700800000,
-      "tag": "0186_repository_maintainer_emails",
+      "when": 1794700800001,
+      "tag": "0187_db_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "7",
+      "when": 1794873600000,
+      "tag": "0188_audit_stale_recollect",
+      "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1794873600002,
+      "tag": "0189_same_model_recheck",
+      "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "7",
+      "when": 1794960000000,
+      "tag": "0190_multilingual_search_query",
+      "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1795219200000,
+      "tag": "0191_repository_identity_anchors",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1795219200001,
+      "tag": "0192_online_missing_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1795219200002,
+      "tag": "0193_japanese_abcllm_product_translation",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1795219200003,
+      "tag": "0194_repository_maintainer_emails",
       "breakpoints": true
     }
   ]

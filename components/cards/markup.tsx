@@ -146,19 +146,22 @@ export function CompactCardMarkup({ product, trailing, ctx, priority = false, he
 }
 
 /** 홈의 가로 띠 — '지금 뜨는'·'이번 주 새로 나온'·상세의 '같은 분야'·없는 주소의 '지금 뜨는'이 같은 모양을 쓴다 */
-export function CompactRowMarkup({ id, title, note, summary, more, items, trailing, priority = false, ctx }: {
+export function CompactRowMarkup({ id, title, note, summary, more, items = [], cards, trailing, priority = false, ctx }: {
   id: string;
   title: string;
   note?: ReactNode;
   summary?: ReactNode;
   more?: { href: string; label: string };
-  items: CardProduct[];
+  items?: CardProduct[];
+  /** 서버가 이름·요약만 넘긴 카드(TeaserCompactCard) — 주면 items 대신 그린다(2026-11-15 공개 HTML 이름·요약만) */
+  cards?: ReactNode[];
   trailing: "category" | "listed";
   /** 화면 첫 띠 — 앞 세 장의 그림을 늦추지 않고 먼저 받는다(PERF-03) */
   priority?: boolean;
   ctx: CardContext;
 }) {
-  if (items.length === 0 && !summary) return null;
+  const count = cards?.length ?? items.length;
+  if (count === 0 && !summary) return null;
   return (
     <section id={id} className="row-section" aria-labelledby={`${id}-title`}>
       <div className="row-head">
@@ -169,8 +172,8 @@ export function CompactRowMarkup({ id, title, note, summary, more, items, traili
         {more && <Link prefetch={false} className="row-more" href={localePath(ctx.locale, more.href)}>{more.label} ›</Link>}
       </div>
       {summary}
-      {items.length > 0 && <div className="compact-grid">
-        {items.map((product, index) => <CompactCardMarkup key={product.slug} product={product} trailing={trailing} priority={priority && index < 3} ctx={ctx} />)}
+      {count > 0 && <div className="compact-grid">
+        {cards ?? items.map((product, index) => <CompactCardMarkup key={product.slug} product={product} trailing={trailing} priority={priority && index < 3} ctx={ctx} />)}
       </div>}
     </section>
   );

@@ -446,7 +446,7 @@ function HoldReasons({ rows, held, rejected }: { rows: Conveyor["holdsByReason"]
   return (
     <section className="cv-panel" aria-labelledby="cv-holds-title">
       <h2 id="cv-holds-title">사람 확인(보류) {held === null ? "" : `${n(held)}건`} — 어디서 왜 빠졌나</h2>
-      <p className="cv-sub">보류 사유와 그 사유를 만든 칸입니다. +는 최근 24시간 안에 바뀐 후보 수입니다.{rejected !== null ? ` 거절 누적 ${n(rejected)}건.` : ""}</p>
+      <p className="cv-sub">보류 사유와 그 사유를 만든 칸입니다. +는 최근 24시간에 처음 보류된 후보 수입니다(이력이 없는 규칙 보류는 규칙 판단 시각 기준).{rejected !== null ? ` 거절 누적 ${n(rejected)}건.` : ""}</p>
       {held === null ? <p className="cv-empty">보류 집계를 읽지 못했습니다 — 0건이 아닙니다.</p>
         : rows.length === 0 ? <p className="cv-empty">보류가 없습니다.</p> : (
         <ol className="cv-bars cv-bars-hold">{rows.slice(0, 10).map((row) => (

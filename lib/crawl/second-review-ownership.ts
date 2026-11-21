@@ -7,7 +7,7 @@ import { pipelineItemLeases, secondReviews, type SecondReview } from "@/lib/db/s
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { assertJobLeaseAtWallTime, JobLeaseLostError, requestJob, type JobLease } from "@/lib/jobs/control";
 import { assertItemLease, claimItemLease, readItemStage, releaseItemLease, renewItemLease, type ItemStageGuard } from "@/lib/jobs/items/repository";
-import { itemBindingHash, itemBindingSchema, itemOwnerSchema, itemWorkKey, type ItemLease, type ItemOwner } from "@/lib/jobs/items/types";
+import { itemBindingHash, itemBindingSchema, itemOwnerSchema, itemWorkKey, type ItemLease, type ItemOwner, type ItemStageMode } from "@/lib/jobs/items/types";
 import { assertReplayJobAdmission, assertReplayItemExecutionAllowed, registerReplayItemFinalAuthority, registerReplayItemRelease, reserveReplayItemCall } from "@/lib/operations/pipeline-replay-execution";
 import type { ReplayCallRequest } from "@/lib/operations/pipeline-replay-ledger";
 import { recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
@@ -257,13 +257,21 @@ export async function finishSecondReviewOwnership(tx: ProductTransaction, guard:
   await assertSecondReviewJob(tx, receipt.ownership.job);
 }
 
-export async function canStartLegacySecondReview(job: JobLease): Promise<boolean> {
+/**
+ * legacy 표 심사를 시작해도 되는지와, 안 된다면 단계가 어디 있는지. "items" 는 item 소비자가 맡은 상태(전환이 끝났다),
+ * "draining" 은 전환 중이다 — 잡은 이 둘을 달리 끝낸다(lib/crawl/jobs/second-review.ts).
+ */
+export async function legacySecondReviewStage(job: JobLease): Promise<ItemStageMode> {
   return db.transaction(async tx => {
     const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
-    if (stage.mode !== "legacy") return false;
+    if (stage.mode !== "legacy") return stage.mode;
     await assertSecondReviewJob(tx, job);
-    return true;
+    return "legacy";
   });
+}
+
+export async function canStartLegacySecondReview(job: JobLease): Promise<boolean> {
+  return await legacySecondReviewStage(job) === "legacy";
 }
 
 /** Legacy admission is an observation under the job mutex, not a durable row claim. */
@@ -349,7 +357,9 @@ async function claimReview(id: number, authority: ClaimAuthority,
           || gateway.call.servingContractHash !== ai2GatewayServingContractHash(serving)
           || gateway.call.totalTokenBound !== serving.totalTokenBound)
           throw new ModelCapacityDeferredError("provider_contract_unavailable");
-        if (serving.provider === "local-direct") {
+        // 장비 이름 칸을 가진 직접 계약(direct-openai-chat-v1)만 장부 매핑의 장비를 견준다. 그 칸이 없는 엔진 직접 총량 상한 계약
+        // (openai-chat-total-bound-v1)은 abcllm 계약처럼 매핑 유무만 장부 입장이 본다.
+        if (serving.provider === "local-direct" && "backendId" in serving) {
           const route = capacity?.policy?.routes.find(route => route.routeId === "second-review"
             && route.provider === serving.provider && route.model === binding.reviewer.model);
           if (!route || route.groupId !== serving.physicalGroup || route.providerBudgetId !== serving.backendId)

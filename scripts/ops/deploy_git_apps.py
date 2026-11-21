@@ -5,6 +5,9 @@ The caller supplies the durable full-fleet rollback snapshot and freshly verifie
 main CI/image receipt. Worker apps use the immutable shared worker image by
 default; connect keeps its Git source and separate healthcheck. No automatic
 retry, resume, rollback, or production discovery is performed by this module.
+The release coordinator alone may supply `start_race_redeploy`, its single
+same-config redeploy after a proven Swarm start race (deploy_release); an
+unreadable runtime read is only read again, never answered by a new request.
 """
 
 import copy
@@ -502,6 +505,14 @@ def unchanged(client, short, original, baseline):
     return app
 
 
+def unreadable_runtime(error):
+    """A runtime read that answered nothing, so proves nothing either way: ssh could not connect (exit 255), the remote
+    inspect failed on an empty reply or a container Swarm was replacing (exit 1), the host was slow, or the reply was
+    empty/invalid JSON. Every other error (contract, rollback, explicit stop) is an answer and is never read again."""
+    return (isinstance(error, (json.JSONDecodeError, subprocess.TimeoutExpired)) or
+            (type(error) is RuntimeError and str(error).startswith('command_failed:ssh:')))
+
+
 def check_deployed(client, short, target, original, previous_id, manifest, *, mode='git-build', expected_runtime=None,
                    timeout=480, pause=2, retired_settings=()):
     expected = expected_config(short, original, target, mode, retired_settings)
@@ -532,7 +543,12 @@ def check_deployed(client, short, target, original, previous_id, manifest, *, mo
                 evidence = probe(short, app, target['sha'], image=target['worker'] if docker else None,
                                  manifest=manifest, expected_runtime=expected_runtime, require_revision=not docker,
                                  retired_settings=retired_settings)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RuntimeError, subprocess.TimeoutExpired) as error:
+                # 2026-11-15: ssh to M3 exited 255 right after deploy.completed for text-m3 and maintenance-m3, whose
+                # deployments had finished fine. The request was accepted, so only the read is repeated, within the
+                # same deadline; a read still failing at the deadline stops as a verification timeout.
+                if not unreadable_runtime(error):
+                    raise
                 time.sleep(pause)
                 continue
             if evidence.get('updateState') in shared.SWARM_ROLLBACK_STATES + shared.SWARM_STOP_STATES:
@@ -559,7 +575,11 @@ def durable_json(path, data):
         os.close(descriptor)
 
 
-def deploy(client, target, state, receipt_dir):
+def deploy(client, target, state, receipt_dir, *, start_race_redeploy=None):
+    """Deploy the prepared waves once. start_race_redeploy(short, expected, previous_id, verify), when the coordinator
+    supplies it, runs verify(previous_id) itself and may request the single same-config redeploy after a proven Swarm
+    start race (deploy_release.git_start_race_redeploy); it re-raises every other rollback, so the wave stops as before.
+    """
     if state.get('target') != target:
         raise ValueError('git_prepared_target_mismatch')
     if not state['waves']:
@@ -606,9 +626,15 @@ def deploy(client, target, state, receipt_dir):
         if stable_config(client.app(short)) != stable_config(expected):
             raise shared.ReleaseStopped(short + '_saved_configuration_mismatch')
         action(short, 'deploy', 'application.deploy', {'applicationId': app_id})
-        result = check_deployed(client, short, target, original, baseline['deploymentId'],
-                                state['targetManifest'], mode=state['mode'], expected_runtime=state['runtime'][short],
-                                retired_settings=retired)
+
+        def verify(previous_id):
+            return check_deployed(client, short, target, original, previous_id, state['targetManifest'],
+                                  mode=state['mode'], expected_runtime=state['runtime'][short], retired_settings=retired)
+
+        if start_race_redeploy is None:
+            result = verify(baseline['deploymentId'])
+        else:
+            result = start_race_redeploy(short, expected, baseline['deploymentId'], verify)
         durable_json(destination / (short + '.verified.json'), result)
         return result
 

@@ -215,3 +215,14 @@ export function aiLevelTotals(rows: readonly AiLevelCount[] | null): Record<AiLe
   for (const row of rows) totals[row.level] += row.count;
   return totals;
 }
+
+/** 목록 조건(검색어 제외)의 주소 값 — /api/browse-counts·/api/product-cards?list=home 이 화면과 같은 정렬·거르기로 세고 읽는다 */
+export function browseCountsQuery(state: BrowseState): string {
+  const params = new URLSearchParams();
+  if (state.sort !== "ai") params.set("sort", state.sort);
+  if (state.category) params.set("category", state.category);
+  if (state.builder) params.set("builder", state.builder);
+  if (state.observedTool) params.set("observedTool", state.observedTool);
+  if (state.ai) params.set("ai", state.ai);
+  return params.toString();
+}

@@ -34,6 +34,8 @@ export const browse = defineCatalog<typeof schema>()({
   "empty.query": "No projects match “{query}”",
   "empty.filtered": "No projects match these filters",
   "empty.queryHint": "Check the spelling or try a shorter, common phrase.",
+  "empty.translationPending": "More results may appear when the translation is ready.",
+  "empty.checkResults": "Check results again",
   "empty.filterHint": "Choose another category or reset the filters.",
   "empty.searchIdeas": "Try these searches",
   "empty.categoryIdeas": "Browse by category",

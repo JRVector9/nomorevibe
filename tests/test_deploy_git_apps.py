@@ -421,6 +421,69 @@ class GitRolloutTests(unittest.TestCase):
             self.assertEqual(inspect.call_count, 240 if source == 'probe' else 0)
         self.assertEqual(self.client.requests, [])
 
+    # 2026-11-15 wave 2: right after deploy.completed the runtime read's ssh to M3 exited 255 for text-m3 and
+    # maintenance-m3; both deployments had finished fine, but the whole rollout stopped.
+    def test_ssh_failure_right_after_deploy_completed_is_read_again_and_verified_without_a_second_deploy(self):
+        state = self.prepare(('scheduler-mini', 'scheduler-m3'), mode='shared-worker')
+        reads = []
+        def probe(short, app, sha, **kwargs):
+            deployment = self.client.deployments[short]
+            reads.append((short, deployment))
+            if not deployment.startswith('new-'):
+                baseline = self.snapshot['baseline'][short]
+                return {'ready': True, 'updateState': 'completed', 'image': baseline['image'], 'specHash': baseline['specHash']}
+            if short == 'scheduler-m3' and reads.count((short, deployment)) == 1:
+                raise RuntimeError('command_failed:ssh:255')
+            return {'ready': True, 'updateState': 'completed', 'image': self.target['worker'], 'specHash': 'f' * 64}
+        with patch.object(release, 'probe', side_effect=probe), patch.object(release.time, 'sleep') as sleep, \
+                tempfile.TemporaryDirectory() as directory:
+            receipts = Path(directory) / 'receipts'
+            summary = release.deploy(self.client, self.target, state, receipts)
+            completed = json.loads((receipts / 'scheduler-m3.deploy.completed.json').read_text())
+            verified = json.loads((receipts / 'scheduler-m3.verified.json').read_text())
+            failed = sorted(path.name for path in receipts.glob('*.failed.json'))
+        self.assertEqual((summary['deployed'], summary['failed'], summary['stopped']), (['scheduler-mini', 'scheduler-m3'], [], False))
+        self.assertEqual((completed['action'], completed['status']), ('application.deploy', 'completed'))
+        self.assertEqual((verified['deploymentId'], verified['service']), ('new-scheduler-m3', 'healthy'))
+        self.assertEqual(failed, [])
+        # Only re-read: the accepted deployment request is never sent again.
+        self.assertEqual([path for path, payload in self.client.requests
+                          if payload['applicationId'] == self.apps['scheduler-m3']['applicationId']],
+                         ['application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy'])
+        self.assertEqual(reads.count(('scheduler-m3', 'new-scheduler-m3')), 3)  # unread, verified, final check
+        sleep.assert_called_once_with(2)
+
+    def test_unreadable_runtime_reads_are_read_again_within_the_deadline(self):
+        # ssh transport failure (255), the remote inspect failing on an empty or vanished container (1), a slow host,
+        # or an empty reply prove nothing either way.
+        self.runtime.stop()
+        original, manifest, before, current = self.poll_fixture()
+        for unread in (RuntimeError('command_failed:ssh:255'), RuntimeError('command_failed:ssh:1'),
+                       subprocess.TimeoutExpired(['ssh'], 90), ''):
+            with self.subTest(unread=repr(unread)), \
+                    patch.object(release.shared, 'ssh_python', side_effect=[unread, json.dumps(current)]) as inspect, \
+                    patch.object(release.time, 'sleep') as sleep:
+                result = release.check_deployed(self.client, 'text-mini', self.target, original, 'old-text-mini',
+                    manifest, mode='shared-worker', expected_runtime=before)
+                self.assertEqual((result['deploymentId'], result['service']), ('new-text-mini', 'healthy'))
+                self.assertEqual(inspect.call_count, 2)
+                sleep.assert_called_once_with(2)
+        self.assertEqual(self.client.requests, [])
+
+    def test_ssh_failure_until_the_deadline_stops_with_the_verification_timeout_and_never_redeploys(self):
+        self.runtime.stop()
+        original, manifest, before, current = self.poll_fixture()
+        clock = [0]
+        def sleep(seconds): clock[0] += seconds
+        with patch.object(release.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(release.time, 'sleep', side_effect=sleep), \
+                patch.object(release.shared, 'ssh_python', side_effect=RuntimeError('command_failed:ssh:255')) as inspect:
+            with self.assertRaisesRegex(TimeoutError, 'text-mini_verification_timeout'):
+                release.check_deployed(self.client, 'text-mini', self.target, original, 'old-text-mini',
+                    manifest, mode='shared-worker', expected_runtime=before)
+        self.assertEqual((clock[0], inspect.call_count), (480, 240))
+        self.assertEqual(self.client.requests, [])
+
     def test_poll_contract_stop_and_rollback_errors_are_never_retried(self):
         original, manifest, before, current = self.poll_fixture()
         failures = (ValueError('identity_mismatch'), release.shared.ReleaseStopped('explicit_stop'),

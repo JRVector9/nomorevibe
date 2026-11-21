@@ -46,7 +46,10 @@ import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS } from "./clicks";
 import { lockProductRepository } from "./repository-identity";
 import { observedToolPredicate } from "./observed-tool";
-import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { OgImageUnavailableError, ogObjectStore, type OgObject } from "@/lib/storage/og-store";
+import { queueOgObjectDelete } from "@/lib/cdn/og-object-delete";
+import { logger } from "@/lib/observability/logger";
 import { EMBEDDING_DOCUMENT, EMBEDDING_MODEL, vectorLiteral } from "./embedding";
 import { createMemo } from "@/lib/cache/memo";
 import { STARS_BASELINE_HOURS } from "./stars";
@@ -852,6 +855,8 @@ export async function removeProductAndEvidence(id: number, slug: string): Promis
     await tx.delete(productSkills).where(eq(productSkills.slug, slug));
     await tx.delete(productEvidenceAudit).where(eq(productEvidenceAudit.slug, slug));
     await tx.delete(ogImages).where(eq(ogImages.slug, slug));
+    // 그림이 버킷에 있으면 같은 커밋에 지울 줄을 적는다 — 발행 워커(cdn-purge)가 버킷에서 지운 뒤 Cloudflare 를 지운다
+    await queueOgObjectDelete(tx, slug);
     await tx.delete(clickEvents).where(eq(clickEvents.slug, slug));
     await tx.delete(productClickDaily).where(eq(productClickDaily.slug, slug));
     await tx.delete(productHealth).where(eq(productHealth.slug, slug));
@@ -934,20 +939,71 @@ export async function setOgImage(slug: string, path: string, lease?: JobLease): 
   await withJobLeaseWrite(lease, tx => tx.update(products).set({ ogImage: path }).where(eq(products.slug, slug)));
 }
 
+/**
+ * 대표 그림을 둔다. 저장소(OG_STORE_*)가 켜져 있으면 버킷의 og/<slug> 에 두고 DB 에는 바이트를 쓰지 않는다 — 그 slug 의 옛 DB 사본은
+ * 같은 트랜잭션에서 지운다(버킷이 잠시 답하지 않을 때 읽기가 옛 그림으로 돌아가 Cloudflare 에 하루 남지 않게, 옮기기 스크립트가 옛 바이트로
+ * 새 그림을 덮지 않게). 차례: 쓰기 관문·일 토큰 확인 → DB 사본 지우기 → 버킷 쓰기 → 커밋. 버킷 쓰기가 실패하면 던져 DB 도 그대로다.
+ */
 export async function putOgImage(slug: string, contentType: string, data: Buffer, lease?: JobLease): Promise<void> {
-  await withJobLeaseWrite(lease, tx => tx
-    .insert(ogImages)
-    .values({ slug, contentType, data })
-    .onConflictDoUpdate({ target: ogImages.slug, set: { contentType, data } }));
+  const store = ogObjectStore();
+  if (!store) {
+    await withJobLeaseWrite(lease, tx => tx
+      .insert(ogImages)
+      .values({ slug, contentType, data })
+      .onConflictDoUpdate({ target: ogImages.slug, set: { contentType, data } }));
+    return;
+  }
+  await withJobLeaseWrite(lease, async tx => {
+    // 잃은 일 토큰으로는 버킷도 쓰지 않는다(withJobLeaseWrite 는 쓰기 뒤에 다시 확인한다)
+    if (lease) await assertJobLease(tx, lease);
+    await tx.delete(ogImages).where(eq(ogImages.slug, slug));
+    await store.put(slug, { data, contentType });
+  });
 }
 
-export async function getOgImage(slug: string): Promise<{ data: Buffer; contentType: string } | null> {
+/** 버킷에서 못 찾아 DB 로 돌아간 읽기 — 줄마다 로그를 남기지 않고 1분마다 센 값만 남긴다 */
+const OG_FALLBACK_LOG_MS = 60_000;
+const ogFallback = { missing: 0, error: 0, servedFromDb: 0, lastError: null as string | null, since: Date.now() };
+
+function noteOgFallback(kind: "missing" | "error", servedFromDb: boolean, error?: unknown): void {
+  ogFallback[kind] += 1;
+  if (servedFromDb) ogFallback.servedFromDb += 1;
+  // 저장소 오류는 동작·HTTP 상태뿐이다(OgStoreError). 그 밖의 것은 이름만
+  if (error) ogFallback.lastError = error instanceof Error ? error.message.startsWith("og_store_") ? error.message : error.name : "unknown";
+  const now = Date.now();
+  if (now - ogFallback.since < OG_FALLBACK_LOG_MS) return;
+  const { missing, error: failed, servedFromDb: fromDb, lastError, since } = ogFallback;
+  (failed ? logger.warn : logger.info)("og.store_fallback", { missing, error: failed, servedFromDb: fromDb, lastError,
+    windowSeconds: Math.round((now - since) / 1000) });
+  Object.assign(ogFallback, { missing: 0, error: 0, servedFromDb: 0, lastError: null, since: now });
+}
+
+/**
+ * 대표 그림 읽기 — 저장소가 켜져 있으면 버킷 먼저, 없거나 버킷 오류면 DB(옮기는 동안과 직후).
+ * 버킷 오류인데 DB 에도 없으면 OgImageUnavailableError(공개 경로는 503·캐시 금지) — 있는 그림을 404 로 엣지에 남기지 않는다.
+ */
+export async function getOgImage(slug: string): Promise<OgObject | null> {
+  const store = ogObjectStore();
+  let storeError: unknown = null;
+  if (store) {
+    try {
+      const object = await store.get(slug);
+      if (object) return object;
+    } catch (error) {
+      storeError = error ?? new Error("unknown");
+    }
+  }
   const row = await db.query.ogImages.findFirst({ where: eq(ogImages.slug, slug) });
-  return row ? { data: Buffer.from(row.data), contentType: row.contentType } : null;
+  if (store) noteOgFallback(storeError ? "error" : "missing", row !== undefined, storeError);
+  if (row) return { data: Buffer.from(row.data), contentType: row.contentType };
+  if (storeError) throw new OgImageUnavailableError();
+  return null;
 }
 
+/** 버킷과 DB 에서 모두 지운다. 버킷 실패는 던진다(부르는 쪽이 본다) */
 export async function deleteOgImage(slug: string): Promise<void> {
   await db.delete(ogImages).where(eq(ogImages.slug, slug));
+  await ogObjectStore()?.delete(slug);
 }
 
 /**

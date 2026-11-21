@@ -34,6 +34,8 @@ export const browse = defineCatalog<typeof schema>()({
   "empty.query": "沒有與「{query}」相符的專案",
   "empty.filtered": "沒有符合條件的專案",
   "empty.queryHint": "請檢查拼字，或嘗試更短、更常見的詞語。",
+  "empty.translationPending": "翻譯完成後，可能會找到更多結果。",
+  "empty.checkResults": "再次查看結果",
   "empty.filterHint": "請選擇其他分類，或清除篩選條件。",
   "empty.searchIdeas": "試試這些搜尋詞",
   "empty.categoryIdeas": "依分類瀏覽",

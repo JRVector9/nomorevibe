@@ -211,8 +211,8 @@ xa-ssh m3ultra "$DK exec -i $NCID sh -s -- status" < "$W/in-container.sh"       
 
 ### 20. 운영 판 확인
 - 위치: gpu3090(`TARGET`이 있는 checkout)
-- 명령: `bash scripts/ops/verify-prod-revision.sh "$TARGET"`
-- 성공: exit 0이고 두 웹 인스턴스 모두 `TARGET`이다.
+- 명령: `NMV_DEPLOY_SSH_USER=jr bash scripts/ops/verify-prod-revision.sh "$TARGET"` (2026-11-16부터 공개 health는 `status`만 내므로 스크립트가 배포 도구와 같은 SSH + docker exec로 두 서버의 웹 컨테이너를 직접 읽는다)
+- 성공: exit 0이고 두 웹 인스턴스의 모든 실행 중 컨테이너가 `TARGET`을 포함하며 공개 health가 `ok`다.
 - 이어서: 배포 관측(5·10·15분·6시간) 영수증과 해제 뒤 30분 동안 모델별 성공·새 미확인 0건을 **실제 영수증으로만** 기록한다. 멈췄던 단계의 관측 통과는 재개 뒤 시각부터 따로 센다.
 
 ## 5. 실패 경로 (어디서 멈추든 지킬 것)

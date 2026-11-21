@@ -26,16 +26,19 @@ export function UnifiedTaskImpact({ taskLabel, impact, deviceNotes, help }: {
 }
 
 /** The success preview describes the reviewed draft only after the existing actions confirmed every required write. */
-export function UnifiedTaskResult({ results, expected, mode, chain, homeHref, onClose }: {
+export function UnifiedTaskResult({ results, expected, mode, chain, homeHref, onClose, scope = null }: {
   results: readonly UnifiedTaskSaveResult[]; expected: readonly ("execution" | "ranks")[];
   mode: "fallback" | "workload_pool"; chain: string; homeHref: string; onClose: () => void;
+  /** 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)의 저장 결과 설명 — 있으면 순위를 「순위대로」(대체 순서)로 적지 않고 이 설명을 보인다 */
+  scope?: string | null;
 }) {
   const confirmed = unifiedTaskSavesConfirmed(results, expected);
   return <div role="status" className="ut-save-results">
     {confirmed ? <>
       <p className="ut-success"><i aria-hidden="true">✓</i>배정 설정을 저장했습니다.</p>
       <p className="ut-drawer-lead">새 업무부터 이 배정을 사용합니다. 저장 확인은 실제 호출 성공과 다릅니다. 최근 실행에서 처리 여부를 확인하세요.</p>
-      <div className="ut-preview-chain ut-after"><div className="ut-label">{mode === "workload_pool" ? "동시에" : "순위대로"}</div>{chain}</div>
+      <div className="ut-preview-chain ut-after"><div className="ut-label">{mode === "workload_pool" ? "동시에" : scope ? "순위" : "순위대로"}</div>{chain}</div>
+      {scope && <p className="ut-callout ut-scope" data-scope="partial">{scope}</p>}
       {results.flatMap(result => result.warnings).map(warning => <p className="ut-callout ut-warn" role="alert" key={warning}>{warning}</p>)}
       <div className="ut-editor-foot"><Link href={homeHref} prefetch={false} className="ut-text-btn" onClick={onClose}>홈 배정 확인 →</Link>
         <button type="button" className="ut-btn ut-primary" onClick={onClose}>확인</button></div>

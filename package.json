@@ -25,6 +25,7 @@
     "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
+    "aws4fetch": "1.0.20",
     "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "^5.12.0",
     "jsonc-parser": "3.3.1",

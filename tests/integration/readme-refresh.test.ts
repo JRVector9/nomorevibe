@@ -26,6 +26,13 @@ async function seed() {
   await crawl.putDocument({ repo, repoMeta: {}, pageMeta: { readmeSample: "Old README", readmeSampleVersion: null } });
 }
 describe("published README refresh after recrawl", () => {
+  it("records the README of a document whose fetched_at has microseconds (saveFetchedDocument writes clock_timestamp())", async () => {
+    await seed();
+    await db.execute(sql`update crawl_documents set fetched_at = date_trunc('milliseconds', clock_timestamp()) + interval '456 microseconds' where repo = ${repo}`);
+    sample.mockResolvedValueOnce({ ok: true, sample: "Fresh README" });
+    await runJob("product-readme-refresh", refreshPublishedReadmes);
+    expect((await crawl.getDocument(repo))?.pageMeta).toMatchObject({ readmeSample: "Fresh README", readmeSampleVersion: README_SAMPLE_VERSION });
+  });
   it("does not overwrite a newer document while the README request is running", async () => {
     await seed();
     sample.mockImplementationOnce(async () => {

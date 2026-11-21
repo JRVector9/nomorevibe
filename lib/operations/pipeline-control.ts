@@ -14,14 +14,14 @@ import { deviceFallbackLimit, modelCapacityModelStateSchema, modelCapacityRouteS
 import { ASSIGNMENT_STAGE_IDS, helperGateStateSchema } from "@/lib/llm/capacity-helpers";
 import { secondReviewFallbacks, secondReviewVoters } from "@/lib/crawl/second-review-voters";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
-import { DIRECT_OPENAI_CHAT_PROTOCOL } from "@/lib/llm/direct-serving-contract";
-import { crawlTaglineServingContractSchema, resolveCrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
-import { productTaglineKoServingContractSchema, resolveProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
-import { productTranslationServingContractSchema, resolveProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
-import { reasonTranslationServingContractSchema, resolveReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
-import { resolveSearchVerifyServingContract, searchVerifyServingContractSchema } from "@/lib/llm/search-verify-serving-contract";
-import { resolveTextProfileServingContract, textProfileServingContractSchema } from "@/lib/llm/text-profile-serving-contract";
-import { resolveWebsearchQueryServingContract, websearchQueryServingContractSchema } from "@/lib/llm/websearch-query-serving-contract";
+import { DIRECT_OPENAI_CHAT_PROTOCOL, type GatewayContractProvider } from "@/lib/llm/direct-serving-contract";
+import { crawlTaglineRouteServingContractSchema, crawlTaglineServingContractSchema, resolveCrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
+import { productTaglineKoRouteServingContractSchema, productTaglineKoServingContractSchema, resolveProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
+import { productTranslationRouteServingContractSchema, productTranslationServingContractSchema, resolveProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
+import { reasonTranslationRouteServingContractSchema, reasonTranslationServingContractSchema, resolveReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
+import { resolveSearchVerifyServingContract, searchVerifyRouteServingContractSchema, searchVerifyServingContractSchema } from "@/lib/llm/search-verify-serving-contract";
+import { resolveTextProfileServingContract, textProfileRouteServingContractSchema, textProfileServingContractSchema } from "@/lib/llm/text-profile-serving-contract";
+import { resolveWebsearchQueryServingContract, websearchQueryRouteServingContractSchema, websearchQueryServingContractSchema } from "@/lib/llm/websearch-query-serving-contract";
 import { httpOriginPolicyHash, httpOriginPolicySchema } from "@/lib/net/http-origin-policy";
 import { modelConfigSchema } from './contracts';
 
@@ -210,19 +210,53 @@ export type RouteStatus = "serving" | "no_contract" | "unmapped" | "admission_on
 export type RouteUse = { routeId: string; provider: string; model: string | null; remoteContractReady?: boolean; keyMissing?: true };
 export type RouteContract = RouteUse & { status: RouteStatus };
 type RouteSpec = { routeId: string; provider: string;
-  served: ((model: string, mapping: ModelCapacityPolicy["routes"][number]) => boolean) | null };
+  served: ((model: string, mapping: ModelCapacityPolicy["routes"][number]) => boolean) | null;
+  /** 쓰는 조합도 정책 route 도 없을 때 「unused」 자리 행을 만들지 않는다 — 판정 목록이 그 provider 를 쓰기 전과 같게 남는다 */
+  quiet?: true };
 const gateway = (routeId: string, resolve: (model: string) => unknown, schema: z.ZodType<{ model: string }>): RouteSpec => ({
   routeId, provider: "abcllm", served: model => schema.safeParse(structuredClone(resolve(model))).data?.model === model });
+/**
+ * 장비 이름 칸(backendId·physicalGroup)을 가진 직접 계약(direct-openai-chat-v1 과 2차의 옛 이름)이면 장부 매핑이 그 장비여야 한다. 그 칸이 없는 모양
+ * (abcllm 총량 상한, 1차의 raw local-direct, 엔진 직접 총량 상한 openai-chat-total-bound-v1)은 매핑이 있으면 된다.
+ */
+const deviceMapped = (contract: object, mapping: ModelCapacityPolicy["routes"][number]): boolean =>
+  !("backendId" in contract && "physicalGroup" in contract)
+  || mapping.providerBudgetId === contract.backendId && mapping.groupId === contract.physicalGroup;
 const ai2Gateway = (provider: "abcllm" | "local-direct"): RouteSpec => ({ routeId: "second-review", provider, served: (model, mapping) => {
   const contract = ai2GatewayServingContractSchema.safeParse(structuredClone(resolveAi2GatewayServingContract(model, provider))).data;
   return contract?.routeId === "second-review" && contract.provider === provider && contract.model === model
-    && (contract.provider !== "local-direct" || mapping.providerBudgetId === contract.backendId && mapping.groupId === contract.physicalGroup);
+    && (contract.provider !== "local-direct" || deviceMapped(contract, mapping));
 } });
+/** text 일곱 경로의 계약 resolver — provider 를 주면 그 provider 의 계약만 돌려준다(주지 않으면 abcllm). */
+type TextResolver = (model: string, provider?: GatewayContractProvider) => unknown;
+/**
+ * text 경로의 엔진 직접(local-direct) 판정 — 잡이 하는 것과 같다: 그 선택이 가리키는 local-direct 계약이 하나 있고 이름이 선택과 같으며,
+ * 장부에 (경로, local-direct, 모델) 매핑이 있으면 serving 이다(text 잡은 매핑의 장비를 계약과 견주지 않는다).
+ */
+const textDirect = (routeId: string, resolve: TextResolver, schema: z.ZodType<{ routeId: string; provider: string; model: string }>): RouteSpec => ({
+  routeId, provider: "local-direct", quiet: true, served: model => {
+    const contract = schema.safeParse(structuredClone(resolve(model, "local-direct"))).data;
+    return contract?.routeId === routeId && contract.provider === "local-direct" && contract.model === model;
+  } });
+/**
+ * text 경로의 한 선택이 어느 provider 의 계약으로 불리나 — 잡이 identity·binding 의 provider 를 정하는 규칙(servingContractProvider)과 같다:
+ * abcllm 계약이 있으면 abcllm, 없고 local-direct 계약 하나가 닿으면 local-direct, 둘 다 없으면 abcllm(판정이 예전처럼 no_contract·unmapped 가 된다).
+ */
+const TEXT_RESOLVERS: Readonly<Record<TextModelRoute, TextResolver>> = {
+  "product-search-profile": resolveTextProfileServingContract, "product-search-verify": resolveSearchVerifyServingContract,
+  "reason-translate": resolveReasonTranslationServingContract, "product-translate": resolveProductTranslationServingContract,
+  "product-tagline-ko": resolveProductTaglineKoServingContract, "search-query-translate": resolveWebsearchQueryServingContract,
+  "crawl-tagline": resolveCrawlTaglineServingContract };
+export function textRouteUseProvider(routeId: TextModelRoute, model: string | null | undefined): GatewayContractProvider {
+  if (!model) return "abcllm";
+  const resolve = TEXT_RESOLVERS[routeId];
+  try { return !resolve(model, "abcllm") && resolve(model, "local-direct") ? "local-direct" : "abcllm"; } catch { return "abcllm"; }
+}
 /** AI1 엔진 직접(local-direct, PR 3b-C): AI2 직접과 같은 판정 — 계약 이름이 선택과 같고, 직접 계약이면 장부 매핑이 그 장비(backend·group)다. */
 const ai1Direct: RouteSpec = { routeId: "crawl-agent-review", provider: "local-direct", served: (model, mapping) => {
   const contract = ai1GatewayServingContractSchema.safeParse(structuredClone(resolveAi1GatewayServingContract(model, "local-direct"))).data;
   return contract?.routeId === "crawl-agent-review" && contract.provider === "local-direct" && contract.model === model
-    && (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || mapping.providerBudgetId === contract.backendId && mapping.groupId === contract.physicalGroup);
+    && (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || deviceMapped(contract, mapping));
 } };
 const cli = (routeId: string, provider: CliProvider): RouteSpec => ({ routeId, provider, served: model => {
   const contract = cliServingContractSchema.safeParse(structuredClone(resolveCliServingContract(routeId, provider, model))).data;
@@ -239,6 +273,14 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
   gateway("product-tagline-ko", resolveProductTaglineKoServingContract, productTaglineKoServingContractSchema),
   gateway("crawl-tagline", resolveCrawlTaglineServingContract, crawlTaglineServingContractSchema),
   gateway("search-query-translate", resolveWebsearchQueryServingContract, websearchQueryServingContractSchema),
+  // text 일곱 경로의 엔진 직접 계약(local-direct — direct-openai-chat-v1·openai-chat-total-bound-v1). 2026-11-21: 예전에는 text 경로를 abcllm 으로만 보았다
+  textDirect("product-search-profile", resolveTextProfileServingContract, textProfileRouteServingContractSchema),
+  textDirect("product-search-verify", resolveSearchVerifyServingContract, searchVerifyRouteServingContractSchema),
+  textDirect("reason-translate", resolveReasonTranslationServingContract, reasonTranslationRouteServingContractSchema),
+  textDirect("product-translate", resolveProductTranslationServingContract, productTranslationRouteServingContractSchema),
+  textDirect("product-tagline-ko", resolveProductTaglineKoServingContract, productTaglineKoRouteServingContractSchema),
+  textDirect("crawl-tagline", resolveCrawlTaglineServingContract, crawlTaglineRouteServingContractSchema),
+  textDirect("search-query-translate", resolveWebsearchQueryServingContract, websearchQueryRouteServingContractSchema),
   cli("crawl-agent-review", "claude-cli"), cli("crawl-agent-review", "grok-cli"), cli("crawl-agent-review", "opencode-cli"),
   cli("second-review", "claude-cli"), cli("second-review", "grok-cli"), cli("second-review", "opencode-cli"),
   cli("product-intro-check", "claude-cli"), cli("product-audit", "claude-cli"), cli("grok-session-check", "grok-cli"),
@@ -287,9 +329,14 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   }
   for (const [routeId, key] of TEXT_ROUTES) {
     const pooled = models?.pooled?.[routeId];
-    if (pooled?.length) for (const model of pooled) add(routeId, "abcllm", model);
+    // provider 는 그 이름의 계약이 정한다(잡과 같은 규칙, textRouteUseProvider) — 계약이 abcllm 이거나 없으면 예전처럼 abcllm 이다
+    if (pooled?.length) for (const model of pooled) add(routeId, textRouteUseProvider(routeId, model), model);
+    // 이름을 모르는 key_missing 은 provider 를 가를 계약이 없다 — 예전 표기(abcllm) 그대로 둔다(판정은 provider 와 무관하게 key_missing)
     else if (models?.keyMissing?.includes(routeId)) uses.set(JSON.stringify([routeId, "abcllm", null]), { routeId, provider: "abcllm", model: null, keyMissing: true });
-    else add(routeId, "abcllm", models?.[key] ?? (key === "koreanTagline" || key === "searchQuery" ? models?.translate : null));
+    else {
+      const model = models?.[key] ?? (key === "koreanTagline" || key === "searchQuery" ? models?.translate : null);
+      add(routeId, textRouteUseProvider(routeId, model), model);
+    }
   }
   add("product-intro-check", "claude-cli", models?.introCheck);
   const audit = snapshot.auditCampaign;
@@ -335,7 +382,7 @@ export function modelRouteContracts(policy: ModelCapacityPolicy | null, ai2Mode:
     if (!uses.some(use => sameRoute(use, route))) rows.push({ routeId: route.routeId, provider: route.provider, model: route.model, status: "unused" });
   }
   for (const spec of MODEL_ROUTES) {
-    if (!rows.some(row => row.routeId === spec.routeId && row.provider === spec.provider))
+    if (!spec.quiet && !rows.some(row => row.routeId === spec.routeId && row.provider === spec.provider))
       rows.push({ routeId: spec.routeId, provider: spec.provider, model: null, status: "unused" });
   }
   // AI2 legacy job은 admission만 있다 — open이면 AI2 전체가 미뤄진다(items로 먼저 옮겨야 한다).

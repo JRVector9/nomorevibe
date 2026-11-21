@@ -11,10 +11,10 @@ import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-
 import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { TEST_TEXT_BASE_URL, textRankRow } from "./text-task-ranks-fixture";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,blocked:vi.fn(),pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn(),skipHandOff:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,blocked:vi.fn(),pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),readmeFailure:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn(),skipHandOff:vi.fn()}));
 vi.mock("@/lib/crawl/first-reviewer-blocks", () => ({readBlockedFirstReviewerKeys:mocks.blocked}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
-vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
+vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme,recordReadmeFetchFailure:mocks.readmeFailure}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
@@ -219,7 +219,7 @@ it("does not request publication without an applied approval", async () => {
 it("README 가 없으면 한 번 받아 저장하고, 있으면 다시 받지 않는다", async () => {
   mocks.readme.mockResolvedValue("Oigo — dictation for macOS");
   await reviewCrawlCandidates(context());
-  expect(mocks.readme).toHaveBeenCalledWith("acme/demo");
+  expect(mocks.readme).toHaveBeenCalledWith("acme/demo", undefined, expect.any(Function));
   expect(mocks.saveReadme).toHaveBeenCalledWith("acme/demo", "Oigo — dictation for macOS", expect.objectContaining({id: 1}), expect.objectContaining({name: "crawl-agent-review", token: "token"}));
 
   mocks.readme.mockClear(); mocks.saveReadme.mockClear();
@@ -230,10 +230,24 @@ it("README 가 없으면 한 번 받아 저장하고, 있으면 다시 받지 �
   expect(mocks.saveReadme).not.toHaveBeenCalled();
 });
 
-it("README 를 잠깐 못 받으면 저장하지 않고 이번엔 없이 심사한다", async () => {
-  mocks.readme.mockResolvedValue(null);
-  await reviewCrawlCandidates(context());
+it("README 를 잠깐 못 받으면 까닭을 원본에 적고, 빈 README 로 심사하지 않고 기다린다(세지 않는 건너뜀)", async () => {
+  const stored = await mocks.document();
+  mocks.readme.mockImplementation(async (_repo: string, _request: unknown, report?: (error: string) => void) => { report?.("http_429"); return null; });
+  mocks.readmeFailure.mockImplementation(async (expected: CrawlDocument, failure: { error: string }) => ({ ...expected,
+    pageMeta: { ...expected.pageMeta, readmeFetchError: failure.error, readmeFetchAttempts: 1, readmeFetchRetryAfter: Date.now() + 15 * 60_000 } }));
+  const ctx = context();
+  await reviewCrawlCandidates(ctx);
   expect(mocks.saveReadme).not.toHaveBeenCalled();
+  expect(mocks.readmeFailure).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { error: "http_429", retryAfter: null },
+    expect.objectContaining({ name: "crawl-agent-review" }), expect.any(Number));
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_skipped", expect.objectContaining({ repo: "acme/demo", reason: "readme_wait", error: "http_429" }));
+  // 기다릴 횟수를 다 쓰면 까닭을 남긴 채 README 없이 심사한다
+  mocks.document.mockResolvedValue({ ...stored, pageMeta: { ...stored.pageMeta, readmeFetchError: "http_429", readmeFetchAttempts: 3,
+    readmeFetchRetryAfter: Date.now() + 60 * 60_000 } });
+  const later = context();
+  await reviewCrawlCandidates(later);
+  expect(later.log).toHaveBeenCalledWith("crawl.agent_review_readme_unavailable", { repo: "acme/demo", error: "http_429", attempts: 3 });
   expect(mocks.review).toHaveBeenCalled();
 });
 

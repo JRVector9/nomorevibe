@@ -6,6 +6,12 @@ const { getPopularGroups } = vi.hoisted(() => ({ getPopularGroups: vi.fn() }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups }));
 // 개인 계정 거르기는 앱 라우터가 있어야 그린다 — 이 테스트는 구간 카드만 본다
 vi.mock("@/components/home/PopularFilter", () => ({ PopularFilter: () => null }));
+// 구간 수는 서버 HTML 에 싣지 않고 /api/browse-counts?part=tiers 로 받는다(2026-11-15) — 받은 값을 바꿔 끼운다
+const counts = vi.hoisted(() => ({ totals: { rising: 526, noticed: 331, popular: 293, large: 177 } as Record<string, number> | null, queries: [] as (string | null)[] }));
+vi.mock("@/components/home/browse-counts", async (original) => ({
+  ...await original<Record<string, unknown>>(),
+  useCountsQuery: (query: string | null) => { counts.queries.push(query); return counts.totals ? { totals: counts.totals } : undefined; },
+}));
 
 import { PopularTiers } from "@/components/home/PopularTiers";
 import { STAR_TIERS } from "@/lib/domain/products/stars";
@@ -38,26 +44,16 @@ describe("홈 '많이 쓰이는 프로젝트' — 구간 탭 + 발견하기 카�
     expect(tabs.match(/tabindex="0"/g)).toHaveLength(1);
   });
 
-  it("첫 구간 카드 3장만 서버가 그리고 다른 판은 hidden 빈 판 — 탭을 처음 고를 때 받는다(2026-11-14 공개 HTML 줄이기)", async () => {
+  it("카드는 서버 HTML 에 없다 — 첫 구간은 화면 가까이 오면, 다른 구간은 탭을 처음 고를 때 받는다(2026-11-15 공개 HTML 줄이기 2차)", async () => {
     const html = renderToStaticMarkup(await PopularTiers({}));
     const panels = [...html.matchAll(/<div role="tabpanel"[^>]*>/g)].map((m) => m[0]);
     expect(panels).toHaveLength(4);
     expect(panels.map((panel) => panel.includes("hidden"))).toEqual([false, true, true, true]);
-    expect(html.match(/class="project-card"/g)).toHaveLength(3);
-    // 숨은 판은 비어 있다 — 제품 값은 서버 HTML 에 없다
-    expect(html).not.toContain("noticed-1");
-  });
-
-  it("카드는 이름을 자르지 않고 한국어 소개·미리보기 커버·순위·저장을 보인다", async () => {
-    const html = renderToStaticMarkup(await PopularTiers({}));
-    const card = html.match(/<article class="project-card">([\s\S]*?)<\/article>/)![1];
-    expect(card).toContain('<span class="project-rank"><span aria-hidden="true">1</span><span class="sr-only">1위</span></span>');
-    expect(card).toContain("Name rising-1 with a long title that used to be cut");
-    expect(card).toContain("rising-1 한국어 소개");
-    expect(card).toContain('class="tile-preview"');
-    expect(card).toContain("tile-flag-ai");
-    expect(card).toContain('aria-label="Name rising-1 with a long title that used to be cut 저장"');
-    expect(card).toContain("보안");
+    expect(html).not.toContain('class="project-card"');
+    // 첫 구간 판에는 받기 전 자리만 — 제품 이름·소개·주소는 서버 HTML 에 없다
+    expect(html.match(/aria-busy="true"/g)).toHaveLength(1);
+    for (const text of ["rising-1", "noticed-1", "English intro", "github.com/acme"]) expect(html).not.toContain(text);
+    expect(html).toContain("★ 2천–5천 미만 · 스타 많은 순");
   });
 
   it("'모두 보기'는 고른 구간의 /popular 로 — 개인 계정만이면 그 거르기를 지킨다", async () => {

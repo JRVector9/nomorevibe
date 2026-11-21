@@ -1,6 +1,10 @@
 import type { ResolvingMetadata } from "next";
+import { after } from "next/server";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { recordMultilingualSearch } from "@/lib/domain/products/search-log";
+import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { logger } from "@/lib/observability/logger";
 
 /**
  * 검색 기록은 응답 뒤에 적는다(next/server after). 여기는 요청 바깥이라 그 예약이 던진다 —
@@ -8,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 vi.mock("next/server", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  after: () => {},
+  after: vi.fn(),
 }));
 import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import type { ProductListItem } from "@/lib/domain/products/view";
@@ -59,10 +63,12 @@ vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mock
 vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage }));
 vi.mock("@/lib/domain/products/repository", () => ({ aiLevelCounts, categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
 // 0건 화면의 추천 검색어는 검색 기록(DB)에서 읽는다 — 화면 조합만 본다
-vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), popularSearches }));
+vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), recordMultilingualSearch: vi.fn(), popularSearches }));
 // 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
 vi.mock("@/lib/domain/products/search-translation", () => ({
-  resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
+  resolveSearchQuery: vi.fn(async (query?: string) => ({ queries: query ? [query] : [], translated: null })),
+  multilingualSearchMode: () => process.env.SEARCH_MULTILINGUAL_MODE ?? "off",
+  MULTILINGUAL_SEARCH_RANKING_VERSION: 1,
   normalizeQuery: (query: string) => query.trim().toLowerCase(),
 }));
 // 관련도순 검색(섞기·재정렬)은 모델 서버와 DB 를 부른다 — 화면 조합만 본다
@@ -85,6 +91,24 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getAllTimeRanking,
   getCurrentSeason,
   getSeasonRanking,
+}));
+
+/**
+ * 2026-11-15 공개 HTML 이름·요약만 — 공개 수·분야별 수·결과 수는 화면 JS 가 /api/browse-counts 로, 첫 쪽 뒤 카드는 /api/product-cards?list=home 으로 받는다.
+ * 받은 수를 바꿔 끼우고(기본은 받는 중), 뒷카드 목록 주소 값을 모은다. 그 API 의 읽기는 tests/browse-counts-api.test.ts·tests/product-cards-lists-api.test.ts 가 본다.
+ */
+const remote = vi.hoisted(() => ({
+  counts: undefined as { total: number; counts: Record<string, number>; resultCount: number } | null | undefined,
+  countQueries: [] as (string | null)[],
+  lists: [] as (string | null)[],
+}));
+vi.mock("@/components/home/browse-counts", async (original) => ({
+  ...await original<typeof import("@/components/home/browse-counts")>(),
+  useBrowseCounts: (query: string | null) => { remote.countQueries.push(query); return query === null ? undefined : remote.counts; },
+}));
+vi.mock("@/components/cards/CardEnrich", async (original) => ({
+  ...await original<typeof import("@/components/cards/CardEnrich")>(),
+  useCardList: (source: string | null) => { remote.lists.push(source); return undefined; },
 }));
 
 import HomePage, { HomeContent, generateMetadata, needsUnclaimedFill, searchSuggestions } from "@/app/(public)/[locale]/(content)/page";
@@ -181,6 +205,9 @@ const renderScreen = render;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  remote.counts = undefined;
+  remote.countQueries.length = 0;
+  remote.lists.length = 0;
   getCrawlSettings.mockResolvedValue({ agentEvidence: { displayObservedFacts: true } });
   getCurrentSeason.mockResolvedValue(season);
   getUnclaimedList.mockResolvedValue([]);
@@ -254,14 +281,19 @@ describe("미클레임 구획을 붙이는 기준", () => {
 
     expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ sort: "recent", aiLevels: [1, 2, 3], repoChecked: undefined }));
     expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], aiLevels: [1, 2, 3], repoChecked: undefined }));
-    expect(categoryCounts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], aiLevels: [1, 2, 3], repoChecked: undefined }));
+    // 분야 알약 수(현재 목록 자격의 분야별 수)는 서버가 세지 않는다 — /api/browse-counts 가 같은 조건으로 센다. 서버는 알약 차례용 전체 수만
+    expect(categoryCounts.mock.calls).toEqual([[{ statuses: ["verified", "seeded"], excludeDown: true }]]);
     expect(getStarGrowthPage).toHaveBeenCalledOnce();
     expect(getSeasonRanking).not.toHaveBeenCalled();
     expect(getCurrentSeason).not.toHaveBeenCalled();
     expect(getUnclaimedList).not.toHaveBeenCalled();
     expect(html).toContain("rising-one");
     expect(html).toContain("ai-one");
-    expect(html).toContain("AI로 제작 25개");
+    // 결과 수는 서버 HTML 에 없다 — 받는 동안 글자 없는 자리
+    expect(html).not.toContain("AI로 제작 25개");
+    expect(new Set(remote.countQueries)).toEqual(new Set([""]));
+    remote.counts = { total: 30, counts: { Dev: 25 }, resultCount: 25 };
+    expect(await render()).toContain("AI로 제작 25개");
     expect(html).toMatch(/aria-selected="true"[^>]*>AI로 제작</);
     expect(html).toContain('href="/?metric=star-growth"');
     expect(html).not.toContain("주인을 기다리는 프로젝트");
@@ -273,6 +305,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
     countProducts.mockResolvedValue(5);
     getPublicList.mockResolvedValue([product("starred-one")]);
 
+    remote.counts = { total: 5, counts: {}, resultCount: 5 };
     const html = await render({ sort: "all-time" });
 
     // 목록은 화면 분량으로 받아 개수까지만 쓴다 — 개수를 기다리지 않고 함께 받는다(app/page.tsx)
@@ -281,6 +314,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
     expect(getAllTimeRanking).not.toHaveBeenCalled();
     expect(html).toContain("starred-one");
     expect(html).toContain("GitHub 스타 많은 순 5개");
+    expect(new Set(remote.countQueries)).toEqual(new Set(["sort=all-time"]));
   });
 
   it("스타가 는 제품이 하나도 없으면 순위가 아니라 스타 확인 이야기를 한다", async () => {
@@ -305,6 +339,34 @@ describe("미클레임 구획을 붙이는 기준", () => {
  * 커밋 cb64f25가 세운 불변식이다.
  */
 describe("빈 화면 문구", () => {
+  it.each([
+    ["voice recorder", "en", "off", undefined],
+    ["음성 녹음기", "ko", "lexical", "miss"],
+    ["语音识别工具", "zh-Hans", "lexical", "hit"],
+    ["音声を録音する", "ja", "full", "hit"],
+  ] as const)("records each %s request and one model event for the cached ranking", async (query, sourceLocale, mode, cache) => {
+    vi.stubEnv("SEARCH_MULTILINGUAL_MODE", mode);
+    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const search = { queries: [query], translated: null, translationCache: cache };
+      vi.mocked(resolveSearchQuery).mockResolvedValueOnce(search).mockResolvedValueOnce(search);
+      const modelWork = { embeddingCalls: 1, rerankCalls: 0, embeddingTimedOut: true, rerankTimedOut: false, fallback: true };
+      searchRelevance.mockResolvedValue({ head: [], total: 0, semantic: false, reranked: false, plan: [], translated: null, modelWork });
+      await render({ q: query });
+      await render({ q: query });
+      for (const [callback] of vi.mocked(after).mock.calls) if (typeof callback === "function") await callback();
+
+      const dimensions = { sourceLocale, mode, translationCache: cache ?? "not_applicable" };
+      expect(recordMultilingualSearch).toHaveBeenCalledTimes(2);
+      expect(recordMultilingualSearch).toHaveBeenCalledWith(expect.objectContaining({ ...dimensions, results: 0 }));
+      expect(searchRelevance).toHaveBeenCalledOnce();
+      expect(info).toHaveBeenCalledExactlyOnceWith("search.multilingual_model_work", { ...dimensions, ...modelWork });
+    } finally {
+      info.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("도구 흔적 필터는 AI·등록 목록에 전달하고 첫 중복값만 쓰며 급상승 띠는 숨긴다", async () => {
     countProducts.mockResolvedValue(25);
     await render({ observedTool: ["Claude Code", "Codex"] });
@@ -367,6 +429,7 @@ describe("빈 화면 문구", () => {
     aiLevelCounts.mockRejectedValue(new Error("db"));
     getPublicList.mockResolvedValue([product("listed")]);
     countProducts.mockResolvedValue(1);
+    remote.counts = { total: 1, counts: { Dev: 1 }, resultCount: 1 };
     const html = await render({ sort: "ai" });
     expect(html).toContain("listed");
     expect(html).toContain("AI로 제작 1개");
@@ -574,14 +637,16 @@ describe("끝까지 닿는 목록", () => {
   it("198개를 넘기면 앞을 접고 다음 구간만 받는다", async () => {
     catalogue();
 
+    remote.counts = { total: TOTAL, counts: {}, resultCount: TOTAL };
     const html = await render({ sort: "recent", shown: "207" });
 
     expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ sort: "recent", offset: 9 }));
     expect(html).toContain("앞의 9개는 접었습니다");
     expect(html).toContain('href="/?sort=recent"');
-    expect(html).toContain("p-10 태그라인");
-    expect(html).toContain("p-207 태그라인");
-    expect(html).not.toContain("p-9 태그라인");
+    // 첫 쪽 뒤라 카드는 서버 HTML 에 없다 — 같은 창(10~207번째)을 카드 API 로 받는 빈 틀만
+    expect(html).not.toMatch(/p-\d+/);
+    expect(remote.lists).toContain("sort=recent&list=home&offset=9&limit=198");
+    expect(html.match(/class="skeleton-card"/g)).toHaveLength(198);
     expect(html).toContain("프로젝트 더 보기 (207 / 33,692)");
     expect(html).toContain('href="/?sort=recent&amp;shown=216"');
   });
@@ -589,10 +654,12 @@ describe("끝까지 닿는 목록", () => {
   it("마지막 항목까지 닿고 거기서 더 보기가 사라진다", async () => {
     catalogue();
 
+    remote.counts = { total: TOTAL, counts: {}, resultCount: TOTAL };
     const html = await render({ sort: "recent", shown: String(TOTAL + 50) });
 
     expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ offset: TOTAL - 198 }));
-    expect(html).toContain(`p-${TOTAL} 태그라인`);
+    expect(html).not.toContain(`p-${TOTAL}`);
+    expect(remote.lists).toContain(`sort=recent&list=home&offset=${TOTAL - 198}&limit=198`);
     expect(html).not.toContain("프로젝트 더 보기");
   });
 
@@ -614,16 +681,25 @@ describe("끝까지 닿는 목록", () => {
 
     expect(getUnclaimedList).toHaveBeenCalledWith(198, expect.objectContaining({ offset: 9 }));
     expect(html).toContain("앞의 9개는 접었습니다");
+    expect(remote.lists).toContain("sort=trending&list=home&offset=9&limit=198&section=unclaimed");
   });
 
   it("198개 이하는 예전처럼 앞에서부터 다 그린다", async () => {
     catalogue();
 
+    remote.counts = { total: TOTAL, counts: {}, resultCount: TOTAL };
     const html = await render({ sort: "recent", shown: "18" });
 
     expect(getPublicList).toHaveBeenCalledWith(18, expect.objectContaining({ offset: 0 }));
     expect(html).not.toContain("접었습니다");
+    // 첫 쪽(9장)만 서버 HTML 에 이름·요약으로, 늘린 9장은 카드 API 로
+    expect(html).toContain("p-9 태그라인");
+    expect(html).not.toContain("p-10");
+    expect(remote.lists).toContain("sort=recent&list=home&offset=9&limit=9");
     expect(html).toContain("프로젝트 더 보기 (18 / 33,692)");
+    // 수를 받기 전에는 전체 수 자리만 비운다
+    remote.counts = undefined;
+    expect(await render({ sort: "recent", shown: "18" })).toMatch(/프로젝트 더 보기 \(18 \/ <span class="fill-line"/);
   });
 });
 
@@ -667,11 +743,13 @@ describe("분야 주소·검색 상태 (UX-12·24·35·39·40)", () => {
     countProducts.mockResolvedValue(1);
     categoryCounts.mockResolvedValue({ Dev: 3, Finance: 1, Profile: 9 });
     getPublicList.mockResolvedValue([product("finance-one")]);
+    remote.counts = { total: 13, counts: { Dev: 3, Finance: 1 }, resultCount: 1 };
 
     const html = await renderScreen({ category: "Finance" });
 
     expect(html).toContain('<h1 id="projects-title" class="row-title">금융 프로젝트</h1>');
     expect(html).toContain("금융 1개");
+    expect(new Set(remote.countQueries)).toEqual(new Set(["category=Finance"]));
     expect(html).not.toContain("AI로 만든 것들이");
     expect(html).not.toContain("많이 쓰이는 프로젝트");
     expect(html).not.toContain("무엇으로 만들었나");

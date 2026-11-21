@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+const request = vi.hoisted(() => ({ locale: "ko" }));
+vi.mock("@/lib/i18n/server", () => ({ getRequestLocale: async () => request.locale }));
 
 import { db } from "@/lib/db";
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, products, takedownRequests } from "@/lib/db/schema";
@@ -16,6 +18,7 @@ import { ensureSchema, resetTables } from "./setup";
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
+  request.locale = "ko";
   await resetTables();
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
@@ -42,21 +45,23 @@ async function evidence(slug: string) {
 }
 
 const metadata = (slug: string) => generateMetadata({ params: Promise.resolve({ slug }) });
-const NOINDEX = { index: false, follow: false };
+const NOINDEX = { index: false, follow: true };
 
 /** 공유 미리보기(2026-10-08 점검 SEO-01·UX-07) — 상세가 실제로 내는 Open Graph·Twitter 값 */
 describe("상세 공유 미리보기", () => {
-  it("제목·소개와 함께, 대표 이미지가 있으면 그 그림을 없거나 아이콘이면 사이트 기본 그림을 싣는다", async () => {
+  it("제목·소개와 함께, 그림은 표지와 상관없이 이름·요약 공유 카드(언어별 주소) — 표지(og-cache) 주소는 싣지 않는다", async () => {
     await product("with-og", { ogImage: "/api/og-cache/with-og?thumbnail=og&w=1200&h=630" });
     await product("with-icon", { ogImage: "/api/og-cache/with-icon?thumbnail=site_icon&w=64&h=64" });
     await product("no-image");
 
     const og = await metadata("with-og");
-    expect(og.openGraph).toMatchObject({ siteName: "nomorevibe", locale: "ko_KR", title: "with-og — nomorevibe", description: "Useful project",
-      images: [{ url: "/api/og-cache/with-og?thumbnail=og&w=1200&h=630", width: 1200, height: 630 }] });
-    expect(og.twitter).toMatchObject({ card: "summary_large_image", images: ["/api/og-cache/with-og?thumbnail=og&w=1200&h=630"] });
-    for (const slug of ["with-icon", "no-image"]) {
-      expect((await metadata(slug)).openGraph, slug).toMatchObject({ images: [{ url: "/og/nomorevibe.png", width: 1200, height: 630 }] });
+    expect(og.openGraph).toMatchObject({ siteName: "nomorevibe", locale: "ko_KR", title: "with-og — nomorevibe", description: "Useful project · nomorevibe.com",
+      images: [{ url: "/p/with-og/share-card.png", width: 1200, height: 630, alt: "with-og" }] });
+    expect(og.twitter).toMatchObject({ card: "summary_large_image", images: ["/p/with-og/share-card.png"] });
+    for (const slug of ["with-og", "with-icon", "no-image"]) {
+      const shared = await metadata(slug);
+      expect(shared.openGraph, slug).toMatchObject({ images: [{ url: `/p/${slug}/share-card.png`, width: 1200, height: 630 }] });
+      expect(JSON.stringify(shared), slug).not.toContain("og-cache");
     }
   });
 });
@@ -92,4 +97,18 @@ describe("상세 robots", () => {
   it("없는 제품은 404 제목만 낸다(본문이 404 를 낸다)", async () => {
     expect(await metadata("nothing-here")).toEqual({ title: "찾는 프로젝트가 없습니다 — nomorevibe" });
   });
+});
+
+
+it("모든 언어: 메타 3종의 끝 출처·중복 방지·noindex follow", async () => {
+  await product("attributed", { tagline: "Useful project · nomorevibe.com" });
+  for (const locale of ["ko", "en", "ja", "zh-Hans", "zh-Hant"]) {
+    request.locale = locale;
+    const meta = await metadata("attributed");
+    for (const value of [meta.description, (meta.openGraph as { description?: string })?.description, (meta.twitter as { description?: string })?.description]) {
+      expect(value?.endsWith(" · nomorevibe.com")).toBe(true);
+      expect(value?.split(" · nomorevibe.com")).toHaveLength(2);
+    }
+    expect(meta.robots).toEqual({ index: false, follow: true });
+  }
 });

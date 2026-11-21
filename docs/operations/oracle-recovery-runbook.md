@@ -125,6 +125,113 @@ monitor만 먼저 배포되면 구 gateway가 `review`를 `unknown`으로 읽어
 monitor 앱은 언제 배포해도 된다 — 새 monitor + 구 gateway·구 Oracle에서는 monitor Push만 UP이고 Oracle은 지금처럼 DOWN이다.
 `native_recovery_gateway.py`는 `recovery_gateway.py`에서 `bounded_output`·`save`만 써서 동작이 바뀌지 않는다.
 
+## Oracle consumer 일시 장애 회복과 한국어 탐색 감시 (2026-11-15)
+
+**사건.** 11-15 03:11–03:21Z 짧은 DB 불통에 osaka 의 두 consumer(`agent-scan`·`github-ko-discovery`, 릴리스 89019bc5)가 `job_timeout` 으로
+끝났다. 재시작 preflight 가 세 번 실패해(`preflight_failed` — preflight 프로세스가 보고 없이 죽음) 유닛 시작 한도(300초 3회)에 걸렸고 `failed`(exit 78)로
+굳었다. 11-13 뒤로 한글 검색어는 Oracle 만 검색하므로 한국어 탐색이 03:16→10:53Z(7.5시간) 0이었고 알림이 없었다 — native gateway(`UNIT`/`KEY`)와
+watchdog config 가 agent-scan 하나만 보았다. agent-scan 자동 복구 두 번(03:21Z·07:19Z)은 DB 가 아직 없을 때 24시간 예산(2회)을 써 버려, 10:15Z DB 복구
+뒤에는 아무도 다시 시도하지 않았다. 10:53·10:55Z 손으로 다시 켰다(첫 ko 시작은 DB 복구 직후 preflight 한 번 실패, 두 번째 성공). 전체 분석은 운영자
+작업 폴더의 `outage-20261115/oracle-report.md` 다(저장소 밖).
+
+**바뀐 동작(소스 계약 — 설치·드릴 완료는 아래 영수증으로 따로 기록한다).**
+
+| 곳 | 전 | 후 |
+| --- | --- | --- |
+| launcher `deploy/oracle/launch.py`(consumer 만) | 어떤 결과든 78 | 아무것도 확인·거절하지 못한 결과 — `oci_metadata_unavailable`(IMDS 무응답), `preflight_unavailable`(시간 초과·실행 실패·보고 없는 78), `preflight_failed`(preflight 가 78 밖의 코드로 죽음), `database_read_only` — 는 같은 프로세스에서 **게이트 전체(릴리스 검증부터)** 를 15·30·60·120초(뒤로는 120초) 간격으로 최대 600초 다시 한다. 줄마다 `{"check","reason","transient":true,"attempt","retryInSeconds"}`. 창이 끝나도 그대로면 **exit 75**, stderr `{"code":"oracle_runtime_preflight_retry_exhausted"}`. 그 밖(릴리스·runtime·예산·identity 불일치 `oci_identity_unverified`·권한 프로필·rejected·모양이 틀린 보고 `preflight_report_mismatch`)은 지금처럼 즉시 **78**. 역할(`--role`)은 사유 이름만 같이 바뀌고 모두 78 그대로다 |
+| consumer preflight `lib/runtime/oracle-consumer-preflight.ts` | 읽기 전용·복구 중 주 DB → database `rejected` | `unknown`/`database_read_only`(launcher 가 기다림). unsafe 권한·세션 계정 불일치는 그대로 rejected. rejected 가 하나라도 있으면 launcher 는 이 사유로 기다리지 않는다 |
+| 유닛 `deploy/oracle/nomorevibe-core-consumer@.service` | `StartLimitIntervalSec=300`·`StartLimitBurst=3`·`RestartSec=15s` — DB 가 2분만 없어도 영구 failed | `StartLimitIntervalSec=0`, `Restart=on-failure`, `RestartPreventExitStatus=78`, `RestartSec=15s`→`RestartSteps=5`→`RestartMaxDelaySec=5min`(systemd ≥254, osaka 255). 78 은 다시 켜지 않고 바로 `failed`, 75·워커 죽음은 끝없이 다시 켠다(간격 15초→약 27·50·91·165초→5분) |
+| native gateway `scripts/ops/native_recovery_gateway.py` | agent-scan 고정 | 코드의 허용 목록 `ALLOWED_CONSUMERS`(agent-scan·github-ko-discovery) 가운데 config `consumers` 에 적은 것만 본다(없으면 예전 agent-scan 하나 그대로). consumer 마다 행·`recover <consumer> <version>`·예산(`attempts[<consumer>]`, 15분 간격·24시간 2회). systemd 재시작 대기(`activating`/`auto-restart`·`auto-restart-queued`)와 launcher 게이트 단계(주 프로세스 cmdline 이 아직 `launch.py`)는 `warming_up`(ok 아님, 복구 대상 아님). 실행 중은 cmdline 이 `<release>/runtime/bin/node … scripts/worker-supervisor.ts … --consumer=<이름>` 일 때만 ok |
+| watchdog `scripts/ops/oracle_watchdog.py` | DB 불통 중에도 native 복구 → 예산 소진 | 이번 주기 어느 행이라도 `database_unavailable`(M3/mini 웹 `/api/health` DB 관측)이면, 그리고 마지막 그 관측 뒤 `DATABASE_SETTLE_SECONDS`(180초) 동안 `native_unit_failed` 복구를 미룬다. 로그 사건 `{"target":…,"recovery":"deferred","cause":"database_unavailable"}`, 시도 예약 없음. DB 근거가 없으면(호스트 못 읽음) 예전대로 복구한다. 다른 복구(웹·monitor)와 예산 규칙은 그대로. 상태 파일에 `database: {unavailableAt}` 이 생긴다(미래·손상 값은 버린다) |
+| 알림 문구 `incident_notifications.SERVICE_TEXT` | `warming_up — 10분 넘게 재시작을 되풀이함 — 크래시 루프 의심` | `warming_up — 10분 넘게 다시 뜨는 중 — 재시작 되풀이(크래시 루프) 또는 Oracle 일꾼의 DB 기다림` |
+| 운영 홈 할 일 `lib/operations/console-tasks.ts` | 없음(M3 `crawl-ko-apply` 가 돌아 겉으로 정상) | 멈춤 `stop:korean-discovery`(규칙 `korean-discovery-stalled`): `github_ko_discovery_control.enabled` 와 수집 전체가 켜져 있는데 Oracle consumer 의 탐색 진행 기록(`discovery-progress:korean:*` — 검색 페이지 적재와 언어 확인 한 건마다 쓴다)이 **15분**(`CONSOLE_TASK_LIMITS.koreanStallMs`) 없음. 평소 언어 확인 시간당 약 800건(5건씩 20여 초마다)·frontier 535~664건/시간이라 15분 0건은 고장이다. 사실 줄: 마지막 진행(KST)·Oracle 일꾼 신호(heartbeat)·언어 확인 대기. 읽기(`korean-discovery-activity.ts`, 주 DB 읽기 전용 3초, 60초 캐시)를 못 하면 「셀 수 없음 · 한국어 탐색」이다 |
+
+**11-15 를 다시 겪으면.**
+
+- DB 10분 불통: consumer 는 launcher 안에서 기다리다(최대 120초 간격) DB 가 돌아오면 다시 일한다. `failed` 가 되지 않아 복구 예산을 쓰지 않는다.
+- DB 3시간 불통: 「launcher 600초 창 → exit 75 → systemd 간격(최대 5분)」을 되풀이한다(창마다 preflight 읽기 몇 번, 2분보다 촘촘하지 않음). gateway 는 내내 `warming_up` 이고, watchdog 은 끊김 없는 고장이 600초를 넘으면 위 문구로 한 번 알린다. DB 자체는 M3/mini 웹의 `database_unavailable` 로 따로 알린다.
+- 설정·권한·계약 문제(78): 바로 `failed` → 두 번째 관측에서 `native_unit_failed` 알림 → 3표본·180초 뒤 복구(DB 가 보일 때만) → 같은 문제면 다시 `failed`. 24시간 2회를 넘겨 두드리지 않는다.
+- consumer 는 살아 있는데 일이 없음(GitHub 한도·막힌 큐 등): 홈 할 일 「한국어 탐색이 N분째 멈춰 있습니다」. 휴대폰 알림은 `/admin/alerts` 가 켜져 있을 때 기존 할 일 알림 통로(maintenance `console-alerts` 5분 → monitor → gateway → Oracle Telegram `NoMoreVibe 할 일 알림`)로 한 번 간다. 기본은 꺼짐이다. 유닛이 죽거나 다시 뜨지 못하는 경우는 watchdog(`osaka/github-ko-discovery`)이 늘 알린다.
+
+**설치 순서(이 PR 은 Oracle 호스트에 아무것도 설치하지 않았다).** 각 단계는 앞 단계 없이도 지금보다 나빠지지 않게 짰다. 비밀 값은 출력하지 않는다.
+
+1. **onetwoday watchdog 코드** — 구 gateway·구 config 와 호환된다. 지금 설치본 세 파일은 main(11-12 `54def2b7`)과 같다.
+   ```sh
+   B=/opt/nomorevibe-watchdog/backup-<sha>-$(date -u +%Y%m%dT%H%M%SZ)
+   sudo install -d -m 0700 "$B" && sudo cp -p /opt/nomorevibe-watchdog/{oracle_watchdog.py,incident_notifications.py,recovery_gateway.py} "$B"/
+   sudo install -o root -g root -m 0644 scripts/ops/{oracle_watchdog.py,incident_notifications.py,recovery_gateway.py} /opt/nomorevibe-watchdog/
+   sudo systemctl restart nomorevibe-oracle-watchdog.service   # config·state·notification 기록은 그대로 이어진다
+   sudo journalctl -u nomorevibe-oracle-watchdog.service -n 2 --no-pager -o cat
+   ```
+2. **osaka 새 Oracle 릴리스**(`launch.py`·consumer preflight) — 평소 consumer-profile 릴리스 절차(`2026-10-17-oracle-activation-runbook.md` §1, `deploy/oracle/README.md` 「Offline inspect, stage and pinned rollback」, `switch --expected-current 89019bc5…`). 두 consumer env(`/etc/nomorevibe-core/consumer-{agent-scan,github-ko-discovery}.env`)의 `RELEASE_TAG` 와 `HOST_DB_BUDGET` 의 policy/process `release` 를 새 SHA 로 바꾸고 한 유닛씩 `restart` 해 `active (running)` 과 첫 틱 관측을 본다. 새 launcher + 옛 유닛도 안전하다: DB 기다림 한 번이 600초라 300초 3회 시작 한도에 다시 걸리지 않고, 설정 문제는 예전처럼 3번 뒤 failed 다.
+3. **osaka 유닛 + gateway 코드 + gateway config sha**(같은 자리에서 연달아 — gateway 는 유닛 파일 sha256 을 고정하므로 둘 사이 표본은 agent-scan `native_unit_unknown` 이 된다. 30초 안이면 경보(2표본)가 나지 않는다).
+   ```sh
+   # 새 launcher 가 current 에 없으면 여기서 멈춘다 — 옛 launcher 는 DB 장애도 78 이라 새 유닛에서 바로 failed 가 된다
+   grep -c EX_TEMPFAIL /opt/nomorevibe-core/current/deploy/oracle/launch.py          # 1 이상이어야 한다
+   sha256sum deploy/oracle/nomorevibe-core-consumer@.service                          # 새 unitSha256 (아래 config)
+   sudo cp -p /etc/systemd/system/nomorevibe-core-consumer@.service /root/nomorevibe-core-consumer@.service.bak-$(date -u +%Y%m%dT%H%M%SZ)
+   sudo cp -p /usr/local/libexec/nomorevibe-native-recovery/native_recovery_gateway.py /root/native_recovery_gateway.py.bak-$(date -u +%Y%m%dT%H%M%SZ)
+   sudo cp -p /etc/nomorevibe-native-recovery/config.json /root/native-recovery-config.json.bak-$(date -u +%Y%m%dT%H%M%SZ)
+   sudo install -o root -g root -m 0644 deploy/oracle/nomorevibe-core-consumer@.service /etc/systemd/system/
+   sudo systemctl daemon-reload        # 돌고 있는 consumer 는 그대로 돈다. 새 재시작 정책은 다음 종료부터
+   sudo install -o root -g root -m 0644 scripts/ops/native_recovery_gateway.py /usr/local/libexec/nomorevibe-native-recovery/
+   # config(root 0600)를 새 모양으로 — 아직 agent-scan 하나만(watchdog 의 osaka 목록과 같게)
+   ```
+   `/etc/nomorevibe-native-recovery/config.json`(키 순서 무관, `osaka` 의 기존 `state`·`unitFile`·`user`·`group`·`recoverEnabled` 값은 그대로):
+   ```json
+   {"state": "/var/lib/nomorevibe-native-recovery/state.json",
+    "unitFile": "/etc/systemd/system/nomorevibe-core-consumer@.service",
+    "unitSha256": "<위 sha256>",
+    "controlGroup": "/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-consumer@%i.service",
+    "user": "nomorevibe-core", "group": "nomorevibe-core",
+    "execStart": "/usr/bin/python3 /opt/nomorevibe-core/current/deploy/oracle/launch.py --consumer=%i",
+    "consumers": ["agent-scan"],
+    "recoverEnabled": true}
+   ```
+   확인: `systemctl show -p StartLimitIntervalUSec,RestartPreventExitStatus,RestartUSec,RestartSteps,RestartMaxDelayUSec,NeedDaemonReload nomorevibe-core-consumer@agent-scan.service` → `0`·`78`·`15s`·`5`·`5min`·`no`, 그리고 아래 probe 가 agent-scan `ok` 한 행.
+4. **한국어 consumer 를 감시 목록에** — osaka gateway config 의 `"consumers": ["agent-scan", "github-ko-discovery"]` 와 onetwoday watchdog config 를 30초 안에 연달아 바꾼다(그 사이 표본은 inventory 가 달라 osaka 전체 `probe_unknown`, 2표본부터 경보). watchdog 은 config 를 시작할 때만 읽는다.
+   ```sh
+   # onetwoday: 값은 출력하지 않는다
+   sudo python3 -I - <<'PY'
+   import json, os
+   p = '/etc/nomorevibe-watchdog/config.json'; c = json.load(open(p))
+   c['hosts']['osaka']['services'] = ['agent-scan', 'github-ko-discovery']
+   fd = os.open(p + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+   with os.fdopen(fd, 'w') as out: json.dump(c, out, indent=2)
+   os.replace(p + '.tmp', p)
+   PY
+   sudo systemctl restart nomorevibe-oracle-watchdog.service
+   ```
+   확인: 위 「관찰과 변경」의 probe 명령을 osaka(`root@100.95.205.94`, config `hosts.osaka.key`)로 → 두 행 모두 `"reason": "ok"`. watchdog 로그에 `osaka/github-ko-discovery` 사건(`ok`)이 생긴다. **gateway·watchdog 상태의 attempts 는 지우지 않는다**(agent-scan 의 11-15 기록 03:21Z·07:19Z 는 11-16 07:19Z 에 저절로 빠진다).
+5. **앱(홈 할 일)** — 일반 배포(`npm run deploy -- scope|plan|run`, 마이그레이션 없음). 할 일은 웹(홈)과 maintenance(`console-alerts`)가 읽는다. 휴대폰으로 받으려면 `/admin/alerts` 에서 켠다.
+
+되돌리기: 3의 백업 세 파일을 되놓고 `daemon-reload`(gateway config sha 가 옛 유닛과 맞는다), 1의 백업을 되놓고 watchdog 재시작, 4는 두 config 의 목록에서 `github-ko-discovery` 를 뺀다(같이, 30초 안). 릴리스는 `switch` 로 이전 SHA.
+
+**남은 한계.**
+
+- systemd 의 재시작 횟수는 유닛이 살아 있는 동안 줄지 않는다 — 긴 장애 뒤에는 다음 자동 재시작도 5분 간격이다. 손으로 `restart`(또는 `reset-failed` + `start`)하면 15초부터 다시 센다.
+- 깨진 릴리스(preflight 가 DB 를 읽기도 전에 죽음)도 `preflight_failed` 라 일시 장애와 구별되지 않는다. 600초 창·최대 5분 간격으로 계속 다시 시도하지만 DB 를 읽기 전에 죽으므로 DB 를 두드리지 않고, gateway `warming_up` 10분 알림으로 드러난다.
+- watchdog 의 함대 재시작 시각(`pipeline_alarm` 10분 유예)에 osaka consumer 의 `warming_up` 도 들어간다 — consumer 가 계속 다시 뜨는 동안 새 `pipeline_alarm` 알림이 최대 10분 늦을 수 있다.
+- DB 근거는 웹 `/api/health` 가 `db: unavailable` 일 때뿐이다. 웹이 모두 `warming_up` 이어서 그 관측이 하나도 없으면 미루지 않고 예전처럼 복구한다(예산 안에서).
+- 실제 드릴(DB 일시 불통 중 consumer 회복, ko 유닛 failed → 자동 복구, 15분 멈춤 할 일·알림)은 설치 뒤 영수증으로 따로 기록한다. 03:11–03:21Z DB 불통은 07:09Z 와 같은 DB 볼륨 가득 참이었다(03:10:43 PANIC, 크래시 덤프로 10분 지연) — [2026-11-15 DB 디스크 장애](2026-11-15-db-disk-outage.md).
+
+## DB 서버 디스크 경보 (2026-11-15)
+
+11-15 공유 Postgres 볼륨이 03:10Z·07:09Z 두 번 가득 찼는데 경보가 없었다(원인·조치는 [2026-11-15 DB 디스크 장애](2026-11-15-db-disk-outage.md)).
+Oracle `onetwoday` 의 `nomorevibe-db-disk-alert.timer`(1분)가 `scripts/ops/db_disk_alert.py` 를 돌린다 — watchdog 과 별개 유닛이고 watchdog 상태·Kuma·복구 판단을 건드리지 않는다.
+
+- 읽기: 두 DB 서버(V9-Primary·V9-Replica)의 node_exporter `:9100/metrics`(Tailscale, 100.64/10 만 허용)에서 `/`·`/data/postgres` 의 df 식 사용률.
+- 알림: watchdog 설정의 `incidentNotifications`(같은 Telegram 통로, 비밀을 복사하지 않고 읽기만)로 `NoMoreVibe 장애 알림`.
+  80% 이상이 되면 한 번, 75% 아래로 내려가기 전까지 6시간마다 한 번 더, 75% 아래로 내려가면 `NoMoreVibe 알림 해제` 한 번. 75~80% 사이에서는 새로 울리지 않는다.
+  서버를 10분 읽지 못하면 한 번(「DB 디스크 확인 불가」), 다시 읽히면 한 번. 전송이 실패하면 기록하지 않고 다음 분에 다시 보낸다.
+- 파일: `/opt/nomorevibe-db-disk/{db_disk_alert.py,incident_notifications.py}`(같은 릴리스의 두 파일), 설정 `/etc/nomorevibe-db-disk/config.json`(예시 `scripts/ops/db-disk-alert.config.example.json`, 실제 주소는 서버에만), 상태 `/var/lib/nomorevibe-db-disk/state.json`.
+
+```sh
+ssh onetwoday 'systemctl list-timers nomorevibe-db-disk-alert.timer --no-pager; sudo journalctl -u nomorevibe-db-disk-alert.service -n 3 --no-pager -o cat'
+```
+
+문턱을 바꾸려면 설정의 `alertPercent`·`clearPercent`(clear < alert)를 고친다 — 다음 분부터 적용된다. 끄려면 `sudo systemctl disable --now nomorevibe-db-disk-alert.timer`.
+
 ## 장애별 현재 검증 범위
 
 | 장애 | 자동 동작 | 현재 근거 / 남은 일 |
@@ -139,6 +246,8 @@ monitor 앱은 언제 배포해도 된다 — 새 monitor + 구 gateway·구 Ora
 | 홈페이지500/monitor hang | 위 제한으로 same-spec rolling recovery | Python/Node/CAS 계약42개. 격리 실제Engine29.5.2의180초gate·CAS·task교체·홈500→200·ACK유실중복제한 통과; 실제운영홈500주입은 미실행 |
 | Oracle watchdog 프로세스 종료 | systemd Restart=always·Kuma deadman | 실제SIGKILL→systemd복귀, 양Kuma heartbeat timeoutDOWN→재시작UP 및 OracleTelegram 두API수락 확인 |
 | 한 receiver 실패 | 원래 M3 watcher는 독립 두 Kuma에 동시 전송 | 양pipeline·양heartbeat ACK와 실제두receiver deadman DOWN→UP 확인. mini tailnetHTTPS8443 추가 |
+| Oracle consumer DB 일시 불통·한국어 탐색 멈춤(11-15) | launcher 600초 재시도·75/78 분리, 유닛 시작 한도 없음·78 은 멈춤, gateway 허용 목록(agent-scan·github-ko-discovery)·`warming_up`, watchdog 은 DB 불통 중 native 복구를 미룸, 홈 할 일 15분 멈춤 | 단위 회귀(Python unittest·vitest)만 통과. Oracle 설치(위 순서), DB 일시 불통 중 회복·ko failed 자동 복구·15분 멈춤 할 일 드릴은 남음 |
+| DB 볼륨·루트 디스크 가득 참(11-15) | Oracle 디스크 경보 80%(Telegram), Postgres `temp_file_limit` 5GB, 크래시 덤프 끔 | 단위 회귀(`test_oracle_watchdog_db_disk.py`)·설치 뒤 첫 실행 영수증. 실제 80% 넘김 알림 드릴은 남음 |
 | 전체 호스트/DB 영구 장애 | 기존 standby/재연결 범위, 준비된 DR fence 필요 | 최신 릴리스에서 host 인계·M3/mini 동시 단절·Oracle DB DR/독립 모델·복귀는 완료로 주장하지 않음 |
 
 ## 관찰과 변경
@@ -157,7 +266,9 @@ ssh onetwoday 'sudo ssh -F /dev/null -p 22222 -o BatchMode=yes -o ConnectTimeout
 
 ```sh
 python3 -B -m unittest discover -s tests -p 'test_recovery*.py'
-python3 -B -m unittest discover -s tests -p 'test_oracle_watchdog*.py'
+python3 -B -m unittest discover -s tests -p 'test_oracle_watchdog*.py'   # db_disk_alert 포함
+(umask 022; python3 -B -m unittest tests.test_oracle_activation)   # launcher·유닛 — umask 002 셸에서는 고정 파일 권한 검사가 실패한다
+npx vitest run tests/oracle-consumer-preflight.test.ts tests/console-tasks.test.ts tests/console-home-read.test.ts tests/korean-discovery-activity.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32784/nomorevibe_test npm run test:integration -- tests/integration/text-stage-progress.test.ts tests/integration/review-stage-progress.test.ts
 npx vitest run tests/failover-monitor.test.ts tests/monitor-heartbeat.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32784/nomorevibe_test npm run test:integration -- tests/integration/monitor-capacity-mode.test.ts

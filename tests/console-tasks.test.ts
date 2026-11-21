@@ -242,6 +242,35 @@ describe("console tasks — rules and their limits", () => {
     expect(unknowns(buildConsoleTasks(quiet({ takedown: null })))).toEqual(["내림 요청"]);
   });
 
+  it("stop: Korean discovery on but no Oracle search or language check for fifteen minutes (2026-11-15: 7.5 hours unnoticed)", () => {
+    const ko = (patch: Partial<NonNullable<ConsoleTaskInputs["koreanDiscovery"]>> = {}) => quiet({ koreanDiscovery: {
+      at: NOW, enabled: true, collectionEnabled: true, workAt: at(3 * MIN), heartbeatAt: at(20_000), pending: 49_534, pendingTruncated: false,
+      ...patch } });
+    expect(CONSOLE_TASK_LIMITS.koreanStallMs).toBe(15 * MIN);
+    // 평소: 언어 확인이 몇 초마다 — 할 일 없음. 14분 59초도 아직 멈춤이 아니다
+    expect(buildConsoleTasks(ko()).total).toBe(0);
+    expect(buildConsoleTasks(ko({ workAt: at(15 * MIN - 1000) })).total).toBe(0);
+    // 11-15 모양: 03:10Z 마지막 진행, Oracle 일꾼 신호도 그때 끊김 — 10:45Z(KST 19:45)에 읽음
+    const stalled = buildConsoleTasks(ko({ at: "2026-11-15T10:45:00.000Z", workAt: "2026-11-15T03:10:39.000Z", heartbeatAt: "2026-11-15T03:13:55.000Z" }));
+    expect(stalled.groups[0].tasks).toEqual([expect.objectContaining({
+      id: "stop:korean-discovery", group: "stop", rule: "korean-discovery-stalled", tone: "bad", notify: true,
+      title: "한국어 탐색이 7시간 34분째 멈춰 있습니다",
+      fact: "마지막 진행 11-15 12:10 · Oracle 일꾼 신호 7시간 31분 전 · 언어 확인 대기 49,534건",
+      actions: [{ kind: "link", label: "한국어 탐색 상태", href: "/admin/status" }] })]);
+    expect(stalled.groups[0].tasks[0].why).toContain("nomorevibe-core-consumer@github-ko-discovery");
+    // 일꾼은 살아 있는데 일이 없음(GitHub 한도·막힌 큐) — 같은 할 일, 사실 한 줄만 다르다
+    expect(buildConsoleTasks(ko({ workAt: at(16 * MIN), heartbeatAt: at(10_000), pending: 50_000, pendingTruncated: true })).groups[0].tasks[0])
+      .toMatchObject({ title: "한국어 탐색이 16분째 멈춰 있습니다", fact: expect.stringMatching(/Oracle 일꾼 신호 있음 · 언어 확인 대기 50,000건 이상$/) });
+    expect(buildConsoleTasks(ko({ workAt: null, heartbeatAt: null })).groups[0].tasks[0])
+      .toMatchObject({ title: "한국어 탐색 진행 기록이 없습니다", fact: "진행 기록 없음 · Oracle 일꾼 신호 없음 · 언어 확인 대기 49,534건" });
+    // 꺼져 있으면(탐색 스위치·수집 전체) 일부러 쉬는 것이다
+    expect(buildConsoleTasks(ko({ enabled: false, workAt: null })).total).toBe(0);
+    expect(buildConsoleTasks(ko({ collectionEnabled: false, workAt: at(DAY) })).total).toBe(0);
+    // 못 읽으면 「셀 수 없음」(멈춤이 아니다), 넣지 않으면 보지 않는다
+    expect(unknowns(buildConsoleTasks(quiet({ koreanDiscovery: null })))).toEqual(["한국어 탐색"]);
+    expect(unknowns(buildConsoleTasks(quiet()))).toEqual([]);
+  });
+
   it("odd: one hold reason grew by more than fifty in a day and at least half of it is new", () => {
     const hold = (count: number, recent: number) => quiet({ conveyor: conveyor({ stations: [station("judge", { label: "규칙 심사" })],
       holdsByReason: [{ reason: "ambiguous", label: "규칙으로 못 가름", count, recent24h: recent, href: null, station: "judge" }] }) });

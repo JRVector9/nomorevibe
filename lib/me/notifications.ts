@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { products, productUpdates } from "@/lib/db/schema";
@@ -149,7 +150,7 @@ export async function listNotifications(userId: number, options: { before?: numb
       select n.created_at, n.id from ${notifications} n where n.id = ${options.before} and n.user_id = ${userId})` : undefined))
     .orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(limit + 1));
   const items = rows.slice(0, limit).map(({ slug, name, ogImage, category, status, ...row }) => ({
-    ...row, product: slug && name && category ? { slug, name, ogImage, category, listed: status !== "banned" } : null,
+    ...row, product: slug && name && category ? { slug, name, ogImage: protectedCoverUrl(ogImage), category, listed: status !== "banned" } : null,
   }));
   return { items, nextCursor: rows.length > limit ? items[items.length - 1].id : null };
 }

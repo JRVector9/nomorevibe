@@ -478,6 +478,71 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertFalse(self.run_probe('2/2', [dict(fresh, id=f'c{i}') for i in range(2)], '4')['ready'])
         self.assertTrue(self.run_probe('2/2', [dict(fresh, id=f'c{i}') for i in range(2)], 'any')['ready'])
 
+    def public_gate(self, public_bodies, probes, *, attempts=3):
+        """공개 주소는 상태만 낸다 — 관문은 공개 status 와 서버별 직접 확인(probe)을 따로 본다. 호출 기록을 돌려준다."""
+        apps = self.apps()
+        apps['web-m3']['replicas'], apps['web-mini']['replicas'] = 4, 2
+        curls, probed, sleeps = [], [], []
+        bodies, answers = iter(public_bodies), {short: iter(rows) for short, rows in probes.items()}
+
+        def fake_run(command, **_kwargs):
+            curls.append(command)
+            body = next(bodies)
+            if isinstance(body, Exception):
+                raise body
+            return json.dumps(body)
+
+        def fake_probe(short, app, target, expected='any', **_kwargs):
+            probed.append((short, app['appName'], target['sha'], expected))
+            return next(answers[short])
+
+        with patch.object(release, 'run', side_effect=fake_run), patch.object(release, 'probe', side_effect=fake_probe), \
+                patch.object(release.time, 'sleep', side_effect=sleeps.append):
+            try:
+                result = release.public_gate(FakeClient(apps), self.target, attempts=attempts)
+            except TimeoutError as error:
+                result = error
+        return result, curls, probed, sleeps
+
+    def test_public_gate_reads_only_public_status_and_proves_both_webs_on_their_servers(self):
+        ready = lambda instance: {'ready': True, 'instanceId': instance}
+        result, curls, probed, sleeps = self.public_gate([{'status': 'ok'}],
+            {'web-mini': [ready('mini-web')], 'web-m3': [ready('m3-web')]})
+        self.assertEqual(result, {'publicHealth': 'ok', 'instances': ['m3-web', 'mini-web']})
+        self.assertEqual(curls, [['curl', '-fsS', '--max-time', '10', 'https://nomorevibe.com/api/health']])
+        # 모든 복제본(Dokploy 의 수)을 목표 릴리스로 — 서비스 이름은 Dokploy 가 준 것
+        self.assertEqual(probed, [('web-mini', 'service-web-mini', self.new_sha, 2), ('web-m3', 'service-web-m3', self.new_sha, 4)])
+        self.assertEqual(sleeps, [])
+
+    def test_public_gate_retries_only_the_missing_side_then_passes(self):
+        ready = lambda instance: {'ready': True, 'instanceId': instance}
+        result, curls, probed, sleeps = self.public_gate(
+            [RuntimeError('command_failed:curl:22'), {'status': 'ok'}],
+            {'web-mini': [ready('mini-web')], 'web-m3': [{'ready': False}, ready('m3-web')]})
+        self.assertEqual(result['instances'], ['m3-web', 'mini-web'])
+        self.assertEqual(len(curls), 2)
+        self.assertEqual([row[0] for row in probed], ['web-mini', 'web-m3', 'web-m3'])
+        self.assertEqual(sleeps, [release.PUBLIC_GATE_PAUSE_SECONDS])
+
+    def test_public_gate_times_out_without_public_ok_or_both_server_proofs(self):
+        ready = lambda instance: {'ready': True, 'instanceId': instance}
+        cases = {
+            # 공개 503(curl -f 실패)·status error — 서버 둘이 새 릴리스여도 통과가 아니다
+            'public_down': ([RuntimeError('command_failed:curl:22')] * 3, {'web-mini': [ready('mini-web')], 'web-m3': [ready('m3-web')]}),
+            'public_error': ([{'status': 'error'}] * 3, {'web-mini': [ready('mini-web')], 'web-m3': [ready('m3-web')]}),
+            # 한 웹의 컨테이너가 옛 릴리스·준비 아님이거나 다른 웹의 instanceId 를 내면 통과가 아니다
+            'm3_not_ready': ([{'status': 'ok'}], {'web-mini': [ready('mini-web')], 'web-m3': [{'ready': False}] * 3}),
+            'm3_wrong_identity': ([{'status': 'ok'}], {'web-mini': [ready('mini-web')], 'web-m3': [ready('mini-web')] * 3}),
+            'mini_probe_failed': ([{'status': 'ok'}], {'web-mini': [{'ready': False, 'instanceId': 'mini-web'}] * 3,
+                                                        'web-m3': [ready('m3-web')]}),
+        }
+        for name, (bodies, probes) in cases.items():
+            with self.subTest(name):
+                result, _curls, _probed, sleeps = self.public_gate(bodies, probes)
+                self.assertIsInstance(result, TimeoutError)
+                self.assertEqual(str(result), 'public_health_gate_timeout')
+                self.assertEqual(len(sleeps), 2)
+
     def test_html_purge_after_release_uses_only_the_purge_token(self):
         with patch.object(release, 'run', side_effect=RuntimeError('command_failed:security:44')):
             self.assertEqual(release.purge_html(), {'htmlPurge': 'skipped', 'reason': 'no_purge_token'})
@@ -1364,7 +1429,7 @@ class ReleaseSpeedTests(unittest.TestCase):
              patch.object(release, 'stage_and_deploy', side_effect=stage or default_stage), \
              patch.object(release, 'unchanged_since_preflight', side_effect=unchanged or (lambda _c, short, _p: record(('check', short)))), \
              patch.object(release, 'monitor_gate', side_effect=gate or default_gate), \
-             patch.object(release, 'public_gate', side_effect=lambda sha: record('public') or {'publicHealth': 'ok'}), \
+             patch.object(release, 'public_gate', side_effect=lambda _client, _target: record('public') or {'publicHealth': 'ok'}), \
              patch.object(release, 'purge_html', return_value={'htmlPurge': 'skipped'}), redirect_stdout(output):
             try:
                 release.deploy(None, self.target, 'token', {'apps': {}, 'previous': self.previous}, '/private/tmp/s.json',

@@ -1,4 +1,5 @@
 import "server-only";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { makerReplies } from "@/lib/db/me-schema";
@@ -27,5 +28,5 @@ export async function listMyOpinions(userId: number): Promise<OpinionView[]> {
   const byTarget = new Map(replies.map((reply) => [reply.targetId, { body: reply.body, authorDisplayName: reply.authorDisplayName, createdAt: reply.createdAt.toISOString() }]));
   const tileOf = new Map(tiles.map((tile) => [tile.id, tile]));
   return feedback.map((item) => ({ ...item, reply: byTarget.get(item.id) ?? null,
-    category: tileOf.get(item.productId)?.category ?? null, ogImage: tileOf.get(item.productId)?.ogImage ?? null }));
+    category: tileOf.get(item.productId)?.category ?? null, ogImage: protectedCoverUrl(tileOf.get(item.productId)?.ogImage) }));
 }

@@ -5,9 +5,13 @@ import { useId, useState } from "react";
 import { installationPrompt } from "@/lib/domain/products/access";
 import { trackAttrs } from "@/lib/analytics/attrs";
 
-export function InstallPrompt({ repoUrl, slug }: { repoUrl: string; slug?: string }) {
+/**
+ * 설치 안내 복사 — 받는 값은 복사할 글에 넣을 설치 주소(url)와 slug 뿐이다. 제품 행 칸(repoUrl)을 그대로 넘기지 않는다
+ * (2026-11-15 공개 HTML 줄이기 2차). 복사할 글 전체(약 1.3KB)를 서버에서 만들어 넘기면 RSC 가 그만큼 커져 글은 여기서 만든다.
+ */
+export function InstallPrompt({ url, slug }: { url: string; slug?: string }) {
   const t = useTranslations("detail");
-  const prompt = installationPrompt(repoUrl) ? t("install.prompt", { url: repoUrl }) : null;
+  const prompt = installationPrompt(url) ? t("install.prompt", { url }) : null;
   const id = useId();
   const [copied, setCopied] = useState(false);
   const [manual, setManual] = useState(false);

@@ -37,6 +37,8 @@ export const browse = defineCatalog<typeof Schema>()({
   "empty.query": "「{query}」に一致するプロジェクトはありません",
   "empty.filtered": "条件に一致するプロジェクトはありません",
   "empty.queryHint": "綴りを確認するか、短く一般的な言葉でお試しください。",
+  "empty.translationPending": "翻訳ができると、検索結果が増える場合があります。",
+  "empty.checkResults": "検索結果を再確認",
   "empty.filterHint": "別のカテゴリを選ぶか、絞り込みをリセットしてください。",
   "empty.searchIdeas": "こんな検索も",
   "empty.categoryIdeas": "カテゴリから探す",

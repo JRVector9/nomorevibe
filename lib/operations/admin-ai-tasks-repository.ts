@@ -6,7 +6,9 @@ import { db, onPrimary } from "@/lib/db";
 import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, aiTaskPoolMembers, modelCapacityControl, modelHelperAssignments, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
-import { AI_TASK_SLOT_MAX, AI_TEXT_TASK_IDS, aiTask, aiTaskReadsRanks, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, isRetiredAiTask, RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_TASK_SLOT_MAX, AI_TEXT_TASK_IDS, AUDIT_SECOND_OPINION_TASK, aiTask, aiTaskReadsRanks, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiRankSavableTask, isAiReviewTask, isRetiredAiTask,
+  RETIRED_AI_TASKS, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { qwenDirectConfig } from "@/lib/crawl/qwen-direct-review";
 import { cliDbContract } from "@/lib/llm/cli-db-contracts";
 import { CLI_DB_CONTRACT_ROUTES, type CliProvider } from "@/lib/llm/cli-serving-contract";
 import { textRankStatusFromCounts, textRankUnusableText, textTaskRankStatus, type TextRankStatus } from "@/lib/llm/ai-task-resolver";
@@ -36,12 +38,14 @@ import { engineRouteContract, ENGINE_CONNECT_ROUTES, probeEngineContract } from 
 import { adminAuditRow, adminLog, type AdminLogRow } from "./admin-log";
 import { DIRECT_PROBE_INTERVAL_MS, directProbeDue, directProbeGate } from "./admin-models-direct-probe";
 import { saveCliServingContractTx, saveServingContractTx } from "./admin-serving-contracts";
+import { contractReaderGateText, readContractReaderGate } from "./contract-reader-gate";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 import { cliCatalogMetadataFromSnapshot, type CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision } from "@/lib/llm/cli-engine-config";
 import { cliEngineBearer } from "@/lib/llm/cli-engine-auth";
 import { readAdminCliCatalog } from "./admin-cli-catalog";
 import { saveLocalContract } from "./admin-cli-stage-resources";
+import { auditSecondOpinionRankIssues, auditSecondOpinionSavedScope } from "./audit-second-opinion-ranks";
 import { validateCliHostTarget } from "./cli-host-target";
 
 /**
@@ -146,7 +150,8 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
   const contracts = servingContractSnapshot().rows.map(row => {
     const contract = row.contract && typeof row.contract === "object" ? row.contract as Record<string, unknown> : {};
     return { routeId: row.routeId, model: row.model, transport: row.transport,
-      provider: typeof contract.provider === "string" ? contract.provider : null, endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
+      provider: typeof contract.provider === "string" ? contract.provider : null, protocol: typeof contract.protocol === "string" ? contract.protocol : null,
+      endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
       engineModel: typeof contract.engineModel === "string" ? contract.engineModel : null,
       cliVersion: typeof contract.cliVersion === "string" ? contract.cliVersion : null,
       deploymentRevision: typeof contract.deploymentRevision === "string" ? contract.deploymentRevision : null,
@@ -163,8 +168,11 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
   const devices = new Map((await listModelCapacityDevices().catch(() => [])).map(device => [device.deviceId,
     { enabled: device.enabled, limitSlots: device.limitSlots, physicalLimit: device.physicalLimit ?? null }]));
   const table = tableLocalModelContracts();
+  // 새 엔진 직접 계약의 모양 — 계약을 읽는 모든 프로세스가 새 판이면 엔진 직접 총량 상한(local-direct, 2026-11-21 2단계). 저장 TX 가 다시 본다(saveServingContractTx)
+  const gate = await readContractReaderGate();
   // 2차(second-review)도 순위 저장이 엔진 직접 계약(abcllm 형 total-bound, transport direct)을 만든다(PR C1 — 예전에는 env·서빙 계약·등록부 화면의 계약만 받았다)
   return { contracts, policy, policyError, devices, cliEngineIdentity: cliEngineModelIdentity, engineRoutes: [...ENGINE_CONNECT_ROUTES, "second-review"], cliContractRoutes: [...CLI_DB_CONTRACT_ROUTES],
+    directShape: { open: gate.ok, text: gate.reason === "stale_processes" ? contractReaderGateText(gate) : null },
     localContract: backendId => {
       const contract = resolveLocalModelContract(backendId);
       return contract ? { model: contract.model, endpoint: contract.endpoint } : null;
@@ -610,7 +618,9 @@ export async function deleteAiConnection(id: string, expectedVersion: number, ac
 
 // ── 순위 저장 ───────────────────────────────────────────────────────────────────────────────────────────
 
-export type SaveAiTaskRanksResult = { ok: true; revision: string; warnings: string[]; created: { devices: string[]; contracts: string[]; routes: string[] } }
+export type SaveAiTaskRanksResult = { ok: true; revision: string; warnings: string[]; created: { devices: string[]; contracts: string[]; routes: string[] };
+  /** 순위 일부만 실행이 읽는 작업(감사 두 번째 의견)의 「이 저장이 실행에 하는 일」 — 화면 결과·CLI 출력에 싣는다 */
+  scope?: string }
   | { ok: false; issues: string[] };
 
 /**
@@ -624,7 +634,7 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
   const task = aiTask(input.task);
   if (!task) return { ok: false, issues: ["ai_task_invalid:task"] };
-  if (!isAiLiveTask(task.id)) {
+  if (!isAiRankSavableTask(task.id)) {
     const target = aiTaskEditTarget(task.id);
     return { ok: false, issues: [`${task.label}의 모델 순위는 지금 실행 쪽이 읽지 않아 저장해도 동작이 바뀌지 않습니다 — 실제 적용 설정에서 바꾸세요: ${target?.href ?? "/admin/models/advanced#model-settings"}`] };
   }
@@ -653,6 +663,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     if (task.id === 'publish-classify' && ranks.some(rank => rank && connections.find(connection => connection.id === rank.provider)?.kind === 'api'))
       return { ok: false, issues: ['ai_task_publish_api_pool_only'] };
     const issues = validateAiTaskRanks(task.id, input.slot, ranks, { connections, rows });
+    // 감사 두 번째 의견: 1순위 = 기본 Qwen 직접 설정(실행이 읽는 값), 2·3순위 = 다른 모델(같은 모델 재판정 거절의 두 번째 의견)
+    if (task.id === AUDIT_SECOND_OPINION_TASK) issues.push(...auditSecondOpinionRankIssues(ranks, connections, qwenDirectConfig()));
     if (issues.length) return { ok: false, issues };
     const chosen = ranks.flatMap((row, index) => row ? [{ rank: index + 1, row, connection: connections.find(entry => entry.id === row.provider)! }] : []);
     // OpenCode 순위의 연결 버전은 위에서 호스트에서 방금 읽은 값이다 — 계약 버전이 다르면 그 값으로 계약을 맞춘다(기록된 옛 버전은 쓰지 않는다)
@@ -695,7 +707,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
       return { revision, created: { devices: madeDevices, contracts: madeContracts, routes: madeRoutes } };
     }));
     logger.info("ai_tasks.ranks_saved", { actor, task: task.id, slot: input.slot, ranks: chosen.length, ...result.created });
-    return { ok: true, revision: result.revision, warnings, created: result.created };
+    const scope = auditSecondOpinionSavedScope(task.id, ranks, connections);
+    return { ok: true, revision: result.revision, warnings, created: result.created, ...(scope ? { scope } : {}) };
   } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
 }
 
@@ -918,7 +931,7 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
         || !effortSupported || (task.kind === "vision" && served.vision !== true))
         return { ok: false as const, issues: ["ai_connection_cli_catalog_changed"] };
       const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, row.model,
-        cliEngineEndpoint(record.baseUrl), context, connection.deviceId, "engine", ready.createContract.engineModel);
+        cliEngineEndpoint(record.baseUrl), context, connection.deviceId, "engine", ready.createContract.engineModel, null, ready.createContract.provider ?? "abcllm");
       if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
       contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity,
         contract: { ...contract, deploymentRevision: cliEngineRevision(cliEngine) }, key: cliEngineBearer(key), label: connection.label });
@@ -938,7 +951,8 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
     // 장부 이름(identity)이 계약 행의 열쇠다. 같은 모델을 다른 연결에도 둔 순위는 연결로 가른 이름이고 엔진에는 engineModel(= 순위 모델)이 나간다(PR B)
     // 추론 토큰 여유는 그 칸을 받는 경로(사유 번역·한국어 소개)의 계약에만 실린다
     const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, probed.responseModel, probed.endpoint,
-      probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel, connection.reasoningTokenReserve ?? null);
+      probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel, connection.reasoningTokenReserve ?? null,
+      ready.createContract.provider ?? "abcllm");
     if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
     contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, contract, key, label: connection.label });
   }
@@ -1003,7 +1017,8 @@ export async function saveAiTaskServingResources(tx: ProductTransaction, task: A
   const { contracts, cliContracts, localContracts = [] } = resources;
   const madeContracts: string[] = [];
   for (const contract of localContracts) {
-    const saved = await saveLocalContract(tx, contract, actor, `작업 ↔ 모델 저장(${task.label}) · ${task.wiring === "assist-direct" ? "LLM 보강 경로" : "감사 직접 경로"}`);
+    const saved = await saveLocalContract(tx, contract, actor, `작업 ↔ 모델 저장(${task.label}) · ${task.wiring === "assist-direct" ? "LLM 보강 경로"
+      : task.wiring === "local-direct" ? "두 번째 의견 경로" : "감사 직접 경로"}`);
     if (saved) madeContracts.push(`${saved.routeId} · ${contract.model} 로컬 계약 (#${saved.id})`);
   }
   for (const entry of contracts) {

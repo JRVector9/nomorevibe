@@ -1,3 +1,4 @@
+import { QUERY_SOURCE_LOCALES } from "@/lib/domain/products/search-query-language";
 import { replacedProviderEvidenceSchema } from "./replaced-provider-boundary-contract";
 import { replacedPathEvidenceSchema } from "./replaced-path-boundary-contract";
 import { cliExecutorIndeterminateRemovedEvidenceSchema } from "./cli-executor-indeterminate-removed-boundary-contract";
@@ -808,7 +809,7 @@ export const websearchQueryCacheSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("present"), rowIdentityHash: sha64, attempts: z.number().int().nonnegative().safe() }).strict(),
 ]);
 export type WebsearchQueryCache = Readonly<z.infer<typeof websearchQueryCacheSchema>>;
-export const websearchQueryMemberSchema = z.object({ cacheKey: sha64, sourceLocale: z.enum(["ko", "zh-Hans", "zh-Hant"]),
+export const websearchQueryMemberSchema = z.object({ cacheKey: sha64, sourceLocale: z.enum(QUERY_SOURCE_LOCALES),
   queryHash: sha64, promptVersion: positive, glossaryVersion: positive.nullable(), cache: websearchQueryCacheSchema }).strict()
   .refine(value => value.sourceLocale === "ko" || value.glossaryVersion === null, "invalid_websearch_query_glossary");
 export type WebsearchQueryMember = Readonly<z.infer<typeof websearchQueryMemberSchema>>;

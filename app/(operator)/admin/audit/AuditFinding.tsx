@@ -3,10 +3,13 @@
 import { startTransition, useActionState, useState } from 'react';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { ReasonText } from '../review/ReasonText';
+import type { SameModelRecheckView } from '@/lib/crawl/same-model-recheck-repository';
+import { SAME_MODEL_RECHECK_LABEL } from '@/lib/crawl/same-model-recheck-label';
 import type { SecondOpinionView } from '@/lib/crawl/audit-second-opinions';
 import { THIN_PAGE_TEXT_CHARS } from '@/lib/crawl/second-opinion-rules';
 import { decideAuditFinding, type AuditActionState } from './actions';
 import { secondOpinionLabel } from './second-opinion-label';
+import type { AuditRecollectLine } from '@/lib/crawl/audit-recollect-view';
 
 export type AuditFindingView = {
   id: number; slug: string; name: string; url: string; category: string;
@@ -17,6 +20,7 @@ export type AuditFindingView = {
   heldAt?: string | null;
   /** 다른 모델의 두 번째 의견 — 없으면 없음 */
   second?: SecondOpinionView[];
+  sameModelRecheck?: SameModelRecheckView | null;
   /** 남은 감사 모델 바꾸기 뒤 바꾼 모델이 낸 답이면 그 이름('qwen-v2') — 시작 모델의 답이면 없음 */
   answeredBy?: string | null;
   /** 감사 답을 받고 사람을 기다린 날 — 오래된 것을 줄에서 바로 본다 */
@@ -29,6 +33,8 @@ export type AuditFindingView = {
   m1Split?: boolean;
   /** 공개분 변경 재판정가 무엇이 바뀌어 다시 물었나('페이지 본문(유사도 0.32) · 이름') — 사람이 연 감사의 줄은 없음 */
   changed?: string | null;
+  /** 입력 기한이 지나 원본을 다시 받은 줄 — 감사 때와 지금의 차이('사이트 404 → 200 · 마지막 push 9/02 → 11/10')·받는 중·다시 받지 못한 사유 */
+  recollect?: AuditRecollectLine | null;
 };
 
 /** 화면 판별 대기 — 글이 적고(원본 없음 포함) 화면 판정이 아직 없다 */
@@ -80,7 +86,17 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
             </button>
           ) : <p className="text-fg-3">사유 없음</p>}
         </div>
+        {finding.sameModelRecheck && <div className="mt-1 min-w-0 rounded border border-up/25 bg-up/5 px-2 py-1 text-up" aria-label="같은 모델 재검토">
+          <p className="font-semibold">{SAME_MODEL_RECHECK_LABEL}</p>
+          <p className="text-fg-3">같은 모델의 재검토 · 독립 두 번째 의견 아님 · {finding.sameModelRecheck.model}</p>
+          {finding.sameModelRecheck.reason && <button type="button" onClick={() => setExpanded(now => !now)} aria-expanded={expanded}
+            className={`w-full text-left leading-[1.6] text-fg-2 ${expanded ? 'block whitespace-pre-line' : 'line-clamp-2'}`}>
+            {finding.sameModelRecheck.reason}
+          </button>}
+        </div>}
         {finding.changed && <p className="mt-1 text-fg-3"><span className="font-semibold text-fg-2">바뀐 것</span> {finding.changed}</p>}
+        {finding.recollect && <p className="mt-1 truncate text-fg-3" title={`${finding.recollect.label} ${finding.recollect.text}`}>
+          <span className={`font-semibold ${finding.recollect.warn ? 'text-warn' : 'text-fg-2'}`}>{finding.recollect.label}</span> {finding.recollect.text}</p>}
         {showReasons && (
           <ul className="mt-1 flex flex-col gap-0.5 border-l-2 border-line pl-2" aria-label="두 번째 의견의 사유">
             {second.filter((opinion) => opinion.reason).map((opinion) => (

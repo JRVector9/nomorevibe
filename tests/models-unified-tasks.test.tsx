@@ -289,3 +289,29 @@ describe("shared unified task editor", () => {
     expect(unifiedTaskSwitchMode(automatic, "workload_pool", line).slots).toEqual(["", "", "", ""]);
   });
 });
+
+describe("2026-11-17 감사 두 번째 의견 편집기 — 순위 일부만 실행이 읽음", () => {
+  const rows: AiTaskRankRow[] = [...llmRankRows, { task: "audit-second-opinion", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {}, enabled: true }];
+  it("실제 적용 설정 링크 대신 순위 편집기를 열고, 설명을 보이며 실행 방식(순위대로·동시에) 고르기는 두지 않는다", () => {
+    const editor = editorOf(rows);
+    const line = lineOf(editor, "audit-second-opinion#1");
+    expect(unifiedTaskEditTarget(line)).toBeNull();
+    expect(unifiedTaskLock(line)).toBeNull();
+    const html = renderToStaticMarkup(<UnifiedTaskEditor taskKey={line.key} editor={editor} devices={null} poolHelp={null} lockReason={null} onClose={() => undefined} />);
+    const plain = text(html);
+    expect(plain).toContain("2·3순위는 변경 재판정 거절을 1순위와 같은 모델이 냈을 때 그 항목의 두 번째 의견에만 씁니다");
+    expect(plain).toContain("이 작업은 순위를 차례로 넘기지 않습니다");
+    expect(plain).not.toContain("1순위 모델을 먼저 쓰고, 호출할 수 없을 때 다음 순위로 전환합니다");
+    expect(html).not.toContain('aria-label="실행 방식"');
+    expect(html).toContain('class="ut-editor-rows" data-scope="partial"');
+    expect(html).toMatch(/name="rank1Connection"|aria-label="감사 두 번째 의견 1순위"/);
+  });
+  it("공개분 추가 검수는 예전 그대로 실제 적용 설정으로 보낸다", () => {
+    const editor = editorOf(rows);
+    const line = lineOf(editor, "published-filter#1");
+    expect(unifiedTaskEditTarget(line)).not.toBeNull();
+    const html = renderToStaticMarkup(<UnifiedTaskEditor taskKey={line.key} editor={editor} devices={null} poolHelp={null} lockReason={null} onClose={() => undefined} />);
+    expect(html).not.toContain('data-scope="partial"');
+    expect(text(html)).toContain("실제 호출에 적용되는 설정을 확인하고 해당 위치에서 변경합니다");
+  });
+});

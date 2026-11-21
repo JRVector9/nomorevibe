@@ -116,7 +116,7 @@ export function vectorLiteral(vector: readonly number[]): string {
  */
 export async function embedTexts(
   texts: readonly string[],
-  options: { timeoutMs: number; signal?: AbortSignal; url?: string; fetchImpl?: typeof fetch },
+  options: { timeoutMs: number; signal?: AbortSignal; url?: string; fetchImpl?: typeof fetch; onRequest?: () => void },
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   const timeout = AbortSignal.timeout(options.timeoutMs);
@@ -145,6 +145,8 @@ export async function embedTexts(
   }
   let response: Response;
   try {
+    signal.throwIfAborted();
+    options.onRequest?.();
     response = await (options.fetchImpl ?? fetch)(`${base}/v1/embeddings`, {
       method: "POST",
       headers,

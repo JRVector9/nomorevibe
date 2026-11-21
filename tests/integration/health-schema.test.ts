@@ -10,6 +10,10 @@ import * as schema from "@/lib/db/schema";
 import { GET } from "@/app/api/health/route";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
+/** 컨테이너에 바로 붙은 요청(Next 16 이 채우는 x-forwarded-* 모양) — 배포 helper 가 읽는 전체 본문. 공개 요청의 상태만 응답은 health-route 테스트가 맡는다 */
+const direct = () => new Request("http://127.0.0.1:3000/api/health", { headers: {
+  host: "127.0.0.1:3000", "x-forwarded-for": "127.0.0.1", "x-forwarded-host": "127.0.0.1:3000", "x-forwarded-port": "3000", "x-forwarded-proto": "http" } });
+
 /*
  * R4: 웹이 기대하는 migration(이 빌드의 journal 마지막 항목)이 DB 에 없으면 /api/health 가 503 이어야 배포 helper(status·db·release
  * 확인)가 롤아웃을 멈춘다. 0095 없이 배포되면 웹 쓰기·로그인·action·webhook 이 모두 실패하는데 select 1 만 보면 200 이었다.
@@ -48,7 +52,7 @@ afterAll(async () => {
 }, 120_000);
 
 it("all expected migrations applied: 200 with the existing shape (status·db·instance·release·latency)", async () => {
-  const res = await GET();
+  const res = await GET(direct());
   expect(res.status).toBe(200);
   expect(res.headers.get("cache-control")).toBe("no-store");
   const body = await res.json();
@@ -59,7 +63,7 @@ it("the code's latest migration missing (deployed before migrate): 503 with sche
   const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   try {
     await client!`DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ${latest.when}`;
-    const res = await GET();
+    const res = await GET(direct());
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ status: "error", db: "ok", schema: "pending", expectedMigration: latest.tag });
     const lines = stderr.mock.calls.map(([line]) => String(line)).filter(line => line.includes("health.schema_not_ready"));
@@ -72,7 +76,7 @@ it("migration ledger unreadable (no drizzle schema): 503 schema unverified — n
   const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   try {
     await client!.unsafe("DROP SCHEMA drizzle CASCADE");
-    const res = await GET();
+    const res = await GET(direct());
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ status: "error", db: "ok", schema: "unverified", expectedMigration: latest.tag });
   } finally { stderr.mockRestore(); }

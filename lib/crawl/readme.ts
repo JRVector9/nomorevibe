@@ -61,16 +61,32 @@ export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): strin
 }
 
 /**
- * README 앞부분. 없으면 "" (다시 찾지 않도록 표시), 잠깐의 실패면 null (다음에 다시 시도).
+ * README 를 받은 결과. 성공이면 앞부분(없으면 "" — 다시 찾지 않도록 표시), 실패면 까닭.
+ * 까닭: http_<상태>(429·403 한도, 5xx, 0 = 연결 실패), timeout, unsafe_url. 404 는 실패가 아니라 다음 이름을 본다.
  */
-export async function fetchReadmeSample(repo: string, request: Request = requestReadme): Promise<string | null> {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return "";
+export type ReadmeFetchResult = { ok: true; sample: string } | { ok: false; error: string; retryAfter: number | null };
+
+export async function fetchReadmeResult(repo: string, request: Request = requestReadme): Promise<ReadmeFetchResult> {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return { ok: true, sample: "" };
   for (const name of README_NAMES) {
     const response = await request(`https://raw.githubusercontent.com/${repo}/HEAD/${name}`, { maxBytes: MAX_README_BYTES, timeoutMs: 8_000 });
-    if (response.ok && response.status === 200) return readmeText(response.body.toString("utf8"));
+    if (response.ok && response.status === 200) return { ok: true, sample: readmeText(response.body.toString("utf8")) };
     if (!response.ok && response.reason === "http" && response.status === 404) continue;
     // Default requests retain a bounded prefix. Strict injected requests may still reject size.
-    return !response.ok && response.reason === "too_large" ? "" : null;
+    if (!response.ok && response.reason === "too_large") return { ok: true, sample: "" };
+    return { ok: false, retryAfter: null,
+      error: response.ok ? `http_${response.status}` : response.reason === "http" ? `http_${response.status}` : response.reason };
   }
-  return "";
+  return { ok: true, sample: "" };
+}
+
+/**
+ * README 앞부분. 없으면 "" (다시 찾지 않도록 표시), 잠깐의 실패면 null (다음에 다시 시도) — 그 까닭은 onFailure 로 알린다.
+ */
+export async function fetchReadmeSample(repo: string, request: Request = requestReadme,
+  onFailure?: (error: string) => void): Promise<string | null> {
+  const result = await fetchReadmeResult(repo, request);
+  if (result.ok) return result.sample;
+  onFailure?.(result.error);
+  return null;
 }

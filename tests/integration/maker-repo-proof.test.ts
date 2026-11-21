@@ -7,6 +7,7 @@ import { publicIdentities, publicSessions, publicUsers } from "@/lib/db/public-u
 import { csrfForToken, newPublicSession } from "@/lib/domain/accounts/session";
 import { clearAllMemos } from "@/lib/cache/memo";
 import { ensureSchema, resetTables } from "./setup";
+import { clearRepositoryIdentityAnchors } from "./repository-identity-anchors-fixture";
 import { repositoryProofPath, signRepositoryProof } from "@/lib/me/repo-proof-token";
 import type { RepositoryProofChallenge } from "@/lib/me/maker-repo-proof";
 
@@ -39,6 +40,8 @@ beforeEach(async () => {
   vi.stubEnv("GITHUB_TOKEN", "test-collector-token");
   vi.stubEnv("GITHUB_COLLECTOR_SECRET", "");
   await resetTables();
+  // 근거 표는 지울 수 없어 앞 시험이 본 저장소 id 가 남는다 — 같은 이름을 다른 id 로 쓰는 시험끼리 섞이지 않게 비운다
+  await clearRepositoryIdentityAnchors();
   clearAllMemos();
   githubCalls = []; proofFiles = new Map(); branchFiles = new Map();
   repoOverrides = {}; graphqlOverrides = {}; graphqlErrors = []; beforeGraphql = null;

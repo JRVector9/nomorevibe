@@ -7,7 +7,8 @@ import { findOwnPendingModelRequest, requestAi2ItemModelSlot, cancelReservedMode
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
 import { itemBindingHash } from '@/lib/jobs/items/types';
-import { prepareAi2GatewayCall, reviewWithReservedAi2Gateway, settleAi2GatewayNotStarted, type GatewayNotStarted, type PreparedAi2GatewayCall } from './agent-review-gateway';
+import { ai2CallReroutesOnCapacityWait, prepareAi2GatewayCall, reviewWithReservedAi2Gateway, settleAi2GatewayNotStarted, type GatewayNotStarted,
+  type PreparedAi2GatewayCall } from './agent-review-gateway';
 import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelReservation, fallbackWaitingSecondReview, type SecondReviewModelClaim } from './second-review-ownership';
 import type { ReviewInput } from './agent-review-contract';
 import type { AgentReviewResult } from './agent-review';
@@ -51,7 +52,9 @@ export async function claimSecondReviewModelCapacity(intent: SecondReviewModelRe
     { candidateId: binding.candidateId, vote: binding.vote });
   if (slot.kind !== 'granted') {
     const reason = await capacityRefusalReason(request, slot.reason);
-    if (reason === 'capacity' && binding.reviewer.provider === 'local-direct' && pending?.state === 'waiting'
+    // 줄에서 15초 넘게 기다린 표를 같은 칸의 다음 순위로 넘기는 것은 장비 칸이 있는 엔진 직접 계약(direct-openai-chat-v1)의 표뿐이다 — abcllm 계약과 그 이름표만
+    // 바꾼 openai-chat-total-bound-v1 의 표는 예전처럼 기다린다(ai2CallReroutesOnCapacityWait, 2026-11-21 abcllm 이름표 정리 2단계). 예전 조건은 provider 가 local-direct 였다
+    if (reason === 'capacity' && ai2CallReroutesOnCapacityWait(call) && pending?.state === 'waiting'
       && !signal?.aborted && await fallbackWaitingSecondReview(intent, pending.requestId))
       return { kind: 'capacity_fallback' };
     throw new ModelCapacityDeferredError(reason);

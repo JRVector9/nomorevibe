@@ -41,6 +41,6 @@ export function productLocaleMetadata(
 ): Pick<Metadata, "alternates" | "robots" | "openGraph"> {
   const ready = baseIndexable ? productReadyLocales(source, translations, contentEligible) : [];
   return { alternates: localizedAlternates(locale, logicalPath, ready),
-    robots: { index: baseIndexable && ready.some(candidate => candidate === locale), follow: baseIndexable },
+    robots: { index: baseIndexable && ready.some(candidate => candidate === locale), follow: true },
     openGraph: localizedOpenGraph(locale, ready) };
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { protectedCoverUrl } from "@/lib/domain/products/cover-url";
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { products, productUpdates } from "@/lib/db/schema";
@@ -115,7 +116,7 @@ export async function listFollows(userId: number): Promise<FollowList> {
         const product = productRows.find((item) => item.id === Number(row.targetKey));
         if (!product) return [];
         const latest = updates.find((item) => item.slug === product.slug);
-        return [{ productId: product.id, slug: product.slug, name: product.name, ogImage: product.ogImage, category: product.category,
+        return [{ productId: product.id, slug: product.slug, name: product.name, ogImage: protectedCoverUrl(product.ogImage), category: product.category,
           listed: product.status !== "banned", latest: latest ? { title: latest.title, at: new Date(latest.at).toISOString() } : null,
           followedAt: row.createdAt.toISOString() }];
       }),

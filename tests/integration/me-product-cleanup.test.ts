@@ -89,12 +89,21 @@ describe("로그아웃 목록 카드 — POST /api/product-summaries", () => {
     const { POST } = await import("@/app/api/product-summaries/route");
     await product("alpha");
     vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
-    for (let attempt = 0; attempt < 120; attempt += 1) expect((await POST(call(["alpha"], "198.51.100.7"), noParams)).status).toBe(200);
-    const limited = await POST(call(["alpha"], "198.51.100.7"), noParams);
-    expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ error: "rate_limited" });
-    expect((await POST(call(["alpha"], "198.51.100.8"), noParams)).status).toBe(200);
-    vi.stubEnv("TRUSTED_PROXY_HOPS", "0");
-    expect((await POST(call(["alpha"], "198.51.100.7"), noParams)).status).toBe(200);
+    // 10분 한도만 잰다 — 같은 IP 가 1초 안에 120번 부르면 과다 호출 차단(lib/http/crawl-burst.ts, tests/crawl-burst-block.test.ts)이 먼저 걸리므로 끈다
+    const { setCrawlBurstStoreForTest } = await import("@/lib/http/crawl-burst");
+    const { CRAWL_BURST_DEFAULTS } = await import("@/lib/http/crawl-burst-policy");
+    setCrawlBurstStoreForTest({ settings: async () => ({ ...CRAWL_BURST_DEFAULTS, burstLimit: 0 }),
+      hit: async () => { throw new Error("burst_off"); }, block: async () => {} });
+    try {
+      for (let attempt = 0; attempt < 120; attempt += 1) expect((await POST(call(["alpha"], "198.51.100.7"), noParams)).status).toBe(200);
+      const limited = await POST(call(["alpha"], "198.51.100.7"), noParams);
+      expect(limited.status).toBe(429);
+      expect(await limited.json()).toEqual({ error: "rate_limited" });
+      expect((await POST(call(["alpha"], "198.51.100.8"), noParams)).status).toBe(200);
+      vi.stubEnv("TRUSTED_PROXY_HOPS", "0");
+      expect((await POST(call(["alpha"], "198.51.100.7"), noParams)).status).toBe(200);
+    } finally {
+      setCrawlBurstStoreForTest(null);
+    }
   });
 });
