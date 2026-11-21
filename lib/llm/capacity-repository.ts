@@ -20,7 +20,7 @@ import { ai1ItemDispatchBindingSchema, ai1ItemDispatchBindingHash, ai1ItemModelD
   ai1ItemGatewayTerminalEvidenceSchema, type Ai1ItemDispatchBinding, type Ai1ItemModelDispatch } from "@/lib/llm/capacity";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityDevices, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
@@ -3093,15 +3093,39 @@ export async function removeCapacityRoutes(tx: ProductTransaction, value: { rout
     predecessors: chain, written: true };
 }
 
+/**
+ * 2차 표 하나가 그 경로·공급자·모델 줄에서 이어서 기다리기 시작한 시각(timestamptz, 없으면 NULL) — 2차 심사 대기 시간(runtime_settings
+ * jobs.second-review.reviewWaitMs, 2026-11-21 소유자 결정 「15초가 아니라 심사 대기 시간을 넘긴 것을 넘기게 해」)을 재는 곳.
+ * 같은 표(logical work key)·경로·공급자·모델에서 줄에만 섰던 행(waiting·withdrawn — 보낸 적 없음) 중 가장 이른 접수 시각이되, 그 표가 그 모델로
+ * 마지막으로 보내진(dispatched·settled·indeterminate) 뒤에 선 것만 센다. 대기 행 하나의 나이(queued_at)만 보면 대기 만료(정책 queueTtlMs)·
+ * 정책 판 바뀜·워커 재시작으로 행이 새로 설 때마다 0 부터 다시 세어, 대기 유효 시간보다 긴 대기 시간에는 영영 닿지 않는다.
+ * 인자는 바깥 행의 칸 — 열(AI2 소비자 hint 의 대기 행) 또는 값(물림 TX 가 잠근 행). 같은 표의 행은 logical key 색인으로 찾는다.
+ */
+export function ai2QueueWaitStartSql(row: Readonly<{ logicalWorkKey: SQLWrapper | string; routeId: SQLWrapper | string;
+  provider: SQLWrapper | string; model: SQLWrapper | string }>): SQL {
+  const same = (alias: "w" | "d") => sql`${sql.raw(alias)}.logical_work_key = ${row.logicalWorkKey} AND ${sql.raw(alias)}.route_id = ${row.routeId}
+    AND ${sql.raw(alias)}.provider = ${row.provider} AND ${sql.raw(alias)}.model = ${row.model}`;
+  return sql`(SELECT min(w.queued_at) FROM model_capacity_requests w WHERE ${same("w")} AND w.state IN ('waiting','withdrawn')
+    AND w.queued_at > coalesce((SELECT max(coalesce(d.dispatched_at, d.queued_at)) FROM model_capacity_requests d
+      WHERE ${same("d")} AND d.state IN ('dispatched','settled','indeterminate')), '-infinity'::timestamptz))`;
+}
+/** 2차 심사 대기 시간의 범위(ms) — runtime_settings jobs.second-review.reviewWaitMs 의 켠 값(0 = 끔은 부르는 쪽이 거른다)과 같다 */
+const AI2_REVIEW_WAIT_MAX_MS = 3_600_000;
+
 /** Fixed AI2 pre-dispatch handoff. The caller must finish its domain transition
- * in this same TX or roll back the withdrawal. Never grants provider authority. */
+ * in this same TX or roll back the withdrawal. Never grants provider authority.
+ * capacity_wait_timeout 은 minWaitMs(2차 심사 대기 시간, 1ms~1시간)가 있어야 하고, 그 표가 이 모델 줄에서 이어서 그만큼 넘게 기다렸을 때만 물린다
+ * (ai2QueueWaitStartSql — 2026-11-21 전에는 고정 15초·이 대기 행의 나이). */
 export type Ai2PreDispatchFallbackReason = "capacity_wait_timeout" | "primary_preflight_failed";
 export async function withdrawUndispatchedAi2ItemForFallback(tx: ProductTransaction, value: {
-  requestId: string; identity: ModelCapacityRequestIdentity; target: Ai2Target; reason: Ai2PreDispatchFallbackReason;
+  requestId: string; identity: ModelCapacityRequestIdentity; target: Ai2Target; reason: Ai2PreDispatchFallbackReason; minWaitMs?: number;
 }): Promise<ReturnType<typeof callerControlSnapshot> | null> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const requestId = modelCapacityRequestSchema.shape.requestId.parse(value.requestId);
   const reason = ["capacity_wait_timeout", "primary_preflight_failed"].includes(value.reason) ? value.reason : fail("invalid_ai2_fallback_reason");
+  const minWaitMs = value.minWaitMs;
+  if (reason === "capacity_wait_timeout" && (!Number.isSafeInteger(minWaitMs) || minWaitMs! < 1 || minWaitMs! > AI2_REVIEW_WAIT_MAX_MS))
+    fail("invalid_ai2_fallback_wait");
   const identity = modelCapacityRequestIdentitySchema.parse(value.identity), target = fixedAi2Target(value.target);
   const logical = fixedAi2Identity(identity, target);
   // 엔진 직접 표만(local-direct, 또는 「작업 ↔ 모델」 순위 저장이 만든 abcllm 형 직접 계약 — PR C1). CLI 표는 물리지 않는다
@@ -3123,7 +3147,8 @@ export async function withdrawUndispatchedAi2ItemForFallback(tx: ProductTransact
     || await ai2Fence(tx, logical, requestId)) return null;
   const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
     .where(and(eq(modelCapacityRequests.requestId, requestId), eq(modelCapacityRequests.state, row.state),
-      reason === "capacity_wait_timeout" ? sql`${modelCapacityRequests.queuedAt} <= clock_timestamp() - interval '15 seconds'` : undefined,
+      reason === "capacity_wait_timeout" ? sql`${ai2QueueWaitStartSql({ logicalWorkKey: logical, routeId: row.routeId, provider: row.provider,
+        model: row.model })} <= clock_timestamp() - ${minWaitMs!}::integer * interval '1 millisecond'` : undefined,
       row.state === "waiting" ? sql`${modelCapacityRequests.queueUntil} > clock_timestamp()`
         : sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
   if (!changed) return null;

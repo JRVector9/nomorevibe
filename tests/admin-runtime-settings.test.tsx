@@ -131,6 +131,13 @@ describe("폼 → sparse patch", () => {
     expect(result).toEqual({ patch: { translation: { product: { batchChars: 6_000, jobMarginMs: 20_500 } } }, changed: ["translation.product.batchChars", "translation.product.jobMarginMs"], issues: [] });
     // 같은 값을 다르게 적어도(300 ↔ 300.0) 바뀐 것이 아니다
     expect(runtimeSettingsPatchFromForm("routes", form({ "value:routes.limits.product-translate.timeoutMs": "300.0", "initial:routes.limits.product-translate.timeoutMs": "300" })).changed).toEqual([]);
+    // 2차 심사 대기 시간(2026-11-21): 화면은 초, 저장은 ms. 0 은 넘기지 않음 — 다시 0 으로도 저장된다. 1시간 넘으면 초 칸 실수로 거절
+    expect(runtimeSettingsPatchFromForm(["routes", "jobs"], form({ "value:jobs.second-review.reviewWaitMs": "90", "initial:jobs.second-review.reviewWaitMs": "0" })))
+      .toEqual({ patch: { jobs: { "second-review": { reviewWaitMs: 90_000 } } }, changed: ["jobs.second-review.reviewWaitMs"], issues: [] });
+    expect(runtimeSettingsPatchFromForm("jobs", form({ "value:jobs.second-review.reviewWaitMs": "0", "initial:jobs.second-review.reviewWaitMs": "90" })).patch)
+      .toEqual({ jobs: { "second-review": { reviewWaitMs: 0 } } });
+    expect(runtimeSettingsPatchFromForm("jobs", form({ "value:jobs.second-review.reviewWaitMs": "90000", "initial:jobs.second-review.reviewWaitMs": "0" })).issues)
+      .toEqual(["2차 심사 대기 시간(초): 90000초는 1시간이 넘습니다 — 이 칸은 초 단위입니다(ms로 넣으셨다면 90초)"]);
   });
 
   it("「기본값으로」는 덮어쓴 키에만 null 을 넣고, 다른 그룹 경로·숫자 아닌 값·빈 값은 거절한다", () => {

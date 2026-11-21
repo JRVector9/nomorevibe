@@ -93,6 +93,23 @@ describe("runtime settings defaults", () => {
     expect(storedSettingsVersion({ assignments: { tableReads: "on" } })).toBe(storedSettingsVersion({ version: 1, assignments: { tableReads: "on" } }));
     expect(runtimeSettingsSchema.safeParse({ version: 1, ...DEFAULT_RUNTIME_SETTINGS, assignments: { tableReads: "maybe" } }).success).toBe(false);
   });
+  it("2차 심사 대기 시간(2026-11-21) — 기본 0(넘기지 않음), 0~1시간 ms, 2차 심사에만 있고 화면 이름표는 「2차 심사 대기 시간(초)」", async () => {
+    expect(DEFAULT_RUNTIME_SETTINGS.jobs["second-review"]).toEqual({ consumerConcurrency: 1, reviewWaitMs: 0 });
+    expect(jobKnob(DEFAULT_RUNTIME_SETTINGS, "second-review", "reviewWaitMs")).toBe(0);
+    expect(RUNTIME_SETTING_LABELS["jobs.second-review.reviewWaitMs"]).toBe("2차 심사 대기 시간(ms)");
+    const { fieldLabel } = await import("@/lib/operations/admin-runtime-settings");
+    expect(fieldLabel("jobs.second-review.reviewWaitMs")).toBe("2차 심사 대기 시간(초)");
+    for (const ms of [0, 1, 60_000, 3_600_000]) {
+      const result = resolveRuntimeSettings({ version: 1, jobs: { "second-review": { reviewWaitMs: ms } } });
+      expect(result.issues).toEqual([]); expect(jobKnob(result.settings, "second-review", "reviewWaitMs")).toBe(ms);
+    }
+    for (const bad of [-1, 1.5, 3_600_001, "60"]) {
+      const result = resolveRuntimeSettings({ version: 1, jobs: { "second-review": { reviewWaitMs: bad } } });
+      expect(result.issues).toEqual(["runtime_settings_invalid:jobs.second-review.reviewWaitMs"]); expect(result.settings.jobs["second-review"].reviewWaitMs).toBe(0);
+    }
+    // 2차 심사가 읽는 손잡이다 — 다른 잡에는 적을 수 없다
+    expect(resolveRuntimeSettings({ version: 1, jobs: { "crawl-agent-review": { reviewWaitMs: 60_000 } } }).issues).toEqual(["unknown_job_knob:crawl-agent-review.reviewWaitMs"]);
+  });
 });
 
 describe("resolveRuntimeSettings", () => {

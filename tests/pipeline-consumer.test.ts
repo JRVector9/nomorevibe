@@ -8,6 +8,7 @@ import { runSecondReviewConsumer } from '@/lib/crawl/consumers/second';
 import { parsePipelineConsumerArgs, runPipelineConsumer } from '@/scripts/pipeline-consumer';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { pinReviewRanks } from './review-task-ranks-fixture';
+import { setRuntimeSettingsForTest } from '@/lib/operations/runtime-settings-store';
 
 const mocks = vi.hoisted(() => ({
   pages: [] as { id: number; fallback: boolean; provider?: string; model?: string }[][], where: vi.fn(), limit: vi.fn(), select: vi.fn(),
@@ -43,6 +44,8 @@ const projectAi2Hint = <T extends { id: number; candidateId?: number; vote?: num
 beforeEach(() => {
   // PR C1: 2차 소비자는 「작업 ↔ 모델」 투표자 순위가 없으면 쉰다(no_task_models) — 이 시험들은 순위가 있는 소비자를 본다
   pinReviewRanks({ second: [[{ provider: 'local-direct', model: 'qwen3.8-flash-next' }]] });
+  // 2차 심사 대기 시간(2026-11-21, 기본 0 = 넘기지 않음·대기 hint 없음) — 이 시험들은 켠 소비자의 대기 hint 를 본다(꺼짐은 따로 아래)
+  setRuntimeSettingsForTest({ version: 1, jobs: { 'second-review': { reviewWaitMs: 15_000 } } });
   vi.resetAllMocks(); mocks.pages = []; mocks.reservedPages = []; mocks.waitingPages = [];
   mocks.limit.mockImplementation(async () => mocks.pages.shift() ?? []);
   mocks.reservedLimit.mockImplementation(async () => { const hint = mocks.reservedPages.shift(); return hint ? [hint] : []; });
@@ -63,7 +66,7 @@ beforeEach(() => {
   mocks.dispatch.mockResolvedValue(success);
   mocks.runtime.mockImplementation(async (_role, load) => load(new AbortController().signal, mocks.report));
 });
-afterEach(() => { vi.useRealTimers(); pinReviewRanks(null); });
+afterEach(() => { vi.useRealTimers(); pinReviewRanks(null); setRuntimeSettingsForTest(null); });
 
 it('parses only the fixed AI2 command and rejects duplicate or arbitrary flags', () => {
   expect(parsePipelineConsumerArgs(['--stage=ai2', '--once'])).toEqual({ stage: 'ai2', once: true });
@@ -338,8 +341,18 @@ it('revisits an aged capacity waiter before the normal cursor reaches EOF', asyn
   // normal cursor 는 쪽 끝(24)까지 나아갔다 — 미룬 행 앞에 묶이지 않는다
   expect(new PgDialect().sqlToQuery(mocks.where.mock.calls[1][0]).params).toContain(24);
   const query = new PgDialect().sqlToQuery(mocks.waitingWhere.mock.calls[0][0]);
-  expect(query.params).toEqual(expect.arrayContaining(['waiting', 'local-direct', owner().instanceId, owner().bootId]));
-  for (const fragment of ['queued_at', 'queue_until', '15 seconds', 'fallback_for_id']) expect(query.sql).toContain(fragment);
+  expect(query.params).toEqual(expect.arrayContaining(['waiting', 'local-direct', 'abcllm', owner().instanceId, owner().bootId, 15_000]));
+  // 그 표가 그 모델 줄에서 이어서 기다린 시간(대기 만료로 거둔 행 포함, 마지막으로 보낸 뒤부터) — ai2QueueWaitStartSql
+  for (const fragment of ['queued_at', 'queue_until', 'fallback_for_id', 'logical_work_key', "'withdrawn'", 'dispatched_at']) expect(query.sql).toContain(fragment);
+});
+it('with the review wait time off (0, the default) never queries a waiting hint — reservations and the normal keyset still run', async () => {
+  setRuntimeSettingsForTest({});
+  mocks.reservedPages = [{ id: 1000, fallback: false, reserved: true, ordinal: 10 }];
+  mocks.waitingPages = [{ id: 2000, fallback: false, reserved: false, ordinal: 2 }];
+  mocks.pages = [[{ id: 1000, fallback: false }, { id: 3, fallback: false }]];
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 2, recorded: 0, skipped: 2, deferred: 0 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([1000, 3]);
+  expect(mocks.waitingLimit).not.toHaveBeenCalled(); expect(mocks.waitingWhere).not.toHaveBeenCalled();
 });
 it('runs a granted reservation before an aged waiter and still makes normal progress', async () => {
   mocks.reservedPages = [{ id: 1000, fallback: false, reserved: true, ordinal: 10 }];

@@ -11,6 +11,7 @@ import { runtimeSettings } from '@/lib/operations/runtime-settings-store';
 import { readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
+import { ai2QueueWaitStartSql } from '@/lib/llm/capacity-repository';
 import { executeSecondReviewConsumerItem } from '../second-review-item-lifecycle';
 import { ensureReviewTaskRanks } from '../review-task-ranks';
 import { secondReviewVotersDegraded } from '../second-review-voters';
@@ -23,8 +24,9 @@ type PriorityCursor = { ordinal: number; id: number };
 
 /** Granted reservations and aged waiting requests can be behind the normal keyset. These are hints,
  * never permits: the lifecycle still checks the full current binding and slot.
- * Rotate separately so stale hints cannot hide another reservation or waiter. */
-async function priorityHint(owner: ItemOwner, cursor: PriorityCursor | null, reserved: boolean) {
+ * Rotate separately so stale hints cannot hide another reservation or waiter.
+ * waitMs: 2차 심사 대기 시간(ms, > 0) — 대기 hint 는 그 표가 그 모델 줄에서 이어서 이만큼 넘게 기다렸을 때만이다(물림 TX 와 같은 식, ai2QueueWaitStartSql). */
+async function priorityHint(owner: ItemOwner, cursor: PriorityCursor | null, reserved: boolean, waitMs = 0) {
   const request = modelCapacityRequests;
   const [hint] = await onPrimary(() => db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId,
     vote: sql<number>`coalesce(${secondReviews.fallbackForId}, ${secondReviews.id})`,
@@ -34,9 +36,11 @@ async function priorityHint(owner: ItemOwner, cursor: PriorityCursor | null, res
       sql`${request.logicalWorkKey} = 'ai2:' || ${secondReviews.candidateId}::text || ':' || coalesce(${secondReviews.fallbackForId}, ${secondReviews.id})::text`,
     )).where(and(eq(request.ownerInstanceId, owner.instanceId), eq(request.ownerBootId, owner.bootId),
       eq(request.class, 'second'), eq(request.pool, 'reviewer'), eq(request.routeId, 'second-review'), eq(request.state, reserved ? 'reserved' : 'waiting'),
-      // 오래 기다린 엔진 직접 표(local-direct, PR C1 부터 순위 저장이 만든 abcllm 형 직접 계약도)는 같은 투표자 칸의 다음 순위로 넘길 수 있다
+      // 2차 심사 대기 시간보다 오래 기다린 API 표(local-direct·abcllm — 계약 모양은 가리지 않는다, 2026-11-21 소유자 결정)는 같은 투표자 칸의 다음 순위로
+      // 넘길 수 있다. 예전에는 이 대기 행의 나이 15초였고 abcllm 표는 hint 만 받고 넘어가지 않았다. 기다림은 대기 만료·재시작으로 행이 새로 서도 이어서 센다
       reserved ? sql`${request.reservedUntil} > clock_timestamp()` : and(inArray(request.provider, ['local-direct', 'abcllm']), isNull(secondReviews.fallbackForId),
-        sql`${request.queueUntil} > clock_timestamp()`, sql`${request.queuedAt} <= clock_timestamp() - interval '15 seconds'`),
+        sql`${request.queueUntil} > clock_timestamp()`, sql`${ai2QueueWaitStartSql({ logicalWorkKey: request.logicalWorkKey, routeId: request.routeId,
+          provider: request.provider, model: request.model })} <= clock_timestamp() - ${waitMs}::integer * interval '1 millisecond'`),
       cursor ? or(gt(request.queueOrdinal, cursor.ordinal),
         and(eq(request.queueOrdinal, cursor.ordinal), gt(secondReviews.id, cursor.id))) : undefined,
     )).orderBy(asc(request.queueOrdinal), asc(secondReviews.id)).limit(1));
@@ -98,12 +102,14 @@ export async function runSecondReviewConsumer(input: {
     if (reserved) reservedCursor = { ordinal: reserved.ordinal, id: reserved.id };
     // After a routing change, let its new fallback reach the normal batch before
     // another aged waiter can reroute and end that batch again. Reservations stay first.
-    const scanWaiting = !resumeFallback;
+    // 2차 심사 대기 시간(second-review-ownership.ts secondReviewRerouteWaitMs 와 같은 칸)이 0(넘기지 않음)이면 넘길 대기 표가 없으므로 대기 hint 를 찾지 않는다
+    const waitMs = jobKnob(runtimeSettings(), 'second-review', 'reviewWaitMs');
+    const scanWaiting = !resumeFallback && waitMs > 0;
     resumeFallback = false;
-    let waiting: Awaited<ReturnType<typeof priorityHint>> | undefined = scanWaiting ? await priorityHint(owner, waitingCursor, false) : undefined;
+    let waiting: Awaited<ReturnType<typeof priorityHint>> | undefined = scanWaiting ? await priorityHint(owner, waitingCursor, false, waitMs) : undefined;
     if (scanWaiting && !waiting && waitingCursor) {
       waitingCursor = null;
-      if (!halt?.aborted) waiting = await priorityHint(owner, null, false);
+      if (!halt?.aborted) waiting = await priorityHint(owner, null, false, waitMs);
     }
     if (halt?.aborted) break;
     if (waiting) waitingCursor = { ordinal: waiting.ordinal, id: waiting.id };
