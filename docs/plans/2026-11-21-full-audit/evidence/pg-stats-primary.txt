@@ -1,0 +1,111 @@
+Pager usage is off.
+## stats since
+stats_reset | now
+ | 2026-11-20 23:55:01.020748+00
+(1 row)
+## tables by seq_tup_read (seq scans reading many rows) — table | size | live | seq_scan | seq_tup_read | idx_scan | n_tup_upd | n_tup_hot_upd | n_dead
+relname | sz | n_live_tup | seq_scan | seq_tup_read | idx_scan | n_tup_upd | n_tup_hot_upd | n_dead_tup
+model_capacity_requests | 2471 MB | 510514 | 1756826 | 565379093415 | 20111391 | 652542 | 0 | 93297
+crawl_candidates | 862 MB | 1063020 | 1403437 | 337034887917 | 1067908889 | 67072 | 0 | 127809
+crawl_documents | 3548 MB | 1066318 | 1056322 | 232803338097 | 1479991661 | 1850565 | 1309843 | 113566
+crawl_frontier | 344 MB | 1073122 | 601976 | 127831272295 | 18579768 | 403161 | 0 | 97753
+pipeline_item_leases | 74 MB | 78262 | 1890239 | 119066999158 | 59499759 | 121021 | 0 | 5387
+second_reviews | 212 MB | 204701 | 1336952 | 117931866734 | 3848689587 | 52765 | 469 | 33405
+crawl_review_attempts | 1845 MB | 362930 | 628528 | 75609777696 | 633582095 | 67918 | 0 | 15369
+products | 1402 MB | 115411 | 984928 | 58485775009 | 1867581117 | 704214 | 2202 | 11340
+product_evidence_sources | 534 MB | 226783 | 245480 | 52431204927 | 1261033435 | 950900 | 408741 | 15176
+uptime_claims | 66 MB | 106608 | 552150 | 42921230649 | 199405552 | 3194504 | 0 | 13386
+repository_ai_levels | 87 MB | 177135 | 145879 | 21731543887 | 37180294 | 422129 | 209562 | 20175
+agent_repository_claims | 55 MB | 165911 | 234482 | 21101905749 | 1417366193 | 289152 | 13 | 23859
+product_health | 13 MB | 109127 | 149963 | 14536139511 | 2687178927 | 1582190 | 1532334 | 15063
+product_translations | 155 MB | 394163 | 95578 | 13851724273 | 605640 | 77033 | 0 | 36170
+product_links | 40 MB | 115361 | 122622 | 13339676170 | 1258365409 | 0 | 0 | 1
+product_search_profiles | 80 MB | 115311 | 90477 | 4515933537 | 3387525881 | 95391 | 81218 | 18037
+second_review_workload_assignments | 584 kB | 2359 | 20658186 | 4406017560 | 5659551122 | 0 | 0 | 0
+product_korean_taglines | 37 MB | 107946 | 64186 | 4235625813 | 1578380723 | 4696 | 3954 | 1904
+text_translations | 234 MB | 284531 | 13876 | 3692910306 | 5836805935 | 445 | 0 | 600
+product_thumbnail_state | 28 MB | 67270 | 20939 | 676440268 | 149404 | 54761 | 0 | 12044
+product_audit_attempts | 61 MB | 678 | 10945 | 601994931 | 330105 | 0 | 0 | 0
+product_intro_checks | 2368 kB | 7690 | 71593 | 513877073 | 43402979 | 11 | 7 | 45
+operations_observations | 5216 kB | 2585 | 150934 | 377160793 | 3065741 | 2267751 | 2191921 | 197
+social_posts | 32 MB | 58287 | 6506 | 304564052 | 179929 | 54590 | 45990 | 11426
+cdn_purges | 1984 kB | 14550 | 18792 | 267930874 | 22279 | 1213 | 521 | 1954
+product_audit_second_opinions | 11 MB | 553 | 14610 | 199028148 | 1979861 | 0 | 0 | 0
+product_evidence_audit | 35 MB | 91521 | 2646 | 181398217 | 48649808 | 0 | 0 | 26
+github_ko_discovery_staging | 50 MB | 105747 | 5085 | 170259857 | 637180 | 168415 | 0 | 826
+crawl_taglines | 2432 kB | 6250 | 16030 | 92311604 | 1214946 | 0 | 0 | 571
+product_audit_campaigns | 64 kB | 0 | 13906636 | 83439816 | 7901753 | 0 | 0 | 0
+(30 rows)
+## big indexes never or rarely used — table | index | size | idx_scan
+relname | indexrelname | sz | idx_scan
+products | products_search_idx | 265 MB | 0
+uptime_claims | uptime_claims_due_idx | 32 MB | 0
+product_evidence_sources | product_evidence_sources_due_idx | 24 MB | 0
+product_thumbnail_state | product_thumbnail_retry_idx | 14 MB | 0
+agent_repository_scans | agent_scans_due_idx | 13 MB | 0
+products | products_stars_refresh_idx | 5504 kB | 0
+products | products_listed_owner_idx | 5384 kB | 0
+product_updates | product_updates_public_released_idx | 25 MB | 141
+model_capacity_requests | model_capacity_requests_job_readback_idx | 19 MB | 1782
+product_translations | product_translations_pending_idx | 15 MB | 2883
+model_capacity_requests | model_capacity_requests_settled_at_idx | 11 MB | 6555
+text_translations | text_translations_updated_idx | 10 MB | 8795
+crawl_candidates | crawl_candidates_state_idx | 87 MB | 21350
+agent_repository_claims | agent_repository_claims_due_idx | 11 MB | 28840
+product_updates | product_updates_visible_order_idx | 26 MB | 44768
+github_discovery_pages | github_discovery_pages_state_idx | 7240 kB | 52516
+products | products_status_listed_at_idx | 7712 kB | 77684
+crawl_frontier | crawl_frontier_admission_recent_idx | 11 MB | 82251
+agent_repository_claims | agent_repository_claims_queue_idx | 14 MB | 115396
+crawl_documents | crawl_documents_github_id_idx | 48 MB | 194428
+crawl_frontier | crawl_frontier_dequeue_idx | 25 MB | 404850
+model_capacity_events | model_capacity_events_request_idx | 125 MB | 745290
+crawl_candidates | crawl_candidates_state_id_idx | 38 MB | 1325236
+product_star_observations | product_star_observations_product_idx | 5448 kB | 2689418
+crawl_documents | crawl_documents_repository_birth_lookup_idx | 107 MB | 3286233
+crawl_candidates | crawl_candidates_identity_idx | 72 MB | 4413861
+second_reviews | second_reviews_status_idx | 9664 kB | 11409012
+products | products_repository_identity_idx | 9952 kB | 14352454
+crawl_frontier | crawl_frontier_identity_idx | 61 MB | 15537763
+crawl_review_attempts | crawl_review_approval_idx | 24 MB | 51067357
+(30 rows)
+## connections by application/state
+application_name | usename | state | count
+ | nomorevibe | idle | 9
+nomorevibe:reviewer | nomorevibe | active | 5
+nomorevibe:text | nomorevibe | active | 5
+nomorevibe:crawler | nomorevibe | active | 2
+ | nomorevibe_oracle_agent_scan | idle | 2
+ | nomorevibe_oracle_github_ko | idle | 2
+psql | postgres | active | 1
+nomorevibe:crawler | nomorevibe_oracle_agent_scan | active | 1
+nomorevibe:monitor | nomorevibe_monitor_20261022 | idle | 1
+nomorevibe:publisher | nomorevibe | active | 1
+nomorevibe:reviewer | nomorevibe | idle in transaction | 1
+(11 rows)
+## settings
+name | setting | unit
+autovacuum_naptime | 60 | s
+autovacuum_vacuum_scale_factor | 0.2 |
+deadlock_timeout | 1000 | ms
+default_statistics_target | 100 |
+effective_cache_size | 6029312 | 8kB
+idle_in_transaction_session_timeout | 0 | ms
+jit | off |
+lock_timeout | 0 | ms
+max_connections | 150 |
+max_parallel_workers_per_gather | 4 |
+random_page_cost | 1.1 |
+shared_buffers | 1966080 | 8kB
+statement_timeout | 0 | ms
+track_io_timing | off |
+work_mem | 65536 | kB
+(15 rows)
+## locks waiting now
+waiting | total
+7 | 357
+(1 row)
+## database counters
+xact_commit | xact_rollback | deadlocks | temp_files | temp | conflicts
+125268523 | 136722 | 13 | 43727 | 1205 GB | 0
+(1 row)
