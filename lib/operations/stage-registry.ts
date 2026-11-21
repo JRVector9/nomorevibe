@@ -128,7 +128,7 @@ export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   "notification-delisted": "팔로한 프로젝트 내려감 알림 — 내린 뒤 계정 알림함에 적기",
   "notification-category-digest": "팔로한 분야 주간 묶음 알림 — 공개 제품을 세기만 한다",
   "notification-prune": "90일 지난 알림 지우기 — 계정 알림함 정리",
-  "db-retention": "DB 보관 정리 — 끝난 장부·지난 근거·지난 스캔·지난 가동 집계를 지우고 거절 원본을 줄인다, 후보·제품 상태는 바꾸지 않는다",
+  "db-retention": "DB 보관 정리 — 끝난 장부·지난 근거·지난 스캔·지난 가동 집계·1년 지난 제작자 이메일을 지우고 거절 원본을 줄인다, 후보·제품 상태는 바꾸지 않는다",
   "model-capacity-reclaim": "종료 증거가 있는 모델 호출 정산 — 보낸 호출 점유를 풀고 확인 못함(사람 검토) 행을 닫는다, 후보·제품은 처리하지 않는다",
 };
 

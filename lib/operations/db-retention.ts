@@ -20,6 +20,8 @@ import { readModelCapacityLedgerRetentionDays } from "@/lib/llm/capacity-retenti
  *    그 이벤트 전부. 열린 행·결과 미확정 행, 아직 열린 생성(generationHash)·논리 작업 열쇠(logical_work_key)에 묶인 행, 처리 중인 LLM 보조 작업·
  *    적용 전 소개 교정이 가리키는 행은 남긴다. 이벤트 표의 추가 전용 트리거는 0187 이 이 트랜잭션 설정(nmv.capacity_retention)에만 DELETE 를 연다.
  * ⑥ 이 모두를 한 잡에서 — 발굴 근거(최근 24시간 + 저장소마다 최근 서로 다른 commit 5개), 스캔(7일 · 보존 집합 밖), 가동 집계(KST 오늘 − 40일 전).
+ * ⑦ repository_maintainer_emails(0194, 관리자 전용 제작자 이메일) — 마지막 확인 뒤 1년(소유자 결정 2026-11-21)이 지난 행. 주소를 읽지 않고 지우기만 한다.
+ *    거부 목록(maintainer_email_denials)은 지우지 않는다 — 지우면 다시 모으게 된다.
  *
  * 저장소 id 근거 표(repository_identity_anchors, 0191)는 이 잡의 대상이 아니다 — 지우지 않는 표다(DB 가 DELETE·TRUNCATE 를 거절한다). 여기에 넣지 않는다.
  * ④의 줄이기는 id·node_id 를 그대로 두므로 근거 트리거(id 가 바뀔 때만 돈다)도 부르지 않는다.
@@ -49,6 +51,9 @@ export const REPO_META_OWNER_KEEP_KEYS = Object.freeze(["login", "id", "node_id"
 export const DOCUMENT_SHRINK_AFTER_DAYS = 30;
 export const SCAN_RETENTION_DAYS = 7;
 export const HEALTH_DAILY_RETENTION_DAYS = 40;
+/** 제작자 이메일: 마지막 확인(last_seen_at) 뒤 이만큼 지나면 지운다(2026-11-21 소유자 결정 「1년」) */
+export const MAINTAINER_EMAIL_RETENTION_DAYS = 365;
+const MAINTAINER_EMAIL_BATCH = 500;
 /** 발굴 근거: 최근 이만큼은 모두 남긴다 · 저장소마다 최근 서로 다른 commit 이만큼 */
 export const DISCOVERY_KEEP_HOURS = 24;
 export const DISCOVERY_KEEP_SHAS = 5;
@@ -62,7 +67,7 @@ const SCAN_BATCH = 2_000;
 /** 하루 한 바퀴 도는 부분(원본 줄이기·스캔·가동 집계)이 다시 도는 간격 */
 export const DAILY_PASS_MS = 20 * 60 * 60_000;
 
-export const DB_RETENTION_PARTS = ["ledger", "evidence", "documents", "scans", "health"] as const;
+export const DB_RETENTION_PARTS = ["ledger", "evidence", "documents", "scans", "health", "maintainerEmails"] as const;
 export type DbRetentionPart = (typeof DB_RETENTION_PARTS)[number];
 export type DbRetentionCursor = {
   v: 1;
@@ -374,4 +379,37 @@ export async function pruneHealthDaily(lease: JobLease | undefined, state: DbRet
     days += 1;
   }
   return { counts: { rows, days }, caughtUp: false, state: state ?? {} };
+}
+
+// ───────────────────────── ⑦ 제작자 이메일(0194) ─────────────────────────
+
+/** 0194 가 적용됐나 — 아니면 이 부분을 건너뛴다(skipped=migration_pending) */
+export async function maintainerEmailRetentionReady(executor: Pick<ProductTransaction, "execute"> = db): Promise<boolean> {
+  const [row] = await executor.execute<{ ready: boolean }>(sql`SELECT to_regclass('repository_maintainer_emails') IS NOT NULL AS ready`);
+  return row?.ready === true;
+}
+
+/**
+ * 마지막 확인 뒤 1년이 지난 제작자 이메일 행을 묶음으로 지운다 — 주소 칸을 읽지 않는다(키·시각만). 다시 수집되는 저장소는 last_seen_at 이 늘
+ * 앞으로 가므로 지워지지 않는다. 내려간 제품·거절된 후보처럼 다시 보지 않는 저장소의 주소가 1년 뒤 사라진다. last_seen_at 색인으로 고른다.
+ */
+export async function pruneMaintainerEmailBatch(lease: JobLease | undefined, days = MAINTAINER_EMAIL_RETENTION_DAYS, limit = MAINTAINER_EMAIL_BATCH): Promise<number> {
+  if (!Number.isSafeInteger(days) || days < 365) throw new Error("maintainer_email_retention_days_invalid");
+  return retentionWrite(lease, async tx => count(await tx.execute(sql`WITH picked AS (
+      SELECT ctid FROM repository_maintainer_emails WHERE last_seen_at < now() - make_interval(days => ${days})
+      ORDER BY last_seen_at LIMIT ${limit} FOR UPDATE SKIP LOCKED)
+    DELETE FROM repository_maintainer_emails e USING picked
+    WHERE e.ctid = picked.ctid AND e.last_seen_at < now() - make_interval(days => ${days})
+    RETURNING 1`)));
+}
+
+export async function pruneMaintainerEmails(lease: JobLease | undefined, more: () => boolean): Promise<PartResult> {
+  if (!await maintainerEmailRetentionReady()) return { counts: { skipped: "migration_pending" }, caughtUp: true };
+  let deleted = 0;
+  while (more()) {
+    const batch = await pruneMaintainerEmailBatch(lease);
+    deleted += batch;
+    if (batch < MAINTAINER_EMAIL_BATCH) return { counts: { deleted }, caughtUp: true };
+  }
+  return { counts: { deleted }, caughtUp: false };
 }

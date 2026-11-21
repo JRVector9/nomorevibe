@@ -5,9 +5,9 @@ import type { DbRetentionCursor } from "@/lib/operations/db-retention";
 
 // 잡 틀(lib/jobs/db-retention.ts)만 — 부분 함수는 가짜다. 실제 DB 동작은 tests/integration/db-retention.test.ts.
 const parts = vi.hoisted(() => ({
-  pruneLedger: vi.fn(), pruneDiscoveryEvidence: vi.fn(), shrinkDocuments: vi.fn(), pruneScans: vi.fn(), pruneHealthDaily: vi.fn(),
+  pruneLedger: vi.fn(), pruneDiscoveryEvidence: vi.fn(), shrinkDocuments: vi.fn(), pruneScans: vi.fn(), pruneHealthDaily: vi.fn(), pruneMaintainerEmails: vi.fn(),
 }));
-vi.mock("@/lib/operations/db-retention", () => ({ DB_RETENTION_PARTS: ["ledger", "evidence", "documents", "scans", "health"], ...parts }));
+vi.mock("@/lib/operations/db-retention", () => ({ DB_RETENTION_PARTS: ["ledger", "evidence", "documents", "scans", "health", "maintainerEmails"], ...parts }));
 const { runDbRetention } = await import("@/lib/jobs/db-retention");
 
 const done = (state: unknown = {}) => ({ counts: { n: 1 }, caughtUp: true, state });
@@ -20,15 +20,17 @@ beforeEach(() => {
   parts.shrinkDocuments.mockReset().mockResolvedValue(done({ afterId: 5_000 }));
   parts.pruneScans.mockReset().mockResolvedValue(done({ afterId: 0, passDoneAt: "2026-11-15T00:00:00.000Z" }));
   parts.pruneHealthDaily.mockReset().mockResolvedValue(done({ passDoneAt: "2026-11-15T00:00:00.000Z" }));
+  parts.pruneMaintainerEmails.mockReset().mockResolvedValue({ counts: { deleted: 2 }, caughtUp: true });
 });
 
 describe("db-retention 잡 틀", () => {
-  it("다섯 부분을 차례로 돌고 각 부분의 다음 자리를 커서에 모은다", async () => {
+  it("여섯 부분을 차례로 돌고 각 부분의 다음 자리를 커서에 모은다", async () => {
     const logs: unknown[] = [];
     const outcome = await runDbRetention(ctx(null, logs));
     expect(outcome).toEqual({ done: true, cursor: { v: 1, lead: 1, evidence: { afterId: 7 }, documents: { afterId: 5_000 },
       scans: { afterId: 0, passDoneAt: "2026-11-15T00:00:00.000Z" }, health: { passDoneAt: "2026-11-15T00:00:00.000Z" } } });
-    expect(logs).toEqual([{ event: "db.retention", fields: expect.objectContaining({ "ledger.requests": 1, "evidence.n": 1, "health.caughtUp": true }) }]);
+    expect(logs).toEqual([{ event: "db.retention", fields: expect.objectContaining({ "ledger.requests": 1, "evidence.n": 1, "health.caughtUp": true,
+      "maintainerEmails.deleted": 2, "maintainerEmails.caughtUp": true }) }]);
   });
 
   it("한 부분의 실패는 그 부분만 접고(제 일 못 한 틱으로 알린다) 다른 부분은 돈다 — DB 까닭만 남긴다", async () => {
@@ -50,6 +52,6 @@ describe("db-retention 잡 틀", () => {
     const order: string[] = [];
     for (const [name, fn] of Object.entries(parts)) fn.mockImplementation(async () => { order.push(name); return done(); });
     await runDbRetention(ctx({ v: 1, lead: 3 }));
-    expect(order).toEqual(["pruneScans", "pruneHealthDaily", "pruneLedger", "pruneDiscoveryEvidence", "shrinkDocuments"]);
+    expect(order).toEqual(["pruneScans", "pruneHealthDaily", "pruneMaintainerEmails", "pruneLedger", "pruneDiscoveryEvidence", "shrinkDocuments"]);
   });
 });

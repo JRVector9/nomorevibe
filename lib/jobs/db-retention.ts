@@ -2,7 +2,7 @@ import { JobLeaseLostError } from "@/lib/jobs/lease";
 import { RoleLeaseLostError } from "@/lib/jobs/role-leader";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
-import { DB_RETENTION_PARTS, pruneDiscoveryEvidence, pruneHealthDaily, pruneLedger, pruneScans, shrinkDocuments,
+import { DB_RETENTION_PARTS, pruneDiscoveryEvidence, pruneHealthDaily, pruneLedger, pruneMaintainerEmails, pruneScans, shrinkDocuments,
   type DbRetentionCursor, type DbRetentionPart, type PartResult } from "@/lib/operations/db-retention";
 
 /** 틱 마감(deadlineAt)을 모를 때 한 부분이 쓰는 시간의 상한 */
@@ -19,10 +19,10 @@ export function partSliceMs(deadlineAt: number | undefined, remainingParts: numb
 /**
  * DB 보관 정리 잡(maintenance, 한 시간마다 — 2026-11-15 소유자 승인 DB 보관 ④⑤⑥). 규칙은 lib/operations/db-retention.ts.
  *
- * 한 틱은 다섯 부분(모델 장부 · 발굴 근거 · 수집 원본 줄이기 · 저장소 스캔 · 일일 가동 집계)을 차례로 돈다. 부분마다 짧은 트랜잭션 묶음을
+ * 한 틱은 여섯 부분(모델 장부 · 발굴 근거 · 수집 원본 줄이기 · 저장소 스캔 · 일일 가동 집계 · 제작자 이메일 1년 보관)을 차례로 돈다. 부분마다 짧은 트랜잭션 묶음을
  * 예산(ctx.hasBudget)과 부분 몫(남은 틱 시간 ÷ 남은 부분 수, partSliceMs) 안에서만 열고, 다 못 한 부분은 커서(jobs.cursor)에 이어 할 자리를 남긴다. 먼저 서는 부분은 틱마다 돌아가므로
  * 한 부분의 밀린 일이 다른 부분을 굶기지 않는다. 원본 줄이기·스캔·가동 집계는 한 바퀴를 마치면 20시간 쉰다(하루 한 번).
- * 모델 장부 부분은 0187 이 적용된 DB 에서만 돈다(아니면 건너뛰고 skipped=migration_pending 을 남긴다).
+ * 모델 장부 부분은 0187, 제작자 이메일 부분은 0194 가 적용된 DB 에서만 돈다(아니면 건너뛰고 skipped=migration_pending 을 남긴다).
  * 부분마다 지운·줄인 수를 db.retention 한 줄에 남긴다.
  */
 export async function runDbRetention(ctx: JobContext<DbRetentionCursor>): Promise<JobOutcome<DbRetentionCursor>> {
@@ -61,6 +61,11 @@ export async function runDbRetention(ctx: JobContext<DbRetentionCursor>): Promis
         case "health": {
           const result = await pruneHealthDaily(ctx.lease, cursor.health, more);
           next.health = result.state; results.health = { ...result.counts, caughtUp: result.caughtUp };
+          break;
+        }
+        case "maintainerEmails": {
+          const result = await pruneMaintainerEmails(ctx.lease, more);
+          results.maintainerEmails = { ...result.counts, caughtUp: result.caughtUp };
           break;
         }
       }
