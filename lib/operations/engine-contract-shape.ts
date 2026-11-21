@@ -11,7 +11,9 @@
  * 그 밖에는 예전 그대로 abcllm 형이다(정책 route 도 (경로, abcllm, 장부 이름)).
  * - 새 경로라도 2차(second-review)와 CLI 엔진(OpenCode) 계약은 abcllm 형이다: local-direct 2차 표의 capacity 대체·도우미 실전 경로 겹침(PR #1012 리뷰
  *   「2차 전환 전 필수」), CLI 엔진은 엔진이 닿는지(계획 0-2)·CLI 엔진 local-direct 시험 공백. 전환 도구로 옮긴 경로면 그 경로의 새 저장도 새 모양이다.
- * 이미 있는 계약은 이 규칙으로 바꾸지 않는다 — 그 계약의 provider 로 부른다.
+ * 이미 있는 계약은 이 규칙으로 바꾸지 않는다 — 그 계약의 provider 로 부른다. 같은 (경로, 모델)을 다시 저장할 때(엔진 연결)는 그 계약의 지금 모양이 경로 상태보다
+ * 앞선다: 이미 엔진 직접 총량 상한이면 새 모양 그대로 저장하고, 관문이 닫혀 있으면 abcllm 으로 낮추지 않고 거절한다(converted_gate_closed). abcllm 으로 돌리는 것은
+ * 전환 도구의 「되돌리기」뿐이다(저장 함수가 그 밖의 낮추기를 contract_downgrade_refused 로 막는다).
  */
 export const TOTAL_BOUND_PROTOCOL_NAME = "openai-chat-total-bound-v1";
 export const DIRECT_SHAPE_SAVE_EXCLUDED_ROUTES: readonly string[] = Object.freeze(["second-review"]);
@@ -33,10 +35,18 @@ export function routeContractState(rows: readonly Readonly<{ routeId: string; pr
   return Object.freeze({ abcllm, direct });
 }
 
-/** abcllm 형으로 만드는 까닭: 관문 닫힘 · 경로가 아직 전환 전(abcllm 계약이 남음) · 새 경로지만 2차·CLI 엔진. null = 새 모양 */
-export type EngineContractShapeReason = "gate_closed" | "route_unconverted" | "excluded" | null;
+/**
+ * 까닭: gate_closed(관문 닫힘 → abcllm) · route_unconverted(경로가 아직 전환 전 → abcllm) · excluded(새 경로지만 2차·CLI 엔진 → abcllm) ·
+ * converted_gate_closed(그 (경로, 모델)은 이미 새 모양인데 관문이 닫힘 → 저장하지 말고 거절한다). null = 새 모양으로 저장
+ */
+export type EngineContractShapeReason = "gate_closed" | "route_unconverted" | "excluded" | "converted_gate_closed" | null;
 export type EngineContractShape = Readonly<{ provider: EngineContractProvider; reason: EngineContractShapeReason }>;
-export function engineContractShape(routeId: string, gateOpen: boolean, state: RouteContractState, cliEngine = false): EngineContractShape {
+/** 같은 (경로, 모델)에 켜진 계약의 지금 모양(없으면 null) */
+export type ModelContractShape = "total-bound" | "other" | null;
+export function engineContractShape(routeId: string, gateOpen: boolean, state: RouteContractState, cliEngine = false,
+  current: ModelContractShape = null): EngineContractShape {
+  // 이미 옮긴 (경로, 모델)은 낮추지 않는다
+  if (current === "total-bound") return Object.freeze({ provider: "local-direct", reason: gateOpen ? null : "converted_gate_closed" });
   if (!gateOpen) return Object.freeze({ provider: "abcllm", reason: "gate_closed" });
   if (state.abcllm > 0) return Object.freeze({ provider: "abcllm", reason: "route_unconverted" });
   // 전환 도구가 끝까지 옮긴 경로(새 모양 계약만 남음)는 2차·CLI 엔진도 새 모양이다. 계약이 없는 새 경로는 2차·CLI 엔진만 abcllm 형

@@ -77,23 +77,29 @@ export function evaluateContractReaderGate(input: ContractReaderInput, required 
 }
 
 type Reader = Pick<typeof db, "execute">;
+type TxReader = Reader & { transaction?: <T>(work: (savepoint: Reader) => Promise<T>) => Promise<T> };
 /**
- * 관문을 DB 에서 읽는다(쓰지 않는다). 호출자의 TX 안에서 부르면 그 TX 로 읽는다. 읽지 못하면 닫힌다(read_failed).
- * 관측 시각(operations_observations.observed_at)은 시간대 없는 칸에 UTC 벽시계로 쓰이므로 UTC 로 견준다.
+ * 관문을 DB 에서 읽는다(쓰지 않는다). 읽지 못하면 닫힌다(read_failed).
+ * 호출자의 TX 를 넘기면 그 TX 의 SAVEPOINT 안에서 읽는다 — 읽기가 실패해도 그 SAVEPOINT 만 되돌려 호출자의 TX 는 계속 쓸 수 있다(실패한 문장이 TX 를
+ * abort 해 다음 문장이 25P02 로 던지는 일이 없다 — 호출자는 contract_reader_gate_closed 로 거절한다).
+ * 관측 시각(operations_observations.observed_at)은 시간대 없는 칸에 UTC 벽시계로 쓰이므로 UTC 로 견준다(세션 시간대와 무관하다).
  */
-export async function readContractReaderGate(reader: Reader = db, required = CONTRACT_READER_REQUIRED): Promise<ContractReaderGate> {
-  try {
+export async function readContractReaderGate(reader: TxReader = db, required = CONTRACT_READER_REQUIRED): Promise<ContractReaderGate> {
+  const read = async (from: Reader) => {
     const seconds = CONTRACT_READER_WINDOW_MS / 1000;
-    const observations = Array.from(await reader.execute<{ key: string; value: Record<string, unknown> }>(sql`
+    const observations = Array.from(await from.execute<{ key: string; value: Record<string, unknown> }>(sql`
       SELECT key, value FROM operations_observations
       WHERE observed_at > (clock_timestamp() AT TIME ZONE 'UTC') - make_interval(secs => ${seconds}) AND (key LIKE 'service:%' OR key NOT LIKE '%:%')`));
-    const leases = Array.from(await reader.execute<{ role: string; owner_instance_id: string | null; owner_release: string | null }>(sql`
+    const leases = Array.from(await from.execute<{ role: string; owner_instance_id: string | null; owner_release: string | null }>(sql`
       SELECT role, owner_instance_id, owner_release FROM role_leases WHERE owner_instance_id IS NOT NULL AND lease_until > now()`));
-    const candidates = Array.from(await reader.execute<{ role: string; instance_id: string; host: string; release: string }>(sql`
+    const candidates = Array.from(await from.execute<{ role: string; instance_id: string; host: string; release: string }>(sql`
       SELECT role, instance_id, host, release FROM job_batch_candidates WHERE observed_at > clock_timestamp() - make_interval(secs => ${seconds})`));
     return evaluateContractReaderGate({ observations: observations.map(row => ({ key: row.key, value: row.value ?? {} })),
       leases: leases.map(row => ({ role: row.role, ownerInstanceId: row.owner_instance_id, ownerRelease: row.owner_release })),
       candidates: candidates.map(row => ({ role: row.role, instanceId: row.instance_id, host: row.host, release: row.release })) }, required);
+  };
+  try {
+    return reader !== db && typeof reader.transaction === "function" ? await reader.transaction(savepoint => read(savepoint)) : await read(reader);
   } catch {
     return Object.freeze({ ok: false, reason: "read_failed" as const, required, checked: Object.freeze({ observations: 0, leases: 0, candidates: 0 }),
       releases: Object.freeze([]), stale: Object.freeze([]) });

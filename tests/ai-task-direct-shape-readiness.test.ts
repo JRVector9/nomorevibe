@@ -68,6 +68,23 @@ describe("새 계약의 모양", () => {
     expect(ai2).toMatchObject({ provider: "local-direct", createContract: { routeId: "second-review", provider: "local-direct" } });
   });
 
+  it("새 경로에서 같은 저장의 1순위 API 가 새 모양 계약을 만들어도 2순위 CLI 엔진은 abcllm 형이다(전환 상태는 저장 전 행으로만 센다)", () => {
+    const opencode = connection({ id: "33333333-3333-4333-8333-333333333333", label: "opencode", kind: "cli", cliTool: "opencode", baseUrl: "http://cli-engine.test:3031/v1",
+      hasKey: true, cliModels: ["engine-x"], cliVersion: "2.2.6", cliCatalog: { cliVersion: "2.2.6", observedAt: "2026-11-21T00:00:00Z",
+        models: [{ id: "engine-x", label: "engine-x", variants: [], maxModelLen: 131072 }] } });
+    const ready = aiRanksReadiness(aiTask("crawl-tagline")!, [{ rank: 1, connection: gpu, model: "qwen-next" }, { rank: 2, connection: opencode, model: "engine-x" }],
+      input({ cliEngineIdentity: model => `${model}@cli-engine` }));
+    expect(ready.map(row => row.blocking)).toEqual([[], []]);
+    expect(ready[0]).toMatchObject({ provider: "local-direct", createContract: { provider: "local-direct" } });
+    expect(ready[1]).toMatchObject({ provider: "abcllm", createContract: { identity: "engine-x@cli-engine", cliEngine: { connectionId: opencode.id } } });
+    expect(ready[1].createContract).not.toHaveProperty("provider");
+    // 전환 도구가 끝낸 경로면(저장 전 행이 새 모양뿐) CLI 엔진 계약도 새 모양이다
+    const converted = aiRankReadiness(aiTask("crawl-tagline")!, 1, opencode, "engine-x", input({ cliEngineIdentity: model => `${model}@cli-engine`,
+      contracts: [{ routeId: "crawl-tagline", model: "other", provider: "local-direct", protocol: TOTAL_BOUND_PROTOCOL_NAME, endpoint: "http://gpu.test:8090/v1/chat/completions",
+        transport: "direct" }] }));
+    expect(converted).toMatchObject({ provider: "local-direct", createContract: { provider: "local-direct" } });
+  });
+
   it("같은 모델 계약이 다른 서버에 있으면 연결로 가른 장부 이름의 새 모양 계약 — 한 줄의 뒤 순위가 앞 순위의 새 계약을 본다", () => {
     const ready = aiRanksReadiness(aiTask("crawl-tagline")!, [{ rank: 1, connection: gpu, model: "qwen-next" }, { rank: 2, connection: supa, model: "qwen-next" }], input());
     const alias = aiTaskAliasIdentity("qwen-next", SUPA)!;

@@ -7,7 +7,7 @@ import { OPENAI_CHAT_TOTAL_BOUND_PROTOCOL } from "@/lib/llm/direct-serving-contr
 import { ensureServingContracts, servingContractAuth, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { contractReaderGateText, readContractReaderGate } from "./contract-reader-gate";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
-import { engineContractShape, engineContractShapeText, routeContractState, type EngineContractProvider } from "./engine-contract-shape";
+import { engineContractShape, engineContractShapeText, isTotalBoundShape, routeContractState, type EngineContractProvider } from "./engine-contract-shape";
 import { readbackServingEndpoint, saveServingContractTx, validateAdminServingContract } from "./admin-serving-contracts";
 import { saveRegistryOverrideTx } from "./admin-model-registry";
 
@@ -225,10 +225,14 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
     const contract = row.contract && typeof row.contract === "object" ? row.contract as { provider?: unknown; protocol?: unknown } : {};
     return { routeId: row.routeId, provider: contract.provider, protocol: contract.protocol };
   });
+  // 같은 (경로, 모델)이 이미 새 모양이면 그 모양 그대로(관문이 닫혀 있으면 낮추지 않고 거절) — 경로 상태보다 앞선다
   const shapes = new Map(routes.map(route => {
     const state = routeContractState(snapshotRows, route);
-    return [route, { state, shape: engineContractShape(route, gate.ok, state) }] as const;
+    const own = servingContractSnapshot().rows.find(row => row.routeId === route && row.model === engineModel);
+    const current = own ? isTotalBoundShape((own.contract ?? {}) as { provider?: unknown; protocol?: unknown }) ? "total-bound" as const : "other" as const : null;
+    return [route, { state, shape: engineContractShape(route, gate.ok, state, false, current) }] as const;
   }));
+  if ([...shapes.values()].some(entry => entry.shape.reason === "converted_gate_closed")) throw new Error("contract_converted_gate_closed");
   const providerOf = (route: string) => shapes.get(route)?.shape.provider ?? "abcllm";
   const definition: ModelDefinition = { ...current, baseUrl: base, model: engineModel, displayName: current.displayName.includes("직접")
     ? current.displayName : `${current.displayName} · 직접 연결`.slice(0, 200) };
