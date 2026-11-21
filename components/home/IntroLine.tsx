@@ -39,8 +39,8 @@ export function IntroLine({ pulse, state }: { pulse: Pick<HomePulse, "born" | "u
         </p>
       </div>
       <p className="intro-stats">
-        {t("intro.public")} <b>{counts ? count(counts.total) : <FillLine width="3.2em" />}</b>
-        {" · "}<Link prefetch={false} href={metricHref(state, "born", locale)}>{t("intro.new")} <b>{count(pulse.born.current)}</b></Link>
+        {counts !== null && <>{t("intro.public")} <b>{counts ? count(counts.total) : <FillLine width="3.2em" />}</b>{" · "}</>}
+        <Link prefetch={false} href={metricHref(state, "born", locale)}>{t("intro.new")} <b>{count(pulse.born.current)}</b></Link>
         {" · "}<Link prefetch={false} href={metricHref(state, "updates", locale)}>{t("intro.updates")} <b>{count(pulse.updates.projects)}</b></Link>
         {" · "}{t("intro.week")}
       </p>

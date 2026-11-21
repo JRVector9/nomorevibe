@@ -6,7 +6,7 @@ export { browseCountsQuery } from "./browse-state";
 
 /**
  * 공개 수·분야별 수·AI 수(2026-11-15 공개 HTML 이름·요약만) — 서버 HTML 에 싣지 않고 화면 JS 가 /api/browse-counts 로 한 번 받는다.
- * 같은 조건의 소개 줄·거르기 줄·집계 창이 한 번 받은 값을 함께 쓴다. 받는 동안·실패하면 undefined/null — 부르는 쪽이 글자 없는 자리를 둔다.
+ * 같은 조건의 소개 줄·거르기 줄·집계 창이 한 번 받은 값을 함께 쓴다. 받는 동안은 undefined, 실패하면 null 이다.
  */
 const loads = new Map<string, Promise<unknown>>();
 

@@ -1,4 +1,6 @@
-import { isSessionRead } from "./paths";
+import { isSessionRead, PUBLIC_API_READS } from "./paths";
+
+const sessionPath = PUBLIC_API_READS.session.path;
 
 type Turnstile = { render: (element: HTMLElement, options: Record<string, unknown>) => string; remove: (id: string) => void };
 declare global { interface Window { turnstile?: Turnstile } }
@@ -44,7 +46,7 @@ export function createSessionFetch(fetcher: typeof fetch, origin: string, solve:
     if (!force && Date.now() < Math.min(expiresAt - 5_000, nextConfig)) return Promise.resolve();
     if (!force && mode === "observe" && expiresAt === 0 && Date.now() < nextConfig) return Promise.resolve();
     return pending ??= (async () => {
-      const response = await fetcher(`${origin}/api/session`, { cache: "no-store", credentials: "same-origin" });
+      const response = await fetcher(origin + sessionPath, { cache: "no-store", credentials: "same-origin" });
       if (!response.ok) throw new Error("session_config_failed");
       const config = await response.json();
       nextConfig = Date.now() + 30_000;
@@ -53,7 +55,7 @@ export function createSessionFetch(fetcher: typeof fetch, origin: string, solve:
       if (!force && config.expiresAt > Date.now() + 5_000) { expiresAt = config.expiresAt; return; }
       try {
         const token = await solve(config.siteKey);
-        const issued = await fetcher(`${origin}/api/session`, { method: "POST", cache: "no-store", credentials: "same-origin",
+        const issued = await fetcher(origin + sessionPath, { method: "POST", cache: "no-store", credentials: "same-origin",
           headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
         if (!issued.ok) throw new Error("session_issue_failed");
         expiresAt = (await issued.json()).expiresAt ?? 0;
@@ -66,13 +68,19 @@ export function createSessionFetch(fetcher: typeof fetch, origin: string, solve:
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), origin);
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-    if (url.origin !== origin || !isSessionRead(url.pathname, method)) return fetcher(input, init);
-    if (init?.signal?.aborted) throw init.signal.reason;
-    await ensure();
+    if (url.origin !== origin) return fetcher(input, init);
+    const sessionRead = isSessionRead(url.pathname, method);
+    const retryableApiGet = method === "GET" && url.pathname.startsWith("/api/") && url.pathname !== sessionPath;
+    if (!sessionRead && !retryableApiGet) return fetcher(input, init);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    signal?.throwIfAborted();
+    if (sessionRead) await ensure();
     // Clone before first send so POST summaries and Request bodies can be retried once.
-    const retry = input instanceof Request ? input.clone() : input;
+    const retry = sessionRead && input instanceof Request ? input.clone() : input;
     const response = await fetcher(input, init);
-    if (response.status !== 401 || (await response.clone().json().catch(() => null))?.error !== "api_session_required") return response;
+    if (response.status !== 401 || (response.url && new URL(response.url).origin !== origin)
+      || (await response.clone().json().catch(() => null))?.error !== "api_session_required") return response;
+    signal?.throwIfAborted();
     await ensure(true);
     return fetcher(retry, init);
   };
