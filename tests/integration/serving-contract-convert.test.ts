@@ -72,6 +72,8 @@ let origin = "";
 
 beforeAll(async () => {
   await pgAdmin.unsafe(`CREATE DATABASE ${name}`); created = true;
+  // 세션 시간대를 UTC 가 아닌 값으로 둔다 — 관측 시각(시간대 없는 칸 = UTC 벽시계)을 UTC 로 견주지 않으면 관문 시험이 늘 실패하게(CI DB 가 UTC 여도)
+  await pgAdmin.unsafe(`ALTER DATABASE ${name} SET timezone = 'Asia/Seoul'`);
   await migrate(drizzle(client), { migrationsFolder: path.join(path.resolve("."), "drizzle") });
   const globals = globalThis as { db?: unknown; pgClient?: unknown }; globals.db = drizzle(client, { schema }); globals.pgClient = client;
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
@@ -98,6 +100,7 @@ afterAll(async () => {
 describe("계약 읽기 관문(실제 행)", () => {
   it("관측·lease·후보를 최근 창 안에서 읽는다 — 표지 없는 관측·증명 안 된 release 는 닫고, 창 밖의 옛 행은 보지 않는다", async () => {
     const { readContractReaderGate } = await import("@/lib/operations/contract-reader-gate");
+    expect((await client`SHOW timezone`)[0].TimeZone).toBe("Asia/Seoul");
     expect(await readContractReaderGate()).toMatchObject({ ok: false, reason: "no_observations" });
     await observeNewRelease("text-m3");
     await observeNewRelease("text-mini");
@@ -124,6 +127,28 @@ describe("계약 읽기 관문(실제 행)", () => {
       VALUES ('translation', 'oracle-translation', 'oracle-osaka-smoke', ${randomUUID()}, ${OLD_RELEASE}, ${"e".repeat(64)})`;
     expect(await readContractReaderGate()).toMatchObject({ ok: false, stale: [{ source: "candidate", reason: "release_unproven" }] });
     await client`UPDATE job_batch_candidates SET observed_at = clock_timestamp() - interval '11 minutes'`;
+    expect(await readContractReaderGate()).toMatchObject({ ok: true });
+  });
+});
+
+describe("TX 안의 관문 읽기", () => {
+  it("읽기가 실패해도 SAVEPOINT 만 되돌려 호출자의 TX 는 계속 쓰고, 저장은 contract_reader_gate_closed 로 거절한다", async () => {
+    const { readContractReaderGate } = await import("@/lib/operations/contract-reader-gate");
+    const { saveAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    const { sql } = await import("drizzle-orm");
+    await observeNewRelease();
+    await client`ALTER TABLE job_batch_candidates RENAME TO job_batch_candidates_off`;
+    try {
+      const after = await db.transaction(async tx => {
+        const gate = await readContractReaderGate(tx);
+        // 실패한 읽기 뒤에도 같은 TX 로 문장을 보낸다(25P02 가 아니다)
+        const [row] = Array.from(await tx.execute<{ one: number }>(sql`SELECT 1 AS one`));
+        return { gate, one: Number(row.one) };
+      });
+      expect(after).toEqual({ gate: expect.objectContaining({ ok: false, reason: "read_failed" }), one: 1 });
+      await expect(saveAdminServingContract({ routeId: "search-query-translate", contract: totalBoundContract("search-query-translate",
+        { endpoint: `${origin}/v1/chat/completions` }), auth: "none", transport: "direct" }, "operator")).rejects.toThrow("contract_reader_gate_closed");
+    } finally { await client`ALTER TABLE job_batch_candidates_off RENAME TO job_batch_candidates`; }
     expect(await readContractReaderGate()).toMatchObject({ ok: true });
   });
 });
@@ -301,6 +326,20 @@ describe("배정 표 저장(direct 전송)", () => {
     expect(old.contract).toMatchObject({ provider: "abcllm", deploymentRevision: "direct-eng-Qwen-X-C32768" });
     await client.begin(async tx => { await tx`DELETE FROM model_helper_assignments`; await tx`DELETE FROM model_capacity_device_roles`; await tx`DELETE FROM model_capacity_devices`; });
   });
+  it("관문이 열려 있어도 그 경로에 켜진 abcllm 계약이 있으면(전환 전) 배정 저장은 abcllm 형으로 만들고 그 까닭을 알린다", async () => {
+    await observeNewRelease();
+    const { saveAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    await saveAdminServingContract({ routeId: "crawl-tagline", contract: abcllmContract("crawl-tagline", { model: "other-model", endpoint: `${origin}/v1/chat/completions` }),
+      auth: "none", transport: "direct" }, "operator");
+    const saved = await saveAssignment();
+    expect(saved).toMatchObject({ route: { provider: "abcllm" }, after: { provider: "abcllm" } });
+    expect(saved.shapeNote).toContain("crawl-tagline: 이 경로는 아직 전환 전 — abcllm 모양으로 저장합니다(켜진 abcllm 계약 1개)");
+    const [row] = await client`SELECT contract FROM model_serving_contracts WHERE enabled AND route_id = 'crawl-tagline' AND model = 'Qwen-X'`;
+    expect(row.contract).toMatchObject({ provider: "abcllm" });
+    const { assignmentSavedMessage } = await import("@/lib/operations/admin-model-assignments");
+    expect(assignmentSavedMessage(saved, true)).toContain("이 경로는 아직 전환 전");
+    await client.begin(async tx => { await tx`DELETE FROM model_helper_assignments`; await tx`DELETE FROM model_capacity_device_roles`; await tx`DELETE FROM model_capacity_devices`; });
+  });
 });
 
 describe("전환 → 호출 → 정산 → 되돌리기 → 호출 → 정산", () => {
@@ -450,6 +489,87 @@ describe("전환 → 호출 → 정산 → 되돌리기 → 호출 → 정산", 
     await client`UPDATE model_helper_assignments SET mode = 'shadow' WHERE assignment_id = 'device-convert:ai2'`;
     expect(await planServingContractConversion({ action: "convert", routeId: "second-review" })).toMatchObject({ blocked: null, targets: [{ model: "voter-model" }] });
     await client`DELETE FROM model_helper_assignments`;
+  });
+
+  it("이미 옮긴 모델은 낮추지 않는다 — 일부만 옮긴 경로의 엔진 연결은 새 모양 그대로, 관문이 닫히면 거절, 손 입력 abcllm 저장도 거절; 되돌리기는 바뀌는 칸을 보인다", async () => {
+    const ENGINE_X = "engine-model-x", BASE = "http://engine-connect.test:8000/v1", RT = "reason-translate";
+    vi.stubEnv("DATABASE_URL", url.toString());
+    await installPolicy({ ...policy(), routes: [...policy().routes, ...[ENGINE_X, "other-model"].map(model =>
+      ({ routeId: RT, provider: "abcllm", model, providerBudgetId: BUDGET, groupId: DEVICE }))] });
+    const { saveAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    const { applyServingContractConversion, conversionPlanLines, planServingContractConversion } = await import("@/lib/operations/serving-contract-convert");
+    const { connectAdminEngine } = await import("@/lib/operations/admin-engine-connect");
+    const first = await saveAdminServingContract({ routeId: RT, contract: abcllmContract(RT, { model: ENGINE_X, endpoint: `${origin}/v1/chat/completions` }),
+      auth: "none", transport: "direct" }, "operator");
+    await saveAdminServingContract({ routeId: RT, contract: abcllmContract(RT, { model: "other-model", endpoint: `${origin}/v1/chat/completions` }),
+      auth: "none", transport: "direct" }, "operator");
+    await observeNewRelease();
+    const plan = await planServingContractConversion({ action: "convert", routeId: RT, model: ENGINE_X });
+    await applyServingContractConversion({ action: "convert", routeId: RT, model: ENGINE_X, planHash: plan.planHash }, "operator");
+    const shapeOf = async () => (await client`SELECT contract FROM model_serving_contracts WHERE enabled AND route_id = ${RT} AND model = ${ENGINE_X}`)[0].contract;
+    expect((await shapeOf()).provider).toBe("local-direct");
+    // 일부만 옮긴 경로(other-model 은 abcllm)에서 옮긴 모델을 엔진 연결로 다시 저장해도 새 모양 그대로다 — 「아직 전환 전」 안내도 없다
+    const probe = (async (_target: string, init?: RequestInit) => init?.method === "POST"
+      ? Response.json({ object: "chat.completion", model: `${ENGINE_X}-served` }) : Response.json({ data: [{ id: ENGINE_X, max_model_len: 98304 }] })) as typeof fetch;
+    const connect = () => connectAdminEngine({ registryKey: "m1:translation", baseUrl: `${BASE}/`, auth: "none", engineModel: ENGINE_X, routes: [RT], selectStages: false }, "jr", probe);
+    const reconnected = await connect();
+    expect(reconnected).toMatchObject({ contracts: [{ routeId: RT, provider: "local-direct" }], directShapeNote: null });
+    expect(await shapeOf()).toMatchObject({ provider: "local-direct", protocol: OPENAI_CHAT_TOTAL_BOUND_PROTOCOL, totalTokenBound: 98304, endpoint: `${BASE}/chat/completions` });
+    // 관문이 닫히면 abcllm 으로 낮추지 않고 거절한다
+    await client`DELETE FROM operations_observations`;
+    await expect(connect()).rejects.toThrow("contract_converted_gate_closed");
+    expect((await shapeOf()).provider).toBe("local-direct");
+    // 손 입력으로 abcllm 모양을 덮는 것도 거절(되돌리기만 낮춘다)
+    await expect(saveAdminServingContract({ routeId: RT, contract: abcllmContract(RT, { model: ENGINE_X, endpoint: `${origin}/v1/chat/completions` }),
+      auth: "none", transport: "direct" }, "operator")).rejects.toThrow("contract_downgrade_refused");
+    // 되돌리기: 전환 도구가 바꾼 행(first)을 되살리고, 지금(엔진 연결로 고친) 새 모양과 다른 칸을 보이며 그 칸이 hash 에 든다
+    const back = await planServingContractConversion({ action: "revert", routeId: RT, model: ENGINE_X });
+    expect(back).toMatchObject({ blocked: null, targets: [{ restoreId: first.id }] });
+    expect(back.targets[0].changes!.map(change => change.field)).toEqual(["endpoint", "totalTokenBound", "responseModel", "deploymentRevision"]);
+    expect(back.targets[0].changes![1]).toEqual({ field: "totalTokenBound", current: "98304", restore: "65536" });
+    expect(conversionPlanLines(back).join("\n")).toContain("바뀌는 칸: endpoint");
+    await applyServingContractConversion({ action: "revert", routeId: RT, model: ENGINE_X, planHash: back.planHash }, "operator");
+    expect(await shapeOf()).toMatchObject({ provider: "abcllm", totalTokenBound: 65_536 });
+    await client`DELETE FROM model_registry_overrides`;
+  });
+
+  it("전환 도구가 바꾼 행이 아니면 되돌리기는 거절한다(무엇을 되살릴지 모른다)", async () => {
+    await installPolicy(policy());
+    const { disableAdminServingContract, saveAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    const { planServingContractConversion } = await import("@/lib/operations/serving-contract-convert");
+    await saveAdminServingContract({ routeId: ROUTE, contract: abcllmContract(ROUTE, { model: MODEL, endpoint: `${origin}/v1/chat/completions` }), auth: "none", transport: "direct" }, "operator");
+    expect(await disableAdminServingContract(ROUTE, MODEL, "operator")).toBe(true);
+    await observeNewRelease();
+    // 켜진 abcllm 이 없는 새 경로라 손 입력 새 모양은 받는다 — 하지만 전환 도구가 만든 행이 아니다
+    await saveAdminServingContract({ routeId: ROUTE, contract: totalBoundContract(ROUTE, { model: MODEL, endpoint: `${origin}/v1/chat/completions` }), auth: "none", transport: "direct" }, "operator");
+    expect(await planServingContractConversion({ action: "revert", routeId: ROUTE })).toMatchObject({ blocked: "nothing_to_do", targets: [],
+      refusals: [{ model: MODEL, reason: "restore_target_not_converted" }] });
+  });
+
+  it("전환은 대상 모델의 abcllm 장부 행이 줄에 서 있거나 용량 mode 가 open 이 아니면 막는다(hash 에 든다)", async () => {
+    await installPolicy({ ...policy(), routes: [...policy().routes, { routeId: ROUTE, provider: "abcllm", model: "busy-model", providerBudgetId: BUDGET, groupId: DEVICE }] });
+    const { saveAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
+    const { applyServingContractConversion, conversionPlanLines, planServingContractConversion } = await import("@/lib/operations/serving-contract-convert");
+    await saveAdminServingContract({ routeId: ROUTE, contract: abcllmContract(ROUTE, { model: "busy-model", endpoint: `${origin}/v1/chat/completions` }), auth: "none", transport: "direct" }, "operator");
+    await observeNewRelease();
+    const idle = await planServingContractConversion({ action: "convert", routeId: ROUTE, model: "busy-model" });
+    expect(idle).toMatchObject({ blocked: null, mode: "open", targets: [{ inFlight: 0 }] });
+    // 예약 하나(abcllm) — 줄에 섰다
+    const productId = 9100, fixed = { productId, slug: "busy", evidenceHash: profileHash(profileEvidence()), profile: { kind: "absent" as const }, model: "busy-model" };
+    granted(await requestTextProfileModelSlot({ requestId: randomUUID(), workKey: `text:profile:${productId}:${textProfileInputHash(fixed)}`, owner: { ...owner },
+      class: "background", pool: "text", routeId: ROUTE, provider: "abcllm", model: "busy-model" }, productId));
+    const busy = await planServingContractConversion({ action: "convert", routeId: ROUTE, model: "busy-model" });
+    expect(busy).toMatchObject({ blocked: "ledger_in_flight", targets: [{ inFlight: 1 }] });
+    expect(busy.planHash).not.toBe(idle.planHash);
+    expect(conversionPlanLines(busy).join("\n")).toContain("줄에 서 있습니다");
+    await expect(applyServingContractConversion({ action: "convert", routeId: ROUTE, model: "busy-model", planHash: idle.planHash }, "operator"))
+      .rejects.toThrow("serving_contract_convert_plan_changed");
+    await expect(applyServingContractConversion({ action: "convert", routeId: ROUTE, model: "busy-model", planHash: busy.planHash }, "operator"))
+      .rejects.toThrow("serving_contract_convert_blocked:ledger_in_flight");
+    // 배포 창(DRAIN): 정책 판을 올리지 않는다
+    await client`UPDATE model_capacity_control SET mode = 'draining' WHERE id = 1`;
+    expect(await planServingContractConversion({ action: "convert", routeId: ROUTE, model: "busy-model" })).toMatchObject({ blocked: "capacity_not_open", mode: "draining" });
+    await installPolicy(policy());
   });
 
   it("관리 화면 동작: 미리 보기 → 그 hash 로 실행(관리자만)", async () => {
