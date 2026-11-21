@@ -13,6 +13,15 @@ vi.mock("@/lib/crawl/agent-review-gateway", async original => ({
 vi.mock("@/lib/crawl/agent-review-grok", async original => ({
   ...await original<typeof import("@/lib/crawl/agent-review-grok")>(), reviewWithGrokCli: transport.grok,
 }));
+// 정비 한 단계(닫기)가 던지는 틱을 만들 때만 쓴다 — 평소에는 진짜 함수 그대로다
+const controller = vi.hoisted(() => ({ closeFailure: null as Error | null }));
+vi.mock("@/lib/crawl/second-review", async original => {
+  const actual = await original<typeof import("@/lib/crawl/second-review")>();
+  return { ...actual, closeSettledSecondReviews: async (...args: Parameters<typeof actual.closeSettledSecondReviews>) => {
+    if (controller.closeFailure) throw controller.closeFailure;
+    return actual.closeSettledSecondReviews(...args);
+  } };
+});
 
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews } from "@/lib/db/schema";
@@ -26,7 +35,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash } from "@/lib/c
 import { claimItemLease, lockItemStage } from "@/lib/jobs/items/repository";
 import type { Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { runJob } from "@/lib/jobs/runner";
-import { requestJob } from "@/lib/jobs/control";
+import { pendingJobNames, requestDueJobs, requestJob } from "@/lib/jobs/control";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
@@ -108,6 +117,7 @@ beforeEach(async () => {
       cursor=EXCLUDED.cursor,not_before=NULL,lease_token=NULL,locked_at=NULL,
       last_success_at=EXCLUDED.last_success_at,last_error=EXCLUDED.last_error,runs=17,updated_at=EXCLUDED.updated_at`;
   vi.resetAllMocks();
+  controller.closeFailure = null;
   const answer = { ok: true, outcome: { decision: "reject", confidence: 0.99,
     reason: "The independent fixture is not a qualifying product", evidenceIds: ["product"] },
     usage: { inputTokens: 8, outputTokens: 2 } };
@@ -241,10 +251,10 @@ it("legacy control dispatches and records exactly one current vote", async () =>
   expect(job.locked_at).toBeNull();
 });
 
-it.each(["items", "draining"] as const)("legacy handler preserves request while ai2 is %s", async mode => {
+// items(전환이 끝난 상태)의 정비 틱은 2026-11-21 부터 완료 틱이다 — 아래 "items 모드의 정비 틱" 시험들. 전환 중(draining)은 종전대로 요청을 남긴다
+it("legacy handler preserves request while ai2 is draining", async () => {
   const context = await source();
-  await admin`UPDATE pipeline_stage_modes SET mode=${mode},draining_from=${mode === "draining" ? "legacy" : null},
-    writer_contract_version=1 WHERE stage='ai2'`;
+  await admin`UPDATE pipeline_stage_modes SET mode='draining',draining_from='legacy',writer_contract_version=1 WHERE stage='ai2'`;
   const before = await domain(context), jobBefore = await preservedJob();
   const result = await tick();
   expect(result.status).toBe("deferred");
@@ -284,16 +294,124 @@ it("legacy handler skips a healthy foreign logical vote item", async () => {
   expect(Number(job.processed_version)).toBe(Number(job.requested_version));
 });
 
-it.each(["items", "draining"] as const)("preserves an inactive %s request even with zero tick budget", async mode => {
+it("preserves an inactive draining request even with zero tick budget", async () => {
   const context = await source();
-  await admin`UPDATE pipeline_stage_modes SET mode=${mode},draining_from=${mode === "draining" ? "legacy" : null},
-    writer_contract_version=1 WHERE stage='ai2'`;
+  await admin`UPDATE pipeline_stage_modes SET mode='draining',draining_from='legacy',writer_contract_version=1 WHERE stage='ai2'`;
   const before = await domain(context), jobBefore = await preservedJob();
   expect(await tick(0)).toMatchObject({ status: "deferred", reason: "stage_blocked" });
   noModelCalls();
   expect(await domain(context)).toEqual(before);
   expect(await preservedJob()).toEqual(jobBefore);
   expect(await lastErrorCleared()).toBe(true);
+});
+
+/**
+ * 2026-11-21: AI2 가 items 모드인 동안 이 잡의 일은 정비(올리기·닫기·정리·되돌리기·재시도)뿐이다. 그 틱을 stage_blocked 미룸으로 끝내던 때는
+ * 러너가 요청을 인정하지 않아 워커 줄이 poll(5초)마다 무거운 정비 쿼리를 되풀이했고(일정은 60초), 성공 시각도 옮겨지지 않았다.
+ * 이제 정비를 마친 틱은 완료 틱이다 — 다음 틱은 scheduler 의 정기 요청과 producer 의 requestJob 이 깨운다.
+ */
+/** 진짜 scheduler 요청 한 번. 카탈로그의 모든 정기 잡 행을 만들고 밀므로, second-review 밖의 행은 원래대로 돌린다 */
+async function scheduledRequest() {
+  const others = [...await admin`SELECT to_jsonb(j) AS value FROM jobs j WHERE name<>'second-review'`].map(row => row.value as Raw);
+  await admin`UPDATE jobs SET next_scheduled_at=clock_timestamp()-interval '1 second' WHERE name='second-review'`;
+  try { return await requestDueJobs(undefined, { overrides: new Map() }); }
+  finally {
+    await admin`DELETE FROM jobs WHERE NOT (name=ANY(${["second-review", ...others.map(row => String(row.name))]}))`;
+    if (others.length) await admin`UPDATE jobs j SET requested_version=r.requested_version,next_scheduled_at=r.next_scheduled_at,
+      updated_at=r.updated_at FROM jsonb_populate_recordset(NULL::jobs,${JSON.stringify(others)}::text::jsonb) r WHERE j.name=r.name`;
+  }
+}
+const itemsMode = () => admin`UPDATE pipeline_stage_modes SET mode='items',writer_contract_version=1 WHERE stage='ai2'`;
+async function jobRuns() {
+  const [row] = await admin`SELECT runs::int AS runs FROM jobs WHERE name='second-review'`;
+  return row.runs as number;
+}
+
+it("items 모드의 정비 틱은 요청을 인정한다 — 다음 poll 은 다시 집지 않고, 정기 요청이나 producer 의 요청이 오면 다시 돈다", async () => {
+  const context = await source();
+  await itemsMode();
+  const before = await domain(context), jobBefore = await preservedJob();
+  expect(await pendingJobNames("reviewer")).toContain("second-review");
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+  noModelCalls();
+  expect(await domain(context)).toEqual(before);
+  // 집은 요청을 인정하고 성공 시각을 옮긴다. 커서는 그대로다
+  const acknowledged = await preservedJob();
+  expect(acknowledged).toMatchObject({ requested: jobBefore.requested, processed: jobBefore.requested, cursor: jobBefore.cursor, notBefore: null });
+  expect(String(acknowledged.lastSuccess) > String(jobBefore.lastSuccess)).toBe(true);
+  expect(await lastErrorCleared()).toBe(true);
+  const [released] = await admin`SELECT lease_token,locked_at FROM jobs WHERE name='second-review'`;
+  expect(released).toEqual({ lease_token: null, locked_at: null });
+
+  // 다음 poll: 대기 목록에 없고, 집으려 해도 요청이 없다 — 정비를 다시 돌리지 않는다
+  const runs = await jobRuns();
+  expect(await pendingJobNames("reviewer")).not.toContain("second-review");
+  expect(await tick()).toEqual({ status: "skipped", reason: "not_requested" });
+  expect(await jobRuns()).toBe(runs);
+
+  // scheduler 의 정기 요청(일정이 찼다)이 다시 깨운다
+  expect(await scheduledRequest()).toBeGreaterThan(0);
+  expect(await pendingJobNames("reviewer")).toContain("second-review");
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+  expect(await preservedJob()).toMatchObject({ requested: jobBefore.requested + 1, processed: jobBefore.requested + 1 });
+  expect(await pendingJobNames("reviewer")).not.toContain("second-review");
+
+  // 정비할 일이 생기면 producer(1차 기록·표 기록)가 부르는 requestJob 이 정기 요청을 기다리지 않고 깨운다
+  await requestJob("second-review");
+  expect(await pendingJobNames("reviewer")).toContain("second-review");
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+  expect(await jobRuns()).toBe(runs + 2);
+  noModelCalls();
+  expect(await domain(context)).toEqual(before);
+});
+
+it("items 모드의 정비 틱은 틱 예산이 0 이어도 완료 틱이다", async () => {
+  const context = await source();
+  await itemsMode();
+  const before = await domain(context), jobBefore = await preservedJob();
+  expect(await tick(0)).toMatchObject({ status: "completed", done: true });
+  noModelCalls();
+  expect(await domain(context)).toEqual(before);
+  expect(await preservedJob()).toMatchObject({ requested: jobBefore.requested, processed: jobBefore.requested, cursor: jobBefore.cursor });
+});
+
+it("items 에서 legacy 로 돌아오면 다음 정기 요청의 틱이 밀린 표를 심사한다", async () => {
+  const context = await source();
+  await itemsMode();
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+  noModelCalls();
+  await admin`UPDATE pipeline_stage_modes SET mode='legacy',draining_from=NULL,writer_contract_version=0 WHERE stage='ai2'`;
+  // 인정된 요청은 남아 있지 않다 — 돌아온 단계를 집는 것은 다음 정기 요청이다(일정 간격 안)
+  expect(await pendingJobNames("reviewer")).not.toContain("second-review");
+  expect(await scheduledRequest()).toBeGreaterThan(0);
+  expect(await tick()).toMatchObject({ status: "completed" });
+  expect(transport.gateway).toHaveBeenCalledTimes(1);
+  const [saved] = await db.select().from(secondReviews).where(eq(secondReviews.id, context.vote.id));
+  expect(saved).toMatchObject({ status: "agreed", secondDecision: "reject" });
+});
+
+it("items 모드에서도 정비가 던진 오류는 종전대로 실패로 적는다 — 요청·성공 시각은 그대로 두고 30초 뒤 다시 본다", async () => {
+  const context = await source();
+  await itemsMode();
+  const before = await domain(context), jobBefore = await preservedJob();
+  controller.closeFailure = new Error("maintenance close failure");
+  expect(await tick()).toMatchObject({ status: "failed", error: expect.stringContaining("maintenance close failure") });
+  noModelCalls();
+  expect(await domain(context)).toEqual(before);
+  const [failed] = await admin`SELECT last_error,lease_token,locked_at,
+    not_before > clock_timestamp() + interval '20 seconds' AND not_before < clock_timestamp() + interval '40 seconds' AS retry
+    FROM jobs WHERE name='second-review'`;
+  expect(failed).toMatchObject({ last_error: expect.stringContaining("maintenance close failure"), lease_token: null, locked_at: null, retry: true });
+  // 요청은 인정되지 않았고(다시 돈다) 성공 시각·커서도 그대로다 — 완료 틱이 실패를 가리지 않는다
+  expect({ ...await preservedJob(), notBefore: null }).toEqual(jobBefore);
+  expect(await tick()).toEqual({ status: "skipped", reason: "backoff" });
+
+  // 정비가 다시 되면 그 요청을 완료 틱이 인정하고 실패 기록을 지운다
+  controller.closeFailure = null;
+  await admin`UPDATE jobs SET not_before=NULL WHERE name='second-review'`;
+  expect(await tick()).toMatchObject({ status: "completed", done: true });
+  expect(await lastErrorCleared()).toBe(true);
+  expect(await preservedJob()).toMatchObject({ requested: jobBefore.requested, processed: jobBefore.requested });
 });
 
 it("keeps a normal exhausted legacy tick acknowledged without dispatch", async () => {
@@ -341,7 +459,7 @@ it("settles every admitted lane before returning a midtick stage block", async (
   }
 });
 
-it("preserves concurrent producer and pause changes while actual stage admission waits", async () => {
+it.each(["draining", "items"] as const)("preserves concurrent producer and pause changes while actual stage admission waits (%s)", async mode => {
   const context = await source(), before = await domain(context);
   const blocker = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
   const locked = barrier<number>(), finish = barrier();
@@ -350,7 +468,8 @@ it("preserves concurrent producer and pause changes while actual stage admission
     await tx`SELECT stage FROM pipeline_stage_modes WHERE stage='ai2' FOR UPDATE`;
     locked.resolve(Number(pid));
     await finish.promise;
-    await tx`UPDATE pipeline_stage_modes SET mode='items',writer_contract_version=1 WHERE stage='ai2'`;
+    await tx`UPDATE pipeline_stage_modes SET mode=${mode},draining_from=${mode === "draining" ? "legacy" : null},
+      writer_contract_version=1 WHERE stage='ai2'`;
   });
   let running: ReturnType<typeof tick> | undefined;
   try {
@@ -364,10 +483,21 @@ it("preserves concurrent producer and pause changes while actual stage admission
     const expectedJob = await preservedJob();
     finish.resolve();
     await holding;
-    expect(await running).toMatchObject({ status: "deferred", reason: "stage_blocked" });
+    const result = await running;
     noModelCalls();
     expect(await domain(context)).toEqual(before);
-    expect(await preservedJob()).toEqual(expectedJob);
+    if (mode === "draining") {
+      expect(result).toMatchObject({ status: "deferred", reason: "stage_blocked" });
+      expect(await preservedJob()).toEqual(expectedJob);
+    } else {
+      // items 의 정비 틱은 완료 틱이다: 자기가 집은 요청(11)만 인정한다 — 도는 사이 온 요청(12)과 사람의 멈춤은 그대로 남고,
+      // 커서는 lease 를 쥔 이 틱의 것으로 적는다
+      expect(result).toMatchObject({ status: "completed", done: true });
+      const jobAfter = await preservedJob();
+      expect(jobAfter).toMatchObject({ requested: 12, processed: 11, notBefore: expectedJob.notBefore,
+        cursor: { marker: "pr04-resume", page: 7 } });
+      expect(String(jobAfter.lastSuccess) > String(expectedJob.lastSuccess)).toBe(true);
+    }
     expect(await lastErrorCleared()).toBe(true);
   } finally {
     finish.resolve();
@@ -376,7 +506,7 @@ it("preserves concurrent producer and pause changes while actual stage admission
   }
 });
 
-it("does not unlock or acknowledge a replacement job owner after a stage wait", async () => {
+it.each(["draining", "items"] as const)("does not unlock or acknowledge a replacement job owner after a stage wait (%s)", async mode => {
   const context = await source(), before = await domain(context);
   const blocker = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
   const locked = barrier<number>(), finish = barrier();
@@ -385,7 +515,8 @@ it("does not unlock or acknowledge a replacement job owner after a stage wait", 
     await tx`SELECT stage FROM pipeline_stage_modes WHERE stage='ai2' FOR UPDATE`;
     locked.resolve(Number(pid));
     await finish.promise;
-    await tx`UPDATE pipeline_stage_modes SET mode='draining',draining_from='legacy',writer_contract_version=1 WHERE stage='ai2'`;
+    await tx`UPDATE pipeline_stage_modes SET mode=${mode},draining_from=${mode === "draining" ? "legacy" : null},
+      writer_contract_version=1 WHERE stage='ai2'`;
   });
   let running: ReturnType<typeof tick> | undefined;
   try {
