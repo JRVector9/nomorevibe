@@ -187,10 +187,14 @@ function safeError(error: unknown): string {
  * 세션 연결(빌드)과 관찰 연결(진행·취소)을 연다. 시간 제한은 연결 시작 값으로 건다 — transaction 모드 풀러는 모르는 시작 값을 거절하거나
  * 문장마다 다른 서버 연결로 보내므로, 그런 주소로는 연결이 실패하거나 아래 직접 연결 확인에서 멈춘다.
  */
+/** 드라이버 타입은 number 지만 보내는 값은 글자여야 한다(아래 주석) */
+const NO_LIMIT = "0" as unknown as number;
 export function connectOnlineIndex(url: string): OnlineIndexConnection {
   // max_lifetime 0: 드라이버가 30~60분마다 연결을 갈지 않게 — 갈리면 세션 설정과 세션 잠금이 사라진다(갈렸는지는 빌드마다 pid 로 다시 본다)
   const open = (name: string) => postgres(url, { max: 1, prepare: false, idle_timeout: 0, max_lifetime: 0, connect_timeout: 15, onnotice: () => {},
-    connection: { application_name: name, statement_timeout: 0, idle_in_transaction_session_timeout: 0 } });
+    // 값은 글자 "0" 으로 보낸다 — 드라이버(postgres.js)는 시작 값에서 falsy 를 걸러 내 숫자 0 을 보내지 않는다. 그러면 계정·DB 기본값
+    // (운영 앱 계정은 statement_timeout 120초)이 세션에 남아 아래 직접 연결 확인이 plan 부터 online_index_session_changed 로 멈춘다
+    connection: { application_name: name, statement_timeout: NO_LIMIT, idle_in_transaction_session_timeout: NO_LIMIT } });
   const session = open("nmv-online-index"), monitor = open("nmv-online-index-monitor");
   return { session, monitor, close: async () => { await Promise.all([session.end({ timeout: 5 }).catch(() => {}), monitor.end({ timeout: 5 }).catch(() => {})]); } };
 }

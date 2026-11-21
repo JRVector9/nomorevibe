@@ -27,7 +27,12 @@ let connection: OnlineIndexConnection;
 
 beforeAll(async () => {
   const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
-  try { await admin.unsafe(`CREATE DATABASE ${name}`); created = true; } finally { await admin.end({ timeout: 5 }); }
+  try {
+    await admin.unsafe(`CREATE DATABASE ${name}`); created = true;
+    // 운영 앱 계정의 DB 기본값과 같게 둔다 — 도구는 이 기본값 아래에서도 제 세션의 시간 제한을 0 으로 걸어야 한다(아래 첫 시험)
+    await admin.unsafe(`ALTER DATABASE ${name} SET statement_timeout = '120s'`);
+    await admin.unsafe(`ALTER DATABASE ${name} SET idle_in_transaction_session_timeout = '120s'`);
+  } finally { await admin.end({ timeout: 5 }); }
   sql = postgres(url, { max: 1, onnotice: () => {} });
   other = postgres(url, { max: 1, onnotice: () => {} });
   connection = connectOnlineIndex(url);
@@ -77,6 +82,16 @@ CREATE INDEX IF NOT EXISTS "fixture_items_lower_b_idx" ON "fixture_items" (lower
     await sql.unsafe(`create table fixture_items (id serial primary key, a integer, b text not null)`);
     await sql.unsafe(`insert into fixture_items (a, b) select case when g % 5 > 0 then g end, 'Row-' || g from generate_series(1, 5000) g`);
     await sql.unsafe(`analyze fixture_items`);
+  });
+
+  it("clears the session time limits even when the database default sets them (production account default)", async () => {
+    const limits = (client: postgres.Sql) => client<{ statement: string; idle: string }[]>`
+      select current_setting('statement_timeout') as statement, current_setting('idle_in_transaction_session_timeout') as idle`;
+    expect((await limits(sql))[0]).toEqual({ statement: "2min", idle: "2min" });
+    expect((await limits(connection.session))[0]).toEqual({ statement: "0", idle: "0" });
+    expect((await limits(connection.monitor))[0]).toEqual({ statement: "0", idle: "0" });
+    // 그래서 직접 연결 확인을 지나 plan 이 끝난다(숫자 0 을 보냈을 때는 여기서 online_index_session_changed 였다)
+    expect((await run(FILE)).ok).toBe(true);
   });
 
   it("plans without creating, executes once, and does nothing on the second execute", async () => {
