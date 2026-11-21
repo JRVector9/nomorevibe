@@ -67,6 +67,19 @@ describe("제작자 이메일 — 관리자 전용 경계", () => {
     expect(body.indexOf("await denyMaintainerEmail(")).toBeGreaterThan(body.indexOf("if (!admin) return"));
   });
 
+  it("느린 문장 로그(500ms 넘은 문장의 bind 값)에 주소가 남지 않게 — 수집 INSERT 와 거부 DELETE 는 주소를 bind 값으로 보내지 않는다", () => {
+    const collector = readFileSync("lib/jobs/products/ai-level-refresh.ts", "utf8");
+    const write = collector.slice(collector.indexOf("async function writeContacts("), collector.indexOf("/**\n * 판정을 적고 같은 저장소의 제품 ai_level"));
+    expect(write).toContain("await hideBindValuesInStatementLog(tx)");
+    expect(write).toContain("SELECT set_config(${STAGED_ROWS}, ${JSON.stringify(rows)}, true)");
+    expect(write).toContain("FROM jsonb_to_recordset(current_setting(${STAGED_ROWS})::jsonb)");
+    expect(write).not.toMatch(/\.insert\(/);
+    const admin = readFileSync("lib/domain/makers/maintainer-emails-admin.ts", "utf8");
+    const deny = admin.slice(admin.indexOf("export async function denyMaintainerEmail("));
+    expect(deny).toContain("WHERE encode(sha256(convert_to(${MAINTAINER_EMAIL_DENY_HASH_PREFIX} || email, 'UTF8')), 'hex') = ${input.denyKey}");
+    expect(deny).not.toMatch(/eq\(repositoryMaintainerEmails\.email/);
+  });
+
   it("탐색 캐시는 여전히 주소를 지운다", () => {
     expect(readFileSync("lib/crawl/discovery-contract.ts", "utf8")).toMatch(/redacted@invalid/);
   });

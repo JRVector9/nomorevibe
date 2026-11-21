@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { CommitFacts } from "@/lib/domain/evidence/ai-level";
 import {
-  MAINTAINER_EMAIL_DENY_HASH, MAINTAINER_EMAILS_PER_REPOSITORY, maintainerEmailDenyHash, maintainerEmailOf, maskMaintainerEmail, ownerMaintainerEmails,
-  repositoryOwnerLogin,
+  currentOwnerLogin, MAINTAINER_EMAIL_DENY_HASH, MAINTAINER_EMAILS_PER_REPOSITORY, maintainerEmailDenyHash, maintainerEmailOf, maskMaintainerEmail,
+  ownerMaintainerEmails,
 } from "@/lib/domain/makers/maintainer-emails";
 
 // 남는 주소 시험은 운영자가 가진 도메인의 시험용 하위 도메인(*.fixture.nomorevibe.com, 받는 곳 없음)을 쓴다 — 남의 실제 주소가 아니다.
@@ -11,7 +11,8 @@ import {
 const SHA = "a".repeat(40);
 const commit = (author: Partial<CommitFacts> = {}, message = "fix: x"): CommitFacts =>
   ({ sha: SHA, message, parents: 1, authorName: "Kim", authorEmail: "kim@fixture.nomorevibe.com", authorLogin: "kim", ...author });
-const user = (key = "kim/tool") => ({ repositoryKey: key, ownerType: "User" as const });
+/** GraphQL 응답의 지금 주인 owner { __typename login } */
+const user = (login = "kim") => ({ login, type: "User" });
 
 describe("maintainerEmailOf — 사람 주소만 남긴다", () => {
   it("실제 꼴의 주소는 앞뒤 공백을 떼고 소문자로 다듬어 남긴다", () => {
@@ -34,32 +35,41 @@ describe("maintainerEmailOf — 사람 주소만 남긴다", () => {
   });
 });
 
-describe("ownerMaintainerEmails — 저장소 제작자(주인 계정)의 주소만", () => {
-  it("커밋 작성자의 GitHub 로그인이 저장소 주인과 같은 커밋만 — 다른 기여자·계정에 안 이어진 커밋은 이름이 같아도 뺀다", () => {
-    const { emails, skip } = ownerMaintainerEmails([
+describe("ownerMaintainerEmails — 저장소의 지금 주인(개인 계정)의 주소만", () => {
+  it("커밋 작성자의 GitHub 로그인이 지금 주인과 같은 커밋만 — 다른 기여자·계정에 안 이어진 커밋은 이름이 같아도 뺀다", () => {
+    const { emails, skip, ownerLogin } = ownerMaintainerEmails([
       commit({ authorEmail: "kim@fixture.nomorevibe.com", authorLogin: "Kim" }),
       commit({ authorEmail: "lee@fixture.nomorevibe.com", authorName: "Lee", authorLogin: "lee" }),
       // 이름 글자는 보지 않는다 — 로그인이 없으면(주소가 계정에 이어지지 않음) 주인이라는 근거가 없다
       commit({ authorEmail: "kim.other@fixture.nomorevibe.com", authorName: "Kim", authorLogin: null }),
       commit({ authorEmail: "kim@fixture.nomorevibe.com", authorLogin: "kim" }),
-    ], user());
-    expect(skip).toBeNull();
+    ], user("KIM"));
+    expect({ skip, ownerLogin }).toEqual({ skip: null, ownerLogin: "kim" });
     expect(emails).toEqual([{ email: "kim@fixture.nomorevibe.com", name: "Kim", login: "Kim", commits: 2 }]);
   });
 
-  it("조직 저장소는 커밋을 보지 않는다 — 저장해 둔 주인 종류가 조직이면 로그인이 같아 보여도 모으지 않는다", () => {
-    expect(ownerMaintainerEmails([commit({ authorLogin: "acme" })], { repositoryKey: "acme/tool", ownerType: "Organization" }))
-      .toEqual({ emails: [], skip: "organization" });
-    // 주인 종류를 모르면 로그인 맞춤만 — 조직 로그인은 커밋 작성자(늘 사용자)와 같을 수 없으니 조직 저장소에서는 아무도 맞지 않는다
-    expect(ownerMaintainerEmails([commit({ authorLogin: "kim" }), commit({ authorEmail: "lee@fixture.nomorevibe.com", authorLogin: "lee" })],
-      { repositoryKey: "acme/tool", ownerType: null })).toEqual({ emails: [], skip: "no_owner_commit" });
+  it("지금 주인이 조직이거나 응답에 주인이 없으면 커밋을 보지 않는다", () => {
+    expect(ownerMaintainerEmails([commit({ authorLogin: "acme" })], { login: "acme", type: "Organization" }))
+      .toEqual({ emails: [], skip: "organization", ownerLogin: null });
+    for (const owner of [null, { login: "kim", type: "Bot" }, { login: "kim.dev", type: "User" }, { login: "-kim", type: "User" }]) {
+      expect(ownerMaintainerEmails([commit()], owner), JSON.stringify(owner)).toEqual({ emails: [], skip: "owner_unknown", ownerLogin: null });
+    }
+    expect(currentOwnerLogin({ login: "Kim", type: "User" })).toBe("kim");
+  });
+
+  it("옮겨 간 저장소: 저장된 키가 아니라 지금 주인으로 맞춘다 — 다른 사람에게 옮겨 가면 그 사람의 커밋만", () => {
+    // 키는 kim/tool 이지만 GitHub 은 lee 에게 옮겨 간 저장소를 돌려준다 — 옛 주인 kim 의 커밋은 이제 제작자 커밋이 아니다
+    const { emails, ownerLogin } = ownerMaintainerEmails([commit(), commit({ authorEmail: "lee@fixture.nomorevibe.com", authorName: "Lee", authorLogin: "lee" })], user("lee"));
+    expect(ownerLogin).toBe("lee");
+    expect(emails.map(row => row.email)).toEqual(["lee@fixture.nomorevibe.com"]);
   });
 
   it("주인 커밋이 있어도 남길 주소가 없으면 까닭을 따로 센다(비공개 주소·AI 도구 작성)", () => {
-    expect(ownerMaintainerEmails([commit({ authorEmail: "1+kim@users.noreply.github.com" })], user())).toEqual({ emails: [], skip: "no_usable_address" });
+    expect(ownerMaintainerEmails([commit({ authorEmail: "1+kim@users.noreply.github.com" })], user()))
+      .toEqual({ emails: [], skip: "no_usable_address", ownerLogin: "kim" });
     // AI 도구가 작성자인 커밋은 주인 로그인이어도 주인 커밋으로 치지 않는다
     expect(ownerMaintainerEmails([commit({ authorName: "Cursor Agent", authorEmail: "cursoragent@cursor.com", authorLogin: "kim" })], user()).emails).toEqual([]);
-    expect(ownerMaintainerEmails([], user())).toEqual({ emails: [], skip: "no_owner_commit" });
+    expect(ownerMaintainerEmails([], user())).toEqual({ emails: [], skip: "no_owner_commit", ownerLogin: "kim" });
   });
 
   it("Co-authored-by 꼬리 줄의 주소는 보지 않는다", () => {
@@ -73,13 +83,6 @@ describe("ownerMaintainerEmails — 저장소 제작자(주인 계정)의 주소
     expect(emails).toHaveLength(MAINTAINER_EMAILS_PER_REPOSITORY);
     expect(emails[0]).toMatchObject({ email: "p2@fixture.nomorevibe.com", commits: 2 });
     expect(emails[1]).toMatchObject({ email: "p0@fixture.nomorevibe.com", name: "P0" });
-  });
-
-  it("저장소 키의 주인이 GitHub 로그인 꼴이 아니면 아무것도 모으지 않는다", () => {
-    expect(repositoryOwnerLogin("kim/tool")).toBe("kim");
-    expect(repositoryOwnerLogin("-kim/tool")).toBeNull();
-    expect(repositoryOwnerLogin("kim.dev/tool")).toBeNull();
-    expect(ownerMaintainerEmails([commit({ authorLogin: "kim.dev" })], user("kim.dev/tool")).emails).toEqual([]);
   });
 });
 

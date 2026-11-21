@@ -1,7 +1,7 @@
 import { inArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agentRepositoryObservations, agentRepositoryScans, repositoryAiLevels, type RepositoryAiLevel } from '@/lib/db/schema';
-import { maintainerEmailDenials, repositoryMaintainerEmails } from '@/lib/db/maintainer-email-schema';
+import { maintainerEmailDenials } from '@/lib/db/maintainer-email-schema';
 import { githubGraphql, githubRequest } from '@/lib/crawl/github';
 import type { RepositoryRef } from '@/lib/crawl/github-repositories';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from '@/lib/domain/evidence/agents/types';
@@ -16,8 +16,9 @@ import {
   type AiLevelDetail, type AiLevelDetailRequest, type RepositoryAiScan,
 } from '@/lib/domain/evidence/ai-level-query';
 import {
-  MAINTAINER_EMAIL_LOCK, maintainerEmailDenyHash, ownerMaintainerEmails, type MaintainerEmail, type MaintainerEmailSkip, type MaintainerOwnerType,
+  MAINTAINER_EMAIL_LOCK, maintainerEmailDenyHash, ownerMaintainerEmails, type MaintainerEmail, type MaintainerEmailSkip,
 } from '@/lib/domain/makers/maintainer-emails';
+import { hideBindValuesInStatementLog } from '@/lib/db/statement-log-guard';
 import { assertJobLease } from '@/lib/jobs/control';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 
@@ -152,8 +153,6 @@ function knownChecks(previous: Previous | undefined) {
 type Loaders = {
   previous: (keys: string[]) => Promise<Map<string, Previous>>;
   scanned: (keys: string[]) => Promise<Map<string, ReturnType<typeof scanEvidence>>>;
-  /** 저장해 둔 저장소 주인 종류(제작자 이메일 고르기) — 없으면 로그인 맞춤만으로 고른다(확인 스크립트는 넘기지 않는다) */
-  owners?: (keys: string[]) => Promise<Map<string, MaintainerOwnerType>>;
 };
 /** 한 틱의 의존과 마감 — 확인 스크립트(scripts/ai-level-check.ts)는 운영 DB 대신 내보낸 근거를 넣고 마감을 두지 않는다 */
 export type AiLevelTick = { request: Request; graphql: Graphql; restLeft: number; startUntil: number; restUntil: number; load: Loaders };
@@ -165,26 +164,7 @@ async function previousLevels(keys: string[]): Promise<Map<string, Previous>> {
     .where(inArray(repositoryAiLevels.repositoryKey, keys));
   return new Map(rows.map((row) => [row.key, row]));
 }
-/**
- * 저장소 주인 종류 — 새 GitHub 요청 없이 이미 저장한 값만 읽는다: 수집 원본의 repo_meta.owner.type(후보)과 제품의 owner_type(스타 확인 잡).
- * 어느 한쪽이라도 조직이면 조직으로 본다(옮겨 간 저장소는 모으지 않는 쪽으로). 둘 다 없으면 넣지 않는다
- */
-async function ownerTypes(keys: string[]): Promise<Map<string, MaintainerOwnerType>> {
-  if (!keys.length) return new Map();
-  const list = sql.join(keys.map((key) => sql`${key}`), sql`, `);
-  const identities = sql.join(keys.map((key) => sql`${`https://github.com/${key}`}`), sql`, `);
-  const rows = await db.execute<{ key: string; type: string | null }>(sql`
-    SELECT lower(d.repo) AS key, d.repo_meta->'owner'->>'type' AS type FROM crawl_documents d WHERE lower(d.repo) IN (${list})
-    UNION ALL
-    SELECT ${PRODUCT_KEY} AS key, owner_type AS type FROM products WHERE ${PRODUCT_IDENTITY} IN (${identities})`);
-  const owners = new Map<string, MaintainerOwnerType>();
-  for (const row of rows) {
-    if (row.type === 'Organization') owners.set(row.key, 'Organization');
-    else if (row.type === 'User' && !owners.has(row.key)) owners.set(row.key, 'User');
-  }
-  return owners;
-}
-const DATABASE_LOADERS: Loaders = { previous: previousLevels, scanned: scannedEvidence, owners: ownerTypes };
+const DATABASE_LOADERS: Loaders = { previous: previousLevels, scanned: scannedEvidence };
 
 export type Judged = { key: string; level: AiLevel | null; clients: string[]; evidence: AiLevelEvidence; headSha: string | null; retryMs: number };
 export type Failed = { key: string; error: 'not_found' | 'unknown'; retryMs: number; fallback?: ReturnType<typeof classifyAiLevel> };
@@ -310,13 +290,15 @@ async function loadDetails(tick: Tick, requests: AiLevelDetailRequest[]): Promis
 
 /** 묶음 하나 — 첫 질의가 통째로 실패하면 마감까지 하나씩 다시 묻는다(큰 저장소 하나가 GitHub 10초 상한을 넘겨 묶음을 막는다). 마감 뒤의 저장소는 적지 않는다(다음 틱) */
 /**
- * contacts: 받은 저장소의 제작자(주인 계정) 커밋 주소(관리자 전용, maintainer-emails.ts) — 판정(Judged)과 따로 둔다.
+ * contacts: 받은 저장소의 제작자(지금 주인 계정) 커밋 주소(관리자 전용, maintainer-emails.ts) — 판정(Judged)과 따로 둔다.
  * 판정은 확인 스크립트(scripts/ai-level-check.ts)가 파일로 내보내므로 주소가 그 파일에 섞이지 않게 한다. 포크는 원본의 커밋을 물려받아 넣지 않는다.
+ * contactOwners: 응답에서 지금 주인을 안 저장소마다 남겨도 되는 로그인 — 개인 계정이면 그 로그인, 조직·포크면 null(그 키의 행을 모두 지운다).
+ *   옮겨 간 저장소에 남은 옛 주인의 주소를 지우는 기준이다. 응답에 주인이 없으면 넣지 않는다(모르면 지우지도 않는다).
  * contactSkips: 주소를 남기지 않은 저장소 수를 까닭별로(주소 없이) — 틱 로그 ai_level.maintainer_emails 로 간다
  */
 export type ContactSkip = MaintainerEmailSkip | 'fork';
-export type BatchResult = { judged: Judged[]; failed: Failed[]; contacts: Map<string, MaintainerEmail[]>; contactSkips: Partial<Record<ContactSkip, number>>;
-  remaining: number | null; rateLimitedUntil?: string };
+export type BatchResult = { judged: Judged[]; failed: Failed[]; contacts: Map<string, MaintainerEmail[]>; contactOwners: Map<string, string | null>;
+  contactSkips: Partial<Record<ContactSkip, number>>; remaining: number | null; rateLimitedUntil?: string };
 const addSkips = (into: Partial<Record<ContactSkip, number>>, from: Partial<Record<ContactSkip, number>>) => {
   for (const [reason, n] of Object.entries(from) as [ContactSkip, number][]) into[reason] = (into[reason] ?? 0) + n;
 };
@@ -324,18 +306,21 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<BatchRe
   const refs: RepositoryRef[] = batch.map((key) => { const [owner, name] = key.split('/'); return { owner, name }; });
   const answer = await tick.graphql<Record<string, unknown>>(aiLevelBatchQuery(refs), { timeoutMs: 10_000 });
   if (!answer.ok && answer.error.kind === 'rate_limited') {
-    return { judged: [], failed: [], contacts: new Map(), contactSkips: {}, remaining: 0,
+    return { judged: [], failed: [], contacts: new Map(), contactOwners: new Map(), contactSkips: {}, remaining: 0,
       rateLimitedUntil: new Date(answer.error.resetAt?.getTime() ?? Date.now() + 15 * 60_000).toISOString() };
   }
   if (!answer.ok || !answer.data) {
-    if (batch.length === 1) return { judged: [], failed: [{ key: batch[0], error: 'unknown', retryMs: errorRetryMs() }], contacts: new Map(), contactSkips: {}, remaining: null };
-    const parts: BatchResult = { judged: [], failed: [], contacts: new Map(), contactSkips: {}, remaining: null };
+    if (batch.length === 1) {
+      return { judged: [], failed: [{ key: batch[0], error: 'unknown', retryMs: errorRetryMs() }], contacts: new Map(), contactOwners: new Map(), contactSkips: {}, remaining: null };
+    }
+    const parts: BatchResult = { judged: [], failed: [], contacts: new Map(), contactOwners: new Map(), contactSkips: {}, remaining: null };
     for (const key of batch) {
       if (Date.now() > tick.startUntil) break;
       const one = await processBatch(tick, [key]);
       if (one.rateLimitedUntil) return { ...parts, remaining: 0, rateLimitedUntil: one.rateLimitedUntil };
       parts.judged.push(...one.judged); parts.failed.push(...one.failed); parts.remaining = one.remaining ?? parts.remaining;
       for (const [key, emails] of one.contacts) parts.contacts.set(key, emails);
+      for (const [key, login] of one.contactOwners) parts.contactOwners.set(key, login);
       addSkips(parts.contactSkips, one.contactSkips);
     }
     return parts;
@@ -343,9 +328,6 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<BatchRe
   const answers = parseAiLevelBatch(refs, answer.data, answer.errors);
   const previous = await tick.load.previous(batch);
   const scanned = await tick.load.scanned(batch);
-  // 제작자 이메일은 곁가지다 — 주인 종류를 못 읽어도 판정은 그대로 하고, 고르기는 로그인 맞춤만으로 한다(조직 로그인은 커밋 작성자와 맞지 않는다)
-  const owners = await (tick.load.owners?.(batch) ?? Promise.resolve(new Map<string, MaintainerOwnerType>()))
-    .catch(() => new Map<string, MaintainerOwnerType>());
 
   // 두 번째 질의: 루트의 에이전트 폴더와, 아직 바뀐 파일을 보지 않은 에이전트 PR(1단계 후보 먼저, 1단계를 이미 확인했으면 볼 것 없음)
   const plans = answers.map((item, index) => {
@@ -369,13 +351,15 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<BatchRe
   const judged: Judged[] = [];
   const failed: Failed[] = [];
   const contacts = new Map<string, MaintainerEmail[]>();
+  const contactOwners = new Map<string, string | null>();
   const contactSkips: Partial<Record<ContactSkip, number>> = {};
   for (const [index, item] of answers.entries()) {
     if (item.kind === 'found') {
-      const picked = item.scan.isFork ? { emails: [], skip: 'fork' as const }
-        : ownerMaintainerEmails(item.scan.commits, { repositoryKey: batch[index], ownerType: owners.get(batch[index]) ?? null });
+      // 지금 주인은 이 응답의 owner 다 — 저장된 키의 owner 는 옮겨 간 저장소에서 낡는다
+      const picked = item.scan.isFork ? { emails: [], skip: 'fork' as const, ownerLogin: null } : ownerMaintainerEmails(item.scan.commits, item.scan.owner);
       if (picked.emails.length) contacts.set(batch[index], picked.emails);
       if (picked.skip) contactSkips[picked.skip] = (contactSkips[picked.skip] ?? 0) + 1;
+      if (picked.skip !== 'owner_unknown') contactOwners.set(batch[index], picked.ownerLogin);
     }
     const key = batch[index];
     const plan = plans[index];
@@ -393,7 +377,7 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<BatchRe
   }
   const limit = answer.data.rateLimit;
   const remaining = limit && typeof limit === 'object' && typeof (limit as { remaining?: unknown }).remaining === 'number' ? (limit as { remaining: number }).remaining : null;
-  return { judged, failed, contacts, contactSkips, remaining };
+  return { judged, failed, contacts, contactOwners, contactSkips, remaining };
 }
 
 /**
@@ -440,7 +424,7 @@ export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, depende
   for (let start = 0; start < keys.length; start += AI_LEVEL_BATCH) {
     if (!ctx.hasBudget() || Date.now() > tick.startUntil) break;
     const result = await processBatch(tick, keys.slice(start, start + AI_LEVEL_BATCH));
-    const written = await record(ctx, result.judged, result.failed, result.contacts);
+    const written = await record(ctx, result.judged, result.failed, { emails: result.contacts, owners: result.contactOwners });
     tallyEmails(emails, result, written);
     checked += result.judged.length + result.failed.length;
     if (result.rateLimitedUntil) {
@@ -464,45 +448,73 @@ export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, depende
 
 /**
  * 제작자 이메일 틱 집계(주소 없이 수만) — repositories 주소를 남긴 저장소, saved 쓴 주소, denied 거부 목록이라 뺀 주소,
- * organization·fork·noOwnerCommit·noAddress 주소를 남기지 않은 저장소(ContactSkip). 기록이 실패한 묶음은 saved·denied 에 넣지 않는다
+ * removed 지금 주인이 아닌 계정(옮겨 가기 전 주인)·조직·포크라 지운 행, unguarded 문장 로그 bind 값 숨기기 권한이 없어 그대로 쓴 묶음,
+ * organization·ownerUnknown·fork·noOwnerCommit·noAddress 주소를 남기지 않은 저장소(ContactSkip). 기록이 실패한 묶음은 넣지 않는다
  */
-type EmailTally = { repositories: number; saved: number; denied: number; organization: number; fork: number; noOwnerCommit: number; noAddress: number };
-const emptyEmailTally = (): EmailTally => ({ repositories: 0, saved: 0, denied: 0, organization: 0, fork: 0, noOwnerCommit: 0, noAddress: 0 });
+type EmailTally = { repositories: number; saved: number; denied: number; removed: number; unguarded: number;
+  organization: number; ownerUnknown: number; fork: number; noOwnerCommit: number; noAddress: number };
+const emptyEmailTally = (): EmailTally => ({ repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0,
+  organization: 0, ownerUnknown: 0, fork: 0, noOwnerCommit: 0, noAddress: 0 });
 function tallyEmails(tally: EmailTally, result: BatchResult, written: ContactWrite) {
   tally.repositories += written.repositories; tally.saved += written.saved; tally.denied += written.denied;
-  tally.organization += result.contactSkips.organization ?? 0; tally.fork += result.contactSkips.fork ?? 0;
-  tally.noOwnerCommit += result.contactSkips.no_owner_commit ?? 0; tally.noAddress += result.contactSkips.no_usable_address ?? 0;
+  tally.removed += written.removed; tally.unguarded += written.unguarded;
+  tally.organization += result.contactSkips.organization ?? 0; tally.ownerUnknown += result.contactSkips.owner_unknown ?? 0;
+  tally.fork += result.contactSkips.fork ?? 0; tally.noOwnerCommit += result.contactSkips.no_owner_commit ?? 0;
+  tally.noAddress += result.contactSkips.no_usable_address ?? 0;
 }
 function logEmails(ctx: JobContext<AiLevelCursor>, tally: EmailTally) {
   if (Object.values(tally).some((n) => n > 0)) ctx.log('ai_level.maintainer_emails', tally);
 }
 
-type ContactWrite = { repositories: number; saved: number; denied: number };
+type ContactWrite = { repositories: number; saved: number; denied: number; removed: number; unguarded: number };
+const noContactWrite = (): ContactWrite => ({ repositories: 0, saved: 0, denied: 0, removed: 0, unguarded: 0 });
+type Contacts = { emails: Map<string, MaintainerEmail[]>; owners: Map<string, string | null> };
+/** 주소·이름을 bind 값 대신 이 트랜잭션 지역 설정으로 넘기는 칸(set_config(..., true) — 트랜잭션이 끝나면 사라진다) */
+const STAGED_ROWS = 'nmv.maintainer_email_rows';
 
 /**
  * 제작자 주소를 쓴다(record 의 트랜잭션 안, 저장점 안에서). 거부 목록(maintainer_email_denials)에 있는 주소는 쓰지 않는다.
- * 관리자 거부(maintainer-emails-admin.ts denyMaintainerEmail)와 겹치지 않게 같은 advisory 잠금을 공유 모드로 잡는다 — 거부가 commit 되기 전
- * 목록을 읽고 그 뒤에 써서 지운 주소가 되살아나는 일이 없다(거부는 배타 모드로 잡아 이 쓰기가 끝나기를 기다린 뒤 지운다).
- * 이번 창에서 본 주소는 시각·커밋 수를 고치고, 창 밖으로 밀려난 지난 주소는 그대로 둔다(보관 1년 뒤 db-retention 이 지운다)
+ * - 관리자 거부(maintainer-emails-admin.ts denyMaintainerEmail)와 겹치지 않게 같은 advisory 잠금을 공유 모드로 잡은 **뒤에** 거부 목록을 읽는다 —
+ *   거부가 commit 되기 전 목록을 읽고 그 뒤에 써서 지운 주소가 되살아나는 일이 없다(거부는 배타 모드로 잡아 이 쓰기가 끝나기를 기다린 뒤 지운다).
+ * - 문장 로그: 운영은 500ms 넘긴 문장을 bind 값과 함께 남긴다. 먼저 이 트랜잭션의 bind 값 기록을 끈다(권한이 있을 때 — statement-log-guard.ts).
+ *   권한이 없어도 주소·이름은 잠금을 기다릴 수 있는 INSERT 의 bind 값으로 보내지 않는다 — 잠금·쓰기가 없는 set_config 한 문장으로 넘기고 INSERT 는 그 설정을 읽는다.
+ * - 이번 창에서 본 주소는 시각·커밋 수를 고치고, 창 밖으로 밀려난 지난 주소는 그대로 둔다(보관 1년 뒤 db-retention 이 지운다).
+ *   다만 지금 주인이 아닌 계정의 행(옮겨 가기 전 주인), 조직·포크가 된 저장소의 행은 지운다(owners — 주소가 아니라 키·로그인으로).
  */
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-async function writeContacts(tx: Transaction, contacts: Map<string, MaintainerEmail[]>, now: Date): Promise<ContactWrite> {
+async function writeContacts(tx: Transaction, contacts: Contacts, now: Date): Promise<ContactWrite> {
+  const written = noContactWrite();
+  if (!await hideBindValuesInStatementLog(tx)) written.unguarded = 1;
   await tx.execute(sql`SELECT pg_advisory_xact_lock_shared(hashtext(${MAINTAINER_EMAIL_LOCK}))`);
-  const hashes = new Map([...contacts.values()].flat().map((item) => [item.email, maintainerEmailDenyHash(item.email)]));
+  const hashes = new Map([...contacts.emails.values()].flat().map((item) => [item.email, maintainerEmailDenyHash(item.email)]));
   const denied = new Set(hashes.size ? (await tx.select({ hash: maintainerEmailDenials.emailHash }).from(maintainerEmailDenials)
     .where(inArray(maintainerEmailDenials.emailHash, [...new Set(hashes.values())]))).map((row) => row.hash) : []);
-  const written: ContactWrite = { repositories: 0, saved: 0, denied: 0 };
-  for (const [key, emails] of contacts) {
+  const rows: { repository_key: string; email: string; author_name: string | null; author_login: string | null; commit_count: number }[] = [];
+  for (const [key, emails] of contacts.emails) {
     const allowed = emails.filter((item) => !denied.has(hashes.get(item.email)!));
     written.denied += emails.length - allowed.length;
     if (!allowed.length) continue;
-    await tx.insert(repositoryMaintainerEmails).values(allowed.map((item) => ({ repositoryKey: key, email: item.email, authorName: item.name,
-      authorLogin: item.login, commitCount: item.commits, firstSeenAt: now, lastSeenAt: now })))
-      .onConflictDoUpdate({ target: [repositoryMaintainerEmails.repositoryKey, repositoryMaintainerEmails.email], set: {
-        authorName: sql`coalesce(excluded.author_name, ${repositoryMaintainerEmails.authorName})`,
-        authorLogin: sql`coalesce(excluded.author_login, ${repositoryMaintainerEmails.authorLogin})`,
-        commitCount: sql`excluded.commit_count`, lastSeenAt: sql`greatest(excluded.last_seen_at, ${repositoryMaintainerEmails.lastSeenAt})` } });
+    rows.push(...allowed.map((item) => ({ repository_key: key, email: item.email, author_name: item.name, author_login: item.login, commit_count: item.commits })));
     written.repositories += 1; written.saved += allowed.length;
+  }
+  if (rows.length) {
+    await tx.execute(sql`SELECT set_config(${STAGED_ROWS}, ${JSON.stringify(rows)}, true)`);
+    await tx.execute(sql`INSERT INTO repository_maintainer_emails AS e (repository_key, email, author_name, author_login, commit_count, first_seen_at, last_seen_at)
+      SELECT r.repository_key, r.email, r.author_name, r.author_login, r.commit_count, ${now.toISOString()}::timestamptz, ${now.toISOString()}::timestamptz
+      FROM jsonb_to_recordset(current_setting(${STAGED_ROWS})::jsonb)
+        AS r(repository_key text, email text, author_name text, author_login text, commit_count integer)
+      ON CONFLICT (repository_key, email) DO UPDATE SET author_name = coalesce(excluded.author_name, e.author_name),
+        author_login = coalesce(excluded.author_login, e.author_login), commit_count = excluded.commit_count,
+        last_seen_at = greatest(excluded.last_seen_at, e.last_seen_at)`);
+    await tx.execute(sql`SELECT set_config(${STAGED_ROWS}, '', true)`);
+  }
+  if (contacts.owners.size) {
+    const owners = [...contacts.owners].map(([key, login]) => ({ key, login }));
+    const removed = await tx.execute(sql`DELETE FROM repository_maintainer_emails e
+      USING jsonb_to_recordset(${JSON.stringify(owners)}::jsonb) AS o(key text, login text)
+      WHERE e.repository_key = o.key AND (o.login IS NULL OR lower(coalesce(e.author_login, '')) <> o.login)
+      RETURNING 1`);
+    written.removed = removed.length;
   }
   return written;
 }
@@ -513,9 +525,11 @@ async function writeContacts(tx: Transaction, contacts: Map<string, MaintainerEm
  * 채 옛 근거가 '이미 확인한 것'으로 다음 판정에 이어지지 않게. 처음 보는 저장소면 단계 없이 오류만 적은 행을 만든다
  * (ai-level-store.ts 는 이런 행을 '검사 전'으로 읽는다) — 같은 저장소가 매 틱 앞을 막지 않게 한다.
  */
-async function record(ctx: JobContext<AiLevelCursor>, judged: Judged[], failed: Failed[], contacts: Map<string, MaintainerEmail[]> = new Map()): Promise<ContactWrite> {
-  const written: ContactWrite = { repositories: 0, saved: 0, denied: 0 };
-  if (!judged.length && !failed.length && !contacts.size) return written;
+async function record(ctx: JobContext<AiLevelCursor>, judged: Judged[], failed: Failed[],
+  contacts: Contacts = { emails: new Map(), owners: new Map() }): Promise<ContactWrite> {
+  const written = noContactWrite();
+  const touchesContacts = contacts.emails.size > 0 || contacts.owners.size > 0;
+  if (!judged.length && !failed.length && !touchesContacts) return written;
   const now = new Date();
   await db.transaction(async (tx) => {
     if (ctx.lease) await assertJobLease(tx, ctx.lease);
@@ -539,12 +553,12 @@ async function record(ctx: JobContext<AiLevelCursor>, judged: Judged[], failed: 
         WHERE ${PRODUCT_IDENTITY} = ${`https://github.com/${item.key}`} AND ai_level IS DISTINCT FROM ${item.level}`);
     }
     // 제작자 주소(관리자 전용) — 곁가지 기록이라 저장점 안에서 쓴다. 실패해도(0194 전 등) 단계 판정은 그대로 적는다. 주소는 로그에 남기지 않는다
-    if (contacts.size) {
+    if (touchesContacts) {
       try {
         Object.assign(written, await tx.transaction((savepoint) => writeContacts(savepoint, contacts, now)));
       } catch (error) {
         const failure = error as { code?: unknown; cause?: { code?: unknown } } | null;
-        ctx.log('ai_level.maintainer_emails_failed', { repositories: contacts.size, code: String(failure?.code ?? failure?.cause?.code ?? 'unknown') });
+        ctx.log('ai_level.maintainer_emails_failed', { repositories: contacts.emails.size, code: String(failure?.code ?? failure?.cause?.code ?? 'unknown') });
       }
     }
   });

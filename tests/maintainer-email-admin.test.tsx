@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   fake.admin.mockResolvedValue({ login: "operator" });
   fake.product.mockResolvedValue({ slug: "kim-tool", repoUrl: "https://github.com/kim/tool" });
-  fake.deny.mockResolvedValue({ deletedRows: 2, alreadyDenied: false, found: true });
+  fake.deny.mockResolvedValue({ deletedRows: 2, repositories: 1, alreadyDenied: false });
 });
 
 describe("제작자 이메일 표", () => {
