@@ -111,6 +111,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     for (const [key, count] of Object.entries(fields ?? {}))
       if (key.startsWith('member_') && typeof count === 'number') poolCounts[key] = (poolCounts[key] ?? 0) + count;
   } };
+  /** 직전 대기열 읽기(이어받기 아님)가 한도보다 적게 돌려줬다 — 그 읽기 때 대기열에 그 밖의 후보가 없었다 */
+  let queueTail = false;
   try {
   while (ctx.hasBudget()) {
     // Filter before LIMIT so pending reviews cannot starve approved products.
@@ -119,9 +121,14 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
       : reviewApprovalPredicate(settings);
     // Exclude conflicting snapshots before LIMIT; they remain untouched for the next tick.
     const resume = pendingBatches.shift();
-    const candidates = await crawl.listCandidates(["approved"], resume ? BATCH : BATCH * classifyConcurrency,
+    // 분류 자리를 기다리는 후보가 있고 대기열을 끝까지 읽었으면, 빈 답을 확인하려고 무거운 대기열 쿼리를 NOT IN 만 바꿔 다시 돌리지 않는다(2026-11-21).
+    // 이 틱은 어차피 model_capacity 미룸으로 끝나 요청이 남는다 — 그 사이 새로 승인된 후보는 다음 poll 이 집는다. 미룸의 재시도 간격은 그대로다.
+    if (!resume && queueTail && classificationWaiting.size) return capacityDeferred();
+    const limit = resume ? BATCH : BATCH * classifyConcurrency;
+    const candidates = await crawl.listCandidates(["approved"], limit,
       and(eligible, resume ? inArray(crawlCandidates.id, [...resume.candidateIds]) : undefined,
         conflicts.size || classificationWaiting.size ? notInArray(crawlCandidates.id, [...conflicts, ...classificationWaiting]) : undefined));
+    if (!resume) queueTail = candidates.length < limit;
     // Stable input order is part of the payload hash. A new queue head must not split an existing batch.
     if (pool) candidates.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || b.id - a.id);
     if (resume && (candidates.length !== resume.candidateIds.length || candidates.some(candidate => !resume.candidateIds.includes(candidate.id)))) {

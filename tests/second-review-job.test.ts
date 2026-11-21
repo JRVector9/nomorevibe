@@ -8,12 +8,14 @@ import { cliRankRow } from "./fake-cli-path";
 
 const mocks = vi.hoisted(() => ({
   settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(), reconcile: vi.fn(),
-  candidate: vi.fn(), document: vi.fn(), input: vi.fn(), admit: vi.fn(), canStart: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
+  candidate: vi.fn(), document: vi.fn(), input: vi.fn(), admit: vi.fn(), canStart: vi.fn(), stage: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
 vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: mocks.candidate }) }) }) } }));
 vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: mocks.document }));
-vi.mock("@/lib/crawl/second-review-ownership", () => ({ admitLegacySecondReview: mocks.admit, canStartLegacySecondReview: mocks.canStart }));
+// stage: 틱 머리의 단계 읽기(legacy·items·draining), canStart: 호출 직전·틱 끝의 다시 확인
+vi.mock("@/lib/crawl/second-review-ownership", () => ({ admitLegacySecondReview: mocks.admit, canStartLegacySecondReview: mocks.canStart,
+  legacySecondReviewStage: mocks.stage }));
 vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.review, REVIEW_CLI_TIMEOUT_MS: 20_000, reviewCliTimeoutMs: () => 20_000, reviewCliMaxOutputTokens: () => 2_000 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 30_000, reviewGatewayTimeoutMs: () => 30_000 }));
 vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000, grokReviewTimeoutMs: () => 90_000 }));
@@ -43,6 +45,7 @@ beforeEach(() => {
   mocks.document.mockResolvedValue({ repo: "acme/demo" });
   mocks.input.mockResolvedValue({ snapshot: {} });
   mocks.canStart.mockResolvedValue(true);
+  mocks.stage.mockResolvedValue("legacy");
   mocks.reconcile.mockResolvedValue(0);
   mocks.record.mockResolvedValue({ state: "recorded" });
   // Unit orchestration only: DB authority is exercised by the unmocked integration suite.
@@ -243,23 +246,43 @@ it("requires a real worker job lease before controller work", async () => {
   expect(mocks.review).not.toHaveBeenCalled();
 });
 
-it("returns stage_blocked after controllers without legacy dispatch even with no remaining budget", async () => {
-  mocks.canStart.mockResolvedValue(false);
-  expect(await secondReviewCandidates({ ...context(), hasBudget: () => false }))
-    .toEqual({ done: false, deferred: "stage_blocked" });
-  expect(mocks.enqueue).toHaveBeenCalledOnce();
-  expect(mocks.admit).not.toHaveBeenCalled();
-  expect(mocks.review).not.toHaveBeenCalled();
-});
-
-it('runs existing controllers in items or draining mode without starting legacy dispatch', async () => {
-  mocks.canStart.mockResolvedValue(false);
-  expect(await secondReviewCandidates({ ...context(), hasBudget: () => false })).toEqual({ done: false, deferred: 'stage_blocked' });
+/**
+ * 2026-11-21: items 모드의 정비 틱을 stage_blocked 미룸으로 끝내던 때는 러너가 요청을 인정하지 않아 워커 줄이 poll(5초)마다 정비 쿼리를
+ * 되풀이했다(일정 60초). items 는 전환이 끝난 상태라 이 잡의 일은 정비뿐이다 — 정비를 마친 틱은 완료 틱이다. 전환 중(draining)은 종전대로 미룬다.
+ */
+const controllersRanOnce = () => {
   expect(mocks.enqueue).toHaveBeenCalledExactlyOnceWith(mocks.settings, undefined, context().lease);
   expect(mocks.close).toHaveBeenCalledExactlyOnceWith(undefined, context().lease);
+  expect(mocks.reconcile).toHaveBeenCalledOnce();
   expect(mocks.reopen).toHaveBeenCalledExactlyOnceWith(mocks.settings, undefined, context().lease);
   expect(mocks.retry).toHaveBeenCalledExactlyOnceWith(undefined, context().lease);
   expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.admit).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
+};
+
+it("items 모드에서는 정비를 마치고 완료 틱으로 끝난다 — 남은 예산이 없어도, legacy 표 심사는 시작하지 않고 cursor 를 지킨다", async () => {
+  mocks.stage.mockResolvedValue("items");
+  const cursor: SecondReviewCursor = { marker: "kept", staleReviewAfterCandidateId: 9 };
+  const ctx = { ...context(), cursor, hasBudget: () => false };
+  expect(await secondReviewCandidates(ctx)).toEqual({ done: true, cursor });
+  controllersRanOnce();
+  expect(mocks.canStart).not.toHaveBeenCalled();
+  expect(ctx.log).toHaveBeenCalledWith("crawl.second_review_skipped", { reason: "stage_inactive", enqueued: 1, closed: 0, reopened: 0, reconciled: 0 });
+  // cursor 가 없던 틱은 cursor 칸 없이 끝난다(러너가 done 에서 비운다 — 이미 비어 있다)
+  expect(await secondReviewCandidates({ ...context(), hasBudget: () => false })).toEqual({ done: true });
+});
+
+it("전환 중(draining)에는 정비를 한 뒤 종전대로 stage_blocked 로 미룬다 — 남은 예산이 없어도", async () => {
+  mocks.stage.mockResolvedValue("draining");
+  expect(await secondReviewCandidates({ ...context(), hasBudget: () => false })).toEqual({ done: false, deferred: "stage_blocked" });
+  controllersRanOnce();
+});
+
+it.each(["enqueue", "close", "reconcile", "reopen", "retry"] as const)("items 모드에서도 정비(%s)가 던진 오류는 삼키지 않고 그대로 던진다 — 완료 틱으로 가리지 않는다", async step => {
+  mocks.stage.mockResolvedValue("items");
+  const failure = new Error(`${step} failure`);
+  mocks[step].mockRejectedValue(failure);
+  await expect(secondReviewCandidates(context())).rejects.toBe(failure);
+  expect(mocks.stage).not.toHaveBeenCalled();
 });
 
 it("dispatches the admitted row and input and passes the same receipt unchanged", async () => {
