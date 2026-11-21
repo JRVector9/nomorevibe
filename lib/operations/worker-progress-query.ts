@@ -21,7 +21,8 @@ import { latestServiceInstance, serviceInstancesFromObservations } from "./insta
 import { pipelineThroughput } from "./throughput";
 import type { ThroughputSnapshot } from "./throughput-model";
 import { classifyLiveness, classifyScheduler, classifyStage, laneForJob, parseAgentProviderFailure, parseRuntimeLanes, progressStageRole,
-  runtimeLaneStall, TEXT_PROGRESS_STAGE_JOBS, type AgentProviderFailure, type ProgressStageInput, type ProgressStageKey, type StageProgress } from "./worker-progress";
+  progressReadFailure, runtimeLaneStall, TEXT_PROGRESS_STAGE_JOBS, type AgentProviderFailure, type ProgressReadFailure, type ProgressStageInput, type ProgressStageKey,
+  type StageProgress } from "./worker-progress";
 import { readUptimeSplitStage } from "./uptime-split-repository";
 import { readTextStageProgress } from './text-stage-progress';
 import { readPublisherClassificationDrain } from './publisher-drain-progress';
@@ -130,12 +131,16 @@ export function buildWorkerProgress(
       else if (mode.mode === 'draining' && ['no_progress', 'worker_missing'].includes(result.reason))
         result = { ...result, reason: 'backoff', alarm: false };
     }
-    return { ...result, job: jobForStage[stage.key],
-      lane: mode && mode.mode !== 'legacy' ? `${consumer}-consumer` : laneForJob(result.role, jobForStage[stage.key]),
+    const base = { ...result, job: jobForStage[stage.key],
+      lane: mode && mode.mode !== 'legacy' ? `${consumer}-consumer` : laneForJob(result.role, jobForStage[stage.key]) };
+    // 읽지 못한 단계는 수치 칸을 싣지 않는다(자리만 채운 0 이 「대기 0건」으로 읽히지 않게) — 원인(조각 이름·코드)만 싣는다
+    if ("unread" in stage && stage.unread) return { ...base, unread: stage.unread };
+    return { ...base,
       waiting: stage.waiting, oldestMinutes: stage.oldestMinutes, completed5m: stage.completed5m,
       progress5m: stage.progress5m, errors5m: stage.errors5m, deferred: stage.deferred,
       ...("providerErrors" in stage ? { providerErrors: stage.providerErrors, providerErrorMinutes: stage.providerErrorMinutes } : {}),
-      ...("held" in stage ? { held: stage.held } : {}) };
+      ...("held" in stage ? { held: stage.held } : {}),
+      ...("measuredAgeSeconds" in stage && stage.measuredAgeSeconds !== undefined ? { measuredAgeSeconds: stage.measuredAgeSeconds } : {}) };
   });
   const lanes = (["crawler", "reviewer", "publisher", "maintenance", "text"] as const).flatMap(role => {
     const instance = latestServiceInstance(instances, role);
@@ -452,12 +457,33 @@ export function withProviderBackoff<J extends { name: string; notBefore: Date | 
   });
 }
 
-export async function readWorkerProgress(now = new Date(), options: { includeText?: boolean } = {}) {
-  const [settings, jobs, batch, agentScan, reviewModes, capacity, admissionBlocks] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db),
-    db.select({ stage: pipelineStageModes.stage, mode: pipelineStageModes.mode, drainingFrom: pipelineStageModes.drainingFrom })
-      .from(pipelineStageModes).where(inArray(pipelineStageModes.stage, ['ai1', 'ai2'])),
-    readModelCapacityControlObservation(),
-    readCapacityAdmissionBlocks(),
+/**
+ * 실패한 읽기가 어느 조각이었는지(2026-11-21). 이 조각들은 생존·경보 판정의 핵심이라 하나라도 실패하면 지금처럼 진행 전체가 실패한다 —
+ * 다만 원인이 남지 않았다. 오류 객체는 그대로 던지고(호출자의 오류 판별을 바꾸지 않는다) 이름만 따로 적어 둔다.
+ */
+const failedPieces = new WeakMap<object, string>();
+function piece<T>(name: string, read: Promise<T>): Promise<T> {
+  return read.catch((error: unknown) => {
+    if (error !== null && typeof error === 'object' && !failedPieces.has(error)) failedPieces.set(error, name);
+    throw error;
+  });
+}
+/** readWorkerProgress 가 던진 오류 → 조각 이름 + SQLSTATE·오류 이름. 조각 밖에서 난 오류는 `progress` 다 */
+export function workerProgressReadFailure(error: unknown): ProgressReadFailure {
+  return progressReadFailure((error !== null && typeof error === 'object' ? failedPieces.get(error) : undefined) ?? 'progress', error);
+}
+
+/**
+ * `reuseTextReasonOnly`: 사유 번역 집계를 여기서 다시 세지 않고 담아 둔 값만 쓴다(text-stage-progress.ts) — 호출자가 방금 따로 세었을 때.
+ * 텍스트 두 조각은 실패해도 던지지 않고 그 단계만 `unread`(모름)로 온다. 그래도 overall 은 ok 가 되지 않는다(unknown_age → unknown).
+ */
+export async function readWorkerProgress(now = new Date(), options: { includeText?: boolean; reuseTextReasonOnly?: boolean } = {}) {
+  const [settings, jobs, batch, agentScan, reviewModes, capacity, admissionBlocks] = await Promise.all([
+    piece('settings', getSettings()), piece('jobs', listJobStates()), piece('batch-mode', readJobBatchMode()), piece('agent-scan-mode', readAgentScanMode(db)),
+    piece('review-modes', db.select({ stage: pipelineStageModes.stage, mode: pipelineStageModes.mode, drainingFrom: pipelineStageModes.drainingFrom })
+      .from(pipelineStageModes).where(inArray(pipelineStageModes.stage, ['ai1', 'ai2']))),
+    piece('capacity-control', readModelCapacityControlObservation()),
+    piece('admission-blocks', readCapacityAdmissionBlocks()),
   ]);
   // A missing control row must not fall back to legacy restart authority.
   if (!['ai1', 'ai2'].every(stage => reviewModes.some(row => row.stage === stage))) throw new Error('review_stage_modes_missing');
@@ -468,14 +494,16 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
   const agentClaims = agentScanByClaims(agentScan);
   // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
   const [throughput, observations, evidence, split, text, publisherDraining] = await Promise.all([
-    pipelineThroughput(settings, now), db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES,
-      notLike(operationsObservations.key, "discovery-progress:%"))),
-    evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
-      agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims),
+    piece('throughput', pipelineThroughput(settings, now)),
+    piece('observations', db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES,
+      notLike(operationsObservations.key, "discovery-progress:%")))),
+    piece('evidence', evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
+      agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims)),
     // 응답 점검은 split claims 모드에서만 단계로 본다(legacy 는 지금처럼 maintenance 생존·줄로만 본다)
-    readUptimeSplitStage(db),
-    options.includeText === false ? Promise.resolve([]) : readTextStageProgress(),
-    capacity.mode === 'draining' ? readPublisherClassificationDrain() : Promise.resolve(false),
+    piece('uptime-split', readUptimeSplitStage(db)),
+    options.includeText === false ? Promise.resolve([])
+      : piece('text', readTextStageProgress({ reuseReasonOnly: options.reuseTextReasonOnly === true })),
+    piece('publisher-drain', capacity.mode === 'draining' ? readPublisherClassificationDrain() : Promise.resolve(false)),
   ]);
   return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch,
     [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity.mode, publisherDraining, admissionBlocks);
