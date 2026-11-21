@@ -130,13 +130,17 @@ it('fails closed on unbound active/unknown AI2 requests and null reservation tim
 });
 
 const LEDGER_STATES = ['waiting', 'withdrawn', 'reserved', 'dispatched', 'indeterminate', 'settled'] as const;
-/** logical key 없이 work_key 로 후보에 묶인 장부 행 — 전송 묶음 없이 넣을 수 있는 꼴 */
+/**
+ * logical key 없이 work_key 로 후보에 묶인 장부 행 — 전송 묶음 없이 넣을 수 있는 꼴.
+ * work_key 는 읽을 수 있는 꼴(ai2:<후보>:<표>:<64hex>)이어야 한다 — 읽지 못하는 키는 「모든 AI2 후보 보호」 가지에 걸려,
+ * 이 행이 정리되지 못하고 남으면 같은 DB 의 다른 낡은 표 정리 시험까지 막는다.
+ */
 function ledgerRow(candidateId: number, state: (typeof LEDGER_STATES)[number]) {
   const held = state !== 'waiting' && state !== 'withdrawn';
   return { requestId: randomUUID(), ownerInstanceId: 'ai2-stale-state-fixture', ownerBootId: randomUUID(), class: 'second' as const,
     pool: 'reviewer' as const, routeId: 'second-review', provider: 'claude-cli', model: 'opus', providerBudgetId: 'fixture', groupId: 'fixture',
     epoch: 1, revision: 1, policyHash: 'a'.repeat(64), state, token: held ? randomUUID() : null, reservedUntil: held ? hours(-1) : null,
-    queueUntil: hours(-1), workKey: `ai2:${candidateId}:1:${state}` };
+    queueUntil: hours(-1), workKey: `ai2:${candidateId}:1:${String(LEDGER_STATES.indexOf(state) + 1).repeat(64)}` };
 }
 
 it('reads only reserved and dispatched ledger rows into the protection probe, and the state CHECK admits no seventh value', async () => {
